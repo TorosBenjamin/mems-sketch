@@ -59,7 +59,9 @@ from pathlib import Path
 
 src = subprocess.run(
     ["git", "show", "f3ee80a:src/mems_sketch/core/shapes.py"],
-    capture_output=True, text=True, check=True,
+    capture_output=True,
+    text=True,
+    check=True,
 ).stdout.splitlines(keepends=True)
 
 
@@ -98,23 +100,30 @@ Path("src/mems_sketch/core/shapes.py").unlink()
     "from typing import Annotated, Literal\n\n"
     "from pydantic import (\n    BaseModel,\n    ConfigDict,\n    Field,\n    TypeAdapter,\n"
     "    field_validator,\n    model_validator,\n)\n\n"
-    + lines(56, 57) + lines(72, 72) + "\n\n"
+    + lines(56, 57)
+    + lines(72, 72)
+    + "\n\n"
     + lines(75, 284)
     + "\nSHAPE_ADAPTER: TypeAdapter = TypeAdapter(Shape)\n"
 )
-(out / "geometry.py").write_text(renamed(
-    '"""Geometry helpers for the shape kinds: arcs, booleans, transforms."""\n\n'
-    "from __future__ import annotations\n\n"
-    "import math\nfrom typing import TYPE_CHECKING\n\n"
-    "import klayout.db as kdb\n\n"
-    "from mems_sketch.core.component import Geometry, to_dbu\n\n"
-    "if TYPE_CHECKING:\n"
-    "    from mems_sketch.core.shapes.base import ArcShape, PathShape, Point\n\n"
-    + lines(58, 59) + "\n\n"
-    + lines(749, 762) + "\n"
-    + lines(923, 940) + "\n"
-    + lines(953, 1005)
-))
+(out / "geometry.py").write_text(
+    renamed(
+        '"""Geometry helpers for the shape kinds: arcs, booleans, transforms."""\n\n'
+        "from __future__ import annotations\n\n"
+        "import math\nfrom typing import TYPE_CHECKING\n\n"
+        "import klayout.db as kdb\n\n"
+        "from mems_sketch.core.component import Geometry, to_dbu\n\n"
+        "if TYPE_CHECKING:\n"
+        "    from mems_sketch.core.shapes.base import ArcShape, PathShape, Point\n\n"
+        + lines(58, 59)
+        + "\n\n"
+        + lines(749, 762)
+        + "\n"
+        + lines(923, 940)
+        + "\n"
+        + lines(953, 1005)
+    )
+)
 (out / "tree.py").write_text(
     '"""Walking and addressing the shape tree."""\n\n'
     "from __future__ import annotations\n\n"
@@ -124,7 +133,8 @@ Path("src/mems_sketch/core/shapes.py").unlink()
     "from mems_sketch.core.expressions import evaluate\n"
     "from mems_sketch.core.shapes.base import (\n    BooleanShape,\n    FilletShape,\n"
     "    LayerMapShape,\n    OffsetShape,\n    RefShape,\n    Shape,\n    TransformShape,\n)\n\n\n"
-    + lines(290, 374) + "\n"
+    + lines(290, 374)
+    + "\n"
     + lines(1020, 1029)
 )
 (out / "points.py").write_text(
@@ -137,40 +147,45 @@ Path("src/mems_sketch/core/shapes.py").unlink()
     "from mems_sketch.core.shapes.base import Point, Shape\n"
     "from mems_sketch.core.shapes.tree import walk\n\n"
     "# Points every node has, from the bounding box of its geometry.\n"
-    + lines(61, 71) + "\n\n"
+    + lines(61, 71)
+    + "\n\n"
     + lines(379, 500)
 )
-(out / "render.py").write_text(renamed(
-    '"""Evaluating a shape tree into geometry."""\n\n'
-    "from __future__ import annotations\n\n"
-    "from collections.abc import Callable, Mapping\nfrom dataclasses import dataclass\n"
-    "from typing import TYPE_CHECKING\n\n"
-    "import klayout.db as kdb\n\n"
-    "from mems_sketch.core.component import DBU_UM, Geometry, placement, resolve_params, to_dbu\n"
-    "from mems_sketch.core.expressions import evaluate\n"
-    f"from mems_sketch.core.shapes.base import (\n    {KINDS},\n    Point,\n    Repeat,\n    Shape,\n    Value,\n)\n"
-    "from mems_sketch.core.shapes.geometry import (\n    ARC_TOLERANCE_UM,\n    annular_sector,\n"
-    "    apply_transform,\n    arc_points,\n    boolean_op,\n    path_of,\n    segments,\n    to_ictrans,\n)\n"
-    "from mems_sketch.core.shapes.points import NodePoints, own_strings, point_dependencies, point_values\n"
-    "from mems_sketch.core.shapes.tree import NodePath\n\n"
-    "if TYPE_CHECKING:\n    from mems_sketch.core.component import Component\n\n\n"
-    + lines(505, 747) + "\n"
-    + lines(942, 951) + "\n"
-    + lines(1012, 1018)
-))
-(out / "rewrite.py").write_text(renamed(
-    '"""Rewriting shapes: moving them and changing the names their expressions use."""\n\n'
-    "from __future__ import annotations\n\n"
-    "import ast\nfrom collections.abc import Callable\nfrom typing import Any\n\n"
-    "from mems_sketch.core.expressions import ExpressionError, substitute\n"
-    f"from mems_sketch.core.shapes.base import (\n    {KINDS},\n    SHAPE_ADAPTER,\n    Shape,\n    Value,\n)\n"
-    "from mems_sketch.core.shapes.points import point_names\n"
-    "from mems_sketch.core.shapes.tree import walk\n\n\n"
-    + lines(767, 921)
-))
+(out / "render.py").write_text(
+    renamed(
+        '"""Evaluating a shape tree into geometry."""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Callable, Mapping\nfrom dataclasses import dataclass\n"
+        "from typing import TYPE_CHECKING\n\n"
+        "import klayout.db as kdb\n\n"
+        "from mems_sketch.core.component import DBU_UM, Geometry, placement, resolve_params, to_dbu\n"
+        "from mems_sketch.core.expressions import evaluate\n"
+        f"from mems_sketch.core.shapes.base import (\n    {KINDS},\n    Point,\n    Repeat,\n    Shape,\n    Value,\n)\n"
+        "from mems_sketch.core.shapes.geometry import (\n    ARC_TOLERANCE_UM,\n    annular_sector,\n"
+        "    apply_transform,\n    arc_points,\n    boolean_op,\n    path_of,\n    segments,\n    to_ictrans,\n)\n"
+        "from mems_sketch.core.shapes.points import NodePoints, own_strings, point_dependencies, point_values\n"
+        "from mems_sketch.core.shapes.tree import NodePath\n\n"
+        "if TYPE_CHECKING:\n    from mems_sketch.core.component import Component\n\n\n"
+        + lines(505, 747)
+        + "\n"
+        + lines(942, 951)
+        + "\n"
+        + lines(1012, 1018)
+    )
+)
+(out / "rewrite.py").write_text(
+    renamed(
+        '"""Rewriting shapes: moving them and changing the names their expressions use."""\n\n'
+        "from __future__ import annotations\n\n"
+        "import ast\nfrom collections.abc import Callable\nfrom typing import Any\n\n"
+        "from mems_sketch.core.expressions import ExpressionError, substitute\n"
+        f"from mems_sketch.core.shapes.base import (\n    {KINDS},\n    SHAPE_ADAPTER,\n    Shape,\n    Value,\n)\n"
+        "from mems_sketch.core.shapes.points import point_names\n"
+        "from mems_sketch.core.shapes.tree import walk\n\n\n" + lines(767, 921)
+    )
+)
 (out / "__init__.py").write_text(
-    lines(1, 37)
-    + "from mems_sketch.core.shapes.base import (\n"
+    lines(1, 37) + "from mems_sketch.core.shapes.base import (\n"
     "    INDEX_NAMES,\n    PRIMITIVE_KINDS,\n    SHAPE_ADAPTER,\n    Align,\n    ArcShape,\n"
     "    BooleanShape,\n    CircleShape,\n    FilletShape,\n    GroupShape,\n    LayerMapShape,\n"
     "    OffsetShape,\n    PathShape,\n    Point,\n    PolygonShape,\n    RectShape,\n    RefShape,\n"
@@ -676,9 +691,7 @@ class PathShape(Primitive):
             raise ValueError("path width must be positive")
         ext = 0 if self.ends == "flush" else width // 2
         geometry = Geometry()
-        geometry.region(self.layer).insert(
-            kdb.Path(points, width, ext, ext, self.ends == "round")
-        )
+        geometry.region(self.layer).insert(kdb.Path(points, width, ext, ext, self.ends == "round"))
         return geometry, {}
 
     def moved(self, x, y, inner) -> dict:
@@ -943,9 +956,7 @@ class FilletShape(Operation):
         n = segments(max(r_out, r_in, ARC_TOLERANCE_UM), self.segments and ctx.ev(self.segments))
         geometry = Geometry()
         for layer, region in ctx.children([self.children])[0].layers.items():
-            geometry.layers[layer] = region.merged().rounded_corners(
-                to_dbu(r_in), to_dbu(r_out), n
-            )
+            geometry.layers[layer] = region.merged().rounded_corners(to_dbu(r_in), to_dbu(r_out), n)
         return geometry, {}
 
     def summary(self) -> str:
@@ -1163,11 +1174,12 @@ and in `_render_node` call `transform_of(shape, first)` instead of `_transform_o
 `rewrite.py`: import `SHAPE_ADAPTER` and (TYPE_CHECKING) `Shape` from `registry`, `Value` from `base`; drop kind imports. Replace the `match` at the end of `translated`:
 
 ```python
-    def inner(children: list[Shape]) -> list[Shape]:
-        nested = moving | _names(shape)
-        return [translated(c, dx, dy, nested) for c in children]
+def inner(children: list[Shape]) -> list[Shape]:
+    nested = moving | _names(shape)
+    return [translated(c, dx, dy, nested) for c in children]
 
-    return shape.model_copy(update=shape.moved(x, y, inner))
+
+return shape.model_copy(update=shape.moved(x, y, inner))
 ```
 
 - [ ] **Step 8: Update the re-exports**

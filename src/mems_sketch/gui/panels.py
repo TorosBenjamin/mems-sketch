@@ -36,27 +36,10 @@ SLOT_LABELS = {"boolean": ("A", "B")}
 
 def describe(shape: Shape) -> str:
     """Short summary shown next to a node's name, with its alignment if it has one."""
-    summary = _summary(shape)
+    summary = shape.summary()
     if shape.align is not None:
         summary += f" · {shape.align.point} at {shape.align.to}"
     return summary
-
-
-def _summary(shape: Shape) -> str:
-    match shape.kind:
-        case "ref":
-            return shape.component
-        case "boolean":
-            return shape.op
-        case "rect" | "polygon" | "circle" | "arc" | "path":
-            return f"{shape.kind} · {shape.layer}"
-        case "offset":
-            return f"offset {shape.distance}"
-        case "fillet":
-            return f"fillet {shape.radius}"
-        case "layer_map":
-            return "layers " + ", ".join(f"{a}→{b}" for a, b in shape.mapping.items())
-    return shape.kind
 
 
 def parse_value(text: str) -> float | str:
@@ -120,9 +103,7 @@ def swatch_icon(color: QColor) -> QIcon:
 
 
 def shape_icon(shape: Shape) -> QIcon:
-    if shape.kind == "boolean":
-        return icons.icon(shape.op)
-    return icons.icon(icons.KIND_ICONS.get(shape.kind, "point"))
+    return icons.icon(shape.icon_name())
 
 
 def _table(columns: Sequence[str]) -> QTableWidget:

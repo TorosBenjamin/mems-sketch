@@ -227,20 +227,6 @@ ICONS = {
     "ok": '<circle cx="8" cy="8" r="6.2" fill="{green}" stroke="none"/>'
     '<path d="M5 8.2l2 2 4-4.2" stroke="#fff" stroke-width="1.6"/>',
 }
-# Shape kinds in the tree use the tool and operation icons.
-KIND_ICONS = {
-    "rect": "rect",
-    "circle": "circle",
-    "polygon": "polygon",
-    "path": "path",
-    "arc": "arc",
-    "ref": "component",
-    "transform": "transform",
-    "group": "transform",
-    "offset": "offset",
-    "fillet": "fillet",
-    "layer_map": "layer_map",
-}
 
 _theme = "light"
 _cache: dict[tuple[str, str, str | None], QIcon] = {}

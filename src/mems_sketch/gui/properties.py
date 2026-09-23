@@ -128,11 +128,12 @@ class PropertyEditor(QScrollArea):
             label = _LABELS.get(field, field.replace("_", " ").capitalize())
             form.addRow(label, self._field_editor(field, info.annotation, getattr(node, field)))
 
-        if node.kind in ("polygon", "path"):
+        fields = type(node).model_fields
+        if "points" in fields:
             form.addRow("Points (x, y per line)", self._points_editor(node.points))
-        if node.kind == "layer_map":
+        if "mapping" in fields:
             form.addRow("Mapping (from → to)", self._mapping_editor(node.mapping))
-        if node.kind == "ref":
+        if "params" in fields:
             layout.addWidget(self._params_editor(node))
         layout.addWidget(self._align_editor(node, path))
         layout.addWidget(self._repeat_editor(node))
@@ -294,7 +295,7 @@ class PropertyEditor(QScrollArea):
             value = getattr(align, field) if align else 0.0
             form.addRow(f"Offset {field[1]}", self._value_editor(f"align:{field}", value))
             offsets[field] = self._editors.pop(f"align:{field}")
-        if node.kind in ("ref", "transform"):
+        if type(node).placed:
             note = QLabel("While aligned, x and y do not move it; rotation and mirroring do.")
             note.setWordWrap(True)
             note.setStyleSheet("color: gray")

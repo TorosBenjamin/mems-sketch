@@ -37,23 +37,15 @@ from mems_sketch.core.process import Layer, default_process
 from mems_sketch.core.project import Project, check_shape_names
 from mems_sketch.core.shapes import (
     Align,
-    ArcShape,
-    BooleanShape,
-    CircleShape,
-    FilletShape,
-    LayerMapShape,
     NodePath,
     NodeRecord,
-    OffsetShape,
-    PathShape,
-    PolygonShape,
-    RectShape,
     RefShape,
     Shape,
     TransformShape,
     Value,
     child_lists,
     container_of,
+    default_shape,
     frame_of,
     map_expressions,
     node_at,
@@ -66,6 +58,7 @@ from mems_sketch.core.shapes import (
     translated,
     visible_from,
     walk,
+    wrap_shapes,
 )
 from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef
 from mems_sketch.export.base import export
@@ -771,7 +764,7 @@ class ProjectDocument(QObject):
                 continue  # follows the shape it is aligned to
             frame = frame_of(record, path)
             local = frame.inverted() * transform * frame  # the same move, in the parent's frame
-            if isinstance(node, RefShape | TransformShape):
+            if type(node).placed:
                 replacements[path] = _reoriented(node, local, record[path])
             else:
                 name = node.name or _fresh("transform", taken)
@@ -873,7 +866,7 @@ class ProjectDocument(QObject):
         return ((0, len(self.shapes) - 1),)
 
     def add_primitive(self, kind: str, layer: str = "device") -> NodePath:
-        return self.add_shape(default_primitive(kind, layer))
+        return self.add_shape(default_shape(kind, layer))
 
     def add_component(self, component: str) -> NodePath:
         stem = component.rsplit(".", 1)[-1].split("_")[0]
@@ -934,26 +927,7 @@ class ProjectDocument(QObject):
         """
         ordered, first, nodes = self._siblings(paths)
         name = self.unique_name("transform" if operation == "group" else operation)
-        match operation:
-            case "union" | "subtract" | "intersect" | "xor":
-                if len(nodes) < 2:
-                    raise ValueError(f"{operation} needs at least two selected shapes")
-                wrapper: Shape = BooleanShape(name=name, op=operation, a=nodes[:1], b=nodes[1:])
-            case "transform" | "group":
-                wrapper = TransformShape(name=name, children=nodes)
-            case "offset":
-                wrapper = OffsetShape(name=name, distance=1.0, children=nodes)
-            case "fillet":
-                wrapper = FilletShape(name=name, radius=1.0, children=nodes)
-            case "layer_map":
-                layers = sorted({getattr(n, "layer", None) for n in walk(nodes)} - {None})
-                wrapper = LayerMapShape(
-                    name=name,
-                    mapping={layer: layer for layer in layers} or {"device": "device"},
-                    children=nodes,
-                )
-            case _:
-                raise ValueError(f"unknown operation '{operation}'")
+        wrapper = wrap_shapes(operation, name, nodes)
         indices = {p[-1][1] for p in ordered}
 
         def change(project: Project) -> None:
@@ -1169,18 +1143,3 @@ def _fresh(name: str, taken: set[str]) -> str:
     while f"{stem}{n}" in taken:
         n += 1
     return f"{stem}{n}"
-
-
-def default_primitive(kind: str, layer: str = "device") -> Shape:
-    match kind:
-        case "rect":
-            return RectShape(layer=layer, x0=0, y0=0, x1=100, y1=50)
-        case "circle":
-            return CircleShape(layer=layer, radius=25)
-        case "arc":
-            return ArcShape(layer=layer, inner_radius=20, outer_radius=30, end_angle=180)
-        case "polygon":
-            return PolygonShape(layer=layer, points=[(0, 0), (60, 0), (30, 50)])
-        case "path":
-            return PathShape(layer=layer, points=[(0, 0), (100, 0), (100, 60)], width=4)
-    raise ValueError(f"unknown primitive '{kind}'")

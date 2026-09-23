@@ -45,7 +45,10 @@ KINDS_DIR = PACKAGE / "core" / "shapes" / "kinds"
 # "is this a component reference?" may be asked anywhere, and turning a
 # transform into a component (the reverse of unpacking a reference) is the
 # same for transforms. None means anywhere; otherwise the files allowed.
-ALLOWED_CLASSES = {"RefShape": None, "TransformShape": {"gui/document.py"}}
+ALLOWED_CLASSES = {
+    "RefShape": None,
+    "TransformShape": {"gui/document.py", "editing/components.py"},
+}
 
 
 def _class_names(node) -> list[str]:

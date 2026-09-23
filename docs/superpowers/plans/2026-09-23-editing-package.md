@@ -229,7 +229,7 @@ imports = "".join(
     for n in tree.body
     if isinstance(n, ast.Import | ast.ImportFrom)
     and "PySide6" not in segment(n)
-    and n.module != "__future__"
+    and getattr(n, "module", None) != "__future__"
 )
 HEADER = "from __future__ import annotations\n\n" + imports
 TYPES = "\nif TYPE_CHECKING:\n    from mems_sketch.editing.session import EditSession\n"

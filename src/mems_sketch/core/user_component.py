@@ -30,13 +30,17 @@ Example (a plate with a grid of release holes)::
 from __future__ import annotations
 
 import keyword
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 
 from mems_sketch.core.component import Component, Geometry, Params
-from mems_sketch.core.expressions import RESERVED_NAMES
+from mems_sketch.core.expressions import RESERVED_NAMES, resolve_variables
 from mems_sketch.core.shapes import INDEX_NAMES, Evaluator, Shape, references
+
+Value = float | str
+RESERVED_PARAM_NAMES = frozenset({*INDEX_NAMES, *RESERVED_NAMES, "process"})
 
 
 class _Model(BaseModel):
@@ -44,8 +48,16 @@ class _Model(BaseModel):
 
 
 class ParamDef(_Model):
+    """A component parameter.
+
+    ``default`` may be a number or an expression over the component's other
+    parameters and ``process.*`` constants, e.g. ``gap`` defaulting to
+    ``"1.5 * width"``. Defaults are resolved in dependency order, after the
+    values given by the caller, and then checked against ``min``/``max``.
+    """
+
     name: str
-    default: float
+    default: Value = 0.0
     min: float | None = None
     max: float | None = None
     integer: bool = False
@@ -56,12 +68,14 @@ class ParamDef(_Model):
     def _valid_name(cls, name: str) -> str:
         if not name.isidentifier() or keyword.iskeyword(name):
             raise ValueError(f"'{name}' is not a valid parameter name")
-        if name in INDEX_NAMES or name in RESERVED_NAMES:
+        if name in RESERVED_PARAM_NAMES:
             raise ValueError(f"'{name}' is reserved")
         return name
 
     @model_validator(mode="after")
-    def _default_in_range(self):
+    def _numeric_default_in_range(self):
+        if isinstance(self.default, str):
+            return self  # checked when the expression is resolved
         if self.min is not None and self.default < self.min:
             raise ValueError(f"default of '{self.name}' is below its minimum")
         if self.max is not None and self.default > self.max:
@@ -94,36 +108,57 @@ class ComponentDef(_Model):
     def references(self) -> set[str]:
         return references(self.shapes)
 
+    def parameter(self, name: str) -> ParamDef:
+        for p in self.parameters:
+            if p.name == name:
+                return p
+        raise KeyError(f"component '{self.name}' has no parameter '{name}'")
+
 
 class UserComponent(Component):
     """Adapts a :class:`ComponentDef` to the :class:`Component` interface.
 
-    ``lookup`` resolves the names used by ``ref`` shapes (normally
-    :meth:`Design.component`).
+    ``lookup`` resolves the names used by ``ref`` shapes; ``scope`` holds the
+    ``process.*`` constants visible to every expression.
     """
 
-    def __init__(self, definition: ComponentDef, lookup: Callable[[str], Component]) -> None:
+    def __init__(
+        self,
+        definition: ComponentDef,
+        lookup: Callable[[str], Component],
+        scope: Mapping[str, float] | None = None,
+    ) -> None:
         self.definition = definition
         self.type_name = definition.name
-        self.Params = _params_model(definition)
+        self.scope = dict(scope or {})
+        self.Params = _params_model(definition, self.scope)
         self._lookup = lookup
 
     def build(self, params: Params) -> Geometry:
-        variables = {name: float(value) for name, value in params.model_dump().items()}
+        variables = {**self.scope, **{k: float(v) for k, v in params.model_dump().items()}}
         return Evaluator(self._lookup).render(self.definition.shapes, variables)
 
 
-def _params_model(definition: ComponentDef) -> type[Params]:
-    fields = {
+def _params_model(definition: ComponentDef, scope: Mapping[str, float]) -> type[Params]:
+    fields: dict[str, Any] = {
         p.name: (
             int if p.integer else float,
-            Field(
-                int(p.default) if p.integer else p.default,
-                ge=p.min,
-                le=p.max,
-                description=p.description,
-            ),
+            Field(ge=p.min, le=p.max, description=p.description),
         )
         for p in definition.parameters
     }
-    return create_model(f"{definition.name}_Params", __base__=Params, **fields)
+    base = create_model(f"{definition.name}_Params", __base__=Params, **fields)
+    defaults = {p.name: p.default for p in definition.parameters}
+
+    class ResolvedParams(base):  # type: ignore[valid-type, misc]
+        @model_validator(mode="before")
+        @classmethod
+        def _fill_defaults(cls, data: Any) -> Any:
+            data = dict(data or {})
+            given = {k: float(v) for k, v in data.items() if isinstance(v, int | float)}
+            missing = {k: v for k, v in defaults.items() if k not in data}
+            data.update(resolve_variables(missing, {**scope, **given}))
+            return data
+
+    ResolvedParams.__name__ = base.__name__
+    return ResolvedParams

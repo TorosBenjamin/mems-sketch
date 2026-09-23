@@ -42,13 +42,27 @@ class ExpressionError(ValueError):
 
 
 def names_in(expression: str) -> set[str]:
-    """Variable names referenced by ``expression`` (functions and constants excluded)."""
-    tree = _parse(expression)
-    return {
-        node.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Name) and node.id not in _FUNCTIONS and node.id not in _CONSTANTS
-    }
+    """Variable names referenced by ``expression`` (functions and constants excluded).
+
+    Dotted names such as ``process.min_gap`` are returned whole.
+    """
+    names: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        dotted = _dotted_name(node)
+        if dotted is not None:
+            if dotted not in _FUNCTIONS and dotted not in _CONSTANTS:
+                names.add(dotted)
+            return
+        if isinstance(node, ast.Call):  # the function name itself is not a variable
+            for arg in node.args:
+                visit(arg)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(_parse(expression))
+    return names
 
 
 def evaluate(expression: str | float | int, variables: Mapping[str, float]) -> float:
@@ -57,14 +71,23 @@ def evaluate(expression: str | float | int, variables: Mapping[str, float]) -> f
     return float(_eval(_parse(expression).body, variables))
 
 
-def resolve_variables(expressions: Mapping[str, str | float]) -> dict[str, float]:
-    """Evaluate global variables that may reference each other, in dependency order."""
+def resolve_variables(
+    expressions: Mapping[str, str | float], fixed: Mapping[str, float] | None = None
+) -> dict[str, float]:
+    """Evaluate variables that may reference each other, in dependency order.
+
+    ``fixed`` holds values that are already known (e.g. process constants); they
+    can be referenced but are not part of the result.
+    """
+    fixed = fixed or {}
     resolved: dict[str, float] = {}
     visiting: set[str] = set()
 
     def visit(name: str) -> float:
         if name in resolved:
             return resolved[name]
+        if name not in expressions and name in fixed:
+            return fixed[name]
         if name in visiting:
             raise ExpressionError(f"circular reference involving '{name}'")
         if name not in expressions:
@@ -94,7 +117,10 @@ def _eval(node: ast.AST, variables: Mapping[str, float]) -> float:
             value, bool
         ):
             return value
-        case ast.Name(id=name):
+        case ast.Name() | ast.Attribute():
+            name = _dotted_name(node)
+            if name is None:
+                raise ExpressionError(f"unsupported syntax: {ast.dump(node)}")
             if name in variables:
                 return variables[name]
             if name in _CONSTANTS:
@@ -107,3 +133,15 @@ def _eval(node: ast.AST, variables: Mapping[str, float]) -> float:
         case ast.Call(func=ast.Name(id=fname), args=args, keywords=[]) if fname in _FUNCTIONS:
             return _FUNCTIONS[fname](*(_eval(arg, variables) for arg in args))
     raise ExpressionError(f"unsupported syntax: {ast.dump(node)}")
+
+
+def _dotted_name(node: ast.AST) -> str | None:
+    """``a`` for a name, ``a.b.c`` for an attribute chain on a name, else None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))

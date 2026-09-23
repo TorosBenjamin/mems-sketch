@@ -153,3 +153,31 @@ def test_user_components_round_trip_through_sqlite(tmp_path):
     loaded = load(tmp_path / "custom.mems")
     assert loaded == design
     assert loaded.render().layers["device"].area() == design.render().layers["device"].area()
+
+
+def test_parameter_defaults_can_be_expressions():
+    design = make_design()
+    design.define_component(
+        ComponentDef(
+            name="bar",
+            parameters=[
+                ParamDef(name="w", default=2),
+                ParamDef(name="length", default="10 * w", max=100),
+            ],
+            shapes=[RectShape(layer="device", x0=0, y0=0, x1="length", y1="w")],
+        )
+    )
+    design.add(Instance("b1", "bar", {"w": 3}))
+    assert area_um2(design.render().layers["device"]) == pytest.approx(30 * 3)
+    with pytest.raises(ValidationError):  # the resolved default is still range-checked
+        design.add(Instance("b2", "bar", {"w": 20}))
+
+
+def test_process_constants_are_visible_as_dotted_names():
+    from mems_sketch.core.expressions import names_in, resolve_variables
+    from mems_sketch.core.process import Process
+
+    process = Process(constants={"min_gap": 2, "finger_gap": "1.5 * min_gap"})
+    assert process.scope() == {"process.min_gap": 2.0, "process.finger_gap": 3.0}
+    assert names_in("2 * process.min_gap + max(w, 1)") == {"process.min_gap", "w"}
+    assert resolve_variables({"g": "process.finger_gap + 1"}, process.scope()) == {"g": 4.0}

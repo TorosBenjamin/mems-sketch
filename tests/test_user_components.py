@@ -67,7 +67,7 @@ def area_um2(region: kdb.Region) -> float:
 
 def test_rect_repeat_and_expressions():
     design = make_design()
-    design.add_instance(Instance("f", "finger_array", {"n": 5, "w": "w_global"}))
+    design.add(Instance("f", "finger_array", {"n": 5, "w": "w_global"}))
     device = design.render().layers["device"]
     # 5 fingers 3 x 30 plus a spine of (4*6+3) x 5
     assert area_um2(device) == pytest.approx(5 * 3 * 30 + 27 * 5)
@@ -75,14 +75,14 @@ def test_rect_repeat_and_expressions():
 
 def test_repeat_index_drives_taper():
     design = make_design()
-    design.add_instance(Instance("f", "finger_array", {"n": 3, "taper": 10}))
+    design.add(Instance("f", "finger_array", {"n": 3, "taper": 10}))
     box = design.render().layers["device"].bbox()
     assert box.top == to_dbu(30 + 2 * 10)
 
 
 def test_polygon_shape():
     design = make_design()
-    design.add_instance(Instance("t", "triangle", {"base": 10, "height": 4}))
+    design.add(Instance("t", "triangle", {"base": 10, "height": 4}))
     assert area_um2(design.render().layers["device"]) == pytest.approx(20)
 
 
@@ -99,7 +99,7 @@ def test_nested_refs_to_user_and_builtin_components():
             ],
         )
     )
-    design.add_instance(Instance("p", "pair", {"spacing": 50}))
+    design.add(Instance("p", "pair", {"spacing": 50}))
     geometry = design.render()
     assert geometry.layers["device"].count() == 3
     assert geometry.layers["anchor"].count() == 1
@@ -108,9 +108,9 @@ def test_nested_refs_to_user_and_builtin_components():
 def test_parameter_limits_are_enforced():
     design = make_design()
     with pytest.raises(ValidationError):
-        design.add_instance(Instance("f", "finger_array", {"n": 0}))
+        design.add(Instance("f", "finger_array", {"n": 0}))
     with pytest.raises(ValidationError):
-        design.add_instance(Instance("f", "finger_array", {"n": 2.5}))
+        design.add(Instance("f", "finger_array", {"n": 2.5}))
 
 
 def test_invalid_definitions_are_rejected():
@@ -139,7 +139,7 @@ def test_cycle_through_redefinition_is_rejected_and_rolled_back():
 
 def test_remove_component_in_use_is_refused():
     design = make_design()
-    design.add_instance(Instance("t", "triangle"))
+    design.add(Instance("t", "triangle"))
     with pytest.raises(ValueError, match="still used"):
         design.remove_component("triangle")
     design.remove_component("finger_array")
@@ -148,7 +148,7 @@ def test_remove_component_in_use_is_refused():
 
 def test_user_components_round_trip_through_sqlite(tmp_path):
     design = make_design()
-    design.add_instance(Instance("f", "finger_array", {"n": 3, "taper": "w_global"}))
+    design.add(Instance("f", "finger_array", {"n": 3, "taper": "w_global"}))
     save(design, tmp_path / "custom.mems")
     loaded = load(tmp_path / "custom.mems")
     assert loaded == design

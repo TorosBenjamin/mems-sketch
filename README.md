@@ -26,7 +26,7 @@ from mems_sketch.process import etch, rules
 design = Design(name="demo")
 design.add_layer(Layer("device", 1, 0, undercut=0.3, min_width=1.5, min_space=1.5))
 design.set_variable("w", 2.0)
-design.add_instance(Instance("comb", "comb_drive", {"finger_width": "w", "gap": "w * 1.5"}))
+design.add(Instance("comb", "comb_drive", {"finger_width": "w", "gap": "w * 1.5"}))
 
 print(rules.check(design))
 save(design, "demo.mems")                                       # SQLite design file
@@ -41,7 +41,8 @@ See `examples/comb_actuator.py` for a complete script.
 |---|---|
 | `core/component.py` | `Component` base class, `Params` (pydantic), `Geometry`, component registry |
 | `core/design.py` | `Design`, `Layer`, `Instance`; resolves expressions and renders geometry |
-| `core/user_component.py` | User-defined components: parametric polygons, rects and references |
+| `core/shapes.py` | The parametric shape tree: primitives, references, boolean and geometric operations |
+| `core/user_component.py` | User-defined components: parameters plus a shape tree |
 | `core/expressions.py` | Safe arithmetic expression evaluator with dependency resolution |
 | `components/library.py` | Built-in components: `rectangle`, `anchor`, `comb_drive`, `serpentine_spring` |
 | `process/etch.py` | Lateral etch loss: `etched()` predicts, `compensated()` pre-biases |
@@ -58,7 +59,7 @@ parametric primitives. Definitions are plain data, saved in the `.mems` file
 and editable from the GUI:
 
 ```python
-from mems_sketch import ComponentDef, ParamDef, RectShape, PolygonShape, RefShape, Repeat
+from mems_sketch import ComponentDef, ParamDef, RectShape, RefShape, Repeat
 
 fingers = ComponentDef(
     name="finger_array",
@@ -76,14 +77,59 @@ fingers = ComponentDef(
     ],
 )
 design.define_component(fingers)
-design.add_instance(Instance("f1", "finger_array", {"n": 12, "w": "w_global"}))
+design.add(Instance("f1", "finger_array", {"n": 12, "w": "w_global"}))
 ```
 
-Shapes are `polygon`, `rect` and `ref` (a built-in or user-defined component,
-so definitions can be nested). Any coordinate can be an expression over the
-component's own parameters, and parameters can have limits and be integers.
-Unknown references, circular references and invalid defaults are rejected
-when the component is defined.
+Any coordinate can be an expression over the component's own parameters, and
+parameters can have limits and be integers. Unknown references, circular
+references and invalid defaults are rejected when the component is defined.
+
+## Shapes and operations
+
+Components and the design's top level are both **shape trees** that are
+re-evaluated whenever a parameter changes. Operations are nodes in the tree,
+not destructive edits, so a subtraction stays editable and parametric.
+
+| Kind | Node | Notes |
+|---|---|---|
+| Primitive | `rect`, `polygon`, `circle`, `arc`, `path` | `arc` is an annular sector (ring at 360°); `path` is a centreline with a width and flush/square/round ends |
+| Reference | `ref` (or `Instance(...)`) | A built-in or user-defined component with parameters and placement |
+| Operation | `group` | Union of children, then mirror, scale, rotate, move |
+| | `boolean` | `a` union / subtract / intersect / xor `b` |
+| | `offset` | Grow (+) or shrink (−) outlines |
+| | `fillet` | Round convex (`radius`) and concave (`inner_radius`) corners |
+| | `layer_map` | Move geometry between layers, e.g. derive an anchor layer from a device outline |
+
+Rules that hold everywhere:
+
+- **Booleans, offsets and fillets act per layer.** Subtracting a device-layer
+  hole only affects the device layer. To combine different layers, bring them
+  onto one layer with `layer_map` first.
+- **Any node can repeat on a grid** (`repeat=Repeat(columns, rows, dx, dy)`),
+  with `i` and `j` as the column and row index.
+- **`enabled=False`** skips a node without deleting it.
+- **Named nodes** can be found, replaced or removed at any depth
+  (`design.find/replace/remove`). Replacing keeps the name, and a failed
+  replace leaves the design unchanged.
+- **Etch loss and rule checks run on the final result**, after all operations.
+- Coordinates snap to the 1 nm grid; curves stay within 5 nm of the true arc.
+
+```python
+from mems_sketch import BooleanShape, CircleShape, FilletShape, Instance, Repeat
+
+# Plate with a grid of round release holes and rounded outer corners,
+# built directly at the design's top level from global variables.
+design.add(FilletShape(radius=2, children=[
+    BooleanShape(
+        op="subtract",
+        a=[Instance("plate", "rectangle", {"width": "plate_w", "height": "plate_w"})],
+        b=[CircleShape(layer="device", x="-plate_w/2 + pitch/2", y="-plate_w/2 + pitch/2",
+                       radius="hole_r",
+                       repeat=Repeat(columns="floor(plate_w/pitch)", rows="floor(plate_w/pitch)",
+                                     dx="pitch", dy="pitch"))],
+    )
+]))
+```
 
 ## Extending
 

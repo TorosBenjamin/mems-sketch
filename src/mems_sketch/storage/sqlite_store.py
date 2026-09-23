@@ -1,8 +1,9 @@
 """Design files as SQLite databases (``*.mems``).
 
 The file holds the parametric model only (layers, variables, user-defined
-components, instances), never generated geometry. Values that may be expressions are stored as JSON so that
-numbers and expression strings round-trip unchanged.
+components and the top-level shape tree), never generated geometry. Shape
+trees and component definitions are stored as JSON, so numbers and expression
+strings round-trip unchanged.
 """
 
 from __future__ import annotations
@@ -12,11 +13,16 @@ import os
 import sqlite3
 from pathlib import Path
 
-from mems_sketch.core.design import Design, Instance, Layer
+from pydantic import TypeAdapter
+
+from mems_sketch.core.design import Design, Layer
+from mems_sketch.core.shapes import RefShape, Shape
 from mems_sketch.core.user_component import ComponentDef
 
-SCHEMA_VERSION = 2
-READABLE_VERSIONS = {1, 2}  # version 1 had no components table
+SCHEMA_VERSION = 3
+# v1: no components table; v1 and v2: flat "instances" table instead of "shapes"
+READABLE_VERSIONS = {1, 2, 3}
+_SHAPE = TypeAdapter(Shape)
 
 _SCHEMA = """
 CREATE TABLE meta (
@@ -40,15 +46,9 @@ CREATE TABLE components (
     name       TEXT PRIMARY KEY,
     definition TEXT NOT NULL        -- JSON ComponentDef
 );
-CREATE TABLE instances (
-    position  INTEGER NOT NULL,     -- keeps instance order stable
-    name      TEXT PRIMARY KEY,
-    component TEXT NOT NULL,
-    params    TEXT NOT NULL,        -- JSON object
-    x         TEXT NOT NULL,        -- JSON: number or expression string
-    y         TEXT NOT NULL,
-    rotation  TEXT NOT NULL,
-    mirror_x  INTEGER NOT NULL DEFAULT 0
+CREATE TABLE shapes (
+    position   INTEGER PRIMARY KEY, -- top-level order
+    definition TEXT NOT NULL        -- JSON shape node, including its subtree
 );
 """
 
@@ -88,20 +88,8 @@ def save(design: Design, path: str | Path) -> None:
             ],
         )
         conn.executemany(
-            "INSERT INTO instances VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    i,
-                    inst.name,
-                    inst.component,
-                    json.dumps(inst.params),
-                    json.dumps(inst.x),
-                    json.dumps(inst.y),
-                    json.dumps(inst.rotation),
-                    int(inst.mirror_x),
-                )
-                for i, inst in enumerate(design.instances)
-            ],
+            "INSERT INTO shapes VALUES (?, ?)",
+            [(i, _SHAPE.dump_json(shape).decode()) for i, shape in enumerate(design.shapes)],
         )
     conn.close()
     os.replace(tmp, path)
@@ -127,21 +115,29 @@ def load(path: str | Path) -> Design:
             ):
                 parsed = ComponentDef.model_validate_json(definition)
                 design.components[parsed.name] = parsed
-        rows = conn.execute(
-            "SELECT name, component, params, x, y, rotation, mirror_x FROM instances ORDER BY position"
-        )
-        for name, component, params, x, y, rotation, mirror_x in rows:
-            design.instances.append(
-                Instance(
-                    name=name,
-                    component=component,
-                    params=json.loads(params),
-                    x=json.loads(x),
-                    y=json.loads(y),
-                    rotation=json.loads(rotation),
-                    mirror_x=bool(mirror_x),
-                )
-            )
+        if version >= 3:
+            for (definition,) in conn.execute("SELECT definition FROM shapes ORDER BY position"):
+                design.shapes.append(_SHAPE.validate_json(definition))
+        else:
+            design.shapes.extend(_legacy_instances(conn))
         return design
     finally:
         conn.close()
+
+
+def _legacy_instances(conn: sqlite3.Connection) -> list[Shape]:
+    rows = conn.execute(
+        "SELECT name, component, params, x, y, rotation, mirror_x FROM instances ORDER BY position"
+    )
+    return [
+        RefShape(
+            name=name,
+            component=component,
+            params=json.loads(params),
+            x=json.loads(x),
+            y=json.loads(y),
+            rotation=json.loads(rotation),
+            mirror_x=bool(mirror_x),
+        )
+        for name, component, params, x, y, rotation, mirror_x in rows
+    ]

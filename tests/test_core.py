@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 
 from mems_sketch import Design, Instance, Layer, export, load, save
-from mems_sketch.core.component import to_dbu
+from mems_sketch.core.component import resolve_params, to_dbu
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.export.base import available_exporters
 from mems_sketch.process import etch, rules
@@ -15,8 +15,8 @@ def make_design() -> Design:
     design.add_layer(Layer("anchor", 2, 0))
     design.set_variable("w", 2.0)
     design.set_variable("gap", "w * 1.5")
-    design.add_instance(Instance("pad", "anchor", {"size": 50}, x=-200))
-    design.add_instance(Instance("comb", "comb_drive", {"finger_width": "w", "gap": "gap"}))
+    design.add(Instance("pad", "anchor", {"size": 50}, x=-200))
+    design.add(Instance("comb", "comb_drive", {"finger_width": "w", "gap": "gap"}))
     return design
 
 
@@ -31,10 +31,13 @@ def test_expressions():
 
 def test_params_resolve_expressions_and_validate():
     design = make_design()
-    params = design.resolve_params(design.instance("comb"))
+    comb = design.find("comb")
+    params = resolve_params(
+        design.component(comb.component), comb.params, design.resolved_variables()
+    )
     assert params.finger_width == 2.0 and params.gap == 3.0
     with pytest.raises(ValidationError):
-        design.add_instance(Instance("bad", "anchor", {"size": 4, "enclosure": 3}))
+        design.add(Instance("bad", "anchor", {"size": 4, "enclosure": 3}))
 
 
 def test_render_and_variable_change_updates_geometry():
@@ -46,9 +49,7 @@ def test_render_and_variable_change_updates_geometry():
 
 def test_rotation_and_placement():
     design = Design()
-    design.add_instance(
-        Instance("r", "rectangle", {"width": 100, "height": 10}, x=50, y=0, rotation=90)
-    )
+    design.add(Instance("r", "rectangle", {"width": 100, "height": 10}, x=50, y=0, rotation=90))
     box = design.render().layers["device"].bbox()
     assert box == kdb.Box(to_dbu(45), to_dbu(-50), to_dbu(55), to_dbu(50))
 
@@ -68,7 +69,7 @@ def test_rules_flag_narrow_features_and_unknown_layers():
     design.set_variable("w", 1.0)  # fingers now narrower than min_width
     found = {v.rule for v in rules.check(design)}
     assert "min_width" in found
-    design.add_instance(Instance("m", "rectangle", {"layer": "metal"}))
+    design.add(Instance("m", "rectangle", {"layer": "metal"}))
     assert any(v.rule == "layer" and v.layer == "metal" for v in rules.check(design))
 
 

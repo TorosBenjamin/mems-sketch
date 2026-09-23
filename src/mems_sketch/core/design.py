@@ -1,9 +1,10 @@
 """The design model: process layers, global variables, user-defined components
-and component instances.
+and the top-level shape tree.
 
-Parameter values and positions may be numbers or expressions over the global
-variables, e.g. ``{"gap": "min_gap * 1.5"}``. Geometry is always regenerated
-from this model; it is never stored.
+The top level is the same kind of shape tree as a component body (see
+:mod:`mems_sketch.core.shapes`), evaluated with the global variables, so
+booleans and other operations work between placed components as well as inside
+them. Geometry is always regenerated from this model; it is never stored.
 """
 
 from __future__ import annotations
@@ -11,19 +12,27 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from mems_sketch.core.component import (
-    Component,
-    Geometry,
-    Params,
-    get_component,
-    is_builtin,
-    placement,
-    resolve_params,
+from mems_sketch.core.component import Component, Geometry, get_component, is_builtin
+from mems_sketch.core.expressions import resolve_variables
+from mems_sketch.core.shapes import (
+    Evaluator,
+    RefShape,
+    Shape,
+    child_lists,
+    find,
+    references,
+    walk,
 )
-from mems_sketch.core.expressions import evaluate, resolve_variables
 from mems_sketch.core.user_component import ComponentDef, UserComponent
 
 Value = float | str  # a number or an expression
+
+
+def Instance(
+    name: str, component: str, params: dict[str, Any] | None = None, **placement
+) -> RefShape:  # noqa: N802
+    """Shorthand for a named component reference, e.g. ``Instance("pad", "anchor", {"size": 50}, x=10)``."""
+    return RefShape(name=name, component=component, params=params or {}, **placement)
 
 
 @dataclass
@@ -39,23 +48,12 @@ class Layer:
 
 
 @dataclass
-class Instance:
-    name: str
-    component: str
-    params: dict[str, Any] = field(default_factory=dict)
-    x: Value = 0.0
-    y: Value = 0.0
-    rotation: Value = 0.0  # degrees, counter-clockwise
-    mirror_x: bool = False
-
-
-@dataclass
 class Design:
     name: str = "untitled"
     layers: dict[str, Layer] = field(default_factory=dict)
     variables: dict[str, Value] = field(default_factory=dict)
     components: dict[str, ComponentDef] = field(default_factory=dict)
-    instances: list[Instance] = field(default_factory=list)
+    shapes: list[Shape] = field(default_factory=list)
 
     # -- editing -----------------------------------------------------------
 
@@ -84,7 +82,7 @@ class Design:
         return definition
 
     def remove_component(self, name: str) -> None:
-        users = [i.name for i in self.instances if i.component == name]
+        users = ["the design"] if name in references(self.shapes) else []
         users += [d.name for d in self.components.values() if name in d.references()]
         if users:
             raise ValueError(f"component '{name}' is still used by: {', '.join(users)}")
@@ -96,54 +94,75 @@ class Design:
             return UserComponent(self.components[name], self.component)
         return get_component(name)
 
-    def add_instance(self, instance: Instance) -> Instance:
-        if any(existing.name == instance.name for existing in self.instances):
-            raise ValueError(f"an instance named '{instance.name}' already exists")
-        self.resolve_params(instance)  # fail early on bad parameters
-        self.instances.append(instance)
-        return instance
+    def add(self, shape: Shape) -> Shape:
+        """Append a top-level shape (typically an :func:`Instance` or an operation)."""
+        self._check_names([*self.shapes, shape])
+        self.render_shape(shape)  # fail early on bad parameters or references
+        self.shapes.append(shape)
+        return shape
 
-    def instance(self, name: str) -> Instance:
-        for inst in self.instances:
-            if inst.name == name:
-                return inst
-        raise KeyError(name)
+    def find(self, name: str) -> Shape:
+        return find(self.shapes, name)
+
+    def replace(self, name: str, new: Shape) -> Shape:
+        """Swap the named shape (at any depth) for ``new``; the design is unchanged on error.
+
+        ``new`` keeps ``name`` unless it has a name of its own.
+        """
+        if new.name is None:
+            new = new.model_copy(update={"name": name})
+        container, index = self._locate(name)
+        old = container[index]
+        container[index] = new
+        try:
+            self._check_names(self.shapes)
+            self.render()
+        except Exception:
+            container[index] = old
+            raise
+        return new
+
+    def remove(self, name: str) -> Shape:
+        container, index = self._locate(name)
+        return container.pop(index)
+
+    def _locate(self, name: str) -> tuple[list[Shape], int]:
+        def search(shapes: list[Shape]):
+            for index, shape in enumerate(shapes):
+                if shape.name == name:
+                    return shapes, index
+                for children in child_lists(shape):
+                    if found := search(children):
+                        return found
+            return None
+
+        if found := search(self.shapes):
+            return found
+        raise KeyError(f"no shape named '{name}'")
+
+    @staticmethod
+    def _check_names(shapes: list[Shape]) -> None:
+        seen: set[str] = set()
+        for shape in walk(shapes):
+            if shape.name is None:
+                continue
+            if shape.name in seen:
+                raise ValueError(f"a shape named '{shape.name}' already exists")
+            seen.add(shape.name)
 
     # -- evaluation --------------------------------------------------------
 
     def resolved_variables(self) -> dict[str, float]:
         return resolve_variables(self.variables)
 
-    def resolve_params(
-        self, instance: Instance, variables: dict[str, float] | None = None
-    ) -> Params:
-        """Evaluate an instance's expressions and validate them against the component schema."""
+    def render_shape(self, shape: Shape, variables: dict[str, float] | None = None) -> Geometry:
+        """Geometry of one top-level shape, e.g. to highlight a selection in the GUI."""
         variables = self.resolved_variables() if variables is None else variables
-        return resolve_params(self.component(instance.component), instance.params, variables)
-
-    def render_instance(
-        self, instance: Instance, variables: dict[str, float] | None = None
-    ) -> Geometry:
-        variables = self.resolved_variables() if variables is None else variables
-        params = self.resolve_params(instance, variables)
-        local = self.component(instance.component).build(params)
-        transform = placement(
-            evaluate(instance.x, variables),
-            evaluate(instance.y, variables),
-            evaluate(instance.rotation, variables),
-            instance.mirror_x,
-        )
-        placed = Geometry()
-        placed.merge(local, transform)
-        return placed
+        return Evaluator(self.component).render([shape], variables)
 
     def render(self) -> Geometry:
         """Drawn geometry of the whole design, merged per layer."""
-        variables = self.resolved_variables()
-        geometry = Geometry()
-        for inst in self.instances:
-            geometry.merge(self.render_instance(inst, variables))
-        return geometry.merged()
+        return Evaluator(self.component).render(self.shapes, self.resolved_variables()).merged()
 
 
 def _check_references(components: dict[str, ComponentDef]) -> None:

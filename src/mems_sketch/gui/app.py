@@ -35,7 +35,6 @@ from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.find_action import FindActionDialog, menu_actions
 from mems_sketch.gui.panels import (
     ComponentsPanel,
-    ConstantsPanel,
     LayersPanel,
     MessagesPanel,
     ParametersPanel,
@@ -43,6 +42,7 @@ from mems_sketch.gui.panels import (
     ShapeTree,
     swatch_icon,
 )
+from mems_sketch.gui.process_view import ProcessView
 from mems_sketch.gui.properties import PropertyEditor
 from mems_sketch.gui.settings import PreferencesDialog, Settings
 from mems_sketch.gui.statusbar import ToolStatus
@@ -98,7 +98,6 @@ class MainWindow(QMainWindow):
         self.parameters = ParametersPanel(self.document)
         self.layers = LayersPanel(self.document)
         self.layers.layers.currentCellChanged.connect(self._layer_row_chosen)
-        self.constants = ConstantsPanel(self.document)
         self.points = PointsPanel(self.document)
         self.messages = MessagesPanel()
         self._build_tool_windows()
@@ -120,6 +119,8 @@ class MainWindow(QMainWindow):
         self.tree.itemDoubleClicked.connect(self._tree_double_clicked)
         self.components.place_requested.connect(self.add_component)
         self.components.open_requested.connect(self.open_component)
+        self.components.process_requested.connect(self.open_process)
+        self.area.process_factory = self._make_process_view
         self.layers.visibility_changed.connect(self._set_layer_visible)
         self.tree.collapse_changed.connect(self.state_changed)
         self.components.collapse_changed.connect(self.state_changed)
@@ -131,7 +132,6 @@ class MainWindow(QMainWindow):
             self.properties,
             self.parameters,
             self.layers,
-            self.constants,
             self.points,
             self.components,
         ):
@@ -176,6 +176,16 @@ class MainWindow(QMainWindow):
             self.report_error(f"unknown component '{name}'")
             return
         self._render(self.area.open(name))
+
+    def open_process(self) -> None:
+        """The Process tab: the process's constants and layer definitions."""
+        self.area.open_process()
+        self.state_changed()
+
+    def _make_process_view(self) -> ProcessView:
+        view = ProcessView(self.document)
+        view.error.connect(self.report_error)
+        return view
 
     def _render(self, view: ComponentView) -> ComponentView:
         if not getattr(view, "rendered", False):
@@ -330,6 +340,9 @@ class MainWindow(QMainWindow):
             tabs = []
             for i in range(pane.count()):
                 view = pane.widget(i)
+                if not isinstance(view, ComponentView):
+                    tabs.append({"process": True})
+                    continue
                 zoom, x, y = view.canvas.view_state()
                 tabs.append(
                     {
@@ -404,7 +417,10 @@ class MainWindow(QMainWindow):
             c: {_path(p) for p in paths} for c, paths in collapsed.get("shapes", {}).items()
         }
         panes = [
-            {**pane, "tabs": [t for t in pane["tabs"] if exists(t["component"])]}
+            {
+                **pane,
+                "tabs": [t for t in pane["tabs"] if t.get("process") or exists(t["component"])],
+            }
             for pane in state.get("panes", [])[:2]
         ]
         panes = [pane for pane in panes if pane["tabs"]]
@@ -418,6 +434,9 @@ class MainWindow(QMainWindow):
                         target.removeTab(0)
                 target = self.area.panes[index]
                 for tab in pane["tabs"]:
+                    if tab.get("process"):
+                        self.area.open_process(target)
+                        continue
                     view = self.area.open(tab["component"], target)
                     view.view_mode = tab.get("mode", "drawn")
                     if view.view_mode not in VIEW_MODES:
@@ -541,7 +560,6 @@ class MainWindow(QMainWindow):
             ("properties", "Properties", "properties", self.properties, "right"),
             ("parameters", "Parameters", "parameters", self.parameters, "right"),
             ("points", "Points", "point", self.points, "right"),
-            ("constants", "Process constants", "edit", self.constants, "right"),
         ):
             self.tool_windows.add(name, title, icon, widget, anchor)
         self._restore_tool_windows()
@@ -735,7 +753,8 @@ class MainWindow(QMainWindow):
             # e.g. undo went back to another component: go to its tab, wherever it is
             self._render(self.area.open(self.document.active, anywhere=True))
         self.layers.refresh()
-        self.constants.refresh()
+        if self.area.process_view is not None:
+            self.area.process_view.refresh()
         for view in self.area.views():
             view.rendered = True
             view.refresh(self.layers.colors, self.layers.visible)

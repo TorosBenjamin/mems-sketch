@@ -1,5 +1,8 @@
 """The window's layout: tool windows, toolbar, status bar, canvas overlays and menus."""
 
+import shutil
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -243,3 +246,70 @@ def test_the_menu_key_opens_the_menu_at_the_centre(window, menus):
     )
     QApplication.sendEvent(canvas, event)
     assert len(menus) == 1
+
+
+# -- the Process tab ------------------------------------------------------------------
+
+
+EXAMPLES = Path(__file__).parent.parent / "examples"
+
+
+@pytest.fixture
+def project(tmp_path):
+    for name in ("resonator", "libraries"):
+        shutil.copytree(
+            EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
+        )
+    return tmp_path / "resonator"
+
+
+def process_item(window):
+    tree = window.components.tree
+    items = [tree.topLevelItem(0).child(i) for i in range(tree.topLevelItem(0).childCount())]
+    return next(item for item in items if item.data(0, window.components.PROCESS_ROLE))
+
+
+def headers(table):
+    return [table.horizontalHeaderItem(i).text() for i in range(table.columnCount())]
+
+
+def test_the_process_tab_opens_from_the_tree_and_the_menu_once(window):
+    window.components.tree.itemDoubleClicked.emit(process_item(window), 0)
+    view = window.area.process_view
+    assert view is not None and window.area.panes[0].currentWidget() is view
+    assert window.view.component == "top"  # the panels keep showing the component
+    assert window.area.views() == [window.view]  # the Process tab is not a component view
+    menu_entry = next(a for a in window.actions_.view.actions() if a.text() == "Process")
+    menu_entry.trigger()
+    assert window.area.process_view is view and window.area.panes[0].count() == 2
+    window.area.close_view(view)
+    assert window.area.process_view is None and window.area.panes[0].count() == 1
+
+
+def test_the_process_tab_edits_constants_with_undo_and_is_remembered(window, project, qtbot):
+    window.open_project(str(project))
+    window.open_process()
+    table = window.area.process_view.constants.constants
+    row = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == "min_gap")
+    table.item(row, 1).setText("2.5")
+    assert window.document.project.process.constants["min_gap"] == 2.5
+    window.document.undo()
+    assert window.document.project.process.constants["min_gap"] == 2
+    assert float(table.item(row, 1).text()) == 2  # the tab shows the undone value
+    window.save_editor_state()
+
+    again = MainWindow()
+    qtbot.addWidget(again)
+    again.open_project(str(project))
+    assert again.area.process_view is not None
+
+
+def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window):
+    assert headers(window.layers.layers) == ["Layer", "GDS"]
+    window.open_process()
+    definitions = window.area.process_view.layers.layers
+    assert "Undercut µm" in headers(definitions)
+    column = headers(definitions).index("Undercut µm")
+    definitions.item(0, column).setText("0.5")
+    first = next(iter(window.document.project.layers.values()))
+    assert first.undercut == 0.5

@@ -105,6 +105,8 @@ class EditorArea(QSplitter):
         self.document = document
         self.panes: list[QTabWidget] = []
         self.current: ComponentView | None = None
+        self.process_view: QWidget | None = None  # the Process tab, when open
+        self.process_factory = None  # makes it: set by the window
         self._add_pane()
 
     # -- panes ---------------------------------------------------------------
@@ -161,13 +163,32 @@ class EditorArea(QSplitter):
     # -- views ---------------------------------------------------------------
 
     def views(self) -> list[ComponentView]:
-        return [pane.widget(i) for pane in self.panes for i in range(pane.count())]
+        """The component tabs (not the Process tab)."""
+        return [
+            w
+            for pane in self.panes
+            for i in range(pane.count())
+            if isinstance(w := pane.widget(i), ComponentView)
+        ]
+
+    def open_process(self, pane: QTabWidget | None = None) -> QWidget:
+        """Show the Process tab (at most one), opening it in ``pane`` or the current one."""
+        if self.process_view is None:
+            view = self.process_view = self.process_factory()
+            pane = pane or self._current_pane()
+            pane.addTab(view, icons.icon(view.icon_name()), view.title())
+            pane.setTabToolTip(pane.indexOf(view), view.tooltip())
+            self._close_button(pane, view)
+            self.tabs_changed.emit()
+        pane = self.pane_of(self.process_view)
+        pane.setCurrentWidget(self.process_view)
+        return self.process_view
 
     def find(self, component: str, pane: QTabWidget | None = None) -> ComponentView | None:
         panes = [pane] if pane is not None else self.panes
         for p in panes:
             for i in range(p.count()):
-                if p.widget(i).component == component:
+                if isinstance(p.widget(i), ComponentView) and p.widget(i).component == component:
                     return p.widget(i)
         return None
 
@@ -195,7 +216,8 @@ class EditorArea(QSplitter):
     def set_current(self, view: ComponentView) -> None:
         pane = self.pane_of(view)
         pane.setCurrentWidget(view)
-        self._make_current(view)
+        if isinstance(view, ComponentView):
+            self._make_current(view)
 
     def close_tab(self, pane: QTabWidget, index: int) -> None:
         view = pane.widget(index)
@@ -203,13 +225,16 @@ class EditorArea(QSplitter):
         if was_current:
             self.current = None  # removing the tab switches tabs; do not refer to it
         pane.removeTab(index)
+        if view is self.process_view:
+            self.process_view = None
         view.deleteLater()
         if pane.count() == 0 and self.split:
             self._remove_pane(pane)
             pane = self.panes[0]
         remaining = self.views()
         if was_current and remaining:
-            self._make_current(pane.currentWidget() or remaining[0])
+            shown = pane.currentWidget()
+            self._make_current(shown if isinstance(shown, ComponentView) else remaining[0])
         self.tabs_changed.emit()
         if not remaining:
             self.open(self.document.project.top)
@@ -228,6 +253,7 @@ class EditorArea(QSplitter):
             pane.removeTab(0)
             view.deleteLater()
         self.current = None
+        self.process_view = None
 
     def split_view(self) -> ComponentView | None:
         """Open the current component in the other pane (creating it), like a code editor."""
@@ -258,7 +284,8 @@ class EditorArea(QSplitter):
                     view.deleteLater()
             self._remove_pane(pane)
         if self.current is None and self.views():
-            self._make_current(self.panes[0].currentWidget())
+            shown = self.panes[0].currentWidget()
+            self._make_current(shown if isinstance(shown, ComponentView) else self.views()[0])
         self.tabs_changed.emit()
 
     def remove_pane_if_empty(self) -> None:
@@ -284,7 +311,11 @@ class EditorArea(QSplitter):
         """Open tabs per pane and the current one, e.g. to restore them next time."""
         return {
             "panes": [
-                [pane.widget(i).component for i in range(pane.count())] for pane in self.panes
+                [
+                    w.component if isinstance(w := pane.widget(i), ComponentView) else "process"
+                    for i in range(pane.count())
+                ]
+                for pane in self.panes
             ],
             "current": self.current.component if self.current else None,
             "current_pane": self.panes.index(self._current_pane()),
@@ -297,13 +328,14 @@ class EditorArea(QSplitter):
         return pane or self.panes[0]
 
     def _focus(self, pane: QTabWidget, index: int) -> None:
-        if index >= 0:
+        if index >= 0 and isinstance(pane.widget(index), ComponentView):
             self._make_current(pane.widget(index))
 
     def _pane_changed(self, pane: QTabWidget) -> None:
         view = pane.currentWidget()
         # A tab switch in the pane being worked in changes the current view.
-        if view is not None and self._current_pane() is pane:
+        # (The Process tab is not a view: the panels keep showing the last one.)
+        if isinstance(view, ComponentView) and self._current_pane() is pane:
             self._make_current(view)
 
     def _make_current(self, view: ComponentView) -> None:

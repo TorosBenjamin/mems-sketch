@@ -197,6 +197,7 @@ class Actions:
         self.dark.setChecked(w.canvas_theme == "dark")
         view.addSeparator()
         act("Open top component", w._edit_top, "Ctrl+T", view, "top")
+        act("Process", w.open_process, None, view, "layers")
         self.split = act("Split view", w.split_view, "Ctrl+\\", view, "split")
         act("Merge split view", w.area.unsplit, None, view)
         act("Close tab", w.close_tab, QKeySequence.StandardKey.Close, view, "close")

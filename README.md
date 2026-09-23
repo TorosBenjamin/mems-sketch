@@ -161,9 +161,18 @@ MATLAB with `system(...)`.
   built-in components.
 - **Points** (tabbed with Parameters): the points the edited component
   declares for whoever places it.
+- **Moving**: drag shapes on the canvas, or nudge the selection with the arrow
+  keys (one grid step; Shift for a tenth). The drag snaps to the grid, or to
+  another shape's point when one is near (Ctrl: no snapping). Shapes aligned
+  to the dragged ones move along. What changes is what the shape stores,
+  always relative to its parent: `x`, `y` of a component or transform, the
+  coordinates of a primitive, or the offset of an aligned shape (Alt-drag
+  removes the alignment instead). Expressions stay parametric: `plate/2 + 39`
+  moved by 11 becomes `plate/2 + 50`. Releasing with **Shift** on a snapped
+  point aligns the shape there. Esc cancels; each drag is one undo step.
 - **Align** (Ctrl+L): select a shape, click one of its points, then click the
   point to put it on. Fine-tune the offset in Properties; **Edit → Remove
-  alignment** undoes it. Esc cancels.
+  alignment** takes it off and leaves the shape where it is. Esc cancels.
 - **Layers**: visibility, colour, GDS numbers, undercut, minimum width and
   spacing.
 - **Process constants** (tabbed with Parameters): values available in every

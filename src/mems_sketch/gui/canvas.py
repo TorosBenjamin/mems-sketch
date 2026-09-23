@@ -29,6 +29,7 @@ POINT_SIZES = {  # marker size in pixels
     "declared": 9,  # the edited component's own points
     "selected": 7,  # points of the selected shape
     "pick": 11,  # candidates while aligning
+    "snap": 13,  # the point a drag snaps to
 }
 # Colours per canvas theme. Grid lines are drawn with the ``grid`` colour at
 # increasing opacity for minor lines, every fifth line and the axes.
@@ -42,6 +43,7 @@ THEMES = {
         "declared": "#008a3e",
         "selected": "#e0007a",
         "pick": "#0072d6",
+        "snap": "#e0007a",
     },
     "dark": {
         "background": "#1e1f22",
@@ -52,9 +54,11 @@ THEMES = {
         "declared": "#3ddc84",
         "selected": "#ffd400",
         "pick": "#00c8ff",
+        "snap": "#ffd400",
     },
 }
 DEFAULT_THEME = "light"
+DRAG_THRESHOLD_PX = 4  # a press moving less than this is a click, not a drag
 
 
 def layer_color(index: int) -> QColor:
@@ -87,6 +91,11 @@ def _add_loop(path: QPainterPath, points) -> None:
 class LayoutCanvas(QGraphicsView):
     clicked = Signal(float, float, bool)  # x, y in µm; True when Ctrl/Shift is held
     double_clicked = Signal(float, float)
+    released = Signal(float, float)  # a click ended without dragging
+    drag_started = Signal(float, float)  # where the press was
+    drag_moved = Signal(float, float, object)  # x, y and the keyboard modifiers
+    drag_finished = Signal(float, float, object)
+    nudged = Signal(int, int, bool)  # arrow keys: steps in x and y; True for fine steps
     cursor_moved = Signal(float, float)
 
     def __init__(self, parent=None) -> None:
@@ -106,6 +115,10 @@ class LayoutCanvas(QGraphicsView):
         self._overlay: list = []
         self._points: dict[str, list] = {}
         self._pan_from: QPointF | None = None
+        self._press: QPointF | None = None  # left button down here (view pixels)
+        self._press_scene: QPointF | None = None
+        self.dragging = False
+        self._drag_items: list = []
         self._has_content = False
         # A large scene rect lets the user pan freely beyond the geometry.
         self.scene().setSceneRect(QRectF(-1e6, -1e6, 2e6, 2e6))
@@ -195,6 +208,40 @@ class LayoutCanvas(QGraphicsView):
             self.scene().addItem(item)
         self._points[style] = items
 
+    def show_drag_preview(self, geometry: Geometry, colors: dict[str, QColor]) -> None:
+        """Draw what is being dragged on top; move it with :meth:`move_drag_preview`."""
+        self.clear_drag_preview()
+        for layer, region in geometry.layers.items():
+            color = colors.get(layer, QColor("#888888"))
+            item = QGraphicsPathItem(region_to_path(region))
+            fill = QColor(color)
+            fill.setAlpha(150)
+            pen = QPen(QColor(self.theme["highlight"]), 1.5)
+            pen.setCosmetic(True)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            item.setPen(pen)
+            item.setBrush(QBrush(fill))
+            item.setZValue(1050)
+            self.scene().addItem(item)
+            self._drag_items.append(item)
+
+    def move_drag_preview(self, dx: float, dy: float) -> None:
+        for item in self._drag_items:
+            item.setPos(dx, dy)
+
+    def clear_drag_preview(self) -> None:
+        for item in self._drag_items:
+            self.scene().removeItem(item)
+        self._drag_items.clear()
+
+    def cancel_drag(self) -> bool:
+        """Stop a drag in progress (e.g. on Esc); True if there was one."""
+        was = self.dragging
+        self.dragging = False
+        self._press = self._press_scene = None
+        self.clear_drag_preview()
+        return was
+
     def pixels_per_um(self) -> float:
         return abs(self.transform().m11())
 
@@ -237,6 +284,7 @@ class LayoutCanvas(QGraphicsView):
             return
         if event.button() == Qt.MouseButton.LeftButton:
             p = self.mapToScene(event.position().toPoint())
+            self._press, self._press_scene = event.position(), p
             additive = bool(
                 event.modifiers()
                 & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
@@ -260,6 +308,15 @@ class LayoutCanvas(QGraphicsView):
             return
         p = self.mapToScene(event.position().toPoint())
         self.cursor_moved.emit(p.x(), p.y())
+        if self._press is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            if not self.dragging:
+                distance = (event.position() - self._press).manhattanLength()
+                if distance >= DRAG_THRESHOLD_PX:
+                    self.dragging = True
+                    self.drag_started.emit(self._press_scene.x(), self._press_scene.y())
+            if self.dragging:
+                self.drag_moved.emit(p.x(), p.y(), event.modifiers())
+                return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
@@ -267,11 +324,30 @@ class LayoutCanvas(QGraphicsView):
             self._pan_from = None
             self.unsetCursor()
             return
+        if event.button() == Qt.MouseButton.LeftButton and self._press is not None:
+            p = self.mapToScene(event.position().toPoint())
+            if self.dragging:
+                self.dragging = False
+                self.drag_finished.emit(p.x(), p.y(), event.modifiers())
+            else:
+                self.released.emit(p.x(), p.y())
+            self._press = self._press_scene = None
+            return
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F:
             self.fit()
+            return
+        steps = {
+            Qt.Key.Key_Left: (-1, 0),
+            Qt.Key.Key_Right: (1, 0),
+            Qt.Key.Key_Up: (0, 1),
+            Qt.Key.Key_Down: (0, -1),
+        }.get(event.key())
+        if steps is not None:
+            fine = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            self.nudged.emit(*steps, fine)
             return
         super().keyPressEvent(event)
 

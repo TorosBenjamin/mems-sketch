@@ -201,8 +201,9 @@ def test_align_and_remove_alignment(doc):
     targets = [name for name, *_ in doc.align_targets(post)]
     assert "rect1.top_right" in targets and not any(t.startswith("post.") for t in targets)
     assert doc.scope(post)["rect1.top.y"] == 50
-    doc.set_align(post, None)
-    assert bbox_of(doc, post) == (0, 0, 10, 10)
+    doc.set_align(post, None)  # stays where the alignment put it
+    assert bbox_of(doc, post) == (100, 50, 110, 60)
+    assert doc.node(post).x0 == 100
     assert base == ((0, 0),)
 
 
@@ -293,3 +294,92 @@ def test_parameters_can_be_renamed(doc):
     doc.set_parameter("w", 2)
     doc.update_parameter("w", name="width")
     assert [p.name for p in doc.active_definition.parameters] == ["width"]
+
+
+# -- moving ------------------------------------------------------------------
+
+
+def test_move_changes_the_right_values_and_is_one_undo_step(doc):
+    doc.set_parameter("w", 100)
+    rect = doc.add_shape(RectShape(name="r", layer="device", x0=0, y0=0, x1="w", y1=10))
+    doc.move([rect], 5, -2)
+    node = doc.node(rect)
+    assert (node.x0, node.x1, node.y0, node.y1) == (5, "w + 5", -2, 8)
+    doc.undo()
+    assert doc.node(rect).x1 == "w"
+
+
+def test_drag_plan_finds_followers_and_snap_points(doc):
+    base = doc.add_shape(RectShape(name="base", layer="device", x0=0, y0=0, x1=100, y1=20))
+    doc.add_shape(
+        RectShape(
+            name="post",
+            layer="device",
+            x0=0,
+            y0=0,
+            x1=10,
+            y1=10,
+            align=Align(point="bottom", to="base.top"),
+        )
+    )
+    doc.add_shape(RectShape(name="bar", layer="device", x0="base.left.x", y0=50, x1=5, y1=55))
+    doc.add_shape(RectShape(name="other", layer="device", x0=200, y0=0, x1=210, y1=10))
+    plan = doc.drag_plan([base])
+    assert plan.roots == [base] and plan.followers == [((0, 1),)] and plan.loose == [((0, 2),)]
+    targets = {name for name, *_ in plan.targets}
+    assert "other.top_left" in targets and not any(t.startswith("post.") for t in targets)
+    assert {name for _, name, *_ in plan.points} >= {"center", "top_right"}
+    assert plan.preview.layers["device"].bbox().top == 30000  # base and post
+
+
+def test_moving_an_aligned_shape_changes_its_offset_or_detaches_it(doc):
+    doc.add_shape(RectShape(name="base", layer="device", x0=0, y0=0, x1=100, y1=20))
+    post = doc.add_shape(
+        RectShape(
+            name="post",
+            layer="device",
+            x0=0,
+            y0=0,
+            x1=10,
+            y1=10,
+            align=Align(point="bottom", to="base.top"),
+        )
+    )
+    doc.move([post], 3, 0)
+    assert (doc.node(post).align.dx, doc.node(post).x0) == (3, 0)
+    doc.move([post], 1, 1, detach=True)
+    node = doc.node(post)
+    assert node.align is None
+    assert (node.x0, node.y0, node.x1, node.y1) == (49, 21, 59, 31)  # stays put, then moves
+
+
+def test_moving_inside_a_rotated_transform_follows_the_mouse(doc):
+    doc.add_shape(
+        TransformShape(
+            name="t",
+            rotation=90,
+            children=[RectShape(name="r", layer="device", x0=0, y0=0, x1=10, y1=10)],
+        )
+    )
+    doc.move([((0, 0), (0, 0))], 5, 0)  # right on screen...
+    inner = doc.node(((0, 0), (0, 0)))
+    assert (inner.x0, inner.y0) == (0, -5)  # ...is -y in the rotated frame
+    assert doc.highlight([((0, 0), (0, 0))]).layers["device"].bbox().left == -5000
+
+
+def test_moving_a_shape_and_its_aligned_partner_moves_both_once(doc):
+    base = doc.add_shape(RectShape(name="base", layer="device", x0=0, y0=0, x1=100, y1=20))
+    post = doc.add_shape(
+        RectShape(
+            name="post",
+            layer="device",
+            x0=0,
+            y0=0,
+            x1=10,
+            y1=10,
+            align=Align(point="bottom", to="base.top"),
+        )
+    )
+    doc.move([base, post], 10, 0)
+    assert doc.node(post).align.dx == 0
+    assert doc.highlight([post]).layers["device"].bbox().left == 55000

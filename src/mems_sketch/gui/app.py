@@ -7,6 +7,7 @@ The window is a frontend only: it shows and edits the project through
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from mems_sketch.core.component import to_dbu
 from mems_sketch.core.shapes import Align, NodePath
 from mems_sketch.export.base import available_exporters
 from mems_sketch.gui.canvas import DEFAULT_THEME, THEMES, LayoutCanvas
-from mems_sketch.gui.document import VIEW_MODES, ProjectDocument
+from mems_sketch.gui.document import VIEW_MODES, DragPlan, ProjectDocument
 from mems_sketch.gui.panels import (
     ComponentsPanel,
     ConstantsPanel,
@@ -43,6 +44,7 @@ from mems_sketch.gui.panels import (
 from mems_sketch.gui.properties import PropertyEditor
 from mems_sketch.gui.views import ComponentView, EditorArea
 
+SNAP_PX = 10  # a dragged point snaps to another shape's point within this many pixels
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 PRIMITIVES = [
     ("rect", "Rectangle"),
@@ -74,6 +76,10 @@ class MainWindow(QMainWindow):
         self._candidates: list[tuple[str, float, float]] = []
         self._problems: list[str] = []
         self._restoring = False  # while opening a project, the tab layout is not saved
+        # Dragging: the plan and where it started; a press on the selection that may
+        # turn out to be a plain click (which then selects only the shape under it).
+        self._drag: dict | None = None
+        self._pending_click: NodePath | None = None
         theme = QSettings("mems-sketch", "mems-sketch").value("canvas/theme", DEFAULT_THEME)
         self.canvas_theme = theme if theme in THEMES else DEFAULT_THEME
 
@@ -166,6 +172,11 @@ class MainWindow(QMainWindow):
                 lambda x, y, v=view: self._view_double_clicked(v, x, y)
             )
             view.canvas.cursor_moved.connect(self._cursor_moved)
+            view.canvas.released.connect(self._click_released)
+            view.canvas.drag_started.connect(lambda x, y, v=view: self._drag_started(v, x, y))
+            view.canvas.drag_moved.connect(self._drag_moved)
+            view.canvas.drag_finished.connect(self._drag_finished)
+            view.canvas.nudged.connect(self.nudge)
             view.canvas.set_theme(self.canvas_theme)
         return view
 
@@ -504,6 +515,9 @@ class MainWindow(QMainWindow):
             self._pick(x, y)
             return
         hit = self._hit(self.view, x, y)
+        if hit is not None and not additive and self._on_selection(x, y):
+            self._pending_click = hit  # keep the selection in case this becomes a drag
+            return
         if hit is None:
             paths = self.selection if additive else []
         elif additive:
@@ -617,7 +631,105 @@ class MainWindow(QMainWindow):
                 best, best_distance = name, distance
         return best
 
+    # -- dragging ----------------------------------------------------------
+
+    def _on_selection(self, x: float, y: float) -> bool:
+        point = kdb.Point(to_dbu(x), to_dbu(y))
+        probe = kdb.Region(kdb.Box(point.x - 1, point.y - 1, point.x + 1, point.y + 1))
+        for path in self.selection:
+            geometry = self.document.highlight([path])
+            if geometry and any(not (r & probe).is_empty() for r in geometry.layers.values()):
+                return True
+        return False
+
+    def _click_released(self, _x: float, _y: float) -> None:
+        if self._pending_click is not None:
+            path, self._pending_click = self._pending_click, None
+            self.tree.select_paths([path])
+
+    def _drag_started(self, view: ComponentView, x: float, y: float) -> None:
+        self._pending_click = None
+        if view is not self.area.current or self.align_step or not self.selection:
+            view.canvas.cancel_drag()
+            return
+        if self.document.read_only:
+            view.canvas.cancel_drag()
+            self.report_error(f"'{self.document.active}' is read-only")
+            return
+        plan = self.document.drag_plan(self.selection)
+        if not plan.roots:
+            view.canvas.cancel_drag()
+            return
+        self._drag = {"plan": plan, "x": x, "y": y, "dx": 0.0, "dy": 0.0, "snap": None}
+        view.canvas.show_drag_preview(plan.preview, self.layers.colors)
+
+    def _drag_moved(self, x: float, y: float, modifiers) -> None:
+        drag = self._drag
+        if drag is None:
+            return
+        dx, dy, snap = self._snapped(drag["plan"], x - drag["x"], y - drag["y"], modifiers)
+        drag.update(dx=dx, dy=dy, snap=snap)
+        self.canvas.move_drag_preview(dx, dy)
+        self.canvas.show_points("snap", [(snap[2], snap[3], snap[4])] if snap else [])
+        text = f"Move Δx {dx:g} µm, Δy {dy:g} µm"
+        if snap:
+            text += f"   {snap[1]} on {snap[2]} (release with Shift to align it there)"
+        self.statusBar().showMessage(text)
+
+    def _snapped(self, plan: DragPlan, dx: float, dy: float, modifiers):
+        """The move after snapping: to another shape's point if one is near, else to the grid.
+
+        Ctrl turns snapping off. Returns ``(dx, dy, snap)``, where ``snap`` is
+        ``(path, own point, target point, x, y)`` or None.
+        """
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            return dx, dy, None
+        best, snap = SNAP_PX / self.canvas.pixels_per_um(), None
+        for path, name, px, py in plan.points:
+            for target, tx, ty in plan.targets:
+                distance = math.hypot(px + dx - tx, py + dy - ty)
+                if distance < best:
+                    best, snap = distance, (path, name, target, tx, ty, px, py)
+        if snap is not None:
+            path, name, target, tx, ty, px, py = snap
+            return tx - px, ty - py, (path, name, target, tx, ty)
+        step = self.canvas.grid_step()
+        return round(dx / step) * step, round(dy / step) * step, None
+
+    def _drag_finished(self, x: float, y: float, modifiers) -> None:
+        drag, self._drag = self._drag, None
+        self.canvas.clear_drag_preview()
+        self.canvas.show_points("snap", [])
+        if drag is None:
+            return
+        plan = drag["plan"]
+        dx, dy, snap = self._snapped(plan, x - drag["x"], y - drag["y"], modifiers)
+        self.statusBar().clearMessage()
+        shift = modifiers & Qt.KeyboardModifier.ShiftModifier
+        if shift and snap is not None and plan.roots == [snap[0]]:
+            path, point, target = snap[0], snap[1], snap[2]
+            ok, _ = self._run(lambda: self.document.set_align(path, Align(point=point, to=target)))
+            if ok:
+                self.statusBar().showMessage(f"Aligned {point} to {target}", 5000)
+            return
+        detach = bool(modifiers & Qt.KeyboardModifier.AltModifier)
+        self._run(lambda: self.document.move(plan.roots, dx, dy, detach=detach))
+
+    def nudge(self, steps_x: int, steps_y: int, fine: bool = False) -> None:
+        """Move the selection by grid steps (a tenth of one when ``fine``)."""
+        if not self.selection or self.align_step:
+            return
+        step = self.canvas.grid_step() / (10 if fine else 1)
+        paths = list(self.selection)
+        self._run(lambda: self.document.move(paths, steps_x * step, steps_y * step))
+
     def cancel_align(self, quiet: bool = False) -> None:
+        """Esc: stop a drag or the Align tool."""
+        if self._drag is not None or self.canvas.dragging:
+            self._drag = None
+            self.canvas.cancel_drag()
+            self.canvas.show_points("snap", [])
+            self.statusBar().showMessage("Move cancelled", 3000)
         if self.align_step is None:
             return
         self.align_step, self._align_path, self._align_point = None, None, None

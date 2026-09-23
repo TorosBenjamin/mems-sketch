@@ -23,6 +23,7 @@ from __future__ import annotations
 import copy
 import re
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -56,9 +57,12 @@ from mems_sketch.core.shapes import (
     frame_of,
     map_expressions,
     node_at,
+    own_strings,
+    point_names,
     rename_node_references,
     rewrite,
     to_ictrans,
+    translated,
     visible_from,
     walk,
 )
@@ -72,6 +76,26 @@ UNDO_LIMIT = 200
 VIEW_MODES = {"drawn": "Drawn", "etched": "As etched", "compensated": "Etch compensated"}
 # Node fields that hold names or choices, not expressions.
 _NOT_EXPRESSIONS = {"kind", "name", "layer", "component", "op", "ends", "corners", "mapping"}
+
+
+@dataclass
+class DragPlan:
+    """What moves when the given shapes are dragged, worked out once when a drag starts.
+
+    ``roots`` are the shapes that get moved; ``followers`` are aligned to them
+    (directly or in a chain) and move along by exactly the same amount;
+    ``loose`` use their points in expressions and are only updated when the
+    drag ends. ``preview`` is the geometry of roots and followers, and
+    ``points`` / ``targets`` are the roots' points and the other shapes'
+    points for snapping, all in the component's frame.
+    """
+
+    roots: list[NodePath] = field(default_factory=list)
+    followers: list[NodePath] = field(default_factory=list)
+    loose: list[NodePath] = field(default_factory=list)
+    preview: Geometry = field(default_factory=Geometry)
+    points: list[tuple[NodePath, str, float, float]] = field(default_factory=list)
+    targets: list[tuple[str, float, float]] = field(default_factory=list)
 
 
 def new_project(name: str = "untitled") -> Project:
@@ -609,9 +633,97 @@ class ProjectDocument(QObject):
         self.edit(f"Unpack {node.name or node.component}", change)
         return path
 
+    # -- moving --------------------------------------------------------------
+
+    def drag_plan(self, paths: list[NodePath]) -> DragPlan:
+        """Work out what moves along with ``paths`` (see :class:`DragPlan`)."""
+        record = self.inspection()
+        shapes = self.shapes
+        plan = DragPlan(roots=_outermost([p for p in paths if p in record]))
+        if not plan.roots:
+            return plan
+        moving = set()
+        for path in plan.roots:
+            moving |= _subtree_names(node_at(shapes, path))
+
+        def inside(path: NodePath, groups: list[NodePath]) -> bool:
+            return any(path[: len(g)] == g for g in groups)
+
+        changed = True
+        while changed:  # anything aligned to a moving shape moves too
+            changed = False
+            for path in sorted(record):
+                if inside(path, plan.roots + plan.followers):
+                    continue
+                node = node_at(shapes, path)
+                if node.align is not None and node.align.to.partition(".")[0] in moving:
+                    plan.followers.append(path)
+                    moving |= _subtree_names(node)
+                    changed = True
+        for path in sorted(record):
+            if inside(path, plan.roots + plan.followers):
+                continue
+            used = {
+                n.partition(".")[0]
+                for t in own_strings(node_at(shapes, path))
+                for n in point_names(t)
+            }
+            if used & moving:
+                plan.loose.append(path)
+        for path in _outermost(plan.roots + plan.followers):
+            plan.preview.merge(record[path].geometry, to_ictrans(frame_of(record, path)))
+        for path in plan.roots:
+            plan.points += [(path, name, x, y) for name, x, y in self.node_points(path)]
+        plan.targets = [
+            (name, x, y)
+            for name, _, x, y in self.align_targets(plan.roots[0])
+            if name.partition(".")[0] not in moving
+        ]
+        return plan
+
+    def move(self, paths: list[NodePath], dx: float, dy: float, detach: bool = False) -> None:
+        """Move shapes by ``(dx, dy)``, given in the active component's frame.
+
+        Each shape is moved in its own parent's frame, so shapes inside a
+        rotated transform follow the mouse. Aligned shapes get a new offset,
+        or with ``detach`` lose their alignment and keep where they are, moved.
+        Shapes aligned to another moved shape follow it by themselves.
+        """
+        record = self.inspection()
+        roots = _outermost([p for p in paths if p in record])
+        if not roots or (dx == 0 and dy == 0 and not detach):
+            return
+        shapes = self.shapes
+        names = {p: _subtree_names(node_at(shapes, p)) for p in roots}
+        moves = {}
+        for path in roots:
+            node = node_at(shapes, path)
+            others = frozenset().union(*(n for p, n in names.items() if p != path))
+            if node.align is not None and node.align.to.partition(".")[0] in others:
+                continue  # follows the shape it is aligned to
+            delta = frame_of(record, path).inverted() * kdb.DVector(dx, dy)
+            if detach and node.align is not None:
+                delta += record[path].shift.disp
+                node = node.model_copy(update={"align": None})
+            moves[path] = translated(node, delta.x, delta.y, others)
+        label = ", ".join(node_at(shapes, p).name or node_at(shapes, p).kind for p in moves)
+
+        def change(project: Project) -> None:
+            for path, moved in moves.items():
+                container, index = container_of(self._shapes_in(project), path)
+                container[index] = moved
+
+        self.edit(f"Move {label}", change)
+
     def set_align(self, path: NodePath, align: Align | None) -> None:
-        """Align a node (``None`` removes its alignment)."""
+        """Align a node. ``None`` removes its alignment and leaves it where it is."""
         node = self.node(path)
+        record = self.inspection().get(path)
+        if align is None and node.align is not None and record is not None:
+            shift = record.shift.disp  # bake the alignment's move into the coordinates
+            node = translated(node.model_copy(update={"align": None}), shift.x, shift.y)
+            self.replace_node(path, node)
+            return
         self.replace_node(path, node.model_copy(update={"align": align}))
 
     # -- declared points of the active component ---------------------------
@@ -852,6 +964,16 @@ class ProjectDocument(QObject):
 
     def remove_layer(self, name: str) -> None:
         self.edit(f"Delete layer {name}", lambda p: p.layers.pop(name))
+
+
+def _outermost(paths: list[NodePath]) -> list[NodePath]:
+    """``paths`` without those inside another one of them (they move with it)."""
+    unique = list(dict.fromkeys(paths))
+    return [p for p in unique if not any(q != p and p[: len(q)] == q for q in unique)]
+
+
+def _subtree_names(node: Shape) -> set[str]:
+    return {n.name for n in walk([node]) if n.name}
 
 
 def _parameter_values(definition: ComponentDef, given: dict[str, Value]) -> dict[str, Value]:

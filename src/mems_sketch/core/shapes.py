@@ -37,6 +37,7 @@ Semantics:
 
 from __future__ import annotations
 
+import ast
 import functools
 import math
 from collections.abc import Callable, Iterator, Mapping
@@ -506,12 +507,14 @@ class NodeRecord:
     """How one node came out of an evaluation (for the GUI: selection, point markers).
 
     ``geometry`` and ``points`` are in the frame of the list holding the node;
-    ``inner`` maps the node's children's frame into that frame.
+    ``inner`` maps the node's children's frame into that frame, and ``shift``
+    is the move its alignment applied (identity when it is not aligned).
     """
 
     geometry: Geometry
     points: NodePoints
     inner: kdb.DCplxTrans
+    shift: kdb.DCplxTrans
 
 
 class Evaluator:
@@ -631,7 +634,7 @@ class Evaluator:
             )
         if self.record is not None and path not in self.record:
             inner = shift * _transform_of(shape, first)
-            self.record[path] = NodeRecord(geometry, points, inner)
+            self.record[path] = NodeRecord(geometry, points, inner, shift)
         return geometry, points
 
     def _alignment(
@@ -756,6 +759,106 @@ def to_ictrans(transform: kdb.DCplxTrans) -> kdb.ICplxTrans:
 def _apply(transform: kdb.DCplxTrans, point: Point) -> Point:
     p = transform * kdb.DPoint(*point)
     return p.x, p.y
+
+
+# -- moving ------------------------------------------------------------------
+
+
+def offset_value(value: Value, delta: float) -> Value:
+    """``value`` plus ``delta``, keeping expressions parametric.
+
+    Numbers are added to. An expression gets a trailing ``+ delta`` term; if
+    it already ends in ``+ number`` or ``- number``, that number is updated,
+    so repeated moves do not pile up terms: ``plate/2 + 39`` moved by 11
+    becomes ``plate/2 + 50``.
+    """
+    if not delta:
+        return value
+    if not isinstance(value, str):
+        return _round(float(value) + delta)
+    try:
+        body = ast.parse(value.strip(), mode="eval").body
+    except SyntaxError:
+        return value
+    base, constant = value.strip(), 0.0
+    if (
+        isinstance(body, ast.BinOp)
+        and isinstance(body.op, ast.Add | ast.Sub)
+        and isinstance(body.right, ast.Constant)
+        and isinstance(body.right.value, int | float)
+    ):
+        base = ast.get_source_segment(value.strip(), body.left) or ast.unparse(body.left)
+        constant = body.right.value if isinstance(body.op, ast.Add) else -body.right.value
+    total = _round(constant + delta)
+    if total == 0:
+        return base
+    sign = "+" if total > 0 else "-"
+    return f"{base} {sign} {_number(abs(total))}"
+
+
+def _round(value: float) -> float:
+    return round(value, 6)  # well below the 1 nm grid; hides float noise
+
+
+def _number(value: float) -> str:
+    return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
+def translated(shape: Shape, dx: float, dy: float, moving: frozenset[str] = frozenset()) -> Shape:
+    """A copy of ``shape`` moved by ``(dx, dy)`` in the frame of the list holding it.
+
+    An aligned node keeps its alignment and gets a new offset. A reference or
+    transform moves by its ``x``, ``y`` (its content stays in its own frame);
+    a primitive by all its coordinates; other operations by moving their
+    children. Nodes whose position follows from a node in ``moving`` (which
+    moves too) are left alone: aligned to it, or using its points for the same
+    axis in an expression.
+    """
+    if shape.align is not None:
+        if shape.align.to.partition(".")[0] in moving:
+            return shape
+        align = shape.align.model_copy(
+            update={"dx": offset_value(shape.align.dx, dx), "dy": offset_value(shape.align.dy, dy)}
+        )
+        return shape.model_copy(update={"align": align})
+
+    def x(value: Value) -> Value:
+        return value if _follows(value, "x", moving) else offset_value(value, dx)
+
+    def y(value: Value) -> Value:
+        return value if _follows(value, "y", moving) else offset_value(value, dy)
+
+    match shape:
+        case RectShape():
+            update = {"x0": x(shape.x0), "x1": x(shape.x1), "y0": y(shape.y0), "y1": y(shape.y1)}
+        case PolygonShape() | PathShape():
+            update = {"points": [(x(px), y(py)) for px, py in shape.points]}
+        case CircleShape() | ArcShape() | RefShape() | TransformShape():
+            update = {"x": x(shape.x), "y": y(shape.y)}
+        case BooleanShape():
+            inner = moving | _names(shape)
+            update = {
+                "a": [translated(c, dx, dy, inner) for c in shape.a],
+                "b": [translated(c, dx, dy, inner) for c in shape.b],
+            }
+        case OffsetShape() | FilletShape() | LayerMapShape():
+            inner = moving | _names(shape)
+            update = {"children": [translated(c, dx, dy, inner) for c in shape.children]}
+    return shape.model_copy(update=update)
+
+
+def _names(shape: Shape) -> frozenset[str]:
+    return frozenset(n.name for n in walk([shape]) if n.name)
+
+
+def _follows(value: Value, axis: str, moving: frozenset[str]) -> bool:
+    """Whether an expression uses a moving node's point on ``axis`` (so it moves by itself)."""
+    if not isinstance(value, str) or not moving:
+        return False
+    return any(
+        name.endswith(f".{axis}") and name.partition(".")[0] in moving
+        for name in point_names(value)
+    )
 
 
 # -- renaming ----------------------------------------------------------------

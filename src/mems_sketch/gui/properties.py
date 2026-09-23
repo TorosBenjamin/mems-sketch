@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import typing
 
+import klayout.db as kdb
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -107,6 +108,19 @@ class PropertyEditor(QScrollArea):
         enabled.setChecked(node.enabled)
         form.addRow("Enabled", enabled)
         self._editors["enabled"] = enabled.isChecked
+        extent = self.document.highlight([path])
+        if extent is not None:
+            box = kdb.Box()
+            for region in extent.layers.values():
+                box += region.bbox()
+            where = QLabel(
+                "x {:g} … {:g}, y {:g} … {:g} µm".format(
+                    *(v / 1000 for v in (box.left, box.right, box.bottom, box.top))
+                )
+            )
+            where.setStyleSheet("color: gray")
+            where.setToolTip("Where the shape ends up in this component (stored values are local)")
+            form.addRow("Extent", where)
 
         for field, info in type(node).model_fields.items():
             if field in _SPECIAL:

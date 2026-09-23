@@ -2,15 +2,15 @@ import klayout.db as kdb
 import pytest
 from pydantic import ValidationError
 
-from mems_sketch import Design, Instance, Layer, export, load, save
+from mems_sketch import Project, Instance, Layer, export, load, save
 from mems_sketch.core.component import resolve_params, to_dbu
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.export.base import available_exporters
 from mems_sketch.process import etch, rules
 
 
-def make_design() -> Design:
-    design = Design(name="accel")
+def make_design() -> Project:
+    design = Project(name="accel")
     design.add_layer(Layer("device", 1, 0, undercut=0.5, min_width=1.5, min_space=1.5))
     design.add_layer(Layer("anchor", 2, 0))
     design.set_variable("w", 2.0)
@@ -48,7 +48,7 @@ def test_render_and_variable_change_updates_geometry():
 
 
 def test_rotation_and_placement():
-    design = Design()
+    design = Project()
     design.add(Instance("r", "rectangle", {"width": 100, "height": 10}, x=50, y=0, rotation=90))
     box = design.render().layers["device"].bbox()
     assert box == kdb.Box(to_dbu(45), to_dbu(-50), to_dbu(55), to_dbu(50))
@@ -73,11 +73,11 @@ def test_rules_flag_narrow_features_and_unknown_layers():
     assert any(v.rule == "layer" and v.layer == "metal" for v in rules.check(design))
 
 
-def test_sqlite_round_trip(tmp_path):
+def test_project_folder_round_trip(tmp_path):
     design = make_design()
-    path = tmp_path / "accel.mems"
+    path = tmp_path / "accel"
     save(design, path)
-    save(design, path)  # overwriting an existing file works
+    save(design, path)  # saving again over an existing project works
     loaded = load(path)
     assert loaded == design
     assert loaded.render().layers["device"].area() == design.render().layers["device"].area()

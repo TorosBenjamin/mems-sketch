@@ -9,3 +9,4 @@ build/
 *.oas
 *.dxf
 *.mems
+.mems-cache/

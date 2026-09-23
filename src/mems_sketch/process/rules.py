@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import klayout.db as kdb
 
 from mems_sketch.core.component import DBU_UM, Geometry, to_dbu
-from mems_sketch.core.design import Design
+from mems_sketch.core.project import Project
 
 
 @dataclass(frozen=True)
@@ -18,12 +18,12 @@ class Violation:
     bbox_um: tuple[float, float, float, float] | None = None  # for highlighting in the GUI
 
 
-def check(design: Design, geometry: Geometry | None = None) -> list[Violation]:
-    """Check ``geometry`` (default: the drawn design) against the layer rules."""
-    geometry = design.render() if geometry is None else geometry
+def check(project: Project, geometry: Geometry | None = None) -> list[Violation]:
+    """Check ``geometry`` (default: the drawn project) against the layer rules."""
+    geometry = project.render() if geometry is None else geometry
     violations: list[Violation] = []
     for name, region in geometry.layers.items():
-        layer = design.layers.get(name)
+        layer = project.layers.get(name)
         if layer is None:
             violations.append(Violation("layer", name, f"layer '{name}' is not defined"))
             continue

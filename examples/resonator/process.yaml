@@ -1,0 +1,12 @@
+constants:
+  min_gap: 2
+layers:
+  device:
+    gds: [1, 0]
+    undercut: 0.3
+    min_width: 2
+    min_space: 2
+  anchor:
+    gds: [2, 0]
+  metal:
+    gds: [3, 0]

@@ -8,7 +8,7 @@ from typing import ClassVar
 import klayout.db as kdb
 
 from mems_sketch.core.component import DBU_UM, Geometry
-from mems_sketch.core.design import Design
+from mems_sketch.core.project import Project
 
 
 class _KLayoutExporter:
@@ -16,14 +16,14 @@ class _KLayoutExporter:
     file_extension: ClassVar[str]
     klayout_format: ClassVar[str]
 
-    def export(self, design: Design, geometry: Geometry, path: Path) -> None:
+    def export(self, project: Project, geometry: Geometry, path: Path) -> None:
         layout = kdb.Layout()
         layout.dbu = DBU_UM
-        top = layout.create_cell(design.name or "TOP")
+        top = layout.create_cell(project.name or "TOP")
         for name, region in geometry.layers.items():
-            layer = design.layers.get(name)
+            layer = project.layers.get(name)
             if layer is None:
-                raise ValueError(f"layer '{name}' has no GDS mapping; add it to the design")
+                raise ValueError(f"layer '{name}' has no GDS mapping; add it to the project")
             index = layout.layer(kdb.LayerInfo(layer.gds_layer, layer.gds_datatype, name))
             top.shapes(index).insert(region)
         options = kdb.SaveLayoutOptions()

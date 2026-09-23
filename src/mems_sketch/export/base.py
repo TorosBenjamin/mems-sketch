@@ -1,7 +1,7 @@
 """Exporter plugin interface and discovery.
 
 An exporter is any class with ``format_name``, ``file_extension`` and an
-``export(design, geometry, path)`` method. Exporters are found through the
+``export(project, geometry, path)`` method. Exporters are found through the
 ``mems_sketch.exporters`` entry-point group (see ``pyproject.toml``), so a new
 format can live in its own package, or be registered at runtime with
 :func:`register_exporter`.
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import ClassVar, Protocol
 
 from mems_sketch.core.component import Geometry
-from mems_sketch.core.design import Design
+from mems_sketch.core.project import Project
 
 ENTRY_POINT_GROUP = "mems_sketch.exporters"
 
@@ -23,7 +23,7 @@ class Exporter(Protocol):
     format_name: ClassVar[str]
     file_extension: ClassVar[str]
 
-    def export(self, design: Design, geometry: Geometry, path: Path) -> None: ...
+    def export(self, project: Project, geometry: Geometry, path: Path) -> None: ...
 
 
 _runtime: dict[str, type[Exporter]] = {}
@@ -57,12 +57,12 @@ def get_exporter(format_name: str) -> Exporter:
 
 
 def export(
-    design: Design,
+    project: Project,
     path: str | Path,
     format_name: str | None = None,
     geometry: Geometry | None = None,
 ) -> Path:
-    """Export ``geometry`` (default: drawn design) to ``path``.
+    """Export ``geometry`` (default: drawn project) to ``path``.
 
     The format is taken from ``format_name`` or, failing that, the file extension.
     """
@@ -74,6 +74,6 @@ def export(
             raise ValueError(f"no exporter handles '{suffix}' files")
         format_name = matches[0]
     get_exporter(format_name).export(
-        design, design.render() if geometry is None else geometry, path
+        project, project.render() if geometry is None else geometry, path
     )
     return path

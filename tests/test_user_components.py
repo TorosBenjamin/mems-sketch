@@ -4,7 +4,7 @@ from pydantic import ValidationError
 
 from mems_sketch import (
     ComponentDef,
-    Design,
+    Project,
     Instance,
     Layer,
     ParamDef,
@@ -51,8 +51,8 @@ def triangle() -> ComponentDef:
     )
 
 
-def make_design() -> Design:
-    design = Design(name="custom")
+def make_design() -> Project:
+    design = Project(name="custom")
     design.add_layer(Layer("device", 1))
     design.add_layer(Layer("anchor", 2))
     design.set_variable("w_global", 3.0)
@@ -125,7 +125,7 @@ def test_invalid_definitions_are_rejected():
         ParamDef(name="i", default=1)
     with pytest.raises(ValidationError):
         ParamDef(name="w", default=0, min=1)
-    assert set(design.components) == {"finger_array", "triangle"}  # nothing half-added
+    assert set(design.components) == {"top", "finger_array", "triangle"}  # nothing half-added
 
 
 def test_cycle_through_redefinition_is_rejected_and_rolled_back():
@@ -146,11 +146,11 @@ def test_remove_component_in_use_is_refused():
     assert "finger_array" not in design.components
 
 
-def test_user_components_round_trip_through_sqlite(tmp_path):
+def test_user_components_round_trip_through_project_files(tmp_path):
     design = make_design()
     design.add(Instance("f", "finger_array", {"n": 3, "taper": "w_global"}))
-    save(design, tmp_path / "custom.mems")
-    loaded = load(tmp_path / "custom.mems")
+    save(design, tmp_path / "custom")
+    loaded = load(tmp_path / "custom")
     assert loaded == design
     assert loaded.render().layers["device"].area() == design.render().layers["device"].area()
 

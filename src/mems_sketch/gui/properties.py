@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes import NodePath, Shape
-from mems_sketch.gui.document import DesignDocument
+from mems_sketch.gui.document import ProjectDocument
 from mems_sketch.gui.panels import parse_value
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
@@ -65,7 +65,7 @@ class PropertyEditor(QScrollArea):
     error = Signal(str)
     applied = Signal()
 
-    def __init__(self, document: DesignDocument) -> None:
+    def __init__(self, document: ProjectDocument) -> None:
         super().__init__()
         self.document = document
         self.setWidgetResizable(True)
@@ -141,7 +141,7 @@ class PropertyEditor(QScrollArea):
         if field == "layer":
             combo = QComboBox()
             combo.setEditable(True)
-            combo.addItems(list(self.document.design.layers))
+            combo.addItems(list(self.document.project.layers))
             combo.setCurrentText(value)
             self._editors[field] = lambda: combo.currentText().strip()
             return combo
@@ -168,7 +168,7 @@ class PropertyEditor(QScrollArea):
                 result.setText("default" if optional else "")
                 return
             try:
-                variables = {**self.document.design.resolved_variables(), "i": 0.0, "j": 0.0}
+                variables = {**self.document.scope(), "i": 0.0, "j": 0.0}
                 result.setText(f"= {evaluate(parse_value(text), variables):g}")
             except Exception:  # noqa: BLE001 - only a preview
                 result.setText("?")
@@ -224,7 +224,8 @@ class PropertyEditor(QScrollArea):
         box = QGroupBox(f"Parameters of {node.component}")
         form = QFormLayout(box)
         try:
-            schema = self.document.design.component(node.component).Params.model_fields
+            schema = self.document.component(node.component).Params.model_fields
+            defaults = self.document.parameter_defaults(node.component)
         except KeyError:
             form.addRow(QLabel("Unknown component."))
             self._editors["params"] = lambda: node.params
@@ -232,17 +233,17 @@ class PropertyEditor(QScrollArea):
         readers = {}
         for field, info in schema.items():
             current = node.params.get(field)
+            default = defaults.get(field)
             if info.annotation is str:
                 edit = QLineEdit("" if current is None else str(current))
-                edit.setPlaceholderText(str(info.default))
+                edit.setPlaceholderText(str(default))
                 readers[field] = lambda e=edit: e.text().strip() or None
                 widget = edit
             else:
                 widget = self._value_editor(f"param:{field}", current, optional=True)
                 readers[field] = self._editors.pop(f"param:{field}")
-                widget.findChild(QLineEdit).setPlaceholderText(_format(info.default))
-            label = info.description or field
-            form.addRow(label, widget)
+                widget.findChild(QLineEdit).setPlaceholderText(_format(default))
+            form.addRow(info.description or field, widget)
 
         def read():
             values = {field: reader() for field, reader in readers.items()}

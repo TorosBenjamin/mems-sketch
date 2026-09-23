@@ -1,0 +1,19 @@
+name: suspension
+description: Serpentine spring ending in an anchor pad
+parameters:
+- name: turns
+  default: 3
+  min: 1
+  integer: true
+shapes:
+- kind: ref
+  name: spring
+  component: serpentine_spring
+  params:
+    turns: turns
+- kind: ref
+  name: anchor
+  component: anchor
+  params:
+    size: 40
+  y: (2 * turns + 1) * 15 + 20 - 1

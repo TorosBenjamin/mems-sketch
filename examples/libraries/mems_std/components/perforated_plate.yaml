@@ -1,0 +1,39 @@
+name: perforated_plate
+description: Square plate with a grid of round release holes
+parameters:
+- name: size
+  default: 160
+  min: 10
+  description: Edge length (µm)
+- name: pitch
+  default: 20
+  min: 2
+  description: Hole pitch (µm)
+- name: hole_r
+  default: pitch / 6
+  min: 0.5
+  description: Hole radius (µm)
+shapes:
+- kind: boolean
+  name: plate
+  op: subtract
+  a:
+  - kind: rect
+    name: outline
+    layer: device
+    x0: -size/2
+    y0: -size/2
+    x1: size/2
+    y1: size/2
+  b:
+  - kind: circle
+    name: holes
+    layer: device
+    x: -size/2 + pitch/2
+    y: -size/2 + pitch/2
+    radius: hole_r
+    repeat:
+      columns: floor(size/pitch)
+      rows: floor(size/pitch)
+      dx: pitch
+      dy: pitch

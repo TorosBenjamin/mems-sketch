@@ -1,0 +1,43 @@
+name: top
+description: Comb-driven resonator
+parameters:
+- name: plate
+  default: 160
+- name: pitch
+  default: 20
+- name: w_finger
+  default: process.min_gap
+shapes:
+- kind: ref
+  name: mass
+  component: std.perforated_plate
+  params:
+    size: plate
+    pitch: pitch
+- kind: ref
+  name: comb_top
+  component: comb_drive
+  params:
+    fingers: 16
+    finger_width: w_finger
+    gap: w_finger
+  y: plate/2 + 39
+  rotation: 180
+- kind: ref
+  name: comb_bottom
+  component: comb_drive
+  params:
+    fingers: 16
+    finger_width: w_finger
+    gap: w_finger
+  y: -plate/2 - 39
+- kind: ref
+  name: suspension_left
+  component: suspension
+  x: -1 * (plate/2 + 38.5)
+  y: -54
+- kind: ref
+  name: suspension_right
+  component: suspension
+  x: 1 * (plate/2 + 38.5)
+  y: -54

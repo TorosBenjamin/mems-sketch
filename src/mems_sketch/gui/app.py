@@ -1,4 +1,8 @@
-"""Main window and application entry point (``mems-sketch`` or ``python -m mems_sketch.gui``)."""
+"""Main window and application entry point (``mems-sketch`` or ``python -m mems_sketch.gui``).
+
+The window is a frontend only: it shows and edits the project through
+:class:`ProjectDocument`, which is the single way into the backend.
+"""
 
 from __future__ import annotations
 
@@ -13,22 +17,29 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDockWidget,
     QFileDialog,
+    QInputDialog,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QToolButton,
-    QMenu,
 )
 
 from mems_sketch.core.component import Geometry, to_dbu
-from mems_sketch.core.shapes import Evaluator, NodePath, placement_of
+from mems_sketch.core.shapes import NodePath
 from mems_sketch.export.base import available_exporters
 from mems_sketch.gui.canvas import LayoutCanvas
-from mems_sketch.gui.document import VIEW_MODES, DesignDocument
-from mems_sketch.gui.panels import LayersPanel, MessagesPanel, ShapeTree, VariablesPanel
+from mems_sketch.gui.document import VIEW_MODES, ProjectDocument
+from mems_sketch.gui.panels import (
+    ComponentsPanel,
+    MessagesPanel,
+    ParametersPanel,
+    ProcessPanel,
+    ShapeTree,
+)
 from mems_sketch.gui.properties import PropertyEditor
 
-FILE_FILTER = "MEMS designs (*.mems)"
+OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 PRIMITIVES = [
     ("rect", "Rectangle"),
     ("circle", "Circle"),
@@ -49,36 +60,25 @@ OPERATIONS = [
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, document: DesignDocument | None = None) -> None:
+    def __init__(self, document: ProjectDocument | None = None) -> None:
         super().__init__()
-        self.document = document or DesignDocument()
+        self.document = document or ProjectDocument()
         self.view_mode = "drawn"
         self.selection: list[NodePath] = []
-        self._shape_regions: list[tuple[NodePath, kdb.Region]] = []
+        self._node_regions: list[tuple[NodePath, kdb.Region]] = []
         self._violations = []
         self._errors: list[str] = []
+        self._shown_component: str | None = None
 
         self.canvas = LayoutCanvas()
         self.setCentralWidget(self.canvas)
+        self.components = ComponentsPanel(self.document)
         self.tree = ShapeTree(self.document)
         self.properties = PropertyEditor(self.document)
-        self.variables = VariablesPanel(self.document)
-        self.layers = LayersPanel(self.document)
+        self.parameters = ParametersPanel(self.document)
+        self.process = ProcessPanel(self.document)
         self.messages = MessagesPanel()
-        left = Qt.DockWidgetArea.LeftDockWidgetArea
-        right = Qt.DockWidgetArea.RightDockWidgetArea
-        shapes_dock = self._dock("Shapes", self.tree, left)
-        layers_dock = self._dock("Layers", self.layers, left)
-        properties_dock = self._dock("Properties", self.properties, right)
-        variables_dock = self._dock("Variables", self.variables, right)
-        messages_dock = self._dock(
-            "Messages", self.messages, Qt.DockWidgetArea.BottomDockWidgetArea
-        )
-        vertical, horizontal = Qt.Orientation.Vertical, Qt.Orientation.Horizontal
-        self.resizeDocks([shapes_dock, layers_dock], [520, 220], vertical)
-        self.resizeDocks([properties_dock, variables_dock], [560, 200], vertical)
-        self.resizeDocks([shapes_dock, properties_dock], [300, 340], horizontal)
-        self.resizeDocks([messages_dock], [110], vertical)
+        self._build_docks()
 
         self.coordinates = QLabel()
         self.statusBar().addPermanentWidget(self.coordinates)
@@ -90,16 +90,17 @@ class MainWindow(QMainWindow):
         self.tree.enabled_toggled.connect(
             lambda p, e: self._run(lambda: self.document.set_enabled(p, e))
         )
+        self.components.place_requested.connect(self.add_component)
         self.canvas.clicked.connect(self._canvas_clicked)
         self.canvas.cursor_moved.connect(
             lambda x, y: self.coordinates.setText(f"x {x:.3f} µm   y {y:.3f} µm")
         )
-        self.layers.visibility_changed.connect(self.canvas.set_layer_visible)
+        self.process.visibility_changed.connect(self.canvas.set_layer_visible)
         self.messages.zoom_requested.connect(self._zoom_to_bbox)
-        for panel in (self.properties, self.variables, self.layers):
+        for panel in (self.properties, self.parameters, self.process, self.components):
             panel.error.connect(self.report_error)
 
-        self.resize(1400, 900)
+        self.resize(1500, 950)
         self.refresh()
         self._update_title()
 
@@ -111,6 +112,22 @@ class MainWindow(QMainWindow):
         dock.setWidget(widget)
         self.addDockWidget(area, dock)
         return dock
+
+    def _build_docks(self) -> None:
+        left, right = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea
+        components = self._dock("Components", self.components, left)
+        shapes = self._dock("Shapes", self.tree, left)
+        process = self._dock("Process", self.process, left)
+        self.tabifyDockWidget(shapes, process)
+        shapes.raise_()
+        properties = self._dock("Properties", self.properties, right)
+        parameters = self._dock("Parameters", self.parameters, right)
+        messages = self._dock("Messages", self.messages, Qt.DockWidgetArea.BottomDockWidgetArea)
+        vertical, horizontal = Qt.Orientation.Vertical, Qt.Orientation.Horizontal
+        self.resizeDocks([components, shapes], [260, 520], vertical)
+        self.resizeDocks([properties, parameters], [560, 220], vertical)
+        self.resizeDocks([shapes, properties], [320, 360], horizontal)
+        self.resizeDocks([messages], [110], vertical)
 
     def _action(self, text: str, slot, shortcut=None, menu: QMenu | None = None) -> QAction:
         action = QAction(text, self)
@@ -124,10 +141,10 @@ class MainWindow(QMainWindow):
     def _build_actions(self) -> None:
         bar = self.menuBar()
         file = bar.addMenu("&File")
-        self._action("New", self.new_file, QKeySequence.StandardKey.New, file)
-        self._action("Open…", self.open_file, QKeySequence.StandardKey.Open, file)
-        self._action("Save", self.save_file, QKeySequence.StandardKey.Save, file)
-        self._action("Save as…", self.save_file_as, QKeySequence.StandardKey.SaveAs, file)
+        self._action("New project", self.new_project, QKeySequence.StandardKey.New, file)
+        self._action("Open project…", self.open_project, QKeySequence.StandardKey.Open, file)
+        self._action("Save", self.save_project, QKeySequence.StandardKey.Save, file)
+        self._action("Save as…", self.save_project_as, QKeySequence.StandardKey.SaveAs, file)
         file.addSeparator()
         export = file.addMenu("Export")
         for mode, label in VIEW_MODES.items():
@@ -148,6 +165,7 @@ class MainWindow(QMainWindow):
         self._action("Duplicate", self.duplicate, "Ctrl+D", edit)
         self._action("Delete", self.delete, QKeySequence.StandardKey.Delete, edit)
         self._action("Unwrap operation", self.unwrap, "Ctrl+Shift+U", edit)
+        self._action("Make component from selection…", self.make_component, "Ctrl+K", edit)
 
         insert = bar.addMenu("&Insert")
         self.primitive_menu = insert.addMenu("Primitive")
@@ -164,14 +182,15 @@ class MainWindow(QMainWindow):
 
         view = bar.addMenu("&View")
         self._action("Fit", self.canvas.fit, "F", view)
-        self._action("Run rule check", self.refresh, "F5", view)
+        self._action("Recompile and check", self.refresh, "F5", view)
+        self._action("Edit top component", self._edit_top, "Ctrl+T", view)
 
         tools = self.addToolBar("Main")
         tools.setObjectName("main-toolbar")
         for text, slot in (
-            ("New", self.new_file),
-            ("Open", self.open_file),
-            ("Save", self.save_file),
+            ("New", self.new_project),
+            ("Open", self.open_project),
+            ("Save", self.save_project),
         ):
             tools.addAction(text, slot)
         tools.addSeparator()
@@ -187,6 +206,7 @@ class MainWindow(QMainWindow):
         tools.addSeparator()
         for op in ("group", "union", "subtract", "intersect", "offset", "fillet"):
             tools.addAction(dict(OPERATIONS)[op], lambda o=op: self.wrap(o))
+        tools.addAction("Make component", self.make_component)
         tools.addSeparator()
         tools.addWidget(QLabel(" View: "))
         self.mode_box = QComboBox()
@@ -199,75 +219,48 @@ class MainWindow(QMainWindow):
     def _fill_component_menu(self) -> None:
         self.component_menu.clear()
         for name in self.document.component_names():
-            self._action(
-                name, lambda _=False, n=name: self.add_component(n), menu=self.component_menu
-            )
+            if name != self.document.active:
+                self._action(
+                    name, lambda _=False, n=name: self.add_component(n), menu=self.component_menu
+                )
 
     # -- refresh -----------------------------------------------------------
 
     def refresh(self) -> None:
-        """Re-render the design and update every view."""
+        """Recompile the active component and update every view."""
+        if self._shown_component != self.document.active:
+            self.selection = []  # paths belong to the previously shown component
         self._errors = []
         try:
-            geometry = self.document.geometry(self.view_mode)
+            drawn = self.document.geometry()
+            geometry = (
+                drawn if self.view_mode == "drawn" else self.document.geometry(self.view_mode)
+            )
+            self._violations = self.document.check(drawn)
         except Exception as exc:  # noqa: BLE001 - shown in the messages panel
             geometry = Geometry()
-            self._errors.append(str(exc))
-        try:
-            self._violations = self.document.check()
-        except Exception:  # noqa: BLE001 - render error already reported
             self._violations = []
-        self._shape_regions = self._top_level_regions()
-        self.layers.refresh()
-        self.variables.refresh()
-        self.canvas.show_geometry(geometry, self.layers.colors, self.layers.visible)
+            self._errors.append(str(exc))
+        self._errors += [p for p in self.document.problems() if p not in self._errors]
+        self.process.refresh()
+        self.parameters.refresh()
+        self.components.refresh()
+        self._node_regions = self.document.node_regions(self.process.visible)
+        self.canvas.show_geometry(geometry, self.process.colors, self.process.visible)
+        if self._shown_component != self.document.active:
+            self._shown_component = self.document.active
+            self.canvas.fit()
         self.tree.rebuild([p for p in self.selection if self._exists(p)])
         self.messages.show_messages(self._errors, self._violations)
         self.undo_action.setEnabled(self.document.can_undo())
         self.redo_action.setEnabled(self.document.can_redo())
         self.undo_action.setText(f"Undo {self.document.undo_text()}".strip())
         self.redo_action.setText(f"Redo {self.document.redo_text()}".strip())
-
-    def _top_level_regions(self) -> list[tuple[NodePath, kdb.Region]]:
-        """Merged geometry of each top-level shape, for click selection."""
-        design = self.document.design
-        try:
-            variables = design.resolved_variables()
-        except Exception:  # noqa: BLE001
-            return []
-        result = []
-        for index, shape in enumerate(design.shapes):
-            if not shape.enabled:
-                continue
-            try:
-                geometry = design.render_shape(shape, variables)
-            except Exception:  # noqa: BLE001
-                continue
-            region = kdb.Region()
-            for layer, r in geometry.layers.items():
-                if self.layers.visible.get(layer, True):
-                    region.insert(r)
-            result.append((((0, index),), region))
-        return result
-
-    def _highlight(self) -> Geometry | None:
-        design = self.document.design
-        highlight = Geometry()
-        try:
-            variables = design.resolved_variables()
-            for path in self.selection:
-                node = self.document.node(path)
-                geometry = Evaluator(design.component).render_shape(
-                    node, {**variables, "i": 0.0, "j": 0.0}
-                )
-                highlight.merge(geometry, placement_of(design.shapes, path, variables))
-        except Exception:  # noqa: BLE001 - nothing to highlight
-            return None
-        return highlight.merged()
+        self._update_title()
 
     def _update_overlay(self) -> None:
         markers = [v.bbox_um for v in self._violations if v.bbox_um]
-        self.canvas.show_overlay(self._highlight(), markers)
+        self.canvas.show_overlay(self.document.highlight(self.selection), markers)
 
     def _exists(self, path: NodePath) -> bool:
         try:
@@ -277,8 +270,12 @@ class MainWindow(QMainWindow):
             return False
 
     def _update_title(self) -> None:
-        name = self.document.path.name if self.document.path else "Untitled"
-        self.setWindowTitle(f"{'*' if self.document.dirty else ''}{name} — MEMS Sketch")
+        project = self.document.project
+        where = str(self.document.path) if self.document.path else "not saved"
+        star = "*" if self.document.dirty else ""
+        self.setWindowTitle(
+            f"{star}{project.name} — editing {self.document.active} — {where} — MEMS Sketch"
+        )
 
     # -- selection ---------------------------------------------------------
 
@@ -291,7 +288,7 @@ class MainWindow(QMainWindow):
         point = kdb.Point(to_dbu(x), to_dbu(y))
         probe = kdb.Region(kdb.Box(point.x - 1, point.y - 1, point.x + 1, point.y + 1))
         hit = next(
-            (p for p, region in reversed(self._shape_regions) if not (region & probe).is_empty()),
+            (p for p, region in reversed(self._node_regions) if not (region & probe).is_empty()),
             None,
         )
         if hit is None:
@@ -316,6 +313,9 @@ class MainWindow(QMainWindow):
         self.view_mode = self.mode_box.currentData()
         self.refresh()
 
+    def _edit_top(self) -> None:
+        self._run(lambda: self.document.set_active(self.document.project.top))
+
     # -- commands ----------------------------------------------------------
 
     def report_error(self, message: str) -> None:
@@ -330,20 +330,27 @@ class MainWindow(QMainWindow):
             self.report_error(str(exc))
             return False, None
 
-    def add_primitive(self, kind: str) -> None:
-        ok, path = self._run(lambda: self.document.add_primitive(kind))
-        if ok:
+    def _select_result(self, action) -> None:
+        ok, path = self._run(action)
+        if ok and path:
             self.tree.select_paths([path])
+
+    def add_primitive(self, kind: str) -> None:
+        self._select_result(lambda: self.document.add_primitive(kind))
 
     def add_component(self, name: str) -> None:
-        ok, path = self._run(lambda: self.document.add_component(name))
-        if ok:
-            self.tree.select_paths([path])
+        self._select_result(lambda: self.document.add_component(name))
 
     def wrap(self, operation: str) -> None:
-        ok, path = self._run(lambda: self.document.wrap(self.selection, operation))
-        if ok:
-            self.tree.select_paths([path])
+        self._select_result(lambda: self.document.wrap(self.selection, operation))
+
+    def make_component(self) -> None:
+        if not self.selection:
+            self.report_error("select the shapes to turn into a component first")
+            return
+        name, ok = QInputDialog.getText(self, "Make component", "Name of the new component:")
+        if ok and name.strip():
+            self._select_result(lambda: self.document.make_component(self.selection, name.strip()))
 
     def unwrap(self) -> None:
         if len(self.selection) == 1:
@@ -351,9 +358,7 @@ class MainWindow(QMainWindow):
 
     def duplicate(self) -> None:
         if len(self.selection) == 1:
-            ok, path = self._run(lambda: self.document.duplicate(self.selection[0]))
-            if ok:
-                self.tree.select_paths([path])
+            self._select_result(lambda: self.document.duplicate(self.selection[0]))
 
     def delete(self) -> None:
         if self.selection:
@@ -368,46 +373,53 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             "Unsaved changes",
-            "Save changes to the current design first?",
+            "Save changes to the current project first?",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
         )
         if answer == QMessageBox.StandardButton.Save:
-            return self.save_file()
+            return self.save_project()
         return answer == QMessageBox.StandardButton.Discard
 
-    def new_file(self) -> None:
+    def new_project(self) -> None:
         if self._confirm_discard():
-            self.selection = []
             self.document.new()
 
-    def open_file(self, path: str | None = None) -> None:
+    def open_project(self, path: str | None = None) -> None:
         if not self._confirm_discard():
             return
         if not path:
             path, _ = QFileDialog.getOpenFileName(
-                self, "Open design", self._last_dir(), FILE_FILTER
+                self, "Open project", self._last_dir(), OPEN_FILTER
             )
-        if path:
-            self.selection = []
-            if self._run(lambda: self.document.open(path))[0]:
-                self._remember_dir(path)
-                self.canvas.fit()
+        if path and self._run(lambda: self.document.open(path))[0]:
+            self._remember_dir(path)
+            if self.document.path is None:
+                self.statusBar().showMessage(
+                    "Imported a legacy design: use Save as… to store it as a project folder", 10000
+                )
 
-    def save_file(self) -> bool:
+    def save_project(self) -> bool:
         if self.document.path is None:
-            return self.save_file_as()
+            return self.save_project_as()
         return self._run(self.document.save)[0]
 
-    def save_file_as(self) -> bool:
-        path, _ = QFileDialog.getSaveFileName(self, "Save design", self._last_dir(), FILE_FILTER)
-        if not path:
+    def save_project_as(self) -> bool:
+        folder = QFileDialog.getExistingDirectory(
+            self, "Save project in folder (create a new folder for a new project)", self._last_dir()
+        )
+        if not folder:
             return False
-        if not path.endswith(".mems"):
-            path += ".mems"
-        self._remember_dir(path)
-        return self._run(lambda: self.document.save(path))[0]
+        target = Path(folder)
+        if (target / "project.yaml").exists() and target != self.document.path:
+            answer = QMessageBox.question(
+                self, "Replace project", f"{target} already contains a project. Replace it?"
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return False
+        self._remember_dir(str(target / "project.yaml"))
+        return self._run(lambda: self.document.save(target))[0]
 
     def export_file(self, mode: str) -> None:
         exporters = available_exporters()
@@ -445,7 +457,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("MEMS Sketch")
     window = MainWindow()
     if len(argv) > 1:
-        window.open_file(argv[1])
+        window.open_project(argv[1])
     window.show()
     return app.exec()
 

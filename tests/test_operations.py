@@ -9,7 +9,7 @@ from mems_sketch import (
     BooleanShape,
     CircleShape,
     ComponentDef,
-    Design,
+    Project,
     FilletShape,
     GroupShape,
     Instance,
@@ -29,7 +29,7 @@ from mems_sketch.core.shapes import ARC_TOLERANCE_UM
 from mems_sketch.process import etch
 
 
-def area(design: Design, layer: str = "device") -> float:
+def area(design: Project, layer: str = "device") -> float:
     region = design.render().layers.get(layer)
     return 0.0 if region is None else region.area() / to_dbu(1) ** 2
 
@@ -39,8 +39,8 @@ def rect(x0, y0, x1, y1, layer="device", **kw) -> RectShape:
 
 
 @pytest.fixture
-def design() -> Design:
-    d = Design()
+def design() -> Project:
+    d = Project()
     d.add_layer(Layer("device", 1, undercut=0.5))
     d.add_layer(Layer("anchor", 2))
     d.add_layer(Layer("metal", 3))
@@ -267,8 +267,8 @@ def test_operation_tree_round_trips(design, tmp_path):
             ],
         )
     )
-    save(design, tmp_path / "ops.mems")
-    loaded = load(tmp_path / "ops.mems")
+    save(design, tmp_path / "ops")
+    loaded = load(tmp_path / "ops")
     assert loaded == design
     assert area(loaded) == pytest.approx(area(design))
 

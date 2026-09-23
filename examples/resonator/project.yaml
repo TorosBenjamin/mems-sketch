@@ -1,0 +1,5 @@
+format: mems-sketch/1
+name: resonator
+top: top
+libraries:
+  std: ../libraries/mems_std

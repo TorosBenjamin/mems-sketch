@@ -37,3 +37,14 @@ class Process:
     def scope(self) -> dict[str, float]:
         """Resolved constants keyed as they appear in expressions (``process.name``)."""
         return {PROCESS_PREFIX + k: v for k, v in resolve_variables(self.constants).items()}
+
+
+def default_process() -> Process:
+    """Starting point for new projects: a device, anchor and metal layer."""
+    return Process(
+        layers={
+            "device": Layer("device", 1, 0, min_width=2.0, min_space=2.0),
+            "anchor": Layer("anchor", 2, 0),
+            "metal": Layer("metal", 3, 0),
+        }
+    )

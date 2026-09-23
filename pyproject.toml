@@ -9,7 +9,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.5"]
+gui = ["PySide6>=6.6"]
+dev = ["pytest>=8", "pytest-qt>=4.4", "ruff>=0.5", "PySide6>=6.6"]
+
+[project.gui-scripts]
+mems-sketch = "mems_sketch.gui.app:main"
 
 # Exporters are discovered through this entry-point group, so a separate
 # package can add a format without touching this repository.

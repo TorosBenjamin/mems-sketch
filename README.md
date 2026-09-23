@@ -5,17 +5,42 @@ components whose parameters can be expressions over shared variables. The tool
 applies etch-loss compensation, checks design rules, and exports through
 pluggable format modules. Simulation is out of scope.
 
-## Status
+![MEMS Sketch GUI](docs/screenshot.png)
 
-Core library only. The GUI (PySide6) will be built on the same API, so
-everything the GUI does can also be scripted.
-
-## Install
+## Install and run
 
 ```bash
-pip install -e ".[dev]"
-pytest
+pip install -e ".[gui]"        # or ".[dev]" for tests and linting
+python examples/resonator.py   # writes resonator.mems
+mems-sketch resonator.mems     # or: python -m mems_sketch.gui
 ```
+
+## GUI
+
+The GUI is built on the same API as scripting, so everything it does can also
+be scripted.
+
+- **Shapes** panel: the design's shape tree. Checkboxes enable or disable a
+  node; Ctrl/Shift-click selects several. Boolean operands appear under A and B.
+- **Canvas**: wheel to zoom, middle or right drag to pan, F to fit, click to
+  select. The selection is outlined in yellow and rule violations are marked
+  in red. The View box switches between drawn, as-etched and etch-compensated
+  geometry.
+- **Properties**: generated from the selected node's schema. Any numeric
+  field takes a number or an expression, with its value shown beside it. For a
+  component the component's own parameters are listed, with their defaults as
+  placeholders. Apply (or Enter) commits; invalid input is rejected with a
+  message and the design stays unchanged.
+- **Insert → Primitive / Component** adds a shape. **Operations** (Group,
+  Union, Subtract, Intersect, XOR, Offset, Fillet, Layer map) wrap the selected
+  sibling shapes in a new operation node; for booleans the first selected shape
+  in tree order is A and the rest are B. **Edit → Unwrap** reverses it.
+- **Variables** and **Layers** panels edit global variables and process layers
+  (GDS mapping, undercut, minimum width and spacing) in place.
+- **Messages** lists errors and rule violations; click one to zoom to it.
+- Full undo/redo (Ctrl+Z / Ctrl+Shift+Z), duplicate (Ctrl+D), delete (Del).
+- **File → Export** writes drawn, as-etched or etch-compensated geometry in any
+  installed export format.
 
 ## Code-first use
 
@@ -49,6 +74,7 @@ See `examples/comb_actuator.py` for a complete script.
 | `process/rules.py` | Minimum width and spacing checks per layer |
 | `storage/sqlite_store.py` | `.mems` design files (SQLite; parametric model only, no geometry) |
 | `export/` | Exporter plugins: GDSII, OASIS, DXF |
+| `gui/` | PySide6 desktop app: document (undo, transactions), canvas, panels, property editor |
 
 Units are micrometres; the database unit is 1 nm.
 

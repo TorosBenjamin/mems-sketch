@@ -1,0 +1,312 @@
+"""Property editor generated from a shape node's schema.
+
+Numeric fields accept a number or an expression; the evaluated value is shown
+next to the field. For a component reference the component's own parameter
+schema is shown, with defaults as placeholders. Edits are applied with the
+Apply button or Enter and go through the document, so invalid input is
+rejected without changing the design.
+"""
+
+from __future__ import annotations
+
+import typing
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
+from mems_sketch.core.expressions import evaluate
+from mems_sketch.core.shapes import NodePath, Shape
+from mems_sketch.gui.document import DesignDocument
+from mems_sketch.gui.panels import parse_value
+
+# Fields edited by dedicated widgets, or not at all (children are edited in the tree).
+_SPECIAL = {
+    "kind",
+    "name",
+    "enabled",
+    "repeat",
+    "params",
+    "points",
+    "mapping",
+    "children",
+    "a",
+    "b",
+}
+_LABELS = {
+    "x0": "x₀",
+    "y0": "y₀",
+    "x1": "x₁",
+    "y1": "y₁",
+    "mirror_x": "Mirror about x",
+    "keep_unmapped": "Keep unmapped layers",
+    "inner_radius": "Inner radius",
+    "outer_radius": "Outer radius",
+    "start_angle": "Start angle °",
+    "end_angle": "End angle °",
+    "rotation": "Rotation °",
+    "op": "Operation",
+}
+
+
+class PropertyEditor(QScrollArea):
+    error = Signal(str)
+    applied = Signal()
+
+    def __init__(self, document: DesignDocument) -> None:
+        super().__init__()
+        self.document = document
+        self.setWidgetResizable(True)
+        self.path: NodePath | None = None
+        self._editors: dict[str, typing.Callable[[], object]] = {}
+        self._show_placeholder("Select a shape to edit its properties.")
+
+    # -- building ----------------------------------------------------------
+
+    def show_node(self, path: NodePath | None) -> None:
+        self.path = path
+        if path is None:
+            self._show_placeholder("Select a shape to edit its properties.")
+            return
+        try:
+            node = self.document.node(path)
+        except KeyError:
+            self._show_placeholder("Select a shape to edit its properties.")
+            return
+        self._editors = {}
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        form = QFormLayout()
+        layout.addLayout(form)
+        form.addRow(QLabel(f"<b>{node.kind}</b>"))
+
+        name = QLineEdit(node.name or "")
+        name.returnPressed.connect(self.apply)
+        form.addRow("Name", name)
+        self._editors["name"] = lambda: name.text().strip() or None
+        enabled = QCheckBox()
+        enabled.setChecked(node.enabled)
+        form.addRow("Enabled", enabled)
+        self._editors["enabled"] = enabled.isChecked
+
+        for field, info in type(node).model_fields.items():
+            if field in _SPECIAL:
+                continue
+            label = _LABELS.get(field, field.replace("_", " ").capitalize())
+            form.addRow(label, self._field_editor(field, info.annotation, getattr(node, field)))
+
+        if node.kind in ("polygon", "path"):
+            form.addRow("Points (x, y per line)", self._points_editor(node.points))
+        if node.kind == "layer_map":
+            form.addRow("Mapping (from → to)", self._mapping_editor(node.mapping))
+        if node.kind == "ref":
+            layout.addWidget(self._params_editor(node))
+        layout.addWidget(self._repeat_editor(node))
+
+        apply = QPushButton("Apply")
+        apply.setDefault(True)
+        apply.clicked.connect(self.apply)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(apply)
+        layout.addLayout(row)
+        layout.addStretch()
+        self.setWidget(body)
+
+    def _field_editor(self, field: str, annotation, value) -> QWidget:
+        args = typing.get_args(annotation)
+        if typing.get_origin(annotation) is typing.Literal:
+            combo = QComboBox()
+            combo.addItems([str(a) for a in args])
+            combo.setCurrentText(str(value))
+            self._editors[field] = combo.currentText
+            return combo
+        if annotation is bool:
+            box = QCheckBox()
+            box.setChecked(bool(value))
+            self._editors[field] = box.isChecked
+            return box
+        if field == "layer":
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.addItems(list(self.document.design.layers))
+            combo.setCurrentText(value)
+            self._editors[field] = lambda: combo.currentText().strip()
+            return combo
+        if field == "component":
+            combo = QComboBox()
+            combo.addItems(self.document.component_names())
+            combo.setCurrentText(value)
+            self._editors[field] = combo.currentText
+            return combo
+        optional = type(None) in args
+        return self._value_editor(field, value, optional)
+
+    def _value_editor(self, field: str, value, optional: bool = False) -> QWidget:
+        """A line edit for a number or expression, with the evaluated value beside it."""
+        edit = QLineEdit("" if value is None else _format(value))
+        edit.returnPressed.connect(self.apply)
+        result = QLabel()
+        result.setMinimumWidth(60)
+        result.setStyleSheet("color: gray")
+
+        def update_result() -> None:
+            text = edit.text().strip()
+            if not text:
+                result.setText("default" if optional else "")
+                return
+            try:
+                variables = {**self.document.design.resolved_variables(), "i": 0.0, "j": 0.0}
+                result.setText(f"= {evaluate(parse_value(text), variables):g}")
+            except Exception:  # noqa: BLE001 - only a preview
+                result.setText("?")
+
+        edit.textChanged.connect(update_result)
+        update_result()
+
+        def read():
+            text = edit.text().strip()
+            if not text and optional:
+                return None
+            return parse_value(text)
+
+        self._editors[field] = read
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(edit, 1)
+        row.addWidget(result)
+        return container
+
+    def _points_editor(self, points) -> QWidget:
+        edit = QPlainTextEdit("\n".join(f"{_format(x)}, {_format(y)}" for x, y in points))
+        edit.setFixedHeight(110)
+
+        def read():
+            rows = [line.split(",") for line in edit.toPlainText().splitlines() if line.strip()]
+            if any(len(r) != 2 for r in rows):
+                raise ValueError("each point needs two comma-separated values")
+            return [(parse_value(x), parse_value(y)) for x, y in rows]
+
+        self._editors["points"] = read
+        return edit
+
+    def _mapping_editor(self, mapping: dict[str, str]) -> QWidget:
+        edit = QPlainTextEdit("\n".join(f"{a} -> {b}" for a, b in mapping.items()))
+        edit.setFixedHeight(80)
+
+        def read():
+            result = {}
+            for line in edit.toPlainText().splitlines():
+                if line.strip():
+                    source, sep, target = line.partition("->")
+                    if not sep:
+                        raise ValueError("write each mapping as 'source -> target'")
+                    result[source.strip()] = target.strip()
+            return result
+
+        self._editors["mapping"] = read
+        return edit
+
+    def _params_editor(self, node: Shape) -> QWidget:
+        box = QGroupBox(f"Parameters of {node.component}")
+        form = QFormLayout(box)
+        try:
+            schema = self.document.design.component(node.component).Params.model_fields
+        except KeyError:
+            form.addRow(QLabel("Unknown component."))
+            self._editors["params"] = lambda: node.params
+            return box
+        readers = {}
+        for field, info in schema.items():
+            current = node.params.get(field)
+            if info.annotation is str:
+                edit = QLineEdit("" if current is None else str(current))
+                edit.setPlaceholderText(str(info.default))
+                readers[field] = lambda e=edit: e.text().strip() or None
+                widget = edit
+            else:
+                widget = self._value_editor(f"param:{field}", current, optional=True)
+                readers[field] = self._editors.pop(f"param:{field}")
+                widget.findChild(QLineEdit).setPlaceholderText(_format(info.default))
+            label = info.description or field
+            form.addRow(label, widget)
+
+        def read():
+            values = {field: reader() for field, reader in readers.items()}
+            return {field: value for field, value in values.items() if value is not None}
+
+        self._editors["params"] = read
+        return box
+
+    def _repeat_editor(self, node: Shape) -> QWidget:
+        box = QGroupBox("Repeat on grid (index i, j)")
+        box.setCheckable(True)
+        box.setChecked(node.repeat is not None)
+        form = QFormLayout(box)
+        repeat = node.repeat
+        fields = {}
+        for field, default in (("columns", 1), ("rows", 1), ("dx", 0.0), ("dy", 0.0)):
+            value = getattr(repeat, field) if repeat else default
+            form.addRow(field, self._value_editor(f"repeat:{field}", value))
+            fields[field] = self._editors.pop(f"repeat:{field}")
+
+        def read():
+            if not box.isChecked():
+                return None
+            return {field: reader() for field, reader in fields.items()}
+
+        self._editors["repeat"] = read
+        return box
+
+    def _show_placeholder(self, text: str) -> None:
+        label = QLabel(text)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setWordWrap(True)
+        label.setStyleSheet("color: gray")
+        self.setWidget(label)
+
+    # -- applying ----------------------------------------------------------
+
+    def apply(self) -> None:
+        if self.path is None:
+            return
+        try:
+            node = self.document.node(self.path)
+            data = node.model_dump()
+            for field, read in self._editors.items():
+                data[field] = read()
+            new = type(node).model_validate(data)
+            self.document.replace_node(self.path, new)
+            self.applied.emit()
+        except Exception as exc:  # noqa: BLE001 - reported to the user
+            self.error.emit(_message(exc))
+
+
+def _format(value) -> str:
+    return f"{value:g}" if isinstance(value, float | int) else str(value)
+
+
+def _message(exc: Exception) -> str:
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            return "; ".join(
+                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" if e["loc"] else e["msg"]
+                for e in errors()
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return str(exc)

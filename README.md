@@ -148,10 +148,12 @@ MATLAB with `system(...)`.
 
 ## GUI
 
-The window follows JetBrains IDEs for the editor parts (tabs, tool windows,
-settings, Find Action) and Blender/Unity for the geometry (tool palette, tool
-options, gizmos, coloured axes). Icons are small SVG drawings coloured for the
-light or dark theme (`gui/icons.py`).
+The window follows JetBrains IDEs for the editor parts (one toolbar row,
+tool windows opened from stripes, tabs, settings, Find Action) and
+Blender/Unity for the geometry (canvas modes, gizmos, coloured axes). Icons
+are small SVG drawings coloured for the light or dark theme (`gui/icons.py`).
+Every menu is under **☰** at the left of the toolbar; the menu paths below
+(e.g. **View → Dark canvas**) are inside it.
 
 - **Look**: a light and a dark theme (**File → Settings… → Appearance**, or
   follow the system). The canvas follows the interface or keeps its own light
@@ -163,17 +165,24 @@ light or dark theme (`gui/icons.py`).
   user.
 - **Find Action** (Ctrl+Shift+A, the magnifier in the toolbar): type part of a
   command's name, Enter runs it.
-- **Toolbar** (one row): file and history, insert, operations, make/unpack
-  component, then the active tool and its **options** (as in Blender): the
-  drawing layer and path width for the drawing tools, the angle step for
-  Rotate. On the right: snapping toggles (shape points, grid), the gizmo
-  toggle, the view mode, split, Find Action and settings.
-- **Tool windows**: the side panels run the full height, with Messages under
-  the editor. Panel headers line up with the editor tabs and carry the panel's
-  own buttons (e.g. add or remove a layer); tabbed panels show their tabs on
-  top.
-- **Status bar**: the current hint, then problems (click to open Messages),
-  grid step, zoom and cursor position.
+- **Toolbar** (one row): ☰, the project, undo and redo, then **Add ▾**
+  (primitives: rectangle, circle, polygon and path start their drawing tool,
+  an arc is added as a default one), **Place ▾** (components) and
+  **Operations ▾**; on the right split view, Find Action and settings. New,
+  open, save and export are in **☰ → File** (Ctrl+N, Ctrl+O, Ctrl+S).
+- **Tool windows**, opened and closed from the stripes on the window edges,
+  as in IntelliJ: on the left stripe Components at the top, then Shapes and
+  Layers, and Messages (the bottom panel) at the bottom; on the right stripe
+  Properties, Parameters and Points. Each place shows one window at a time;
+  the left side splits when Components and Shapes (or Layers) are both open.
+  The side panels run the full height, with Messages under the editor; a
+  panel's header lines up with the editor tabs and carries the panel's own
+  buttons. Which windows are open and their sizes are remembered. **View →
+  Panels** lists them too.
+- **Status bar**: the current hint, the active tool and its options (the
+  drawing layer and path width while drawing, the angle step for Rotate), the
+  snapping toggles (shape points, grid) and the gizmo toggle, then problems
+  (click to open Messages), grid step, zoom and cursor position.
 - **Tabs**: every component opens in its own tab, with its own zoom, selection
   and view mode; the panels show the current tab. Double-click a component in
   the Components panel, or a placed component in the canvas or the Shapes
@@ -214,14 +223,23 @@ light or dark theme (`gui/icons.py`).
   definition, so it is read-only here (changing it would change every copy).
   Double-click such a row to open the component with that shape selected.
 - **Canvas**: wheel to zoom, middle or right drag (or Space + drag, in any
-  tool) to pan, F to fit; the buttons in the top-right corner zoom and fit
-  too. The selection is outlined in orange with its alignment points, the
+  tool) to pan, F to fit; the buttons in the bottom-right corner zoom and fit
+  too, and the **canvas modes** (Select, Hand, Move, Rotate, Align, Measure)
+  float in the top-right corner. The selection is outlined in orange with its alignment points, the
   shape under the cursor is outlined dashed (what a click would select), rule
   violations are boxed in red and the component's own points are marked in
   green. The x axis is red and the y axis green; the corner shows an axis
-  indicator and a scale bar, and the top left what is shown (component, view
-  mode, read-only). **View → Overlays** switches each of these on or off. The
-  View box switches between drawn, as-etched and etch-compensated geometry.
+  indicator and a scale bar, and the top left what is shown (component,
+  read-only) with the tab's **view mode**: click it to switch between drawn,
+  as-etched and etch-compensated geometry. **View → Overlays** switches each
+  of these on or off.
+- **Right-click** in the canvas (a click; a right drag pans): **Add** a
+  primitive with its first point where you clicked, **Place component**, and
+  for the selection (the shape under the cursor is selected first) Combine
+  (union, subtract, intersect, XOR), offset, fillet, transform, layer map,
+  make or unpack component, rotate 90° and mirror, duplicate and delete.
+  Entries that do not apply are greyed out. The keyboard's menu key opens it
+  too.
 - **Properties**: generated from the selected node's schema. Any numeric field
   takes a number or an expression, with its value shown beside it. For a
   component the component's own parameters are listed, with their declared
@@ -232,10 +250,11 @@ light or dark theme (`gui/icons.py`).
   saved or undone, and only affects that component's own tab (the components
   that place it still pass their own values). It also works on library and
   built-in components.
-- **Points** (tabbed with Parameters): the points the edited component
-  declares for whoever places it.
-- **Tools** (the palette on the left; a tool stays active until another is
-  chosen, Esc cancels what it is doing and, pressed again, returns to Select):
+- **Points**: the points the edited component declares for whoever places it.
+- **Tools** (the canvas modes in the canvas's corner; the drawing tools start
+  from **Add**, the right-click menu or their shortcut. A tool stays active
+  until another is chosen; Esc cancels what it is doing and, pressed again,
+  returns to Select):
   - **Select** (V): click to select (Ctrl/Shift to add), drag the selection to
     move it, drag on empty space to select with a box. A drag snaps to the
     grid, or a point of the moved shapes to another shape's point (Ctrl: no
@@ -250,7 +269,7 @@ light or dark theme (`gui/icons.py`).
   - **Rotate** (R): drag the ring around the selection to rotate about its
     centre, or click a pivot, then set the angle (15° steps by default; Ctrl:
     free). **Rotate 90°** (Ctrl+R, Ctrl+Shift+R) and **Mirror** left-right or
-    up-down act about the selection's centre.
+    up-down (right-click menu, or **Edit**) act about the selection's centre.
   - **Align** (A, Ctrl+L): click a shape, one of its points, then the point to
     put it on. Fine-tune the offset in Properties; **Edit → Remove alignment**
     takes it off and leaves the shape where it is.
@@ -263,9 +282,9 @@ light or dark theme (`gui/icons.py`).
     or (for a polygon) a click on the first point finishes, Backspace takes
     back the last point. Shift keeps segments at 0°, 45° or 90°.
 
-  The drawing tools draw on the layer chosen in the tool options (clicking a
-  layer in the Layers panel also chooses it); paths get the **Width** next to
-  it. Points snap to shape points, else to the grid
+  The drawing tools draw on the layer chosen in the status bar (clicking a
+  layer in the Layers window also chooses it); paths get the **Width** next
+  to it. Points snap to shape points, else to the grid
   (Ctrl: no snapping). A drawn shape is added at the top of the edited
   component with a fresh name, selected, and editable like any other; the
   numbers can be turned into expressions in Properties afterwards.
@@ -277,13 +296,15 @@ light or dark theme (`gui/icons.py`).
   so rotating one wraps it in a transform that takes over its name.
   Expressions stay parametric: `plate/2 + 39` moved by 11 becomes
   `plate/2 + 50`. Each move or rotation is one undo step.
-- **Layers**: visibility, colour, GDS numbers, undercut, minimum width and
-  spacing.
-- **Process constants** (tabbed with Parameters): values available in every
-  expression as `process.<name>`.
-- **View → Panels** reopens any panel that was closed.
-- **Operations** (Union, Subtract, Intersect, XOR, Offset, Fillet, Layer map,
-  Transform) wrap the selected sibling shapes in a new operation node; **Edit →
+- **Layers**: which layers are shown, their colours and GDS numbers.
+- **Process** (the first item of the project in Components, or **View →
+  Process**): a tab with the process constants, available in every
+  expression as `process.<name>`, and the layer definitions: GDS layer and
+  datatype, undercut, minimum width and spacing. Edits are undoable like any
+  other.
+- **Operations** (Operations ▾ or the right-click menu: Union, Subtract,
+  Intersect, XOR, Offset, Fillet, Layer map, Transform) wrap the selected
+  sibling shapes in a new operation node; **Edit →
   Unwrap** reverses it. **Make component** (Ctrl+K) moves the selection into a
   new component. The parameters it uses become the new component's parameters,
   so the geometry does not change; a single transform becomes a component
@@ -427,7 +448,7 @@ code. MATLAB can use the same API through its Python interface
 |---|---|
 | `core/project.py` | `Project`, `Library`, `Instance`: components, name resolution, parameters |
 | `core/compiler.py` | `Compiler` and `Session`: fingerprints, cache, rendering |
-| `core/shapes.py` | The shape tree: primitives, references, operations, alignment, evaluation |
+| `core/shapes/` | The shape tree: one module per shape kind in `kinds/`, their registry, alignment points, evaluation, rewriting |
 | `core/user_component.py` | `ComponentDef`, `ParamDef` and their adapter to `Component` |
 | `core/component.py` | `Component` base class, `Geometry`, built-in component registry |
 | `core/process.py` | `Process`, `Layer`, process constants |
@@ -437,13 +458,31 @@ code. MATLAB can use the same API through its Python interface
 | `storage/` | Project folders (canonical YAML) and the legacy SQLite importer |
 | `export/` | Exporter plugins: GDSII, OASIS, DXF |
 | `cli.py` | `mems-sketch-cli` |
-| `gui/` | PySide6 frontend: document (transactions, undo), tabs, canvas and tools, panels, property editor, editor state, settings, theme and icons |
+| `editing/` | `EditSession`: transactions, undo, files, and the edit commands (components, shapes, moves, points, parameters, process) |
+| `gui/` | PySide6 frontend: the window (actions and menus, toolbar, tool windows, status bar), tabs, canvas and tools, panels, the Process tab, property editor, editor state, settings, theme and icons |
 
 ## Extending
 
 **New built-in component:** subclass `Component`, define a nested `Params`
 model and `build()`, and decorate the class with `@register_component`.
 Override `points()` to offer alignment points.
+
+**New shape kind:** write a module in `core/shapes/kinds/` with a `Node`
+subclass (`Primitive` or `Operation` for the usual defaults) that implements
+`render` and, as needed, `moved`, `placement`, `summary`, `default` or `wrap`,
+and add the class to `KINDS` in `kinds/__init__.py`. `tests/test_shape_kinds.py`
+then checks it (YAML round trip, rendering, moving); the GUI's shape tree and
+property panel pick it up without changes.
+
+**New edit command:** a method on one of the command groups in `editing/`
+(`components.py`, `nodes.py`, `moves.py`, ...) that calls `self.session.edit`
+with a description and a change; it gets undo and rollback, and is usable from
+scripts at once. To offer it in the GUI, add an action in `gui/actions.py` and
+put it in a menu, the toolbar or the right-click menu.
+
+**New tool window:** `window.tool_windows.add(name, title, icon, widget,
+anchor)` in `MainWindow._build_tool_windows`, with an anchor of `left-top`,
+`left-bottom`, `bottom` or `right`.
 
 **New export format:** write a class with `format_name`, `file_extension` and
 `export(project, geometry, path)`. Register it either with `@register_exporter`

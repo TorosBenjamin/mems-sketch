@@ -81,13 +81,6 @@ SETTINGS: tuple[Setting, ...] = (
         choices=CANVAS_THEMES,
         keywords=("dark", "white", "background"),
     ),
-    Setting(
-        "appearance/palette_labels",
-        False,
-        "Show names under the tool icons",
-        "Appearance",
-        "Tool palette",
-    ),
     # -- Canvas -------------------------------------------------------------
     Setting(
         "canvas/fill_opacity",

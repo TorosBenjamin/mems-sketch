@@ -25,7 +25,7 @@ from mems_sketch.gui import icons
 ACTION_ROLE = Qt.ItemDataRole.UserRole
 
 
-def menu_actions(bar: QMenuBar) -> list[tuple[str, QAction]]:
+def menu_actions(bar: QMenuBar | QMenu) -> list[tuple[str, QAction]]:
     """Every command in the menus, as ``(menu path, action)``."""
     found: list[tuple[str, QAction]] = []
 

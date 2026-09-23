@@ -206,7 +206,7 @@ def test_editor_state_is_saved_in_the_project_and_restored(window, example, qtbo
     w.open_component("suspension")
     w.tree.select_paths([((0, 1),)])
     w.canvas.set_view_state(7.5, 12, 34)
-    w.mode_box.setCurrentIndex(w.mode_box.findData("etched"))
+    w.set_view_mode("etched")
     w.split_view()
     w.open_component("std.perforated_plate")
     w.document.set_trial("pitch", 30)

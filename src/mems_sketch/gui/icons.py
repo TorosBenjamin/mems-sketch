@@ -233,6 +233,18 @@ ICONS = {
     'stroke="{x}"/>',
     "point": '<circle cx="8" cy="8" r="4.2"/><path d="M8 2v12M2 8h12"/>',
     "ruler": '<path d="M1.9 10.6 10.6 1.9l3.5 3.5-8.7 8.7z"/>',
+    # -- tool windows -----------------------------------------------------
+    "minimize": '<path d="M4 8.5h8"/>',
+    "menu": '<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',
+    "shapes": '<rect x="2" y="2" width="4" height="3" rx=".6"/><path d="M4 5v7.5h3M4 8.5h3"/>'
+    '<rect x="8" y="7" width="6" height="3" rx=".6" stroke="{blue}"/>'
+    '<rect x="8" y="11" width="6" height="3" rx=".6" stroke="{blue}"/>',
+    "parameters": '<path d="M2.5 4.5h2M7.5 4.5h6M2.5 8h6.5M12 8h1.5M2.5 11.5h1M6.5 11.5h7"/>'
+    '<circle cx="6" cy="4.5" r="1.5"/><circle cx="10.5" cy="8" r="1.5"/>'
+    '<circle cx="5" cy="11.5" r="1.5"/>',
+    "messages": '<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.2h5M5.5 8.2h3"/>',
+    "properties": '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>'
+    '<path d="M5 6h2M5 10h2M9 6h2M9 10h2"/>',
     # -- messages ---------------------------------------------------------
     "error": '<circle cx="8" cy="8" r="6.2" fill="{red}" stroke="none"/>'
     '<path d="M8 4.6v4.2M8 11.1v.3" stroke="#fff" stroke-width="1.6"/>',

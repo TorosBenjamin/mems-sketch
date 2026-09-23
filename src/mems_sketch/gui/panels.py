@@ -175,9 +175,11 @@ class ComponentsPanel(_Panel):
     place_requested = Signal(str)
     open_requested = Signal(str)
     open_aside_requested = Signal(str)  # open in the other pane
+    process_requested = Signal()
     collapse_changed = Signal()
     NAME_ROLE = Qt.ItemDataRole.UserRole
     GROUP_ROLE = Qt.ItemDataRole.UserRole + 1  # "project", "library:<name>", "builtin"
+    PROCESS_ROLE = Qt.ItemDataRole.UserRole + 2  # the Process item
     PENDING = "…"  # placeholder child: filled in when the item is expanded
 
     def __init__(self, document: EditSession) -> None:
@@ -220,6 +222,10 @@ class ComponentsPanel(_Panel):
         scroll = self.tree.verticalScrollBar().value()
         self.tree.clear()
         local = self._group(project.name, "project", "folder", "Project components")
+        process = QTreeWidgetItem(local, ["Process"])
+        process.setData(0, self.PROCESS_ROLE, True)
+        process.setIcon(0, icons.icon("layers"))
+        process.setToolTip(0, "The process's layers and constants (opens in a tab)")
         names = sorted(project.components, key=lambda n: n != project.top)  # top first
         for name in names:
             self._component(local, name, name)
@@ -335,6 +341,9 @@ class ComponentsPanel(_Panel):
         return name is not None and name in self.document.project.components
 
     def _activated(self, item: QTreeWidgetItem) -> None:
+        if item.data(0, self.PROCESS_ROLE):
+            self.process_requested.emit()
+            return
         name = item.data(0, self.NAME_ROLE)
         if name is not None:
             self.open_requested.emit(name)
@@ -347,11 +356,17 @@ class ComponentsPanel(_Panel):
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
 
     def _context_menu(self, position) -> None:
-        item = self.tree.itemAt(position)
+        menu = self.menu_for(self.tree.itemAt(position))
+        if not menu.isEmpty():
+            menu.exec(self.tree.viewport().mapToGlobal(position))
+
+    def menu_for(self, item: QTreeWidgetItem | None) -> QMenu:
+        """The right-click menu for an item of the explorer (or its empty space)."""
         menu = QMenu(self)
-        self.context_menu = menu  # for tests
         if item is None:
             self._project_actions(menu)
+        elif item.data(0, self.PROCESS_ROLE):
+            _menu_action(menu, "Open the process", self.process_requested.emit, "layers")
         elif item.data(0, self.GROUP_ROLE) is not None:
             group = item.data(0, self.GROUP_ROLE)
             if group == "project":
@@ -367,8 +382,7 @@ class ComponentsPanel(_Panel):
         else:
             self.tree.setCurrentItem(item)
             self._component_actions(menu, item.data(0, self.NAME_ROLE))
-        if not menu.isEmpty():
-            menu.exec(self.tree.viewport().mapToGlobal(position))
+        return menu
 
     def _project_actions(self, menu) -> None:
         _menu_action(menu, "New component…", self._new, "add")
@@ -900,28 +914,26 @@ class PointsPanel(_Panel):
 
 
 class LayersPanel(_Panel):
-    """Process layers: visibility, colour, GDS mapping, etch loss and rules."""
+    """The layers as shown: visibility and colour. Click a layer to draw on it.
+
+    Their definitions (GDS numbers, etch loss, rules) are part of the process
+    and edited in the Process tab (:class:`LayerDefinitionsPanel`).
+    """
 
     visibility_changed = Signal(str, bool)
-    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm")
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.visible: dict[str, bool] = {}
         self.colors: dict[str, QColor] = {}
-        self.layers = _table(self.LAYER_COLUMNS)
+        self.layers = _table(("Layer", "GDS"))
         self.layers.itemChanged.connect(self._layer_changed)
         self.layers.setToolTip("Tick to show a layer; click a layer to draw on it")
+        self.layers.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.actions = _action_bar(
-            None,
-            ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
-            ("remove", "Remove the selected layers", self._remove_layers),
-        )
-        self.header_buttons = list(self.actions.buttons.values())  # shown in the dock header
         layout.addWidget(self.layers)
         self._layer_names: list[str] = []
 
@@ -931,6 +943,53 @@ class LayersPanel(_Panel):
         layers = self.document.project.layers
         self._layer_names = list(layers)
         self.colors = {name: layer_color(i) for i, name in enumerate(layers)}
+        self.layers.blockSignals(True)
+        self.layers.setRowCount(len(layers))
+        for row, layer in enumerate(layers.values()):
+            name_cell = QTableWidgetItem(layer.name)
+            name_cell.setFlags(name_cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            shown = self.visible.get(layer.name, True)
+            name_cell.setCheckState(Qt.CheckState.Checked if shown else Qt.CheckState.Unchecked)
+            name_cell.setIcon(swatch_icon(self.colors[layer.name]))
+            self.layers.setItem(row, 0, name_cell)
+            self.layers.setItem(row, 1, _readonly(f"{layer.gds_layer}/{layer.gds_datatype}"))
+        self.layers.blockSignals(False)
+
+    def _layer_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() != 0:
+            return
+        name = self._layer_names[item.row()]
+        shown = item.checkState() == Qt.CheckState.Checked
+        if shown != self.visible.get(name, True):
+            self.visible[name] = shown
+            self.visibility_changed.emit(name, shown)
+
+
+class LayerDefinitionsPanel(_Panel):
+    """The process's layers: name, GDS mapping, etch loss and rules (in the Process tab)."""
+
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm")
+
+    def __init__(self, document: EditSession) -> None:
+        super().__init__()
+        self.document = document
+        self.layers = _table(self.LAYER_COLUMNS)
+        self.layers.itemChanged.connect(self._layer_changed)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            QLabel("Layers"),
+            ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
+            ("remove", "Remove the selected layers", self._remove_layers),
+        )
+        layout.addLayout(self.actions)
+        layout.addWidget(self.layers)
+        self._layer_names: list[str] = []
+
+    def refresh(self) -> None:
+        layers = self.document.project.layers
+        self._layer_names = list(layers)
         self.layers.blockSignals(True)
         self.layers.setRowCount(len(layers))
         for row, layer in enumerate(layers.values()):
@@ -944,11 +1003,6 @@ class LayersPanel(_Panel):
             ]
             for column, value in enumerate(values):
                 self.layers.setItem(row, column, QTableWidgetItem(_format(value)))
-            name_cell = self.layers.item(row, 0)
-            name_cell.setFlags(name_cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            shown = self.visible.get(layer.name, True)
-            name_cell.setCheckState(Qt.CheckState.Checked if shown else Qt.CheckState.Unchecked)
-            name_cell.setIcon(swatch_icon(self.colors[layer.name]))
         self.layers.blockSignals(False)
         # the name column also holds the check box and the colour swatch
         header = self.layers.horizontalHeader()
@@ -959,14 +1013,6 @@ class LayersPanel(_Panel):
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:
         name = self._layer_names[item.row()]
-        if item.column() == 0:
-            shown = item.checkState() == Qt.CheckState.Checked
-            if shown != self.visible.get(name, True):
-                self.visible[name] = shown
-                self.visibility_changed.emit(name, shown)
-                return
-            if item.text().strip() == name:
-                return
         row = item.row()
         texts = [self.layers.item(row, c).text().strip() for c in range(len(self.LAYER_COLUMNS))]
 
@@ -983,8 +1029,6 @@ class LayersPanel(_Panel):
                 optional(texts[5]),
             )
             self.document.process.set_layer(name, layer)
-            if layer.name != name:
-                self.visible[layer.name] = self.visible.pop(name, True)
 
         if not self._guard(apply):
             self.refresh()

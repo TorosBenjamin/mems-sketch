@@ -133,8 +133,14 @@ MATLAB with `system(...)`.
   tree, to open it. Library and built-in components open read-only. **View →
   Split view** (Ctrl+\\) shows two tabs side by side: edit a spring on one side
   and watch the resonator that uses it on the other. A `*` on a tab marks a
-  component changed since the last save. Open tabs are remembered per project
-  (in the app's settings, not in the project folder).
+  component changed since the last save.
+- **Editor state**: how the project was being looked at comes back when it is
+  reopened: open tabs and the split, zoom and position per tab, view modes,
+  selections, rulers, collapsed tree items, hidden layers and trial values. It
+  is kept in `.mems-sketch/state.json` in the project folder, which carries its
+  own `.gitignore`, so it moves with the project but never reaches git.
+  Deleting the folder resets the views. Window layout, canvas theme and the
+  active tool are per user, in the app settings.
 - **Undo/redo** is one history for the whole project and goes back to the tab
   where the change was made, reopening it if it was closed.
 - **Components**: the project's components (✎ marks the one in the current
@@ -143,8 +149,8 @@ MATLAB with `system(...)`.
 - **Shapes**: the shape tree of the component being edited. Checkboxes enable
   or disable a node; Ctrl/Shift-click selects several. Boolean operands appear
   under A and B, and each alignment is shown (e.g. `bottom at spring.end`).
-- **Canvas**: wheel to zoom, middle or right drag to pan, F to fit, click to
-  select. The selection is outlined with its alignment points, rule
+- **Canvas**: wheel to zoom, middle or right drag (or Space + drag, in any
+  tool) to pan, F to fit. The selection is outlined with its alignment points, rule
   violations are boxed in red and the component's own points are marked in
   green. The background is white; **View → Dark canvas** switches to dark
   (remembered). The View box switches between drawn, as-etched and etch-compensated
@@ -161,18 +167,34 @@ MATLAB with `system(...)`.
   built-in components.
 - **Points** (tabbed with Parameters): the points the edited component
   declares for whoever places it.
-- **Moving**: drag shapes on the canvas, or nudge the selection with the arrow
-  keys (one grid step; Shift for a tenth). The drag snaps to the grid, or to
-  another shape's point when one is near (Ctrl: no snapping). Shapes aligned
-  to the dragged ones move along. What changes is what the shape stores,
-  always relative to its parent: `x`, `y` of a component or transform, the
+- **Tools** (the palette on the left; a tool stays active until another is
+  chosen, Esc cancels what it is doing and, pressed again, returns to Select):
+  - **Select** (V): click to select (Ctrl/Shift to add), drag the selection to
+    move it, drag on empty space to select with a box. A drag snaps to the
+    grid, or a point of the moved shapes to another shape's point (Ctrl: no
+    snapping); releasing with **Shift** on a snapped point aligns the shape
+    there. Shapes aligned to the moved ones move along.
+  - **Hand** (H): the left button pans (for trackpads without a middle button).
+  - **Move** (M): click a base point, then where it goes; both snap to shape
+    points, so parts can be placed exactly. **Edit → Move by…** takes a typed
+    dx, dy; the arrow keys nudge by a grid step (Shift: a tenth).
+  - **Rotate** (R): click the pivot, then set the angle (15° steps; Ctrl:
+    free). **Rotate 90°** (Ctrl+R, Ctrl+Shift+R) and **Mirror** left-right or
+    up-down act about the selection's centre.
+  - **Align** (A, Ctrl+L): click a shape, one of its points, then the point to
+    put it on. Fine-tune the offset in Properties; **Edit → Remove alignment**
+    takes it off and leaves the shape where it is.
+  - **Measure** (D): click two points (they snap) to see the distance, dx and
+    dy. Rulers stay until **Tools → Clear rulers**; they also work on
+    read-only tabs.
+
+  Moving and rotating change what a shape stores, always relative to its
+  parent: `x`, `y` and `rotation` of a component or transform, the
   coordinates of a primitive, or the offset of an aligned shape (Alt-drag
-  removes the alignment instead). Expressions stay parametric: `plate/2 + 39`
-  moved by 11 becomes `plate/2 + 50`. Releasing with **Shift** on a snapped
-  point aligns the shape there. Esc cancels; each drag is one undo step.
-- **Align** (Ctrl+L): select a shape, click one of its points, then click the
-  point to put it on. Fine-tune the offset in Properties; **Edit → Remove
-  alignment** takes it off and leaves the shape where it is. Esc cancels.
+  removes the alignment instead). Primitives have no rotation of their own,
+  so rotating one wraps it in a transform that takes over its name.
+  Expressions stay parametric: `plate/2 + 39` moved by 11 becomes
+  `plate/2 + 50`. Each move or rotation is one undo step.
 - **Layers**: visibility, colour, GDS numbers, undercut, minimum width and
   spacing.
 - **Process constants** (tabbed with Parameters): values available in every
@@ -290,7 +312,7 @@ code. MATLAB can use the same API through its Python interface
 | `storage/` | Project folders (canonical YAML) and the legacy SQLite importer |
 | `export/` | Exporter plugins: GDSII, OASIS, DXF |
 | `cli.py` | `mems-sketch-cli` |
-| `gui/` | PySide6 frontend: document (transactions, undo), canvas, panels, property editor |
+| `gui/` | PySide6 frontend: document (transactions, undo), tabs, canvas and tools, panels, property editor, editor state |
 
 ## Extending
 

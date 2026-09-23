@@ -6,14 +6,12 @@ The window is a frontend only: it shows and edits the project through
 
 from __future__ import annotations
 
-import json
-import math
 import sys
 from pathlib import Path
 
 import klayout.db as kdb
-from PySide6.QtCore import QRectF, QSettings, Qt
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtCore import QRectF, QSettings, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -27,11 +25,11 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
-from mems_sketch.core.component import to_dbu
-from mems_sketch.core.shapes import Align, NodePath
+from mems_sketch.core.shapes import NodePath
 from mems_sketch.export.base import available_exporters
 from mems_sketch.gui.canvas import DEFAULT_THEME, THEMES, LayoutCanvas
-from mems_sketch.gui.document import VIEW_MODES, DragPlan, ProjectDocument
+from mems_sketch.gui.document import VIEW_MODES, ProjectDocument
+from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.panels import (
     ComponentsPanel,
     ConstantsPanel,
@@ -42,9 +40,10 @@ from mems_sketch.gui.panels import (
     ShapeTree,
 )
 from mems_sketch.gui.properties import PropertyEditor
+from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
 from mems_sketch.gui.views import ComponentView, EditorArea
 
-SNAP_PX = 10  # a dragged point snaps to another shape's point within this many pixels
+STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 PRIMITIVES = [
     ("rect", "Rectangle"),
@@ -69,19 +68,19 @@ class MainWindow(QMainWindow):
     def __init__(self, document: ProjectDocument | None = None) -> None:
         super().__init__()
         self.document = document or ProjectDocument()
-        # The Align tool: None, or the step ("own" / "target") with its path and candidates.
-        self.align_step: str | None = None
-        self._align_path: NodePath | None = None
-        self._align_point: str | None = None
-        self._candidates: list[tuple[str, float, float]] = []
         self._problems: list[str] = []
-        self._restoring = False  # while opening a project, the tab layout is not saved
-        # Dragging: the plan and where it started; a press on the selection that may
-        # turn out to be a plain click (which then selects only the shape under it).
-        self._drag: dict | None = None
-        self._pending_click: NodePath | None = None
-        theme = QSettings("mems-sketch", "mems-sketch").value("canvas/theme", DEFAULT_THEME)
+        self._restoring = False  # while opening a project, the editor state is not saved
+        self.rulers: dict[str, list[tuple[float, float, float, float]]] = {}  # per component
+        settings = QSettings("mems-sketch", "mems-sketch")
+        theme = settings.value("canvas/theme", DEFAULT_THEME)
         self.canvas_theme = theme if theme in THEMES else DEFAULT_THEME
+        self.tools: dict[str, Tool] = {cls.name: cls(self) for cls in TOOLS}
+        self.tool: Tool = self.tools["select"]
+        self.tool.reset()
+        self._state_timer = QTimer(self)
+        self._state_timer.setSingleShot(True)
+        self._state_timer.setInterval(STATE_SAVE_DELAY_MS)
+        self._state_timer.timeout.connect(self.save_editor_state)
 
         self.area = EditorArea(self.document)
         self.setCentralWidget(self.area)
@@ -104,7 +103,7 @@ class MainWindow(QMainWindow):
         self.document.file_changed.connect(self._update_title)
         self.document.component_renamed.connect(self.area.rename)
         self.area.current_changed.connect(self._view_activated)
-        self.area.tabs_changed.connect(self._save_tabs)
+        self.area.tabs_changed.connect(self.state_changed)
         self.tree.selection_changed_paths.connect(self._tree_selected)
         self.tree.enabled_toggled.connect(
             lambda p, e: self._run(lambda: self.document.set_enabled(p, e))
@@ -113,6 +112,9 @@ class MainWindow(QMainWindow):
         self.components.place_requested.connect(self.add_component)
         self.components.open_requested.connect(self.open_component)
         self.layers.visibility_changed.connect(self._set_layer_visible)
+        self.tree.collapse_changed.connect(self.state_changed)
+        self.components.collapse_changed.connect(self.state_changed)
+        self.document.changed.connect(self.state_changed)  # e.g. trial values
         self.messages.zoom_requested.connect(self._zoom_to_bbox)
         for panel in (
             self.properties,
@@ -127,6 +129,8 @@ class MainWindow(QMainWindow):
         self.resize(1500, 950)
         self.refresh()
         self._update_title()
+        saved_tool = settings.value("tool", "select")
+        self.set_tool(saved_tool if saved_tool in self.tools else "select")
 
     # -- construction ------------------------------------------------------
 
@@ -165,25 +169,26 @@ class MainWindow(QMainWindow):
         if not getattr(view, "rendered", False):
             view.rendered = True
             view.refresh(self.layers.colors, self.layers.visible)
-            view.canvas.clicked.connect(
-                lambda x, y, additive, v=view: self._view_clicked(v, x, y, additive)
-            )
-            view.canvas.double_clicked.connect(
-                lambda x, y, v=view: self._view_double_clicked(v, x, y)
-            )
-            view.canvas.cursor_moved.connect(self._cursor_moved)
-            view.canvas.released.connect(self._click_released)
-            view.canvas.drag_started.connect(lambda x, y, v=view: self._drag_started(v, x, y))
-            view.canvas.drag_moved.connect(self._drag_moved)
-            view.canvas.drag_finished.connect(self._drag_finished)
-            view.canvas.nudged.connect(self.nudge)
-            view.canvas.set_theme(self.canvas_theme)
+            canvas = view.canvas
+            canvas.pressed.connect(lambda x, y, m, v=view: self._pressed(v, x, y, m))
+            canvas.moved.connect(lambda x, y, m, left, v=view: self._moved(v, x, y, m, left))
+            canvas.released.connect(lambda x, y, m, v=view: self._released(v, x, y, m))
+            canvas.double_clicked.connect(lambda x, y, v=view: self._view_double_clicked(v, x, y))
+            canvas.cursor_moved.connect(self._cursor_moved)
+            canvas.nudged.connect(self.nudge)
+            canvas.view_changed.connect(self.state_changed)
+            canvas.set_theme(self.canvas_theme)
+            canvas.left_pans = self.tool.name == "hand"
+            canvas.set_tool_cursor(self.tool.cursor)
+            canvas.show_rulers(self.rulers.get(view.component, []))
         return view
 
     def _view_activated(self, view: ComponentView) -> None:
         """The user switched tabs (or panes): the panels follow the new current tab."""
-        self.cancel_align(quiet=True)
+        for tool in self.tools.values():
+            tool.reset()  # what a tool was doing belongs to the previous tab
         self._render(view)
+        self.state_changed()
         if self.document.active != view.component:
             self.document.set_active(view.component)  # emits active_changed
         else:
@@ -219,43 +224,205 @@ class MainWindow(QMainWindow):
         if self.area.current is not None:
             self.area.close_view(self.area.current)
 
-    def _save_tabs(self) -> None:
-        if self.document.path is not None and not self._restoring:
-            QSettings("mems-sketch", "mems-sketch").setValue(
-                self._tabs_key(), json.dumps(self.area.layout_state())
-            )
+    # -- editor state (see mems_sketch.gui.editor_state) -------------------
 
-    def _restore_tabs(self) -> None:
-        """Reopen the tabs that were open the last time this project was open."""
+    def state_changed(self) -> None:
+        """Something worth remembering changed: save the editor state a moment later."""
+        if self.document.path is not None and not self._restoring:
+            self._state_timer.start()
+
+    def editor_state(self) -> dict:
+        """How the project is being looked at: tabs, views, rulers, tree and layer state."""
+        panes = []
+        for pane in self.area.panes:
+            tabs = []
+            for i in range(pane.count()):
+                view = pane.widget(i)
+                zoom, x, y = view.canvas.view_state()
+                tabs.append(
+                    {
+                        "component": view.component,
+                        "mode": view.view_mode,
+                        "zoom": zoom,
+                        "center": [x, y],
+                        "selection": [[list(step) for step in path] for path in view.selection],
+                    }
+                )
+            panes.append({"tabs": tabs, "current": pane.currentIndex()})
+        current = self.area.current
+        return {
+            "panes": panes,
+            "current_pane": self.area.panes.index(self.area.pane_of(current)) if current else 0,
+            "rulers": {c: [list(r) for r in rs] for c, rs in self.rulers.items() if rs},
+            "hidden_layers": sorted(n for n, shown in self.layers.visible.items() if not shown),
+            "collapsed": {
+                "components": sorted(self.components.collapsed),
+                "shapes": {
+                    c: [[list(step) for step in p] for p in sorted(paths)]
+                    for c, paths in self.tree.collapsed.items()
+                    if paths
+                },
+            },
+            "trials": {c: dict(v) for c, v in self.document.trials.items() if v},
+        }
+
+    def save_editor_state(self) -> None:
+        self._state_timer.stop()
+        if self.document.path is not None and not self._restoring:
+            try:
+                save_state(self.document.path, self.editor_state())
+            except OSError as exc:  # e.g. a read-only folder: views are simply not remembered
+                self.statusBar().showMessage(f"Could not save the editor state: {exc}", 5000)
+
+    def restore_editor_state(self) -> None:
+        """Bring back how the project was being looked at the last time it was open."""
         if self.document.path is None:
             return
+        state = load_state(self.document.path)
+        if not state:
+            return
         try:
-            state = json.loads(
-                str(QSettings("mems-sketch", "mems-sketch").value(self._tabs_key(), ""))
-            )
-        except (json.JSONDecodeError, TypeError):
-            return
-        panes = [[n for n in names if self.document.exists(n)] for names in state["panes"]]
-        panes = [names for names in panes if names]
-        if not panes:
-            return
-        self.area.close_all()
-        for index, names in enumerate(panes[:2]):
-            if index:
-                self.area.split_view()
-                pane = self.area.panes[1]
-                while pane.count():  # split_view copied the current tab; use the saved ones
-                    pane.removeTab(0)
-            for name in names:
-                self._render(self.area.open(name, self.area.panes[index]))
-        current = state.get("current")
-        pane = self.area.panes[min(state.get("current_pane", 0), len(self.area.panes) - 1)]
-        view = self.area.find(current, pane) if current else None
-        if view is not None:
-            self.area.set_current(view)
+            self._apply_state(state)
+        except (KeyError, TypeError, ValueError, IndexError):
+            pass  # an unexpected state file only costs the views, never the project
 
-    def _tabs_key(self) -> str:
-        return "tabs/" + str(Path(self.document.path).resolve())
+    def _apply_state(self, state: dict) -> None:
+        exists = self.document.exists
+        layers = self.document.project.layers
+        self.layers.visible = {n: False for n in state.get("hidden_layers", []) if n in layers}
+        self.document.restore_trials(state.get("trials", {}))
+        self.rulers = {
+            c: [tuple(float(v) for v in r) for r in rs]
+            for c, rs in state.get("rulers", {}).items()
+            if exists(c)
+        }
+        collapsed = state.get("collapsed", {})
+        self.components.collapsed = set(collapsed.get("components", []))
+        self.tree.collapsed = {
+            c: {_path(p) for p in paths} for c, paths in collapsed.get("shapes", {}).items()
+        }
+        panes = [
+            {**pane, "tabs": [t for t in pane["tabs"] if exists(t["component"])]}
+            for pane in state.get("panes", [])[:2]
+        ]
+        panes = [pane for pane in panes if pane["tabs"]]
+        if panes:
+            self.area.close_all()
+            for index, pane in enumerate(panes):
+                if index:
+                    self.area.split_view()
+                    target = self.area.panes[1]
+                    while target.count():  # split_view copied the current tab
+                        target.removeTab(0)
+                target = self.area.panes[index]
+                for tab in pane["tabs"]:
+                    view = self.area.open(tab["component"], target)
+                    view.view_mode = tab.get("mode", "drawn")
+                    if view.view_mode not in VIEW_MODES:
+                        view.view_mode = "drawn"
+                    view.selection = [_path(p) for p in tab.get("selection", [])]
+                    view._fitted = True
+                    self._render(view)
+                    view.canvas.set_view_state(tab["zoom"], *tab["center"])
+                current = pane.get("current", 0)
+                if 0 <= current < target.count():
+                    target.setCurrentIndex(current)
+            chosen = self.area.panes[min(state.get("current_pane", 0), len(self.area.panes) - 1)]
+            if chosen.currentWidget() is not None:
+                self.area.set_current(chosen.currentWidget())
+        self.refresh()
+
+    # -- tools -------------------------------------------------------------
+
+    def set_tool(self, name: str) -> None:
+        """Make a canvas tool active (see :mod:`mems_sketch.gui.tools`)."""
+        tool = self.tools[name]
+        if tool is not self.tool:
+            self.tool.deactivate()
+            self.tool = tool
+        self.tool_actions[name].setChecked(True)
+        for view in self.area.views():
+            view.canvas.set_tool_cursor(tool.cursor)
+        tool.activate()
+        QSettings("mems-sketch", "mems-sketch").setValue("tool", name)
+        self.update_overlay()
+
+    def set_left_pans(self, pans: bool) -> None:
+        for view in self.area.views():
+            view.canvas.left_pans = pans
+            view.canvas.set_tool_cursor(self.tool.cursor)
+
+    def prompt(self, text: str) -> None:
+        self.statusBar().showMessage(text)
+
+    def run(self, action) -> tuple[bool, object]:
+        return self._run(action)
+
+    def _pressed(self, view: ComponentView, x: float, y: float, modifiers) -> None:
+        if view is not self.area.current:
+            self.area.set_current(view)  # clicking in the other pane switches to it
+        self.tool.press(x, y, modifiers)
+
+    def _moved(self, view: ComponentView, x: float, y: float, modifiers, left: bool) -> None:
+        if view is self.area.current:
+            self.tool.move(x, y, modifiers, left)
+
+    def _released(self, view: ComponentView, x: float, y: float, modifiers) -> None:
+        if view is self.area.current:
+            self.tool.release(x, y, modifiers)
+
+    def _canvas_clicked(self, x: float, y: float, additive: bool) -> None:
+        """A click at ``(x, y)`` with the active tool (Ctrl when ``additive``)."""
+        modifiers = Qt.KeyboardModifier.ControlModifier if additive else Qt.KeyboardModifier(0)
+        self.tool.press(x, y, modifiers)
+        self.tool.release(x, y, modifiers)
+
+    def escape(self) -> None:
+        """Esc: stop what the tool is doing; if it was idle, go back to Select."""
+        if not self.tool.cancel() and self.tool.name != "select":
+            self.set_tool("select")
+        else:
+            self.prompt(self.tool.hint())
+        self.update_overlay()
+
+    cancel_align = escape  # the earlier name
+
+    def start_align(self) -> None:
+        """The Align tool; with one shape selected, it starts with that shape."""
+        if len(self.selection) != 1:
+            self.report_error("select the one shape to align first")
+            return
+        self.set_tool("align")
+
+    @property
+    def align_step(self) -> str | None:
+        tool = self.tools["align"]
+        return tool.step if self.tool is tool else None
+
+    @property
+    def _candidates(self) -> list:
+        tool = self.tools["align"]
+        return tool.candidates if isinstance(self.tool, AlignTool) else []
+
+    # -- rulers ------------------------------------------------------------
+
+    def add_ruler(self, ruler: tuple[float, float, float, float]) -> None:
+        self.rulers.setdefault(self.document.active, []).append(ruler)
+        self.draw_rulers()
+        self.state_changed()
+
+    def clear_rulers(self) -> None:
+        self.rulers.pop(self.document.active, None)
+        self.draw_rulers()
+        self.state_changed()
+
+    def draw_rulers(self, extra: tuple[float, float, float, float] | None = None) -> None:
+        """Show the rulers in every tab of the current component (plus one being drawn)."""
+        for view in self.area.views():
+            rulers = list(self.rulers.get(view.component, []))
+            if extra is not None and view is self.area.current:
+                rulers.append(extra)
+            view.canvas.show_rulers(rulers)
 
     def _dock(self, title: str, widget, area) -> QDockWidget:
         dock = QDockWidget(title, self)
@@ -322,9 +489,30 @@ class MainWindow(QMainWindow):
         self._action("Make component from selection…", self.make_component, "Ctrl+K", edit)
         self._action("Unpack component", self.unpack, "Ctrl+Shift+K", edit)
         edit.addSeparator()
+        self._action("Move by…", self.move_by, "Ctrl+Shift+M", edit)
+        self._action("Rotate 90° left", lambda: self.rotate_selection(90), "Ctrl+R", edit)
+        self._action("Rotate 90° right", lambda: self.rotate_selection(-90), "Ctrl+Shift+R", edit)
+        self._action("Mirror left-right", lambda: self.mirror_selection(True), None, edit)
+        self._action("Mirror up-down", lambda: self.mirror_selection(False), None, edit)
+        edit.addSeparator()
         self._action("Align…", self.start_align, "Ctrl+L", edit)
         self._action("Remove alignment", self.remove_alignment, None, edit)
-        self._action("Cancel", self.cancel_align, "Esc", edit)
+        self._action("Cancel", self.escape, "Esc", edit)
+
+        tools_menu = bar.addMenu("&Tools")
+        self.tool_actions: dict[str, QAction] = {}
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for name, tool in self.tools.items():
+            action = self._action(
+                tool.label, lambda _=False, n=name: self.set_tool(n), tool.shortcut, tools_menu
+            )
+            action.setCheckable(True)
+            action.setToolTip(f"{tool.label} ({tool.shortcut})")
+            group.addAction(action)
+            self.tool_actions[name] = action
+        tools_menu.addSeparator()
+        self._action("Clear rulers", self.clear_rulers, None, tools_menu)
 
         insert = bar.addMenu("&Insert")
         self.primitive_menu = insert.addMenu("Primitive")
@@ -375,7 +563,6 @@ class MainWindow(QMainWindow):
         tools.addSeparator()
         for op in ("union", "subtract", "intersect", "offset", "fillet", "transform"):
             tools.addAction(dict(OPERATIONS)[op], lambda o=op: self.wrap(o))
-        tools.addAction("Align", self.start_align)
         tools.addAction("Make component", self.make_component)
         tools.addSeparator()
         tools.addWidget(QLabel(" View: "))
@@ -386,6 +573,17 @@ class MainWindow(QMainWindow):
         tools.addWidget(self.mode_box)
         tools.addAction("Fit", lambda: self.canvas.fit())
         tools.addAction("Split", self.split_view)
+
+        palette = self.addToolBar("Tools")
+        palette.setObjectName("tools-toolbar")
+        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, palette)  # a vertical tool palette
+        for action in self.tool_actions.values():
+            palette.addAction(action)
+        palette.addSeparator()
+        palette.addAction("⟲ 90°", lambda: self.rotate_selection(90))
+        palette.addAction("⟳ 90°", lambda: self.rotate_selection(-90))
+        palette.addAction("⇆", lambda: self.mirror_selection(True)).setToolTip("Mirror left-right")
+        palette.addAction("⇅", lambda: self.mirror_selection(False)).setToolTip("Mirror up-down")
 
     def _fill_component_menu(self) -> None:
         self.component_menu.clear()
@@ -399,7 +597,7 @@ class MainWindow(QMainWindow):
 
     def refresh(self) -> None:
         """Recompile every open tab and update the panels (after any change)."""
-        self.cancel_align(quiet=True)
+        self.tool.cancel()  # what it was doing was based on the previous state
         for view in self.area.views():
             if not self.document.exists(view.component):
                 self.area.close_view(view)  # its component was deleted (or undone)
@@ -412,6 +610,7 @@ class MainWindow(QMainWindow):
             view.rendered = True
             view.refresh(self.layers.colors, self.layers.visible)
         self.area.update_titles()
+        self.draw_rulers()
         self._problems = self.document.problems()
         self._refresh_panels()
 
@@ -437,7 +636,7 @@ class MainWindow(QMainWindow):
         errors = [*extra, *view.errors, *(p for p in self._problems if p not in view.errors)]
         self.messages.show_messages(errors, view.violations)
 
-    def _update_overlay(self) -> None:
+    def update_overlay(self) -> None:
         view = self.view
         markers = [v.bbox_um for v in view.violations if v.bbox_um]
         self.canvas.show_overlay(self.document.highlight(view.selection), markers)
@@ -446,9 +645,13 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001 - the messages panel shows why
             declared = []
         self.canvas.show_points("declared", declared, labels=True)
+        tool_markers = self.tool.markers()
         selected = self.document.node_points(view.selection[0]) if len(view.selection) == 1 else []
-        self.canvas.show_points("selected", [] if self.align_step else selected)
-        self.canvas.show_points("pick", self._candidates if self.align_step else [])
+        self.canvas.show_points("selected", [] if "pick" in tool_markers else selected)
+        for style in ("pick", "anchor"):
+            self.canvas.show_points(style, tool_markers.get(style, []))
+
+    _update_overlay = update_overlay
 
     def _exists(self, path: NodePath) -> bool:
         try:
@@ -471,20 +674,15 @@ class MainWindow(QMainWindow):
     def _tree_selected(self, paths: list[NodePath]) -> None:
         self.selection = paths
         self.properties.show_node(paths[0] if len(paths) == 1 else None)
-        self._update_overlay()
+        self.update_overlay()
+        self.state_changed()
 
     def _cursor_moved(self, x: float, y: float) -> None:
         text = f"x {x:.3f} µm   y {y:.3f} µm"
-        if self.align_step:
-            nearest = self._nearest_candidate(x, y)
-            if nearest is not None:
-                text = f"{nearest}   {text}"
+        label = self.tool.hover_label(x, y)
+        if label is not None:
+            text = f"{label}   {text}"
         self.coordinates.setText(text)
-
-    def _view_clicked(self, view: ComponentView, x: float, y: float, additive: bool) -> None:
-        if view is not self.area.current:
-            self.area.set_current(view)  # clicking in the other pane switches to it
-        self._canvas_clicked(x, y, additive)
 
     def _view_double_clicked(self, view: ComponentView, x: float, y: float) -> None:
         """Double-clicking a placed component opens it in a tab."""
@@ -503,21 +701,42 @@ class MainWindow(QMainWindow):
             self.open_component(target)
 
     def _hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
-        point = kdb.Point(to_dbu(x), to_dbu(y))
-        probe = kdb.Region(kdb.Box(point.x - 1, point.y - 1, point.x + 1, point.y + 1))
+        at = probe(x, y)
         return next(
-            (p for p, region in reversed(view.node_regions) if not (region & probe).is_empty()),
+            (p for p, region in reversed(view.node_regions) if not (region & at).is_empty()),
             None,
         )
 
-    def _canvas_clicked(self, x: float, y: float, additive: bool) -> None:
-        if self.align_step:
-            self._pick(x, y)
-            return
-        hit = self._hit(self.view, x, y)
-        if hit is not None and not additive and self._on_selection(x, y):
-            self._pending_click = hit  # keep the selection in case this becomes a drag
-            return
+    def hit(self, x: float, y: float) -> NodePath | None:
+        """The top-level shape under ``(x, y)`` in the current tab."""
+        return self._hit(self.view, x, y)
+
+    def on_selection(self, x: float, y: float) -> bool:
+        """Whether ``(x, y)`` lies on one of the selected shapes."""
+        at = probe(x, y)
+        for path in self.selection:
+            geometry = self.document.highlight([path])
+            if geometry and any(not (r & at).is_empty() for r in geometry.layers.values()):
+                return True
+        return False
+
+    def select_box(self, x0: float, y0: float, x1: float, y1: float, additive: bool) -> None:
+        """Select the top-level shapes lying entirely inside a box."""
+        box = kdb.Box(
+            *(round(v * 1000) for v in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+        )
+        inside = [
+            p
+            for p, region in self.view.node_regions
+            if not region.is_empty()
+            and box.contains(region.bbox().p1)
+            and box.contains(region.bbox().p2)
+        ]
+        paths = list(dict.fromkeys([*self.selection, *inside])) if additive else inside
+        self.tree.select_paths(paths)
+
+    def select_click(self, hit: NodePath | None, additive: bool) -> None:
+        """A click on ``hit`` (or on nothing): select it, or toggle it when ``additive``."""
         if hit is None:
             paths = self.selection if additive else []
         elif additive:
@@ -582,166 +801,50 @@ class MainWindow(QMainWindow):
         if ok and name.strip():
             self._select_result(lambda: self.document.make_component(self.selection, name.strip()))
 
-    # -- the Align tool ----------------------------------------------------
-
-    def start_align(self) -> None:
-        """Pick a point of the selected shape, then the point to align it to."""
-        if len(self.selection) != 1:
-            self.report_error("select the one shape to align first")
-            return
-        path = self.selection[0]
-        candidates = self.document.node_points(path)
-        if not candidates:
-            self.report_error("this shape has no points to align (does it have geometry?)")
-            return
-        self.align_step, self._align_path, self._candidates = "own", path, candidates
-        name = self.document.node(path).name or "the shape"
-        self._prompt(f"Align {name}: click the point of {name} to align (Esc cancels)")
-        self._update_overlay()
-
-    def _pick(self, x: float, y: float) -> None:
-        picked = self._nearest_candidate(x, y)
-        if picked is None:
-            self.statusBar().showMessage("Click on one of the marked points (Esc cancels)", 5000)
-            return
-        if self.align_step == "own":
-            targets = [
-                (name, tx, ty) for name, _, tx, ty in self.document.align_targets(self._align_path)
-            ]
-            if not targets:
-                self.cancel_align(quiet=True)
-                self.report_error("there is no other named shape here to align to")
-                return
-            self.align_step, self._align_point, self._candidates = "target", picked, targets
-            self._prompt(f"Now click the point to put {picked} on (Esc cancels)")
-            self._update_overlay()
-            return
-        path, point = self._align_path, self._align_point
-        self.cancel_align(quiet=True)
-        ok, _ = self._run(lambda: self.document.set_align(path, Align(point=point, to=picked)))
-        if ok:
-            self.statusBar().showMessage(f"Aligned {point} to {picked}", 5000)
-
-    def _nearest_candidate(self, x: float, y: float, pixels: float = 12) -> str | None:
-        reach = pixels / self.canvas.pixels_per_um()
-        best, best_distance = None, reach
-        for name, px, py in self._candidates:
-            distance = ((px - x) ** 2 + (py - y) ** 2) ** 0.5
-            if distance <= best_distance:
-                best, best_distance = name, distance
-        return best
-
-    # -- dragging ----------------------------------------------------------
-
-    def _on_selection(self, x: float, y: float) -> bool:
-        point = kdb.Point(to_dbu(x), to_dbu(y))
-        probe = kdb.Region(kdb.Box(point.x - 1, point.y - 1, point.x + 1, point.y + 1))
-        for path in self.selection:
-            geometry = self.document.highlight([path])
-            if geometry and any(not (r & probe).is_empty() for r in geometry.layers.values()):
-                return True
-        return False
-
-    def _click_released(self, _x: float, _y: float) -> None:
-        if self._pending_click is not None:
-            path, self._pending_click = self._pending_click, None
-            self.tree.select_paths([path])
-
-    def _drag_started(self, view: ComponentView, x: float, y: float) -> None:
-        self._pending_click = None
-        if view is not self.area.current or self.align_step or not self.selection:
-            view.canvas.cancel_drag()
-            return
-        if self.document.read_only:
-            view.canvas.cancel_drag()
-            self.report_error(f"'{self.document.active}' is read-only")
-            return
-        plan = self.document.drag_plan(self.selection)
-        if not plan.roots:
-            view.canvas.cancel_drag()
-            return
-        self._drag = {"plan": plan, "x": x, "y": y, "dx": 0.0, "dy": 0.0, "snap": None}
-        view.canvas.show_drag_preview(plan.preview, self.layers.colors)
-
-    def _drag_moved(self, x: float, y: float, modifiers) -> None:
-        drag = self._drag
-        if drag is None:
-            return
-        dx, dy, snap = self._snapped(drag["plan"], x - drag["x"], y - drag["y"], modifiers)
-        drag.update(dx=dx, dy=dy, snap=snap)
-        self.canvas.move_drag_preview(dx, dy)
-        self.canvas.show_points("snap", [(snap[2], snap[3], snap[4])] if snap else [])
-        text = f"Move Δx {dx:g} µm, Δy {dy:g} µm"
-        if snap:
-            text += f"   {snap[1]} on {snap[2]} (release with Shift to align it there)"
-        self.statusBar().showMessage(text)
-
-    def _snapped(self, plan: DragPlan, dx: float, dy: float, modifiers):
-        """The move after snapping: to another shape's point if one is near, else to the grid.
-
-        Ctrl turns snapping off. Returns ``(dx, dy, snap)``, where ``snap`` is
-        ``(path, own point, target point, x, y)`` or None.
-        """
-        if modifiers & Qt.KeyboardModifier.ControlModifier:
-            return dx, dy, None
-        best, snap = SNAP_PX / self.canvas.pixels_per_um(), None
-        for path, name, px, py in plan.points:
-            for target, tx, ty in plan.targets:
-                distance = math.hypot(px + dx - tx, py + dy - ty)
-                if distance < best:
-                    best, snap = distance, (path, name, target, tx, ty, px, py)
-        if snap is not None:
-            path, name, target, tx, ty, px, py = snap
-            return tx - px, ty - py, (path, name, target, tx, ty)
-        step = self.canvas.grid_step()
-        return round(dx / step) * step, round(dy / step) * step, None
-
-    def _drag_finished(self, x: float, y: float, modifiers) -> None:
-        drag, self._drag = self._drag, None
-        self.canvas.clear_drag_preview()
-        self.canvas.show_points("snap", [])
-        if drag is None:
-            return
-        plan = drag["plan"]
-        dx, dy, snap = self._snapped(plan, x - drag["x"], y - drag["y"], modifiers)
-        self.statusBar().clearMessage()
-        shift = modifiers & Qt.KeyboardModifier.ShiftModifier
-        if shift and snap is not None and plan.roots == [snap[0]]:
-            path, point, target = snap[0], snap[1], snap[2]
-            ok, _ = self._run(lambda: self.document.set_align(path, Align(point=point, to=target)))
-            if ok:
-                self.statusBar().showMessage(f"Aligned {point} to {target}", 5000)
-            return
-        detach = bool(modifiers & Qt.KeyboardModifier.AltModifier)
-        self._run(lambda: self.document.move(plan.roots, dx, dy, detach=detach))
+    # -- moving, rotating, mirroring ---------------------------------------
 
     def nudge(self, steps_x: int, steps_y: int, fine: bool = False) -> None:
         """Move the selection by grid steps (a tenth of one when ``fine``)."""
-        if not self.selection or self.align_step:
+        if not self.selection or self.tool.busy:
             return
         step = self.canvas.grid_step() / (10 if fine else 1)
         paths = list(self.selection)
         self._run(lambda: self.document.move(paths, steps_x * step, steps_y * step))
 
-    def cancel_align(self, quiet: bool = False) -> None:
-        """Esc: stop a drag or the Align tool."""
-        if self._drag is not None or self.canvas.dragging:
-            self._drag = None
-            self.canvas.cancel_drag()
-            self.canvas.show_points("snap", [])
-            self.statusBar().showMessage("Move cancelled", 3000)
-        if self.align_step is None:
+    def move_by(self) -> None:
+        """Move the selection by an exact amount, typed as ``dx, dy``."""
+        if not self.selection:
+            self.report_error("select the shapes to move first")
             return
-        self.align_step, self._align_path, self._align_point = None, None, None
-        self._candidates = []
-        self.canvas.unsetCursor()
-        if not quiet:
-            self.statusBar().showMessage("Align cancelled", 3000)
-        self._update_overlay()
+        text, ok = QInputDialog.getText(self, "Move by", "dx, dy in µm (e.g. 10, -2.5):")
+        if not ok or not text.strip():
+            return
+        paths = list(self.selection)
 
-    def _prompt(self, text: str) -> None:
-        self.canvas.setCursor(Qt.CursorShape.CrossCursor)
-        self.statusBar().showMessage(text)
+        def move() -> None:
+            parts = [float(v) for v in text.replace(";", ",").split(",")]
+            if len(parts) != 2:
+                raise ValueError("type two numbers: dx, dy")
+            self.document.move(paths, *parts)
+
+        self._run(move)
+
+    def rotate_selection(self, angle: float) -> None:
+        """Rotate the selection about the centre of its bounding box."""
+        center = self.document.selection_center(self.selection) if self.selection else None
+        if center is None:
+            self.report_error("select the shapes to rotate first")
+            return
+        paths = list(self.selection)
+        self._run(lambda: self.document.rotate(paths, angle, center))
+
+    def mirror_selection(self, left_right: bool) -> None:
+        center = self.document.selection_center(self.selection) if self.selection else None
+        if center is None:
+            self.report_error("select the shapes to mirror first")
+            return
+        paths = list(self.selection)
+        self._run(lambda: self.document.mirror(paths, left_right, center))
 
     def remove_alignment(self) -> None:
         if len(self.selection) == 1:
@@ -784,8 +887,9 @@ class MainWindow(QMainWindow):
 
     def new_project(self) -> None:
         if self._confirm_discard():
-            self._save_tabs()
+            self.save_editor_state()
             self.area.close_all()
+            self.rulers = {}
             self.document.new()
 
     def open_project(self, path: str | None = None) -> None:
@@ -797,7 +901,7 @@ class MainWindow(QMainWindow):
             )
         if not path:
             return
-        self._save_tabs()
+        self.save_editor_state()
         if self._run(lambda: self._open(path))[0]:
             self._remember_dir(path)
             if self.document.path is None:
@@ -810,11 +914,14 @@ class MainWindow(QMainWindow):
         try:
             self.document.open(path)  # raises before anything changes if the file is bad
             self.area.close_all()
+            self.rulers = {}
+            self.layers.visible = {}
+            self.components.collapsed = set()
+            self.tree.collapsed = {}
             self.refresh()
-            self._restore_tabs()
+            self.restore_editor_state()
         finally:
             self._restoring = False
-        self._save_tabs()
 
     def save_project(self) -> bool:
         if self.document.path is None:
@@ -862,10 +969,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._confirm_discard():
-            self._save_tabs()
+            self.save_editor_state()
             event.accept()
         else:
             event.ignore()
+
+
+def _path(steps) -> NodePath:
+    return tuple((int(slot), int(index)) for slot, index in steps)
 
 
 def main(argv: list[str] | None = None) -> int:

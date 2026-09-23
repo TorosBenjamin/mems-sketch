@@ -131,6 +131,10 @@ class ComponentsPanel(_Panel):
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.itemDoubleClicked.connect(self._activated)
+        self.collapsed: set[str] = set()  # group titles, e.g. "Built-in"
+        self.tree.itemCollapsed.connect(lambda item: self._set_collapsed(item, True))
+        self.tree.itemExpanded.connect(lambda item: self._set_collapsed(item, False))
+        self._refreshing = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tree)
@@ -147,7 +151,27 @@ class ComponentsPanel(_Panel):
             row.addWidget(button)
         layout.addLayout(row)
 
+    collapse_changed = Signal()
+
+    def _set_collapsed(self, item: QTreeWidgetItem, collapsed: bool) -> None:
+        if self._refreshing or item.parent() is not None:
+            return
+        key = self._group_key(item.text(0))
+        (self.collapsed.add if collapsed else self.collapsed.discard)(key)
+        self.collapse_changed.emit()
+
+    @staticmethod
+    def _group_key(title: str) -> str:
+        return "project" if title.startswith("Project: ") else title
+
     def refresh(self) -> None:
+        self._refreshing = True
+        try:
+            self._fill()
+        finally:
+            self._refreshing = False
+
+    def _fill(self) -> None:
         project = self.document.project
         self.tree.clear()
         local = QTreeWidgetItem(self.tree, [f"Project: {project.name}"])
@@ -169,6 +193,10 @@ class ComponentsPanel(_Panel):
             item.setData(0, self.NAME_ROLE, name)
             self._mark_active(item, name, name)
         self.tree.expandAll()
+        for i in range(self.tree.topLevelItemCount()):
+            group = self.tree.topLevelItem(i)
+            if self._group_key(group.text(0)) in self.collapsed:
+                group.setExpanded(False)
 
     def _mark_active(self, item: QTreeWidgetItem, name: str, label: str) -> None:
         if name == self.document.active:
@@ -227,6 +255,7 @@ class ShapeTree(QTreeWidget):
 
     selection_changed_paths = Signal(list)
     enabled_toggled = Signal(tuple, bool)
+    collapse_changed = Signal()
 
     def __init__(self, document: ProjectDocument) -> None:
         super().__init__()
@@ -237,6 +266,18 @@ class ShapeTree(QTreeWidget):
         self.itemSelectionChanged.connect(self._emit_selection)
         self.itemChanged.connect(self._item_changed)
         self._rebuilding = False
+        # Collapsed nodes per component (everything else is expanded).
+        self.collapsed: dict[str, set[NodePath]] = {}
+        self.itemCollapsed.connect(lambda item: self._set_collapsed(item, True))
+        self.itemExpanded.connect(lambda item: self._set_collapsed(item, False))
+
+    def _set_collapsed(self, item: QTreeWidgetItem, collapsed: bool) -> None:
+        path = item.data(0, PATH_ROLE)
+        if self._rebuilding or path is None:
+            return
+        paths = self.collapsed.setdefault(self.document.active, set())
+        (paths.add if collapsed else paths.discard)(path)
+        self.collapse_changed.emit()
 
     def rebuild(self, keep: list[NodePath] | None = None) -> None:
         keep = self.selected_paths() if keep is None else keep
@@ -245,6 +286,13 @@ class ShapeTree(QTreeWidget):
         for index, shape in enumerate(self.document.shapes):
             self._add(self.invisibleRootItem(), shape, ((0, index),))
         self.expandAll()
+        collapsed = self.collapsed.get(self.document.active, set())
+        pending = [self.topLevelItem(i) for i in range(self.topLevelItemCount())]
+        while pending:
+            item = pending.pop()
+            if item.data(0, PATH_ROLE) in collapsed:
+                item.setExpanded(False)
+            pending.extend(item.child(i) for i in range(item.childCount()))
         self._rebuilding = False
         self.select_paths(keep)
 

@@ -1,5 +1,10 @@
-"""The layout canvas: layers as filled outlines, selection highlight, rule markers
-and alignment points.
+"""The layout canvas: layers as filled outlines, selection highlight, rule markers,
+alignment points and rulers.
+
+The canvas itself only zooms (wheel) and pans (middle or right drag, left drag
+while Space is held or in hand mode). Left-button presses, moves and releases
+are passed on as signals; the active tool (see :mod:`mems_sketch.gui.tools`)
+decides what they do.
 
 Scene units are micrometres with y pointing up (the view flips Qt's y axis).
 Wheel zooms around the cursor, middle or right drag pans, F fits the view.
@@ -30,6 +35,7 @@ POINT_SIZES = {  # marker size in pixels
     "selected": 7,  # points of the selected shape
     "pick": 11,  # candidates while aligning
     "snap": 13,  # the point a drag snaps to
+    "anchor": 9,  # a point a tool has fixed (move base, rotation pivot, ruler start)
 }
 # Colours per canvas theme. Grid lines are drawn with the ``grid`` colour at
 # increasing opacity for minor lines, every fifth line and the axes.
@@ -44,6 +50,8 @@ THEMES = {
         "selected": "#e0007a",
         "pick": "#0072d6",
         "snap": "#e0007a",
+        "anchor": "#e0007a",
+        "ruler": "#b35c00",
     },
     "dark": {
         "background": "#1e1f22",
@@ -55,10 +63,11 @@ THEMES = {
         "selected": "#ffd400",
         "pick": "#00c8ff",
         "snap": "#ffd400",
+        "anchor": "#ffd400",
+        "ruler": "#ffb000",
     },
 }
 DEFAULT_THEME = "light"
-DRAG_THRESHOLD_PX = 4  # a press moving less than this is a click, not a drag
 
 
 def layer_color(index: int) -> QColor:
@@ -89,14 +98,14 @@ def _add_loop(path: QPainterPath, points) -> None:
 
 
 class LayoutCanvas(QGraphicsView):
-    clicked = Signal(float, float, bool)  # x, y in µm; True when Ctrl/Shift is held
+    # Left button, in µm, with the keyboard modifiers (for the active tool).
+    pressed = Signal(float, float, object)
+    moved = Signal(float, float, object, bool)  # True while the left button is down
+    released = Signal(float, float, object)
     double_clicked = Signal(float, float)
-    released = Signal(float, float)  # a click ended without dragging
-    drag_started = Signal(float, float)  # where the press was
-    drag_moved = Signal(float, float, object)  # x, y and the keyboard modifiers
-    drag_finished = Signal(float, float, object)
     nudged = Signal(int, int, bool)  # arrow keys: steps in x and y; True for fine steps
     cursor_moved = Signal(float, float)
+    view_changed = Signal()  # zoomed or panned
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -115,10 +124,13 @@ class LayoutCanvas(QGraphicsView):
         self._overlay: list = []
         self._points: dict[str, list] = {}
         self._pan_from: QPointF | None = None
-        self._press: QPointF | None = None  # left button down here (view pixels)
-        self._press_scene: QPointF | None = None
-        self.dragging = False
+        self.left_pans = False  # hand mode: the left button pans
+        self._space = False  # Space held: the left button pans
+        self._left_down = False
         self._drag_items: list = []
+        self._ruler_items: list = []
+        self._box_item: QGraphicsRectItem | None = None
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._has_content = False
         # A large scene rect lets the user pan freely beyond the geometry.
         self.scene().setSceneRect(QRectF(-1e6, -1e6, 2e6, 2e6))
@@ -227,20 +239,73 @@ class LayoutCanvas(QGraphicsView):
 
     def move_drag_preview(self, dx: float, dy: float) -> None:
         for item in self._drag_items:
+            item.setTransform(QTransform())
             item.setPos(dx, dy)
+
+    def rotate_drag_preview(self, angle: float, pivot: tuple[float, float]) -> None:
+        """Show the preview rotated by ``angle`` degrees (counter-clockwise) about ``pivot``."""
+        px, py = pivot
+        transform = QTransform().translate(px, py).rotate(angle).translate(-px, -py)
+        for item in self._drag_items:
+            item.setPos(0, 0)
+            item.setTransform(transform)
 
     def clear_drag_preview(self) -> None:
         for item in self._drag_items:
             self.scene().removeItem(item)
         self._drag_items.clear()
 
-    def cancel_drag(self) -> bool:
-        """Stop a drag in progress (e.g. on Esc); True if there was one."""
-        was = self.dragging
-        self.dragging = False
-        self._press = self._press_scene = None
-        self.clear_drag_preview()
-        return was
+    def show_box(self, corners: tuple[float, float, float, float] | None) -> None:
+        """The selection box being dragged out, or None to hide it."""
+        if corners is None:
+            if self._box_item is not None:
+                self.scene().removeItem(self._box_item)
+                self._box_item = None
+            return
+        x0, y0, x1, y1 = corners
+        if self._box_item is None:
+            self._box_item = QGraphicsRectItem()
+            pen = QPen(QColor(self.theme["pick"]), 1)
+            pen.setCosmetic(True)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            self._box_item.setPen(pen)
+            fill = QColor(self.theme["pick"])
+            fill.setAlpha(30)
+            self._box_item.setBrush(QBrush(fill))
+            self._box_item.setZValue(1200)
+            self.scene().addItem(self._box_item)
+        self._box_item.setRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)).normalized())
+
+    def show_rulers(self, rulers: list[tuple[float, float, float, float]]) -> None:
+        """Measurement lines with their length, dx and dy."""
+        for item in self._ruler_items:
+            self.scene().removeItem(item)
+        self._ruler_items.clear()
+        color = QColor(self.theme["ruler"])
+        for x0, y0, x1, y1 in rulers:
+            pen = QPen(color, 1.5)
+            pen.setCosmetic(True)
+            line = self.scene().addLine(x0, y0, x1, y1, pen)
+            line.setZValue(1150)
+            length = math.hypot(x1 - x0, y1 - y0)
+            text = QGraphicsSimpleTextItem(f"{length:.3f} µm  (dx {x1 - x0:.3f}, dy {y1 - y0:.3f})")
+            text.setBrush(color)
+            text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            text.setPos((x0 + x1) / 2, (y0 + y1) / 2)
+            text.setZValue(1150)
+            self.scene().addItem(text)
+            self._ruler_items += [line, text]
+
+    def view_state(self) -> tuple[float, float, float]:
+        """Zoom (pixels per µm) and the centre of the view, to restore it later."""
+        center = self.mapToScene(self.viewport().rect().center())
+        return self.pixels_per_um(), center.x(), center.y()
+
+    def set_view_state(self, zoom: float, x: float, y: float) -> None:
+        if 1e-4 < zoom < 1e5:
+            self.setTransform(QTransform.fromScale(zoom, -zoom))
+            self.centerOn(QPointF(x, y))
+            self._has_content = True  # do not fit over it
 
     def pixels_per_um(self) -> float:
         return abs(self.transform().m11())
@@ -268,6 +333,7 @@ class LayoutCanvas(QGraphicsView):
         center = rect.center()
         self.setTransform(QTransform.fromScale(scale, -scale))
         self.centerOn(center)
+        self.view_changed.emit()
 
     # -- interaction -------------------------------------------------------
 
@@ -276,25 +342,33 @@ class LayoutCanvas(QGraphicsView):
         scale = abs(self.transform().m11()) * factor
         if 1e-4 < scale < 1e5:
             self.scale(factor, factor)
+            self.view_changed.emit()
+
+    def _scene(self, event) -> QPointF:
+        return self.mapToScene(event.position().toPoint())
+
+    def _pans(self, event) -> bool:
+        button = event.button()
+        if button in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+            return True
+        return button == Qt.MouseButton.LeftButton and (self.left_pans or self._space)
 
     def mousePressEvent(self, event) -> None:
-        if event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+        self.setFocus()
+        if self._pans(event):
             self._pan_from = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             return
         if event.button() == Qt.MouseButton.LeftButton:
-            p = self.mapToScene(event.position().toPoint())
-            self._press, self._press_scene = event.position(), p
-            additive = bool(
-                event.modifiers()
-                & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
-            )
-            self.clicked.emit(p.x(), p.y(), additive)
+            self._left_down = True
+            p = self._scene(event)
+            self.pressed.emit(p.x(), p.y(), event.modifiers())
+            return
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            p = self.mapToScene(event.position().toPoint())
+        if event.button() == Qt.MouseButton.LeftButton and not (self.left_pans or self._space):
+            p = self._scene(event)
             self.double_clicked.emit(p.x(), p.y())
             return
         super().mouseDoubleClickEvent(event)
@@ -306,38 +380,49 @@ class LayoutCanvas(QGraphicsView):
             self.horizontalScrollBar().setValue(int(self.horizontalScrollBar().value() - delta.x()))
             self.verticalScrollBar().setValue(int(self.verticalScrollBar().value() - delta.y()))
             return
-        p = self.mapToScene(event.position().toPoint())
+        p = self._scene(event)
         self.cursor_moved.emit(p.x(), p.y())
-        if self._press is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            if not self.dragging:
-                distance = (event.position() - self._press).manhattanLength()
-                if distance >= DRAG_THRESHOLD_PX:
-                    self.dragging = True
-                    self.drag_started.emit(self._press_scene.x(), self._press_scene.y())
-            if self.dragging:
-                self.drag_moved.emit(p.x(), p.y(), event.modifiers())
-                return
-        super().mouseMoveEvent(event)
+        left = bool(event.buttons() & Qt.MouseButton.LeftButton) and self._left_down
+        self.moved.emit(p.x(), p.y(), event.modifiers(), left)
 
     def mouseReleaseEvent(self, event) -> None:
         if self._pan_from is not None:
             self._pan_from = None
-            self.unsetCursor()
+            self._update_cursor()
+            self.view_changed.emit()
             return
-        if event.button() == Qt.MouseButton.LeftButton and self._press is not None:
-            p = self.mapToScene(event.position().toPoint())
-            if self.dragging:
-                self.dragging = False
-                self.drag_finished.emit(p.x(), p.y(), event.modifiers())
-            else:
-                self.released.emit(p.x(), p.y())
-            self._press = self._press_scene = None
+        if event.button() == Qt.MouseButton.LeftButton and self._left_down:
+            self._left_down = False
+            p = self._scene(event)
+            self.released.emit(p.x(), p.y(), event.modifiers())
             return
         super().mouseReleaseEvent(event)
+
+    def keyReleaseEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
+            self._space = False
+            self._update_cursor()
+            return
+        super().keyReleaseEvent(event)
+
+    def set_tool_cursor(self, cursor: Qt.CursorShape) -> None:
+        self._tool_cursor = cursor
+        self._update_cursor()
+
+    def _update_cursor(self) -> None:
+        if self.left_pans or self._space:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.setCursor(getattr(self, "_tool_cursor", Qt.CursorShape.ArrowCursor))
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F:
             self.fit()
+            return
+        if event.key() == Qt.Key.Key_Space:
+            if not event.isAutoRepeat():
+                self._space = True
+                self._update_cursor()
             return
         steps = {
             Qt.Key.Key_Left: (-1, 0),

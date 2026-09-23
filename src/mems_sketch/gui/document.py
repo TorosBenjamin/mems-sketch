@@ -57,6 +57,7 @@ from mems_sketch.core.shapes import (
     frame_of,
     map_expressions,
     node_at,
+    offset_value,
     own_strings,
     point_names,
     rename_node_references,
@@ -331,6 +332,20 @@ class ProjectDocument(QObject):
                     trials[name] = previous
                 raise
         self.changed.emit()
+
+    def restore_trials(self, trials: dict[str, dict[str, Value]]) -> None:
+        """Take over saved trial values, quietly dropping ones that no longer apply."""
+        self.trials = {}
+        for component, values in trials.items():
+            if not self.exists(component) or not isinstance(values, dict):
+                continue
+            for name, value in values.items():
+                kept = self.trials.setdefault(component, {})
+                kept[name] = value
+                try:
+                    self.session().variables(component, self._trials(component))
+                except Exception:  # noqa: BLE001 - an outdated trial value is dropped
+                    kept.pop(name)
 
     def _trials(self, component: str) -> dict[str, Value]:
         """Trial values that still apply (parameters may have been renamed or removed)."""
@@ -715,6 +730,93 @@ class ProjectDocument(QObject):
 
         self.edit(f"Move {label}", change)
 
+    def rotate(self, paths: list[NodePath], angle: float, pivot: tuple[float, float]) -> None:
+        """Rotate shapes by ``angle`` degrees (counter-clockwise) about ``pivot``."""
+        px, py = pivot
+        about = kdb.DCplxTrans(px, py) * kdb.DCplxTrans(1, angle, False, 0, 0)
+        self.transform_nodes(paths, about * kdb.DCplxTrans(-px, -py), f"Rotate {angle:g}°")
+
+    def mirror(self, paths: list[NodePath], left_right: bool, center: tuple[float, float]) -> None:
+        """Mirror shapes left-right (about a vertical line) or up-down, through ``center``."""
+        cx, cy = center
+        if left_right:
+            flip = kdb.DCplxTrans(1, 180, True, 2 * cx, 0)
+        else:
+            flip = kdb.DCplxTrans(1, 0, True, 0, 2 * cy)
+        self.transform_nodes(paths, flip, "Mirror " + ("left-right" if left_right else "up-down"))
+
+    def transform_nodes(
+        self, paths: list[NodePath], transform: kdb.DCplxTrans, description: str
+    ) -> None:
+        """Apply a rigid transform, given in the active component's frame, to shapes.
+
+        References and transforms get a new ``rotation`` / ``mirror_x`` (and
+        position); other shapes have no orientation of their own, so they are
+        wrapped in a transform that takes over their name, so alignments and
+        point expressions that use them keep working. Aligned shapes stay
+        attached: only their orientation changes.
+        """
+        record = self.inspection()
+        roots = _outermost([p for p in paths if p in record])
+        if not roots:
+            return
+        shapes = self.shapes
+        names = {p: _subtree_names(node_at(shapes, p)) for p in roots}
+        taken = {n.name for n in walk(shapes) if n.name}
+        replacements = {}
+        for path in roots:
+            node = node_at(shapes, path)
+            others = frozenset().union(*(n for p, n in names.items() if p != path))
+            if node.align is not None and node.align.to.partition(".")[0] in others:
+                continue  # follows the shape it is aligned to
+            frame = frame_of(record, path)
+            local = frame.inverted() * transform * frame  # the same move, in the parent's frame
+            if isinstance(node, RefShape | TransformShape):
+                replacements[path] = _reoriented(node, local, record[path])
+            else:
+                name = node.name or _fresh("transform", taken)
+                inner = _fresh(f"{name}_shape", taken)
+                taken |= {name, inner}
+                wrapper = TransformShape(
+                    name=name,
+                    align=node.align,
+                    children=[node.model_copy(update={"name": inner, "align": None})],
+                    rotation=_angle(local.angle),
+                    mirror_x=local.is_mirror(),
+                    x=_round_um(local.disp.x),
+                    y=_round_um(local.disp.y),
+                )
+                replacements[path] = wrapper
+
+        def change(project: Project) -> None:
+            for path, new in replacements.items():
+                container, index = container_of(self._shapes_in(project), path)
+                container[index] = new
+
+        self.edit(description, change)
+
+    def selection_center(self, paths: list[NodePath]) -> tuple[float, float] | None:
+        """Centre of the bounding box of the given shapes, in the component's frame."""
+        geometry = self.highlight(paths)
+        if geometry is None:
+            return None
+        box = kdb.Box()
+        for region in geometry.layers.values():
+            box += region.bbox()
+        center = box.center()
+        return center.x / 1000, center.y / 1000
+
+    def all_points(self, component: str | None = None) -> list[tuple[str, float, float]]:
+        """Every shape's points (``shape.point``, x, y) in the component's frame, e.g. to
+        snap to."""
+        component = component or self.active
+        shapes = self.definition_of(component).shapes
+        result = []
+        for path in sorted(self.inspection(component)):
+            label = node_at(shapes, path).name or node_at(shapes, path).kind
+            result += [(f"{label}.{p}", x, y) for p, x, y in self.node_points(path, component)]
+        return result
+
     def set_align(self, path: NodePath, align: Align | None) -> None:
         """Align a node. ``None`` removes its alignment and leaves it where it is."""
         node = self.node(path)
@@ -964,6 +1066,38 @@ class ProjectDocument(QObject):
 
     def remove_layer(self, name: str) -> None:
         self.edit(f"Delete layer {name}", lambda p: p.layers.pop(name))
+
+
+def _reoriented(node: Shape, local: kdb.DCplxTrans, record: NodeRecord) -> Shape:
+    """A reference or transform with ``local`` applied to its placement (in its parent's frame).
+
+    Expressions stay expressions: rotation and position get offsets added.
+    """
+    placed = record.shift.inverted() * record.inner  # its own placement, without alignment
+    new = local * record.inner
+    turn = _angle(new.angle - placed.angle)
+    update: dict[str, Any] = {
+        "rotation": (
+            offset_value(node.rotation, turn)
+            if isinstance(node.rotation, str)
+            else _angle(node.rotation + turn) + 0.0  # + 0.0: no "-0"
+        ),
+        "mirror_x": new.is_mirror(),
+    }
+    if node.align is None:  # an aligned shape keeps its attachment; only the orientation changes
+        update["x"] = offset_value(node.x, new.disp.x - placed.disp.x)
+        update["y"] = offset_value(node.y, new.disp.y - placed.disp.y)
+    return node.model_copy(update=update)
+
+
+def _angle(degrees: float) -> float:
+    """An angle in (-180, 180], without float noise."""
+    angle = round(degrees % 360, 6)
+    return angle - 360 if angle > 180 else angle
+
+
+def _round_um(value: float) -> float:
+    return round(value, 6)
 
 
 def _outermost(paths: list[NodePath]) -> list[NodePath]:

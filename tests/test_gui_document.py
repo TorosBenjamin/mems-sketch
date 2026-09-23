@@ -383,3 +383,49 @@ def test_moving_a_shape_and_its_aligned_partner_moves_both_once(doc):
     doc.move([base, post], 10, 0)
     assert doc.node(post).align.dx == 0
     assert doc.highlight([post]).layers["device"].bbox().left == 55000
+
+
+# -- rotating and mirroring --------------------------------------------------
+
+
+def test_rotating_a_reference_about_a_pivot(doc):
+    ref = doc.add_shape(RefShape(name="a", component="anchor", x=10, y=0))
+    doc.rotate([ref], 90, (0, 0))
+    node = doc.node(ref)
+    assert (node.rotation, node.x, node.y) == pytest.approx((90, 0, 10))
+    doc.rotate([ref], 270, (0, 0))
+    assert (doc.node(ref).rotation, doc.node(ref).x) == pytest.approx((0, 10))
+
+
+def test_rotating_a_primitive_wraps_it_and_keeps_its_name(doc):
+    rect = doc.add_shape(RectShape(name="r", layer="device", x0=0, y0=0, x1=20, y1=10))
+    post = doc.add_shape(
+        RectShape(
+            name="post",
+            layer="metal",
+            x0=0,
+            y0=0,
+            x1=2,
+            y1=2,
+            align=Align(point="bottom", to="r.top"),
+        )
+    )
+    doc.rotate([rect], 90, (0, 0))
+    wrapper = doc.node(rect)
+    assert isinstance(wrapper, TransformShape) and wrapper.name == "r"
+    assert wrapper.children[0].name == "r_shape1"
+    box = doc.highlight([rect]).layers["device"].bbox()
+    assert (box.left, box.bottom, box.right, box.top) == (-10000, 0, 0, 20000)
+    # The post stays aligned to the (now rotated) rectangle's top.
+    assert doc.highlight([post]).layers["metal"].bbox().bottom == 20000
+
+
+def test_mirroring_and_expressions(doc):
+    doc.set_parameter("d", 30)
+    ref = doc.add_shape(RefShape(name="a", component="anchor", x="d", y=0))
+    doc.mirror([ref], left_right=True, center=(0, 0))
+    node = doc.node(ref)
+    assert node.x == "d - 60" and node.mirror_x and node.rotation == 180
+    doc.mirror([ref], left_right=True, center=(0, 0))
+    node = doc.node(ref)
+    assert node.x == "d" and not node.mirror_x and node.rotation == 0

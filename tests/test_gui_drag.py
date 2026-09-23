@@ -103,7 +103,7 @@ def test_drag_keeps_a_multiple_selection_and_esc_cancels(window):
     assert len(window.selection) == 2  # pressing on the selection keeps it
     mouse(canvas, QEvent.Type.MouseMove, 60, 10)
     mouse(canvas, QEvent.Type.MouseMove, 80, 10)
-    assert canvas.dragging
+    assert window.tool.busy
     window.cancel_align()  # Esc
     mouse(canvas, QEvent.Type.MouseButtonRelease, 80, 10)
     assert not window.document.can_undo() or window.document.undo_text().startswith("Add")

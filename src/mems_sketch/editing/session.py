@@ -1,9 +1,12 @@
 """An open project being edited: what every frontend edits through.
 
-The GUI never builds geometry or touches files itself; it asks the document,
-which uses the backend (project model, compiler, storage, rules, export).
+Frontends (the GUI, the CLI, scripts) never build geometry or touch files
+themselves; they go through a session, which uses the rest of the backend
+(project model, compiler, storage, rules, export). Edits are grouped:
+``session.components``, ``.nodes``, ``.moves``, ``.points``, ``.parameters``
+and ``.process``; ``session.results`` is what the components evaluate to.
 
-* One component is **active**: the one in the current tab. Shape edits,
+* One component is **active**, e.g. the one in the GUI's current tab. Shape edits,
   parameters and points refer to it. Any component can be active; library
   and built-in components are read-only.
 * **Trial values** per component override parameter defaults for viewing
@@ -12,8 +15,8 @@ which uses the backend (project model, compiler, storage, rules, export).
   recompiled, and if a project that compiled before no longer does, the change
   is rolled back exactly.
 * Undo/redo keep whole-project snapshots (libraries are read-only and shared)
-  and remember which component each change was made in, so the GUI can go
-  back to it, like a code editor.
+  and remember which component each change was made in, so a frontend can
+  go back to it, like a code editor.
 * A long-lived :class:`Compiler` caches built components by fingerprint, so
   recompiling after an edit only rebuilds what changed.
 """

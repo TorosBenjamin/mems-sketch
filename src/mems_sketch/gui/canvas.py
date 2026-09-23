@@ -72,6 +72,7 @@ THEMES = {
         "snap": "#e0007a",
         "anchor": "#e0007a",
         "ruler": "#b35c00",
+        "guide": "#1b8a96",
         "axis_x": "#e0443e",
         "axis_y": "#3f9b3f",
         "gizmo_free": "#6c707e",
@@ -92,6 +93,7 @@ THEMES = {
         "snap": "#ff5fb0",
         "anchor": "#ff5fb0",
         "ruler": "#ffb000",
+        "guide": "#4cc2cf",
         "axis_x": "#f0584f",
         "axis_y": "#6cc36c",
         "gizmo_free": "#dfe1e5",
@@ -567,6 +569,35 @@ class LayoutCanvas(QGraphicsView):
         self._sketch_item.setPen(pen)
         self._sketch_item.setZValue(1100)
         self.scene().addItem(self._sketch_item)
+
+    def show_guides(self, guides: list, selected: set) -> None:
+        """Guide lines, dashed, with their names; those in ``selected`` stand out.
+
+        ``guides`` are ``(path, name, start, end)`` in µm.
+        """
+        for item in getattr(self, "_guide_items", []):
+            self.scene().removeItem(item)
+        self._guide_items = []
+        for path, name, (x0, y0), (x1, y1) in guides:
+            chosen = path in selected
+            color = QColor(self.theme["highlight" if chosen else "guide"])
+            pen = QPen(color, 2.0 if chosen else 1.3)
+            pen.setCosmetic(True)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            line = self.scene().addLine(x0, y0, x1, y1, pen)
+            line.setZValue(1040)
+            for x, y in ((x0, y0), (x1, y1)):
+                end = _PointMarker(color, 6)
+                end.setPos(x, y)
+                self.scene().addItem(end)
+                self._guide_items.append(end)
+            label = QGraphicsSimpleTextItem(name)
+            label.setBrush(color)
+            label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            label.setPos(x1, y1)
+            label.setZValue(1040)
+            self.scene().addItem(label)
+            self._guide_items += [line, label]
 
     def show_rulers(self, rulers: list[tuple[float, float, float, float]]) -> None:
         """Measurement lines with their length, dx and dy."""

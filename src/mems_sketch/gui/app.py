@@ -7,6 +7,7 @@ an :class:`~mems_sketch.editing.EditSession`, the backend's way to edit a projec
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -52,6 +53,7 @@ from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import VIEW_MODES, ComponentView, EditorArea
 
 STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
+GUIDE_REACH_PX = 6  # a click this close to a guide line selects it
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
@@ -804,6 +806,7 @@ class MainWindow(QMainWindow):
         view = self.view
         markers = [v.bbox_um for v in view.violations if v.bbox_um]
         self.canvas.show_overlay(self.document.results.highlight(view.selection), markers)
+        self.canvas.show_guides(view.guides, set(view.selection))
         try:
             declared = [(n, x, y) for n, (x, y) in self.document.results.declared_points().items()]
         except Exception:  # noqa: BLE001 - the messages panel shows why
@@ -915,10 +918,19 @@ class MainWindow(QMainWindow):
 
     def _hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
         at = probe(x, y)
-        return next(
+        hit = next(
             (p for p, region in reversed(view.node_regions) if not (region & at).is_empty()),
             None,
         )
+        return hit if hit is not None else self._guide_hit(view, x, y)
+
+    def _guide_hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
+        """The top-level shape holding a guide line near ``(x, y)`` (a few pixels)."""
+        reach = GUIDE_REACH_PX / view.canvas.pixels_per_um()
+        for path, _name, start, end in reversed(view.guides):
+            if _distance_to_segment((x, y), start, end) <= reach:
+                return path[:1]
+        return None
 
     def hit(self, x: float, y: float) -> NodePath | None:
         """The top-level shape under ``(x, y)`` in the current tab."""
@@ -944,6 +956,12 @@ class MainWindow(QMainWindow):
             if not region.is_empty()
             and box.contains(region.bbox().p1)
             and box.contains(region.bbox().p2)
+        ]
+        dbox = box.to_dtype(0.001)
+        inside += [  # guides draw nothing: they are inside when both ends are
+            path[:1]
+            for path, _name, start, end in self.view.guides
+            if dbox.contains(kdb.DPoint(*start)) and dbox.contains(kdb.DPoint(*end))
         ]
         paths = list(dict.fromkeys([*self.selection, *inside])) if additive else inside
         self.tree.select_paths(paths)
@@ -1220,6 +1238,14 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+
+def _distance_to_segment(p, a, b) -> float:
+    (px, py), (ax, ay), (bx, by) = p, a, b
+    dx, dy = bx - ax, by - ay
+    length = dx * dx + dy * dy
+    t = 0.0 if length == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
 def _path(steps) -> NodePath:

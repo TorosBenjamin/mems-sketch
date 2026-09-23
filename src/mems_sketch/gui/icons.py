@@ -175,6 +175,13 @@ ICONS = {
     'fill-opacity=".35" stroke="{blue}"/><rect x="6.5" y="11.5" width="3" height="3" rx=".5" '
     'fill="{blue}" fill-opacity=".35" stroke="{blue}"/><rect x="1.5" y="6.5" width="3" '
     'height="3" rx=".5" fill="{blue}" fill-opacity=".35" stroke="{blue}"/>',
+    "up": '<path d="M4 10l4-4 4 4"/>',
+    "down": '<path d="M4 6l4 4 4-4"/>',
+    "apply": '<path d="M3.4 8.4l3 3 6.2-6.6" stroke="{green}"/>',
+    "eye_off": '<path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8 12 12.4 8 12.4 1.6 8 1.6 8z"/>'
+    '<circle cx="8" cy="8" r="2"/><path d="M2.6 13.4 13.4 2.6"/>',
+    "modifier": '<path d="M9.6 2.2a3.4 3.4 0 0 0-3.2 4.6l-4.2 4.2a1.3 1.3 0 0 0 1.9 1.9'
+    'l4.2-4.2a3.4 3.4 0 0 0 4.6-3.2l-2 1.2-1.9-1.1V3.4z" stroke="{blue}"/>',
     "link": '<path d="M6.6 9.4l2.8-2.8"/><path d="M7.4 4.6l1.3-1.3a2.6 2.6 0 0 1 3.7 3.7'
     'l-1.3 1.3M8.6 11.4l-1.3 1.3a2.6 2.6 0 0 1-3.7-3.7l1.3-1.3" stroke="{blue}"/>',
     "collapse": '<path d="M4.5 3.5 8 6.5l3.5-3M4.5 12.5 8 9.5l3.5 3"/>',

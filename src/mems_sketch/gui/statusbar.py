@@ -68,7 +68,11 @@ class ToolStatus(QWidget):
         """Show the active tool and the options it uses."""
         self.tool_icon.setPixmap(icons.pixmap(tool.icon, 16))
         self.tool_name.setText(f"{tool.label} ")
-        shown = {"layer": tool.draws, "width": tool.name == "path", "angle": tool.name == "rotate"}
+        shown = {
+            "layer": tool.draws and getattr(tool, "uses_layer", True),
+            "width": tool.name == "path",
+            "angle": tool.name == "rotate",
+        }
         for key, widgets in self.tool_widgets.items():
             for widget in widgets:
                 widget.setVisible(shown[key])

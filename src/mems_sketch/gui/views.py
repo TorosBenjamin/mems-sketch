@@ -33,6 +33,7 @@ class ComponentView(QWidget):
         self.canvas = LayoutCanvas()
         self.selection: list[NodePath] = []
         self.view_mode = "drawn"
+        self.guides: list = []  # (path, name, start, end) of its guide lines
         self.node_regions: list[tuple[NodePath, kdb.Region]] = []
         self.violations: list = []
         self.errors: list[str] = []
@@ -80,6 +81,11 @@ class ComponentView(QWidget):
             self.violations = []
             self.errors.append(str(exc))
         self.node_regions = self.document.results.node_regions(visible, self.component)
+        try:
+            self.guides = self.document.results.guides(self.component)
+        except Exception:  # noqa: BLE001 - the messages panel shows why
+            self.guides = []
+        self.canvas.show_guides(self.guides, set(self.selection))
         self.selection = [
             p for p in self.selection if p in self.document.results.inspection(self.component)
         ]

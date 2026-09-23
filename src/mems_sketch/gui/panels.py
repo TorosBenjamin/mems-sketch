@@ -54,12 +54,13 @@ def alignment(shape: Shape) -> str:
 
 
 def detail(shape: Shape) -> str:
-    """The muted text after a node's name: what it is, briefly, and how often it repeats."""
-    text = shape.detail()
-    repeat = shape.repeat
-    if repeat is not None:
-        text += f"  {_format(repeat.columns)}×{_format(repeat.rows)}"
-    return text
+    """The muted text after a node's name: what it is, briefly."""
+    return shape.detail()
+
+
+def modifier_stack(shape: Shape) -> str:
+    """The modifier stack in words, first to last (switched-off ones marked)."""
+    return " → ".join(m.summary() + ("" if m.enabled else " (off)") for m in shape.modifiers)
 
 
 def parse_value(text: str) -> float | str:
@@ -562,19 +563,21 @@ class ShapeTree(QTreeWidget):
     collapse_changed = Signal()
 
     STATUS = 1  # the narrow column with the alignment icon
+    MODIFIERS = 2  # ... and the one with the modifier icon
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.setColumnCount(2)
+        self.setColumnCount(3)
         self.setHeaderHidden(True)
         self.setItemDelegateForColumn(0, DetailDelegate(self))
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         header = self.header()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(self.STATUS, QHeaderView.ResizeMode.Fixed)
-        self.setColumnWidth(self.STATUS, 26)
+        for column in (self.STATUS, self.MODIFIERS):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            self.setColumnWidth(column, 24)
         self.itemSelectionChanged.connect(self._emit_selection)
         self.itemChanged.connect(self._item_changed)
         self._rebuilding = False
@@ -631,6 +634,11 @@ class ShapeTree(QTreeWidget):
         if shape.align is not None:
             item.setIcon(self.STATUS, icons.icon("link"))
             item.setToolTip(self.STATUS, f"Aligned: {alignment(shape)}")
+        if shape.modifiers:
+            first = shape.modifiers[0]
+            glyph = type(first).icon if len(shape.modifiers) == 1 else "modifier"
+            item.setIcon(self.MODIFIERS, icons.icon(glyph))
+            item.setToolTip(self.MODIFIERS, f"Modifiers: {modifier_stack(shape)}")
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(0, Qt.CheckState.Checked if shape.enabled else Qt.CheckState.Unchecked)
         if not shape.enabled:
@@ -693,6 +701,11 @@ class ShapeTree(QTreeWidget):
         if shape.align is not None:
             item.setIcon(self.STATUS, icons.icon("link"))
             item.setToolTip(self.STATUS, f"Aligned: {alignment(shape)}")
+        if shape.modifiers:
+            first = shape.modifiers[0]
+            glyph = type(first).icon if len(shape.modifiers) == 1 else "modifier"
+            item.setIcon(self.MODIFIERS, icons.icon(glyph))
+            item.setToolTip(self.MODIFIERS, f"Modifiers: {modifier_stack(shape)}")
         self._placeholder(item, shape, namespace)
         labels = SLOT_LABELS.get(shape.kind)
         for slot, children in enumerate(child_lists(shape)):

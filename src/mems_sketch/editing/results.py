@@ -155,6 +155,26 @@ class Results:
         center = box.center()
         return center.x / 1000, center.y / 1000
 
+    def guides(
+        self, component: str | None = None
+    ) -> list[tuple[NodePath, str, tuple[float, float], tuple[float, float]]]:
+        """The guide lines of a component: ``(path, name, start, end)`` in its frame."""
+        component = component or self.session.active
+        shapes = self.session.definition_of(component).shapes
+        record = self.inspection(component)
+        result = []
+        for path in sorted(record):
+            node = node_at(shapes, path)
+            if node.category != "guide":
+                continue
+            frame, points = frame_of(record, path), record[path].points
+            ends = []
+            for end in ("start", "end"):
+                p = frame * kdb.DPoint(*points.point(end))
+                ends.append((p.x, p.y))
+            result.append((path, node.name or node.kind, ends[0], ends[1]))
+        return result
+
     def all_points(self, component: str | None = None) -> list[tuple[str, float, float]]:
         """Every shape's points (``shape.point``, x, y) in the component's frame, e.g. to
         snap to."""

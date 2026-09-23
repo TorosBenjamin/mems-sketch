@@ -26,6 +26,7 @@ PRIMITIVES = [
     ("arc", "Arc / ring"),
     ("polygon", "Polygon"),
     ("path", "Path"),
+    ("guide", "Guide"),
 ]
 OVERLAYS = [  # View › Overlays: setting, label, icon
     ("canvas/show_grid", "Grid", "grid"),

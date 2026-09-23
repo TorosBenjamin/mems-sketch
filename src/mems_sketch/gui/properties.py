@@ -21,7 +21,6 @@ from __future__ import annotations
 import contextlib
 import typing
 
-import klayout.db as kdb
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -47,7 +46,7 @@ from mems_sketch.core.shapes import MODIFIER_KINDS, Modifier, NodePath, Shape
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.panels import parse_value
-from mems_sketch.gui.value_edit import ValueEdit
+from mems_sketch.gui.value_edit import ElidedLineEdit, ValueEdit
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
 _SPECIAL = {
@@ -163,14 +162,15 @@ class PropertyEditor(QScrollArea):
         title.setSpacing(6)
         glyph = QLabel()
         glyph.setPixmap(icons.pixmap(node.icon_name(), 18))
-        name = QLineEdit(node.name or "")
+        name = ElidedLineEdit(
+            node.name or "",
+            tip="The shape's name: click to rename (alignments and expressions follow)",
+        )
         name.setObjectName("title-edit")
         name.setPlaceholderText(f"unnamed {node.kind}")
-        name.setToolTip("The shape's name: click to rename (alignments and expressions follow)")
         name.returnPressed.connect(self.apply)
         name.setReadOnly(self.document.read_only)
         name.setMinimumWidth(60)
-        name.setCursorPosition(0)  # a long name shows its start
         kind = QLabel(node.kind)
         kind.setObjectName("muted")
         title.addWidget(glyph)
@@ -182,19 +182,6 @@ class PropertyEditor(QScrollArea):
         self._editors["name"] = lambda: name.text().strip() or None
         form = _form()
         layout.addLayout(form)
-        extent = self.document.results.highlight([path])
-        if extent is not None:
-            box = kdb.Box()
-            for region in extent.layers.values():
-                box += region.bbox()
-            where = QLabel(
-                "x {:g} … {:g}, y {:g} … {:g} µm".format(
-                    *(v / 1000 for v in (box.left, box.right, box.bottom, box.top))
-                )
-            )
-            where.setObjectName("muted")
-            where.setToolTip("Where the shape ends up in this component (stored values are local)")
-            form.addRow("Extent", where)
 
         self._add_fields(form, node, node.kind, "", skip=_SPECIAL)
 
@@ -549,7 +536,7 @@ class PropertyEditor(QScrollArea):
         layout.addLayout(header)
 
         form = _form()
-        form.setContentsMargins(22, 0, 4, 0)
+        form.setContentsMargins(0, 0, 4, 0)  # the fields may reach under the icon
         labels = MODIFIER_LABELS.get(kind, {})
         key = f"modifier{index}:"
         widgets: dict[str, QWidget] = {}

@@ -127,6 +127,9 @@ def test_long_names_are_cut_and_do_not_widen_the_panel(window):
     window.tree.select_paths([((0, 0),)])
     body = window.properties.widget()
     assert body.minimumSizeHint().width() < 320
+    name = window.properties.name_edit
+    assert name._elided() and name.toolTip().startswith("interdigitated_comb_finger_left_side")
+    assert not [lab for lab in body.findChildren(QLabel) if lab.text() == "Extent"]
     from_x = fields(window)["From x"]
     assert from_x._elided() and from_x.toolTip().startswith(f"{long} + {long}")
     summary = next(lab for lab in body.findChildren(ElidedLabel) if long in lab.text())

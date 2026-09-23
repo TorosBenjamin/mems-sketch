@@ -22,7 +22,7 @@ import re
 
 from PySide6.QtCore import QPoint, QRect, QSize, QStringListModel, Qt, Signal
 from PySide6.QtGui import QPainter, QPalette
-from PySide6.QtWidgets import QCompleter, QLineEdit, QMenu
+from PySide6.QtWidgets import QCompleter, QLineEdit, QMenu, QStyle, QStyleOptionFrame
 
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.gui import icons
@@ -40,6 +40,72 @@ def is_number(text: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+class ElidedLineEdit(QLineEdit):
+    """A line edit that, when not being edited, shows a text too long for it from
+    its start, cut with "…" (the whole text is in the tooltip and back while
+    editing). It may shrink, so a long text never widens its panel."""
+
+    def __init__(self, text: str = "", tip: str = "") -> None:
+        super().__init__(text)
+        self.tip = tip  # shown in the tooltip, after the text when that is cut
+        self.textChanged.connect(self._changed)
+        self._changed()
+
+    def _changed(self) -> None:
+        self._layout()
+        self.update()
+
+    def _text_rect(self) -> QRect:
+        """Where the text is drawn, as QLineEdit does it (without the text margins)."""
+        option = QStyleOptionFrame()
+        self.initStyleOption(option)
+        rect = self.style().subElementRect(QStyle.SubElement.SE_LineEditContents, option, self)
+        return rect.adjusted(2, 0, -2, 0)
+
+    def _elided(self) -> bool:
+        width = self.fontMetrics().horizontalAdvance(self.text())
+        return not self.hasFocus() and width > self._text_rect().width()
+
+    def _layout(self) -> None:
+        """While elided, the field's own text is pushed out of view (painted cut instead)."""
+        elided = self._elided()
+        right = self.width() if elided else 0
+        if self.textMargins().right() != right:
+            self.setTextMargins(0, 0, right, 0)
+        self.setToolTip("\n".join(t for t in (self.text() if elided else "", self.tip) if t))
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(48, super().minimumSizeHint().height())
+
+    def sizeHint(self) -> QSize:  # not widened by the pushed-out text
+        return QSize(120, super().sizeHint().height())
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._elided():
+            painter = QPainter(self)
+            painter.setPen(self.palette().color(QPalette.ColorRole.Text))
+            rect = self._text_rect()
+            shown = self.fontMetrics().elidedText(
+                self.text(), Qt.TextElideMode.ElideRight, rect.width()
+            )
+            painter.drawText(rect, int(Qt.AlignmentFlag.AlignVCenter), shown)
+            painter.end()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._layout()
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self._layout()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.setCursorPosition(0)
+        self._layout()
 
 
 class ValueEdit(QLineEdit):

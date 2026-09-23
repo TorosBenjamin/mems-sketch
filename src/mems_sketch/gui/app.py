@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.component import to_dbu
 from mems_sketch.core.shapes import Align, NodePath
 from mems_sketch.export.base import available_exporters
-from mems_sketch.gui.canvas import LayoutCanvas
+from mems_sketch.gui.canvas import DEFAULT_THEME, THEMES, LayoutCanvas
 from mems_sketch.gui.document import VIEW_MODES, ProjectDocument
 from mems_sketch.gui.panels import (
     ComponentsPanel,
@@ -74,6 +74,8 @@ class MainWindow(QMainWindow):
         self._candidates: list[tuple[str, float, float]] = []
         self._problems: list[str] = []
         self._restoring = False  # while opening a project, the tab layout is not saved
+        theme = QSettings("mems-sketch", "mems-sketch").value("canvas/theme", DEFAULT_THEME)
+        self.canvas_theme = theme if theme in THEMES else DEFAULT_THEME
 
         self.area = EditorArea(self.document)
         self.setCentralWidget(self.area)
@@ -164,6 +166,7 @@ class MainWindow(QMainWindow):
                 lambda x, y, v=view: self._view_double_clicked(v, x, y)
             )
             view.canvas.cursor_moved.connect(self._cursor_moved)
+            view.canvas.set_theme(self.canvas_theme)
         return view
 
     def _view_activated(self, view: ComponentView) -> None:
@@ -183,6 +186,18 @@ class MainWindow(QMainWindow):
     def _set_layer_visible(self, layer: str, visible: bool) -> None:
         for view in self.area.views():
             view.canvas.set_layer_visible(layer, visible)
+
+    def set_canvas_theme(self, theme: str) -> None:
+        """Light or dark canvas background for every tab; remembered for next time."""
+        self.canvas_theme = theme
+        for view in self.area.views():
+            view.canvas.set_theme(theme)
+        self.dark_action.setChecked(theme == "dark")
+        QSettings("mems-sketch", "mems-sketch").setValue("canvas/theme", theme)
+        self._update_overlay()
+
+    def _toggle_dark(self, checked: bool) -> None:
+        self.set_canvas_theme("dark" if checked else "light")
 
     def split_view(self) -> None:
         view = self.area.split_view()
@@ -316,6 +331,9 @@ class MainWindow(QMainWindow):
         view = bar.addMenu("&View")
         self._action("Fit", lambda: self.canvas.fit(), "F", view)
         self._action("Recompile and check", self.refresh, "F5", view)
+        self.dark_action = self._action("Dark canvas", self._toggle_dark, None, view)
+        self.dark_action.setCheckable(True)
+        self.dark_action.setChecked(self.canvas_theme == "dark")
         view.addSeparator()
         self._action("Open top component", self._edit_top, "Ctrl+T", view)
         self._action("Split view", self.split_view, "Ctrl+\\", view)

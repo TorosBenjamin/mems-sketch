@@ -157,3 +157,12 @@ def test_property_editor_edits_the_alignment(window):
     editor.apply()
     assert window.document.node(((0, 1),)).align.to == "rect1.right"
     assert window.points.table.rowCount() == 0
+
+
+def test_canvas_is_white_by_default_and_can_be_dark(window):
+    assert window.canvas.backgroundBrush().color().name() == "#ffffff"
+    window.set_canvas_theme("dark")
+    assert window.canvas.backgroundBrush().color().name() == "#1e1f22"
+    again = MainWindow()  # the choice is remembered
+    assert again.canvas.backgroundBrush().color().name() == "#1e1f22"
+    again.close()

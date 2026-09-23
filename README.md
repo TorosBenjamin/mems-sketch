@@ -144,9 +144,10 @@ MATLAB with `system(...)`.
   or disable a node; Ctrl/Shift-click selects several. Boolean operands appear
   under A and B, and each alignment is shown (e.g. `bottom at spring.end`).
 - **Canvas**: wheel to zoom, middle or right drag to pan, F to fit, click to
-  select. The selection is outlined in yellow with its alignment points, rule
+  select. The selection is outlined with its alignment points, rule
   violations are boxed in red and the component's own points are marked in
-  green. The View box switches between drawn, as-etched and etch-compensated
+  green. The background is white; **View → Dark canvas** switches to dark
+  (remembered). The View box switches between drawn, as-etched and etch-compensated
   geometry.
 - **Properties**: generated from the selected node's schema. Any numeric field
   takes a number or an expression, with its value shown beside it. For a

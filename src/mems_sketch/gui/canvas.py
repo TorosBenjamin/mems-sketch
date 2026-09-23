@@ -25,13 +25,36 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.component import DBU_UM, Geometry
 
 PALETTE = ["#4c78a8", "#f58518", "#54a24b", "#e45756", "#72b7b2", "#b279a2", "#eeca3b", "#9d755d"]
-HIGHLIGHT = QColor("#ffd400")
-VIOLATION = QColor("#ff2d55")
-POINT_STYLES = {  # colour and marker size in pixels
-    "declared": (QColor("#3ddc84"), 9),  # the edited component's own points
-    "selected": (QColor("#ffd400"), 7),  # points of the selected shape
-    "pick": (QColor("#00c8ff"), 11),  # candidates while aligning
+POINT_SIZES = {  # marker size in pixels
+    "declared": 9,  # the edited component's own points
+    "selected": 7,  # points of the selected shape
+    "pick": 11,  # candidates while aligning
 }
+# Colours per canvas theme. Grid lines are drawn with the ``grid`` colour at
+# increasing opacity for minor lines, every fifth line and the axes.
+THEMES = {
+    "light": {
+        "background": "#ffffff",
+        "grid": (0, 0, 0),
+        "grid_alpha": (18, 40, 90),
+        "highlight": "#e0007a",
+        "violation": "#d7002a",
+        "declared": "#008a3e",
+        "selected": "#e0007a",
+        "pick": "#0072d6",
+    },
+    "dark": {
+        "background": "#1e1f22",
+        "grid": (255, 255, 255),
+        "grid_alpha": (14, 32, 70),
+        "highlight": "#ffd400",
+        "violation": "#ff2d55",
+        "declared": "#3ddc84",
+        "selected": "#ffd400",
+        "pick": "#00c8ff",
+    },
+}
+DEFAULT_THEME = "light"
 
 
 def layer_color(index: int) -> QColor:
@@ -76,7 +99,8 @@ class LayoutCanvas(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
-        self.setBackgroundBrush(QColor("#1e1f22"))
+        self.theme = THEMES[DEFAULT_THEME]
+        self.setBackgroundBrush(QColor(self.theme["background"]))
         self.setTransform(QTransform.fromScale(2, -2))
         self._layer_items: dict[str, QGraphicsPathItem] = {}
         self._overlay: list = []
@@ -87,6 +111,12 @@ class LayoutCanvas(QGraphicsView):
         self.scene().setSceneRect(QRectF(-1e6, -1e6, 2e6, 2e6))
 
     # -- content -----------------------------------------------------------
+
+    def set_theme(self, name: str) -> None:
+        """Switch between the ``light`` and ``dark`` canvas colours."""
+        self.theme = THEMES[name]
+        self.setBackgroundBrush(QColor(self.theme["background"]))
+        self.viewport().update()
 
     def show_geometry(
         self, geometry: Geometry, colors: dict[str, QColor], visible: dict[str, bool]
@@ -123,7 +153,7 @@ class LayoutCanvas(QGraphicsView):
         if highlight is not None:
             for region in highlight.layers.values():
                 item = QGraphicsPathItem(region_to_path(region))
-                pen = QPen(HIGHLIGHT, 2)
+                pen = QPen(QColor(self.theme["highlight"]), 2)
                 pen.setCosmetic(True)
                 item.setPen(pen)
                 item.setZValue(1000)
@@ -134,7 +164,7 @@ class LayoutCanvas(QGraphicsView):
             item = QGraphicsRectItem(
                 QRectF(x0 - pad, y0 - pad, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad)
             )
-            pen = QPen(VIOLATION, 2)
+            pen = QPen(QColor(self.theme["violation"]), 2)
             pen.setCosmetic(True)
             item.setPen(pen)
             item.setZValue(1001)
@@ -147,7 +177,7 @@ class LayoutCanvas(QGraphicsView):
         """Mark points (name, x, y) with crosses of a style; replaces that style's markers."""
         for item in self._points.pop(style, []):
             self.scene().removeItem(item)
-        color, size = POINT_STYLES[style]
+        color, size = QColor(self.theme[style]), POINT_SIZES[style]
         items = []
         for name, x, y in points:
             marker = _PointMarker(color, size)
@@ -248,9 +278,9 @@ class LayoutCanvas(QGraphicsView):
     def drawBackground(self, painter: QPainter, rect: QRectF) -> None:  # noqa: N802
         super().drawBackground(painter, rect)
         step = self.grid_step()
-        minor = QPen(QColor(255, 255, 255, 14), 0)
-        major = QPen(QColor(255, 255, 255, 32), 0)
-        axis = QPen(QColor(255, 255, 255, 70), 0)
+        minor, major, axis = (
+            QPen(QColor(*self.theme["grid"], alpha), 0) for alpha in self.theme["grid_alpha"]
+        )
         left, right = math.floor(rect.left() / step), math.ceil(rect.right() / step)
         top, bottom = math.floor(rect.top() / step), math.ceil(rect.bottom() / step)
         if (right - left) * (bottom - top) > 400_000:

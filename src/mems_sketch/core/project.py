@@ -35,7 +35,7 @@ __all__ = ["Instance", "Layer", "Library", "Process", "Project"]
 DEFAULT_TOP = "top"
 
 
-def Instance(  # noqa: N802 - reads like a class at call sites
+def Instance(
     name: str, component: str, params: dict[str, Any] | None = None, **placement
 ) -> RefShape:
     """Shorthand for a named component reference: ``Instance("pad", "anchor", {"size": 50}, x=10)``."""

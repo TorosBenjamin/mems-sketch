@@ -34,5 +34,7 @@ def test_importing_the_backend_loads_no_gui():
         "bad = [m for m in sys.modules if m.startswith(('PySide6', 'mems_sketch.gui'))];"
         "print(bad); sys.exit(1 if bad else 0)"
     )
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
     assert result.returncode == 0, result.stdout + result.stderr

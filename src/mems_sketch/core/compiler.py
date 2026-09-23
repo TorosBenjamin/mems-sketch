@@ -18,6 +18,7 @@ changes to that project.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import inspect
 import json
@@ -156,10 +157,9 @@ class Session:
             return record
         definition, namespace = found
         evaluator = Evaluator(lambda n: self.component(n, namespace), record)
-        try:
+        # On failure, what was evaluated so far is still useful to show.
+        with contextlib.suppress(Exception):
             evaluator.render(definition.shapes, self.variables(component, params))
-        except Exception:  # noqa: BLE001 - partial results are still useful to show
-            pass
         return record
 
     def render_shapes(

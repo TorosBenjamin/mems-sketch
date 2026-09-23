@@ -2,10 +2,10 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from mems_sketch.core.process import Layer  # noqa: E402
-from mems_sketch.core.shapes import BooleanShape, RectShape, RefShape  # noqa: E402
-from mems_sketch.gui.document import ProjectDocument  # noqa: E402
-from mems_sketch.storage import load  # noqa: E402
+from mems_sketch.core.process import Layer
+from mems_sketch.core.shapes import BooleanShape, RectShape, RefShape
+from mems_sketch.gui.document import ProjectDocument
+from mems_sketch.storage import load
 
 
 def area(doc: ProjectDocument, mode: str = "drawn") -> float:
@@ -29,7 +29,7 @@ def test_add_primitive_names_and_selects_path(doc):
 def test_invalid_edit_rolls_back_and_keeps_history_clean(doc):
     path = doc.add_primitive("circle")
     before = doc.node(path)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="unknown_var"):
         doc.replace_node(path, before.model_copy(update={"radius": "unknown_var"}))
     assert doc.node(path) == before
     assert doc.undo_text() == "Add circle1"
@@ -183,8 +183,8 @@ def test_save_open_export(doc, tmp_path):
 
 # -- alignment, transforms and unpacking -------------------------------------
 
-from mems_sketch.core.shapes import Align, TransformShape  # noqa: E402
-from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef  # noqa: E402
+from mems_sketch.core.shapes import Align, TransformShape
+from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef
 
 
 def bbox_of(doc: ProjectDocument, path, layer="device"):

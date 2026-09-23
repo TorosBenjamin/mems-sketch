@@ -5,9 +5,9 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QDockWidget, QInputDialog, QLineEdit, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QDockWidget, QInputDialog, QLineEdit, QMessageBox
 
-from mems_sketch.gui.app import MainWindow  # noqa: E402
+from mems_sketch.gui.app import MainWindow
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 

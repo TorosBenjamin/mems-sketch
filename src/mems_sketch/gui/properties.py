@@ -9,6 +9,7 @@ rejected without changing the design.
 
 from __future__ import annotations
 
+import contextlib
 import typing
 
 from PySide6.QtCore import Qt, Signal
@@ -349,13 +350,12 @@ def _format(value) -> str:
 
 
 def _message(exc: Exception) -> str:
+    """A readable message; validation errors list each field with its problem."""
     errors = getattr(exc, "errors", None)
     if callable(errors):
-        try:
+        with contextlib.suppress(Exception):  # not a pydantic error after all
             return "; ".join(
                 f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" if e["loc"] else e["msg"]
                 for e in errors()
             )
-        except Exception:  # noqa: BLE001
-            pass
     return str(exc)

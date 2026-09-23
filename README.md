@@ -218,23 +218,46 @@ subtraction stays editable and parametric.
 ## Code-first use
 
 ```python
-from mems_sketch import Align, ComponentDef, Instance, ParamDef, RectShape, Repeat, load, save, export
+from mems_sketch import (
+    Align,
+    ComponentDef,
+    Instance,
+    ParamDef,
+    RectShape,
+    Repeat,
+    load,
+    save,
+    export,
+)
 from mems_sketch.process import etch, rules
 
 project = load("examples/resonator")
-project.set_variable("pitch", 16)                     # a top-level parameter
-project.define_component(ComponentDef(
-    name="finger_array",
-    parameters=[ParamDef(name="n", default=4, min=1, integer=True),
-                ParamDef(name="w", default="process.min_gap")],
-    shapes=[RectShape(layer="device", x0=0, y0=0, x1="w", y1=30,
-                      repeat=Repeat(columns="n", dx="3 * w"))],
-))
-project.add(Instance("fingers", "finger_array", {"n": 12},
-                     align=Align(point="bottom_left", to="mass.top_right", dx=10)))
+project.set_variable("pitch", 16)  # a top-level parameter
+project.define_component(
+    ComponentDef(
+        name="finger_array",
+        parameters=[
+            ParamDef(name="n", default=4, min=1, integer=True),
+            ParamDef(name="w", default="process.min_gap"),
+        ],
+        shapes=[
+            RectShape(
+                layer="device", x0=0, y0=0, x1="w", y1=30, repeat=Repeat(columns="n", dx="3 * w")
+            )
+        ],
+    )
+)
+project.add(
+    Instance(
+        "fingers",
+        "finger_array",
+        {"n": 12},
+        align=Align(point="bottom_left", to="mass.top_right", dx=10),
+    )
+)
 
 print(rules.check(project))
-save(project, "my_resonator")                         # a project folder
+save(project, "my_resonator")  # a project folder
 export(project, "my_resonator.gds", geometry=etch.compensated(project))
 ```
 

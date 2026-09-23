@@ -11,7 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.6"]
-dev = ["pytest>=8", "pytest-qt>=4.4", "ruff>=0.5", "PySide6>=6.6"]
+dev = ["pytest>=8", "pytest-qt>=4.4", "ruff==0.16.8", "PySide6>=6.6"]  # ruff pinned: CI and local agree
 
 [project.scripts]
 mems-sketch-cli = "mems_sketch.cli:main"

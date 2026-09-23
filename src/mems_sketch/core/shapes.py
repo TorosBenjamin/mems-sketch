@@ -901,7 +901,7 @@ def _path(shape: PathShape, ev) -> kdb.Path:
     return kdb.Path(points, width, ext, ext, shape.ends == "round")
 
 
-from pydantic import TypeAdapter  # noqa: E402 - needs the Shape union defined above
+from pydantic import TypeAdapter
 
 _SHAPE_ADAPTER: TypeAdapter = TypeAdapter(Shape)
 

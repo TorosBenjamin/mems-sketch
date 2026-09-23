@@ -65,7 +65,7 @@ def names_in(expression: str) -> set[str]:
     return names
 
 
-def evaluate(expression: str | float | int, variables: Mapping[str, float]) -> float:
+def evaluate(expression: str | float, variables: Mapping[str, float]) -> float:
     if isinstance(expression, (int, float)):
         return float(expression)
     return float(_eval(_parse(expression).body, variables))
@@ -128,10 +128,10 @@ def substitute(expression: str, change: Callable[[str], str | None]) -> str:
             changed = True
             return _parse(str(replacement)).body
 
-        visit_Name = _name  # noqa: N815 - ast.NodeTransformer naming
-        visit_Attribute = _name  # noqa: N815
+        visit_Name = _name
+        visit_Attribute = _name
 
-        def visit_Call(self, node: ast.Call) -> ast.AST:  # noqa: N802
+        def visit_Call(self, node: ast.Call) -> ast.AST:
             node.args = [self.visit(arg) for arg in node.args]
             return node
 

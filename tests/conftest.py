@@ -3,7 +3,7 @@ import os
 # GUI tests run without a display.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest  # noqa: E402
+import pytest
 
 
 @pytest.fixture(autouse=True)

@@ -748,7 +748,7 @@ class MainWindow(QMainWindow):
     def _remember_dir(self, path: str) -> None:
         QSettings("mems-sketch", "mems-sketch").setValue("last_dir", str(Path(path).parent))
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+    def closeEvent(self, event: QCloseEvent) -> None:
         if self._confirm_discard():
             self._save_tabs()
             event.accept()

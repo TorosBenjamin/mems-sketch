@@ -8,8 +8,8 @@ A project is a folder of YAML files (the source of truth); the compiler turns
 it into geometry, which can be checked, etch-processed and exported.
 """
 
-from mems_sketch.core.component import Component, Geometry, Params, register_component
 from mems_sketch.core.compiler import Compiler
+from mems_sketch.core.component import Component, Geometry, Params, register_component
 from mems_sketch.core.process import Layer, Process
 from mems_sketch.core.project import Instance, Library, Project
 from mems_sketch.core.shapes import (
@@ -38,9 +38,9 @@ __all__ = [
     "ArcShape",
     "BooleanShape",
     "CircleShape",
+    "Compiler",
     "Component",
     "ComponentDef",
-    "Compiler",
     "FilletShape",
     "Geometry",
     "GroupShape",
@@ -51,8 +51,8 @@ __all__ = [
     "OffsetShape",
     "ParamDef",
     "Params",
-    "PointDef",
     "PathShape",
+    "PointDef",
     "PolygonShape",
     "Process",
     "Project",

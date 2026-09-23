@@ -4,11 +4,11 @@ from pydantic import ValidationError
 
 from mems_sketch import (
     ComponentDef,
-    Project,
     Instance,
     Layer,
     ParamDef,
     PolygonShape,
+    Project,
     RectShape,
     RefShape,
     Repeat,

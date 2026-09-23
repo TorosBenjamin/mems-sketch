@@ -572,7 +572,7 @@ class ProjectDocument(QObject):
         """
         node = self.node(path)
         if not isinstance(node, RefShape):
-            raise ValueError("select a component reference to unpack")
+            raise ValueError("select a component reference to unpack")  # noqa: TRY004
         found = self.project.definition(self.project.qualify(node.component))
         if found is None:
             raise ValueError(f"'{node.component}' is a built-in component: it has no shapes")

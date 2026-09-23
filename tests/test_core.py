@@ -2,7 +2,7 @@ import klayout.db as kdb
 import pytest
 from pydantic import ValidationError
 
-from mems_sketch import Project, Instance, Layer, export, load, save
+from mems_sketch import Instance, Layer, Project, export, load, save
 from mems_sketch.core.component import resolve_params, to_dbu
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.export.base import available_exporters

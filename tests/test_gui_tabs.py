@@ -5,11 +5,11 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QMessageBox
 
-from mems_sketch.core.shapes import RefShape  # noqa: E402
-from mems_sketch.core.user_component import ComponentDef  # noqa: E402
-from mems_sketch.gui.app import MainWindow  # noqa: E402
+from mems_sketch.core.shapes import RefShape
+from mems_sketch.core.user_component import ComponentDef
+from mems_sketch.gui.app import MainWindow
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -81,8 +81,8 @@ def test_trial_values_do_not_change_the_design(example):
     assert w.document.project.components["suspension"].parameter("turns").default == 3
     row = w.parameters._names.index("turns")
     assert w.parameters.table.item(row, w.parameters.TRIAL).text() == "6"
-    with pytest.raises(Exception):
-        w.document.set_trial("turns", 0.5)  # must be an integer >= 1
+    with pytest.raises(ValueError, match="turns"):
+        w.document.set_trial("turns", 0.5)  # must be an integer
     assert w.document.trials["suspension"] == {"turns": 6}
 
 

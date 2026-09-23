@@ -224,13 +224,13 @@ class LayoutCanvas(QGraphicsView):
 
     # -- interaction -------------------------------------------------------
 
-    def wheelEvent(self, event) -> None:  # noqa: N802
+    def wheelEvent(self, event) -> None:
         factor = 1.25 if event.angleDelta().y() > 0 else 0.8
         scale = abs(self.transform().m11()) * factor
         if 1e-4 < scale < 1e5:
             self.scale(factor, factor)
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802
+    def mousePressEvent(self, event) -> None:
         if event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
             self._pan_from = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -244,14 +244,14 @@ class LayoutCanvas(QGraphicsView):
             self.clicked.emit(p.x(), p.y(), additive)
         super().mousePressEvent(event)
 
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+    def mouseDoubleClickEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             p = self.mapToScene(event.position().toPoint())
             self.double_clicked.emit(p.x(), p.y())
             return
         super().mouseDoubleClickEvent(event)
 
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+    def mouseMoveEvent(self, event) -> None:
         if self._pan_from is not None:
             delta = event.position() - self._pan_from
             self._pan_from = event.position()
@@ -262,20 +262,20 @@ class LayoutCanvas(QGraphicsView):
         self.cursor_moved.emit(p.x(), p.y())
         super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+    def mouseReleaseEvent(self, event) -> None:
         if self._pan_from is not None:
             self._pan_from = None
             self.unsetCursor()
             return
         super().mouseReleaseEvent(event)
 
-    def keyPressEvent(self, event) -> None:  # noqa: N802
+    def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F:
             self.fit()
             return
         super().keyPressEvent(event)
 
-    def drawBackground(self, painter: QPainter, rect: QRectF) -> None:  # noqa: N802
+    def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
         super().drawBackground(painter, rect)
         step = self.grid_step()
         minor, major, axis = (

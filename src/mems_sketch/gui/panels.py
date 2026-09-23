@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -81,9 +83,9 @@ def _button_row(*buttons: QPushButton) -> QHBoxLayout:
     return row
 
 
-def _table(columns: list[str]) -> QTableWidget:
+def _table(columns: Sequence[str]) -> QTableWidget:
     table = QTableWidget(0, len(columns))
-    table.setHorizontalHeaderLabels(columns)
+    table.setHorizontalHeaderLabels(list(columns))
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
     table.horizontalHeader().setStretchLastSection(True)
     table.verticalHeader().hide()
@@ -302,7 +304,7 @@ class ParametersPanel(_Panel):
     Library and built-in components are read-only, but trial values work.
     """
 
-    COLUMNS = ["Name", "Default", "Min", "Max", "Trial", "Value"]
+    COLUMNS = ("Name", "Default", "Min", "Max", "Trial", "Value")
     TRIAL = 4
 
     def __init__(self, document: ProjectDocument) -> None:
@@ -396,8 +398,8 @@ class PointsPanel(_Panel):
     and ``Y`` may be expressions over the component's parameters.
     """
 
-    COLUMNS = ["Name", "At", "X", "Y", "Position"]
-    FIELDS = ["name", "at", "x", "y"]
+    COLUMNS = ("Name", "At", "X", "Y", "Position")
+    FIELDS = ("name", "at", "x", "y")
 
     def __init__(self, document: ProjectDocument) -> None:
         super().__init__()
@@ -471,7 +473,7 @@ class LayersPanel(_Panel):
     """Process layers: visibility, colour, GDS mapping, etch loss and rules."""
 
     visibility_changed = Signal(str, bool)
-    LAYER_COLUMNS = ["Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm"]
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm")
 
     def __init__(self, document: ProjectDocument) -> None:
         super().__init__()

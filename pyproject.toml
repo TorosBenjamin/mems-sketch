@@ -1,0 +1,33 @@
+[project]
+name = "mems-sketch"
+version = "0.1.0"
+description = "Parametric MEMS layout design: components, etch-loss compensation, rule checks and pluggable export."
+requires-python = ">=3.11"
+dependencies = [
+    "klayout>=0.29",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+# Exporters are discovered through this entry-point group, so a separate
+# package can add a format without touching this repository.
+[project.entry-points."mems_sketch.exporters"]
+gds = "mems_sketch.export.klayout_formats:GdsExporter"
+oasis = "mems_sketch.export.klayout_formats:OasisExporter"
+dxf = "mems_sketch.export.klayout_formats:DxfExporter"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mems_sketch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]

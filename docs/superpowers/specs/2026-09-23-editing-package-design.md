@@ -54,7 +54,9 @@ trial values (`set_trial`, `restore_trials`); lookups (`session`, `exists`,
 `component`, `parameter_defaults`, `node`, `unique_name`, `reference_target`);
 `set_active`.
 
-Private helpers the groups use become public: `_local` → `local`,
+The method `session()` (the compiler session of the project) becomes
+`compiled()`, so a group does not read `self.session.session()`. Private
+helpers the groups use become public: `_local` → `local`,
 `_shapes_in` → `shapes_in`, `_trials` → `trials_for`; `_siblings` becomes
 `NodeEdits.siblings` (also used by `components.make`).
 

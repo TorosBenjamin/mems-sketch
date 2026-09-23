@@ -243,13 +243,17 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   Entries that do not apply are greyed out. The keyboard's menu key opens it
   too.
 - **Properties**: generated from the selected node's schema. The shape's name
-  is the title (click it to rename); pairs such as x and y, or columns and
-  rows, share a row. Any numeric field takes a number or an expression. An
+  is the title (click it to rename), with an eye beside it that switches
+  the shape off or on at once (it stays selected); pairs such as x and y, or
+  columns and rows, share a row. Any numeric field takes a number or an expression. An
   expression is tinted and shows its value inside the field (a red border
   and tooltip if it cannot be evaluated). Typing a name offers the matching
   parameters, process constants and points; the parameter button (on hover)
   picks a parameter, **makes a parameter from the value** (asks for a name,
-  sets the default and uses it), or replaces an expression by its value. For
+  sets the default and uses it), or replaces an expression by its value.
+  Long names and expressions never widen the panel: a field not being edited
+  shows the start and cuts the rest with "…" (all of it in the tooltip and
+  while editing). For
   a component the component's own parameters are listed, with their
   declared defaults as placeholders. **Modifiers** are cards, as in Blender: each shows
   its settings (applied with the rest), and buttons that act at once: switch

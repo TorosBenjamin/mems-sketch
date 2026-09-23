@@ -6,8 +6,9 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QInputDialog, QLabel, QMessageBox
 
-from mems_sketch import RectShape
+from mems_sketch import ArrayModifier, RectShape
 from mems_sketch.gui.app import MainWindow
+from mems_sketch.gui.properties import ElidedLabel
 from mems_sketch.gui.value_edit import ValueEdit
 
 
@@ -96,3 +97,39 @@ def test_use_the_value_replaces_an_expression_by_its_number(window):
     edit = fields(window)["To x"]
     edit._use(edit._hint)
     assert window.document.shapes[0].x1 == 26
+
+
+def test_enabled_is_an_eye_in_the_title_row_and_acts_at_once(window):
+    editor = window.properties
+    assert not [lab for lab in editor.findChildren(QLabel) if lab.text() == "Enabled"]
+    assert editor.enabled_toggle.isChecked()
+    editor.enabled_toggle.click()
+    assert window.document.shapes[0].enabled is False
+    assert not window.properties.enabled_toggle.isChecked()  # the panel was rebuilt
+    window.document.undo()
+    assert window.document.shapes[0].enabled is True
+
+
+def test_long_names_are_cut_and_do_not_widen_the_panel(window):
+    long = "comb_finger_overlap_length_of_the_left_rotor"
+    window.document.parameters.set(long, 12.0)
+    bar = window.document.shapes[0]
+    window.document.nodes.replace(
+        ((0, 0),),
+        bar.model_copy(
+            update={
+                "name": "interdigitated_comb_finger_left_side",
+                "x0": f"{long} + {long}",
+                "modifiers": [ArrayModifier(rows=long, dy=long)],
+            }
+        ),
+    )
+    window.tree.select_paths([((0, 0),)])
+    body = window.properties.widget()
+    assert body.minimumSizeHint().width() < 320
+    from_x = fields(window)["From x"]
+    assert from_x._elided() and from_x.toolTip().startswith(f"{long} + {long}")
+    summary = next(lab for lab in body.findChildren(ElidedLabel) if long in lab.text())
+    assert QLabel.text(summary).endswith("…")  # shown cut; text() is all of it
+    from_x.setFocus()
+    assert not from_x._elided()  # all of it while editing

@@ -13,7 +13,7 @@ from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtWidgets import QSplitter, QTabBar, QTabWidget, QToolButton, QVBoxLayout, QWidget
 
 from mems_sketch.core.component import Geometry
-from mems_sketch.core.shapes import NodePath
+from mems_sketch.core.shapes import NodePath, node_at
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import LayoutCanvas
@@ -86,13 +86,19 @@ class ComponentView(QWidget):
         except Exception:  # noqa: BLE001 - the messages panel shows why
             self.guides = []
         self.canvas.show_guides(self.guides, set(self.selection))
-        self.selection = [
-            p for p in self.selection if p in self.document.results.inspection(self.component)
-        ]
+        self.selection = [p for p in self.selection if self._exists(p)]
         self.canvas.show_geometry(geometry, colors, visible)
         if not self._fitted and geometry.layers:
             self._fitted = True
             self.canvas.fit()
+
+    def _exists(self, path: NodePath) -> bool:
+        """The node is still there (switched off or not: it stays selected)."""
+        try:
+            node_at(self.document.definition_of(self.component).shapes, path)
+            return True
+        except (KeyError, IndexError):
+            return False
 
 
 class EditorArea(QSplitter):

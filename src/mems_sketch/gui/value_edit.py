@@ -10,14 +10,18 @@
   its value.
 * An optional prefix (``x``, ``y``) is drawn inside the field, so pairs such
   as x and y can sit side by side.
+* When the field is not being edited, a text too long for it is shown from
+  its start and cut with "…" (the value only if there is room left); the
+  whole text is in the tooltip and back while editing. The field may shrink,
+  so long names never widen the panel.
 """
 
 from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import QPoint, QRect, QStringListModel, Qt, Signal
-from PySide6.QtGui import QPainter
+from PySide6.QtCore import QPoint, QRect, QSize, QStringListModel, Qt, Signal
+from PySide6.QtGui import QPainter, QPalette
 from PySide6.QtWidgets import QCompleter, QLineEdit, QMenu
 
 from mems_sketch.core.expressions import evaluate
@@ -100,36 +104,83 @@ class ValueEdit(QLineEdit):
                 invalid, tip = True, f"cannot evaluate: {exc}"
         elif not text and self.optional:
             tip = "empty: the default"
+        if text and not tip:
+            tip = text
         self.setToolTip(tip)
         if self.property("expression") != expression or self.property("invalid") != invalid:
             self.setProperty("expression", expression)
             self.setProperty("invalid", invalid)
             self.style().unpolish(self)
             self.style().polish(self)
-        metrics = self.fontMetrics()
-        left = metrics.horizontalAdvance(self.prefix) + 6 if self.prefix else 0
-        right = metrics.horizontalAdvance(self._hint) + 6 if self._hint else 0
-        self.setTextMargins(left, 0, right, 0)
+        self._layout()
         self.update()
 
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        if not (self.prefix or self._hint):
-            return
-        painter = QPainter(self)
-        painter.setPen(self.palette().placeholderText().color())
+    def _elided(self) -> bool:
+        """The text is too long and not being edited: :meth:`paintEvent` draws it cut."""
+        return not self.hasFocus() and not self._fits(with_hint=False)
+
+    def _layout(self) -> None:
+        """Room for the prefix, and for the value hint if it fits. While the text is
+        elided the field's own text is pushed out of view (painted cut instead)."""
+        metrics = self.fontMetrics()
+        left = metrics.horizontalAdvance(self.prefix) + 6 if self.prefix else 0
+        right = 0
+        if self._elided():
+            right = self.width()
+        elif self._hint and self._fits(with_hint=True):
+            right = metrics.horizontalAdvance(self._hint) + 6
+        if self.textMargins().left() != left or self.textMargins().right() != right:
+            self.setTextMargins(left, 0, right, 0)
+
+    def _room(self) -> QRect:
         rect = self.contentsRect().adjusted(7, 0, -7, 0)
         if self._bind.isVisible():
             rect.setRight(rect.right() - 20)
+        return rect
+
+    def _fits(self, with_hint: bool) -> bool:
+        metrics = self.fontMetrics()
+        needed = metrics.horizontalAdvance(self.text())
         if self.prefix:
-            painter.drawText(
-                rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), self.prefix
-            )
-        if self._hint:
-            painter.drawText(
-                rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight), self._hint
-            )
+            needed += metrics.horizontalAdvance(self.prefix) + 6
+        if with_hint:
+            needed += metrics.horizontalAdvance(self._hint) + 8
+        return needed <= self._room().width()
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(48, super().minimumSizeHint().height())
+
+    def sizeHint(self) -> QSize:
+        return QSize(80, super().sizeHint().height())
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        painter = QPainter(self)
+        muted = self.palette().placeholderText().color()
+        rect = self._room()
+        middle = Qt.AlignmentFlag.AlignVCenter
+        metrics = self.fontMetrics()
+        if self.prefix:
+            painter.setPen(muted)
+            painter.drawText(rect, int(middle | Qt.AlignmentFlag.AlignLeft), self.prefix)
+            rect.setLeft(rect.left() + metrics.horizontalAdvance(self.prefix) + 6)
+        hint = self._hint if self._fits(with_hint=True) else ""
+        if hint:
+            painter.setPen(muted)
+            painter.drawText(rect, int(middle | Qt.AlignmentFlag.AlignRight), hint)
+        if self._elided():
+            painter.setPen(self.palette().color(QPalette.ColorRole.Text))
+            shown = metrics.elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
+            painter.drawText(rect, int(middle | Qt.AlignmentFlag.AlignLeft), shown)
         painter.end()
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self._layout()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._layout()
 
     def enterEvent(self, event) -> None:
         self._bind.setVisible(self.isEnabled() and not self.isReadOnly())
@@ -143,6 +194,8 @@ class ValueEdit(QLineEdit):
     def focusOutEvent(self, event) -> None:
         self._bind.setVisible(False)
         super().focusOutEvent(event)
+        self.setCursorPosition(0)  # next time, start at the beginning
+        self._layout()
 
     # -- names -------------------------------------------------------------------
 

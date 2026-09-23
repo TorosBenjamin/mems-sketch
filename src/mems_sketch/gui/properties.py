@@ -3,7 +3,10 @@
 Numeric fields accept a number or an expression (see
 :mod:`mems_sketch.gui.value_edit`: expressions show their value inside the
 field, names are completed, and a button uses or makes parameters). Pairs such
-as x and y sit side by side. The name is the panel's title, edited in place. For a component reference the component's own parameter
+as x and y sit side by side. The name is the panel's title, edited in place,
+with an eye that switches the shape off or on at once. Long texts are cut
+with "…" so they never widen the panel. For a component reference the
+component's own parameter
 schema is shown, with defaults as placeholders. Edits are applied with the
 Apply button or Enter and go through the document, so invalid input is
 rejected without changing the design.
@@ -34,6 +37,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -165,20 +169,19 @@ class PropertyEditor(QScrollArea):
         name.setToolTip("The shape's name: click to rename (alignments and expressions follow)")
         name.returnPressed.connect(self.apply)
         name.setReadOnly(self.document.read_only)
+        name.setMinimumWidth(60)
+        name.setCursorPosition(0)  # a long name shows its start
         kind = QLabel(node.kind)
         kind.setObjectName("muted")
         title.addWidget(glyph)
         title.addWidget(name, 1)
         title.addWidget(kind)
+        title.addWidget(self._enabled_toggle(node))
         layout.addLayout(title)
         self.name_edit = name
         self._editors["name"] = lambda: name.text().strip() or None
         form = _form()
         layout.addLayout(form)
-        enabled = QCheckBox()
-        enabled.setChecked(node.enabled)
-        form.addRow("Enabled", enabled)
-        self._editors["enabled"] = enabled.isChecked
         extent = self.document.results.highlight([path])
         if extent is not None:
             box = kdb.Box()
@@ -215,10 +218,33 @@ class PropertyEditor(QScrollArea):
         layout.addStretch()
         self.setWidget(body)
 
+    def _enabled_toggle(self, node: Shape) -> QToolButton:
+        """The eye in the title row: whether the shape is drawn (applied at once)."""
+        toggle = QToolButton()
+        toggle.setObjectName("enabled-toggle")
+        toggle.setCheckable(True)
+        toggle.setChecked(node.enabled)
+        toggle.setAutoRaise(True)
+        toggle.setIconSize(QSize(16, 16))
+        toggle.setEnabled(not self.document.read_only)
+
+        def show(on: bool) -> None:
+            icons.bind(toggle, "eye" if on else "eye_off")
+            toggle.setToolTip(
+                "Enabled: click to switch the shape off" if on else "Switched off: click to enable"
+            )
+
+        show(node.enabled)
+        toggle.toggled.connect(show)
+        toggle.toggled.connect(self.apply)
+        self.enabled_toggle = toggle
+        self._editors["enabled"] = toggle.isChecked
+        return toggle
+
     def _field_editor(self, field: str, annotation, value) -> QWidget:
         args = typing.get_args(annotation)
         if typing.get_origin(annotation) is typing.Literal:
-            combo = QComboBox()
+            combo = _combo()
             combo.addItems([str(a) for a in args])
             combo.setCurrentText(str(value))
             self._editors[field] = combo.currentText
@@ -229,14 +255,14 @@ class PropertyEditor(QScrollArea):
             self._editors[field] = box.isChecked
             return box
         if field == "layer":
-            combo = QComboBox()
+            combo = _combo()
             combo.setEditable(True)
             combo.addItems(list(self.document.project.layers))
             combo.setCurrentText(value)
             self._editors[field] = lambda: combo.currentText().strip()
             return combo
         if field == "component":
-            combo = QComboBox()
+            combo = _combo()
             combo.addItems(self.document.component_names())
             combo.setCurrentText(value)
             self._editors[field] = combo.currentText
@@ -384,11 +410,11 @@ class PropertyEditor(QScrollArea):
         box.setChecked(node.align is not None)
         form = _form(box)
         align = node.align
-        own = QComboBox()
+        own = _combo()
         own.setEditable(True)
         own.addItems([name for name, _, _ in self.document.results.node_points(path)] or ["center"])
         own.setCurrentText(align.point if align else "center")
-        target = QComboBox()
+        target = _combo()
         target.setEditable(True)
         target.addItems([name for name, *_ in self.document.results.align_targets(path)])
         target.setCurrentText(align.to if align else "")
@@ -476,7 +502,7 @@ class PropertyEditor(QScrollArea):
         title = QLabel(MODIFIER_TITLES.get(kind, kind))
         title.setObjectName("card-title")
         title.setToolTip(MODIFIER_TIPS.get(kind, ""))
-        summary = QLabel(modifier.summary().removeprefix(kind.replace("_", " ")).strip())
+        summary = ElidedLabel(modifier.summary().removeprefix(kind.replace("_", " ")).strip())
         summary.setObjectName("muted")
         header.addWidget(glyph)
         header.addSpacing(4)
@@ -559,7 +585,7 @@ class PropertyEditor(QScrollArea):
 
     def _about_editor(self, key: str, value: str | None, path: NodePath) -> QWidget:
         """Where a mirror mirrors: nothing (use the axis), a guide, or a point."""
-        combo = QComboBox()
+        combo = _combo()
         combo.setEditable(True)
         combo.addItem("")
         guides = [name for p, name, *_ in self.document.results.guides() if p != path]
@@ -605,6 +631,43 @@ class PropertyEditor(QScrollArea):
             self.applied.emit()
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))
+
+
+class ElidedLabel(QLabel):
+    """A one-line label that may shrink: a text too long is cut with "…" (the whole
+    text is in the tooltip)."""
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__()
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:
+        self._full = text
+        self.setToolTip(text)
+        self._elide()
+
+    def text(self) -> str:
+        return self._full
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        shown = self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, self.width())
+        super().setText(shown)
+
+
+def _combo() -> QComboBox:
+    """A combo box that may shrink below its longest item (long names never widen
+    the panel; the list still opens wide enough)."""
+    combo = QComboBox()
+    combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(6)
+    combo.view().setTextElideMode(Qt.TextElideMode.ElideNone)
+    return combo
 
 
 def _section(title: str) -> QGroupBox:

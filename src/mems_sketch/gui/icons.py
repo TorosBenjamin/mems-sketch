@@ -175,6 +175,8 @@ ICONS = {
     'fill-opacity=".35" stroke="{blue}"/><rect x="6.5" y="11.5" width="3" height="3" rx=".5" '
     'fill="{blue}" fill-opacity=".35" stroke="{blue}"/><rect x="1.5" y="6.5" width="3" '
     'height="3" rx=".5" fill="{blue}" fill-opacity=".35" stroke="{blue}"/>',
+    "parameter": '<path d="M8 2.2 13.8 8 8 13.8 2.2 8z" stroke="{purple}"/>'
+    '<path d="M8 5.6 10.4 8 8 10.4 5.6 8z" fill="{purple}" stroke="none"/>',
     "up": '<path d="M4 10l4-4 4 4"/>',
     "down": '<path d="M4 6l4 4 4-4"/>',
     "apply": '<path d="M3.4 8.4l3 3 6.2-6.6" stroke="{green}"/>',

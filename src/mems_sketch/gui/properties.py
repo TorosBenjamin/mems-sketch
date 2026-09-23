@@ -1,7 +1,9 @@
 """Property editor generated from a shape node's schema.
 
-Numeric fields accept a number or an expression; the evaluated value is shown
-next to the field. For a component reference the component's own parameter
+Numeric fields accept a number or an expression (see
+:mod:`mems_sketch.gui.value_edit`: expressions show their value inside the
+field, names are completed, and a button uses or makes parameters). Pairs such
+as x and y sit side by side. The name is the panel's title, edited in place. For a component reference the component's own parameter
 schema is shown, with defaults as placeholders. Edits are applied with the
 Apply button or Enter and go through the document, so invalid input is
 rejected without changing the design.
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -36,11 +39,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes import MODIFIER_KINDS, Modifier, NodePath, Shape
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.panels import parse_value
+from mems_sketch.gui.value_edit import ValueEdit
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
 _SPECIAL = {
@@ -97,6 +100,22 @@ MODIFIER_TIPS = {
     "a guide, or through a point",
 }
 SELF_POINTS = ("self.center", "self.left", "self.right", "self.top", "self.bottom")
+# Fields shown as one row of two: (first, second) -> row label, inside prefixes.
+PAIRS = {
+    ("x0", "y0"): ("From", ("x", "y")),
+    ("x1", "y1"): ("To", ("x", "y")),
+    ("x", "y"): ("Position", ("x", "y")),
+    ("dx", "dy"): ("Step", ("x", "y")),
+    ("columns", "rows"): ("Grid", ("cols", "rows")),
+}
+PAIR_LABELS = {  # (kind, first field) -> row label, where the default does not fit
+    ("guide", "x0"): "Start",
+    ("guide", "x1"): "End",
+    ("circle", "x"): "Centre",
+    ("arc", "x"): "Centre",
+    ("polar_array", "x"): "Centre",
+    ("mirror", "x"): "Line at",
+}
 
 
 class PropertyEditor(QScrollArea):
@@ -136,16 +155,26 @@ class PropertyEditor(QScrollArea):
         layout = QVBoxLayout(body)
         layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(4)
+        title = QHBoxLayout()
+        title.setSpacing(6)
+        glyph = QLabel()
+        glyph.setPixmap(icons.pixmap(node.icon_name(), 18))
+        name = QLineEdit(node.name or "")
+        name.setObjectName("title-edit")
+        name.setPlaceholderText(f"unnamed {node.kind}")
+        name.setToolTip("The shape's name: click to rename (alignments and expressions follow)")
+        name.returnPressed.connect(self.apply)
+        name.setReadOnly(self.document.read_only)
+        kind = QLabel(node.kind)
+        kind.setObjectName("muted")
+        title.addWidget(glyph)
+        title.addWidget(name, 1)
+        title.addWidget(kind)
+        layout.addLayout(title)
+        self.name_edit = name
+        self._editors["name"] = lambda: name.text().strip() or None
         form = _form()
         layout.addLayout(form)
-        kind = QLabel(node.kind)
-        kind.setObjectName("heading")
-        form.addRow(kind)
-
-        name = QLineEdit(node.name or "")
-        name.returnPressed.connect(self.apply)
-        form.addRow("Name", name)
-        self._editors["name"] = lambda: name.text().strip() or None
         enabled = QCheckBox()
         enabled.setChecked(node.enabled)
         form.addRow("Enabled", enabled)
@@ -164,11 +193,7 @@ class PropertyEditor(QScrollArea):
             where.setToolTip("Where the shape ends up in this component (stored values are local)")
             form.addRow("Extent", where)
 
-        for field, info in type(node).model_fields.items():
-            if field in _SPECIAL:
-                continue
-            label = _LABELS.get(field, field.replace("_", " ").capitalize())
-            form.addRow(label, self._field_editor(field, info.annotation, getattr(node, field)))
+        self._add_fields(form, node, node.kind, "", skip=_SPECIAL)
 
         fields = type(node).model_fields
         if "points" in fields:
@@ -219,40 +244,77 @@ class PropertyEditor(QScrollArea):
         optional = type(None) in args
         return self._value_editor(field, value, optional)
 
-    def _value_editor(self, field: str, value, optional: bool = False) -> QWidget:
-        """A line edit for a number or expression, with the evaluated value beside it."""
-        edit = QLineEdit("" if value is None else _format(value))
+    def _value_editor(
+        self, field: str, value, optional: bool = False, prefix: str = ""
+    ) -> ValueEdit:
+        """A field for a number or an expression (see :class:`ValueEdit`)."""
+        parameters = [p.name for p in self.document.active_definition.parameters]
+        edit = ValueEdit(value, self._scope, parameters, prefix=prefix, optional=optional)
         edit.returnPressed.connect(self.apply)
-        result = QLabel()
-        result.setMinimumWidth(54)
-        result.setObjectName("muted")
+        edit.make_parameter.connect(lambda v, e=edit: self._make_parameter(e, v))
+        edit.setReadOnly(self.document.read_only)
+        self._editors[field] = edit.value
+        return edit
 
-        def update_result() -> None:
-            text = edit.text().strip()
-            if not text:
-                result.setText("default" if optional else "")
-                return
-            try:
-                result.setText(f"= {evaluate(parse_value(text), self._scope):g}")
-            except Exception:  # noqa: BLE001 - only a preview
-                result.setText("?")
+    def _add_fields(self, form: QFormLayout, model, kind: str, key: str, skip=()) -> dict:
+        """A row per field of ``model`` (pairs such as x and y share one row).
 
-        edit.textChanged.connect(update_result)
-        update_result()
+        Readers are registered as ``key + field``; returns the rows' widgets by field.
+        """
+        fields = [(f, info) for f, info in type(model).model_fields.items() if f not in skip]
+        names = [f for f, _ in fields]
+        labels = MODIFIER_LABELS.get(kind, {}) if key else {}
+        widgets: dict[str, QWidget] = {}
+        done: set[str] = set()
+        for field, info in fields:
+            if field in done:
+                continue
+            pair = next(
+                (p for p in PAIRS if p[0] == field and p[1] in names and _numeric(model, p)), None
+            )
+            if pair is not None:
+                label, prefixes = PAIRS[pair]
+                label = PAIR_LABELS.get((kind, field), label)
+                row = QWidget()
+                line = QHBoxLayout(row)
+                line.setContentsMargins(0, 0, 0, 0)
+                line.setSpacing(4)
+                for name, prefix in zip(pair, prefixes, strict=True):
+                    edit = self._value_editor(key + name, getattr(model, name), prefix=prefix)
+                    line.addWidget(edit, 1)
+                    widgets[name] = edit
+                    done.add(name)
+                form.addRow(label, row)
+                continue
+            label = labels.get(field) or _LABELS.get(field, field.replace("_", " ").capitalize())
+            widget = self._field_editor(key + field, info.annotation, getattr(model, field))
+            widgets[field] = widget
+            form.addRow(label, widget)
+        return widgets
 
-        def read():
-            text = edit.text().strip()
-            if not text and optional:
-                return None
-            return parse_value(text)
-
-        self._editors[field] = read
-        container = QWidget()
-        row = QHBoxLayout(container)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(edit, 1)
-        row.addWidget(result)
-        return container
+    def _make_parameter(self, edit: ValueEdit, value) -> None:
+        """Make a parameter with this value as its default, and use it in the field."""
+        suggestion = "param"
+        name, ok = QInputDialog.getText(
+            self,
+            "Make a parameter",
+            f"Name of the new parameter of {self.document.active} (default {_format(value)}):",
+            text=suggestion,
+        )
+        name = name.strip()
+        if not ok or not name:
+            return
+        if not name.isidentifier():
+            self.error.emit(f"'{name}' is not a valid parameter name")
+            return
+        edit.setText(name)
+        try:
+            new = self._collect()  # read the form before the panel is rebuilt
+            self.document.parameters.set(name, value)
+            self.document.nodes.replace(self.path, new)
+            self.applied.emit()
+        except Exception as exc:  # noqa: BLE001 - reported to the user
+            self.error.emit(_message(exc))
 
     def _points_editor(self, points) -> QWidget:
         edit = QPlainTextEdit("\n".join(f"{_format(x)}, {_format(y)}" for x, y in points))
@@ -306,7 +368,7 @@ class PropertyEditor(QScrollArea):
             else:
                 widget = self._value_editor(f"param:{field}", current, optional=True)
                 readers[field] = self._editors.pop(f"param:{field}")
-                widget.findChild(QLineEdit).setPlaceholderText(_format(default))
+                widget.setPlaceholderText(_format(default))
             form.addRow(info.description or field, widget)
 
         def read():
@@ -333,10 +395,15 @@ class PropertyEditor(QScrollArea):
         form.addRow("Point", own)
         form.addRow("To", target)
         offsets = {}
+        row = QWidget()
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(4)
         for field in ("dx", "dy"):
             value = getattr(align, field) if align else 0.0
-            form.addRow(f"Offset {field[1]}", self._value_editor(f"align:{field}", value))
+            line.addWidget(self._value_editor(f"align:{field}", value, prefix=field[1]), 1)
             offsets[field] = self._editors.pop(f"align:{field}")
+        form.addRow("Offset", row)
         if type(node).placed:
             note = QLabel("While aligned, x and y do not move it; rotation and mirroring do.")
             note.setWordWrap(True)
@@ -458,28 +525,27 @@ class PropertyEditor(QScrollArea):
         form = _form()
         form.setContentsMargins(22, 0, 4, 0)
         labels = MODIFIER_LABELS.get(kind, {})
-        fields: dict[str, typing.Callable[[], object]] = {}
+        key = f"modifier{index}:"
         widgets: dict[str, QWidget] = {}
-        order = sorted(type(modifier).model_fields.items(), key=lambda f: f[0] != "about")
-        for field, info in order:  # "about" first: it replaces the axis fields below it
-            if field in ("kind", "enabled"):
-                continue
-            key = f"modifier{index}:{field}"
-            value = getattr(modifier, field)
-            if field == "about":
-                widget = self._about_editor(key, value, path)
-            else:
-                widget = self._field_editor(key, info.annotation, value)
-            fields[field] = self._editors.pop(key)
-            widgets[field] = widget
-            form.addRow(labels.get(field, field.replace("_", " ").capitalize()), widget)
+        if "about" in type(modifier).model_fields:  # first: it replaces the axis fields below
+            widgets["about"] = self._about_editor(key + "about", modifier.about, path)
+            form.addRow(labels.get("about", "About"), widgets["about"])
+        widgets |= self._add_fields(form, modifier, kind, key, skip=("kind", "enabled", "about"))
+        fields = {
+            k[len(key) :]: self._editors.pop(k) for k in list(self._editors) if k.startswith(key)
+        }
         layout.addLayout(form)
         if kind == "mirror":  # a line or point given by "about" replaces axis, x and y
             about = widgets["about"].findChild(QComboBox) or widgets["about"]
 
             def update_axis(text: str) -> None:
                 for field in ("axis", "x", "y"):
-                    widgets[field].setEnabled(not text.strip())
+                    widget = widgets[field]
+                    row = widget if form.labelForField(widget) else widget.parentWidget()
+                    row.setEnabled(not text.strip())
+                    label = form.labelForField(row)
+                    if label is not None:
+                        label.setEnabled(not text.strip())
 
             about.currentTextChanged.connect(update_axis)
             update_axis(about.currentText())
@@ -523,16 +589,19 @@ class PropertyEditor(QScrollArea):
 
     # -- applying ----------------------------------------------------------
 
+    def _collect(self) -> Shape:
+        """The node as the form describes it (validated)."""
+        node = self.document.node(self.path)
+        data = node.model_dump()
+        for field, read in self._editors.items():
+            data[field] = read()
+        return type(node).model_validate(data)
+
     def apply(self) -> None:
         if self.path is None:
             return
         try:
-            node = self.document.node(self.path)
-            data = node.model_dump()
-            for field, read in self._editors.items():
-                data[field] = read()
-            new = type(node).model_validate(data)
-            self.document.nodes.replace(self.path, new)
+            self.document.nodes.replace(self.path, self._collect())
             self.applied.emit()
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))
@@ -554,6 +623,13 @@ def _form(parent: QWidget | None = None) -> QFormLayout:
     if parent is not None:
         form.setContentsMargins(0, 4, 0, 4)
     return form
+
+
+def _numeric(model, pair) -> bool:
+    """Both fields of a pair hold values (not e.g. a mirror's axis letter)."""
+    return all(isinstance(getattr(model, f), float | int | str) for f in pair) and not any(
+        f == "axis" for f in pair
+    )
 
 
 def _format(value) -> str:

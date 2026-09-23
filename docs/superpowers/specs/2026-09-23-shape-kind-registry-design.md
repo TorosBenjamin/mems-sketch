@@ -79,6 +79,13 @@ A kind is its pydantic model plus these members. `Node` provides the defaults.
 | `default(cls, layer)` (primitives) | `document.default_primitive` | none |
 | `wraps: ClassVar[tuple[str, ...]]` and `wrap(cls, op, name, nodes)` (operations) | the `match` in `document.wrap` | none |
 
+Two more ClassVars keep generic code generic: `child_fields` names the
+fields holding child lists (`child_lists`, `moved` and `own_strings` use it),
+and `placed` marks kinds with x, y, rotation and mirroring (reference and
+transform). `Primitive` and `Operation` are small base classes setting the
+category, the primitive summary (`kind · layer`) and `child_fields =
+("children",)`.
+
 In `moved`, `x` and `y` move one coordinate value each (they already skip
 values that follow a moving node), and `inner` moves a list of children. The
 alignment case stays generic in `rewrite.translated`.
@@ -110,8 +117,10 @@ One commit each, with the full test suite green:
    `points`, `render`, `rewrite` and `geometry`, and `__init__` re-exporting.
 2. `Node`, the registry and `kinds/` with `render`, `child_lists`, `moved`
    and `placement`; the matching `match` blocks go.
-3. `summary`, `icon_name`, `default` and `wrap`; `panels`, `document`,
-   `properties` and `icons` use them.
+   The kinds get their whole interface here, `summary`, `icon_name`,
+   `default` and `wrap` included, so each kind file is written once.
+3. `panels`, `document`, `properties` and `icons` use `summary`,
+   `icon_name`, `default` and `wrap`.
 4. Guard rails (below).
 
 ## Testing

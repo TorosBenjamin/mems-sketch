@@ -296,7 +296,8 @@ def explorer_item(window, *names):
 
 def test_the_explorer_shows_what_each_component_places(resonator):
     suspension = explorer_item(resonator, "top", "suspension")
-    assert suspension.data(0, DETAIL_ROLE) == "×2"
+    assert suspension.data(0, DETAIL_ROLE) is None  # definitions: no counts
+    assert "placed in top" in suspension.toolTip(0)
     suspension.setExpanded(True)
     children = [suspension.child(i).text(0) for i in range(suspension.childCount())]
     assert children == ["serpentine_spring", "anchor"]
@@ -352,3 +353,26 @@ def test_the_shape_list_shows_details_and_alignment_icons(resonator):
     assert comb.toolTip(tree.STATUS) == "Aligned: moving at mass.top"
     resonator.document.nodes.add_primitive("rect")
     assert tree.topLevelItem(tree.topLevelItemCount() - 1).data(0, DETAIL_ROLE) == "device"
+
+
+def test_placed_components_open_read_only_in_the_shape_list(resonator):
+    from mems_sketch.gui.panels import INSIDE_ROLE, PATH_ROLE, PLACES_ROLE
+
+    tree = resonator.tree
+    left = next(
+        tree.topLevelItem(i)
+        for i in range(tree.topLevelItemCount())
+        if tree.topLevelItem(i).text(0) == "suspension_left"
+    )
+    assert left.data(0, PLACES_ROLE) == "suspension" and not left.isExpanded()
+    left.setExpanded(True)  # loads what is inside
+    inside = [left.child(i) for i in range(left.childCount())]
+    assert [i.text(0) for i in inside] == ["spring", "anchor"]
+    assert inside[0].data(0, INSIDE_ROLE) == ("suspension", ((0, 0),))
+    assert not inside[0].flags() & Qt.ItemFlag.ItemIsSelectable  # read-only
+    assert tree.opened["top"] == {left.data(0, PATH_ROLE)}  # remembered per component
+    comb = tree.topLevelItem(1)
+    assert comb.childCount() == 0  # a built-in has nothing inside to show
+    resonator._tree_double_clicked(inside[1], 0)  # edit the anchor where it lives
+    assert resonator.document.active == "suspension"
+    assert resonator.selection == [((0, 1),)]

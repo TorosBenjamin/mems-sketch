@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.component import component_types
 from mems_sketch.core.expressions import ExpressionError, resolve_variables
 from mems_sketch.core.process import Layer
-from mems_sketch.core.shapes import NodePath, Shape, child_lists
+from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import COMPONENT_MIME
@@ -164,8 +164,9 @@ class _Panel(QWidget):
 class ComponentsPanel(_Panel):
     """An explorer of the components: the project's, each library's and the built-ins.
 
-    Every component expands to the components it places (with how many), and
-    those expand in turn, so the whole hierarchy can be browsed. Double-click
+    These are definitions: every component expands to the components it
+    uses, and those expand in turn. The placements themselves (each with its
+    own name) are in the Shapes list. Double-click
     opens a component in a tab (library and built-in ones read-only); drag one
     onto the canvas, or use Place, to put it into the component being edited.
     Right-click for everything else.
@@ -245,17 +246,13 @@ class ComponentsPanel(_Panel):
         item.setExpanded(self._state_key(item) not in self.collapsed)
         return item
 
-    def _component(self, parent: QTreeWidgetItem, name: str, label: str, count: int = 0):
+    def _component(self, parent: QTreeWidgetItem, name: str, label: str):
         project = self.document.project
         item = QTreeWidgetItem(parent, [label])
         item.setData(0, self.NAME_ROLE, name)
         item.setIcon(0, icons.icon(component_icon(project, name)))
-        details = []
-        if count > 1:
-            details.append(f"×{count}")
         if name == project.top and name != "top":  # the star shows it too
-            details.append("top")
-        item.setData(0, DETAIL_ROLE, "  ".join(details))
+            item.setData(0, DETAIL_ROLE, "top")
         item.setToolTip(0, self._tooltip(name))
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
         if parent.parent() is None and name == self.document.active:  # the tab being edited
@@ -286,8 +283,8 @@ class ComponentsPanel(_Panel):
     def _fill_children(self, item: QTreeWidgetItem) -> None:
         if item.childCount() == 1 and item.child(0).text(0) == self.PENDING:
             item.takeChild(0)
-            for child, count in self.document.components.placed(item.data(0, self.NAME_ROLE)):
-                self._component(item, child, child, count)
+            for child, _count in self.document.components.placed(item.data(0, self.NAME_ROLE)):
+                self._component(item, child, child)
 
     # -- expanded state --------------------------------------------------------
 
@@ -498,6 +495,8 @@ def _menu_action(menu, text: str, slot, icon: str | None = None):
 
 
 DETAIL_ROLE = Qt.ItemDataRole.UserRole + 5  # muted text drawn after an item's name
+PLACES_ROLE = Qt.ItemDataRole.UserRole + 6  # a shape row placing a component: its name
+INSIDE_ROLE = Qt.ItemDataRole.UserRole + 7  # a row inside a placed component: (owner, path)
 
 
 class DetailDelegate(QStyledItemDelegate):
@@ -535,7 +534,14 @@ class DetailDelegate(QStyledItemDelegate):
 
 
 class ShapeTree(QTreeWidget):
-    """The active component's shape tree. Emits the selected node paths."""
+    """The active component's shapes, as an outliner. Emits the selected node paths.
+
+    The component's own shapes can be selected and edited. A placed component
+    expands to show what is inside it: greyed and read-only, because it
+    belongs to that component's definition and changing it changes every
+    copy. Double-clicking such a row opens the component that owns it, with
+    that shape selected.
+    """
 
     selection_changed_paths = Signal(list)
     enabled_toggled = Signal(tuple, bool)
@@ -558,17 +564,27 @@ class ShapeTree(QTreeWidget):
         self.itemSelectionChanged.connect(self._emit_selection)
         self.itemChanged.connect(self._item_changed)
         self._rebuilding = False
-        # Collapsed nodes per component (everything else is expanded).
+        # Per component: collapsed operations (others are open) and opened
+        # placed components (others are closed).
         self.collapsed: dict[str, set[NodePath]] = {}
+        self.opened: dict[str, set[NodePath]] = {}
         self.itemCollapsed.connect(lambda item: self._set_collapsed(item, True))
-        self.itemExpanded.connect(lambda item: self._set_collapsed(item, False))
+        self.itemExpanded.connect(self._expanded)
+
+    def _expanded(self, item: QTreeWidgetItem) -> None:
+        self._fill_placed(item)
+        self._set_collapsed(item, False)
 
     def _set_collapsed(self, item: QTreeWidgetItem, collapsed: bool) -> None:
         path = item.data(0, PATH_ROLE)
         if self._rebuilding or path is None:
             return
-        paths = self.collapsed.setdefault(self.document.active, set())
-        (paths.add if collapsed else paths.discard)(path)
+        if item.data(0, PLACES_ROLE) is not None:
+            paths = self.opened.setdefault(self.document.active, set())
+            (paths.discard if collapsed else paths.add)(path)
+        else:
+            paths = self.collapsed.setdefault(self.document.active, set())
+            (paths.add if collapsed else paths.discard)(path)
         self.collapse_changed.emit()
 
     def rebuild(self, keep: list[NodePath] | None = None) -> None:
@@ -577,14 +593,18 @@ class ShapeTree(QTreeWidget):
         self.clear()
         for index, shape in enumerate(self.document.shapes):
             self._add(self.invisibleRootItem(), shape, ((0, index),))
-        self.expandAll()
         collapsed = self.collapsed.get(self.document.active, set())
+        opened = self.opened.get(self.document.active, set())
         pending = [self.topLevelItem(i) for i in range(self.topLevelItemCount())]
-        while pending:
+        while pending:  # the component's own nodes only: placed contents load when opened
             item = pending.pop()
-            if item.data(0, PATH_ROLE) in collapsed:
-                item.setExpanded(False)
-            pending.extend(item.child(i) for i in range(item.childCount()))
+            path = item.data(0, PATH_ROLE)
+            if item.data(0, PLACES_ROLE) is not None:
+                item.setExpanded(path in opened)
+            elif item.childCount():
+                item.setExpanded(path not in collapsed)
+            if item.data(0, INSIDE_ROLE) is None:
+                pending.extend(item.child(i) for i in range(item.childCount()))
         self._rebuilding = False
         self.select_paths(keep)
 
@@ -601,6 +621,7 @@ class ShapeTree(QTreeWidget):
         item.setCheckState(0, Qt.CheckState.Checked if shape.enabled else Qt.CheckState.Unchecked)
         if not shape.enabled:
             item.setForeground(0, QBrush(QColor("#8c8f99")))
+        self._placeholder(item, shape, None)
         labels = SLOT_LABELS.get(shape.kind)
         for slot, children in enumerate(child_lists(shape)):
             holder = item
@@ -610,6 +631,66 @@ class ShapeTree(QTreeWidget):
                 holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
             for index, child in enumerate(children):
                 self._add(holder, child, (*path, (slot, index)))
+
+    # -- what is inside placed components (read-only) -------------------------
+
+    def _placeholder(self, item: QTreeWidgetItem, shape: Shape, namespace: str | None) -> None:
+        """Let a placed component's row expand into its shapes (loaded when opened)."""
+        if not isinstance(shape, RefShape):
+            return
+        project = self.document.project
+        try:
+            target = project.qualify(shape.component, namespace)
+        except KeyError:
+            return
+        found = project.definition(target)
+        if found is None or not found[0].shapes:
+            return  # a built-in (or empty) component has nothing to show
+        item.setData(0, PLACES_ROLE, target)
+        QTreeWidgetItem(item, ["…"])
+
+    def _fill_placed(self, item: QTreeWidgetItem) -> None:
+        target = item.data(0, PLACES_ROLE)
+        if target is None or item.childCount() != 1 or item.child(0).data(0, INSIDE_ROLE):
+            return
+        item.takeChild(0)
+        found = self.document.project.definition(target)
+        if found is None:
+            return
+        definition, namespace = found
+        for index, shape in enumerate(definition.shapes):
+            self._add_inside(item, shape, target, namespace, ((0, index),))
+
+    def _add_inside(self, parent, shape: Shape, owner: str, namespace, path: NodePath) -> None:
+        item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})"])
+        item.setData(0, INSIDE_ROLE, (owner, path))
+        item.setData(0, DETAIL_ROLE, detail(shape))
+        item.setIcon(0, shape_icon(shape))
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # not selectable: it belongs to ``owner``
+        item.setForeground(0, QBrush(QColor("#8c8f99")))
+        font = QFont()
+        font.setItalic(True)
+        item.setFont(0, font)
+        item.setToolTip(
+            0,
+            f"{describe(shape)}\nPart of {owner}: double-click to edit it there "
+            "(changes every copy)",
+        )
+        if shape.align is not None:
+            item.setIcon(self.STATUS, icons.icon("link"))
+            item.setToolTip(self.STATUS, f"Aligned: {alignment(shape)}")
+        self._placeholder(item, shape, namespace)
+        labels = SLOT_LABELS.get(shape.kind)
+        for slot, children in enumerate(child_lists(shape)):
+            holder = item
+            if labels:
+                holder = QTreeWidgetItem(item, [labels[slot]])
+                holder.setData(0, DETAIL_ROLE, "operand")
+                holder.setData(0, INSIDE_ROLE, (owner, path))
+                holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            for index, child in enumerate(children):
+                self._add_inside(holder, child, owner, namespace, (*path, (slot, index)))
+            holder.setExpanded(True)
 
     def selected_paths(self) -> list[NodePath]:
         return [p for item in self.selectedItems() if (p := item.data(0, PATH_ROLE)) is not None]

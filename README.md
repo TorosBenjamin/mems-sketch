@@ -195,9 +195,10 @@ light or dark theme (`gui/icons.py`).
   where the change was made, reopening it if it was closed.
 - **Components** (an explorer): the project, each library and the built-ins,
   with their own icons (purple project components, blue library ones, orange
-  built-ins; a star for the top component). Every component expands to the
-  components it places, with how many (`suspension ×2`), and those expand in
-  turn. Double-click opens a component in a tab; drag one onto the canvas, or
+  built-ins; a star for the top component). These are definitions: every
+  component expands to the components it uses, and those expand in turn
+  (hover one to see where it is placed). The placements themselves, each with
+  its own name, are in the Shapes list. Double-click opens a component in a tab; drag one onto the canvas, or
   use **Place**, to put it into the component being edited. Right-click for
   the rest: open in the other pane, rename (updates every reference and tab),
   duplicate, delete, set as top, copy a library component into the project,
@@ -208,7 +209,10 @@ light or dark theme (`gui/icons.py`).
   reference places, `3×2` when repeated) in grey; a link icon marks an aligned
   shape (hover it for e.g. `bottom at spring.end`). Checkboxes enable or
   disable a node; Ctrl/Shift-click selects several. Operations show their
-  operands under them (booleans under A and B).
+  operands under them (booleans under A and B). A placed component expands to
+  show what is inside it, in grey italics: that belongs to the component's
+  definition, so it is read-only here (changing it would change every copy).
+  Double-click such a row to open the component with that shape selected.
 - **Canvas**: wheel to zoom, middle or right drag (or Space + drag, in any
   tool) to pan, F to fit; the buttons in the top-right corner zoom and fit
   too. The selection is outlined in orange with its alignment points, the

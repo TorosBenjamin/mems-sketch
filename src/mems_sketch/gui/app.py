@@ -39,6 +39,7 @@ from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.find_action import FindActionDialog, menu_actions
 from mems_sketch.gui.panels import (
+    INSIDE_ROLE,
     ComponentsPanel,
     ConstantsPanel,
     LayersPanel,
@@ -1191,6 +1192,13 @@ class MainWindow(QMainWindow):
             self._open_reference(hit, view.component)
 
     def _tree_double_clicked(self, item, _column: int) -> None:
+        inside = item.data(0, INSIDE_ROLE)
+        if inside is not None:  # part of a placed component: edit it in its own tab
+            owner, path = inside
+            self.open_component(owner)
+            if self.document.active == owner:
+                self.tree.select_paths([path])
+            return
         path = item.data(0, Qt.ItemDataRole.UserRole)
         if path is not None:
             self._open_reference(path, self.document.active)

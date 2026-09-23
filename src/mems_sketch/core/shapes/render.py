@@ -8,40 +8,16 @@ from typing import TYPE_CHECKING
 
 import klayout.db as kdb
 
-from mems_sketch.core.component import DBU_UM, Geometry, placement, resolve_params, to_dbu
+from mems_sketch.core.component import DBU_UM, Geometry, placement, to_dbu
 from mems_sketch.core.expressions import evaluate
-from mems_sketch.core.shapes.base import (
-    ArcShape,
-    BooleanShape,
-    CircleShape,
-    FilletShape,
-    LayerMapShape,
-    OffsetShape,
-    PathShape,
-    Point,
-    PolygonShape,
-    RectShape,
-    RefShape,
-    Repeat,
-    Shape,
-    TransformShape,
-    Value,
-)
-from mems_sketch.core.shapes.geometry import (
-    ARC_TOLERANCE_UM,
-    annular_sector,
-    apply_transform,
-    arc_points,
-    boolean_op,
-    path_of,
-    segments,
-    to_ictrans,
-)
+from mems_sketch.core.shapes.base import Point, RenderContext, Repeat
+from mems_sketch.core.shapes.geometry import apply_transform, to_ictrans
 from mems_sketch.core.shapes.points import NodePoints, own_strings, point_dependencies, point_values
 from mems_sketch.core.shapes.tree import NodePath
 
 if TYPE_CHECKING:
     from mems_sketch.core.component import Component
+    from mems_sketch.core.shapes.registry import Shape
 
 
 @dataclass
@@ -175,7 +151,7 @@ class Evaluator:
                 label, geometry, {k: apply_transform(shift, p) for k, p in points.declared.items()}
             )
         if self.record is not None and path not in self.record:
-            inner = shift * _transform_of(shape, first)
+            inner = shift * transform_of(shape, first)
             self.record[path] = NodeRecord(geometry, points, inner, shift)
         return geometry, points
 
@@ -208,84 +184,16 @@ class Evaluator:
         scope: Mapping[str, NodePoints],
         path: NodePath,
     ) -> tuple[Geometry, dict[str, Point]]:
-        def ev(value: Value) -> float:
-            return evaluate(value, v)
-
-        def children(lists: list[list[Shape]], inner_scope=scope) -> list[Geometry]:
+        def render_lists(lists, inner_scope) -> list[Geometry]:
             return self._render_lists(lists, v, inner_scope, path)[0]
 
-        geometry = Geometry()
-        declared: dict[str, Point] = {}
-        match shape:
-            case RectShape():
-                geometry.add_rect(
-                    shape.layer, ev(shape.x0), ev(shape.y0), ev(shape.x1), ev(shape.y1)
-                )
-            case PolygonShape():
-                geometry.add_polygon(shape.layer, [(ev(x), ev(y)) for x, y in shape.points])
-            case CircleShape():
-                r = ev(shape.radius)
-                n = segments(r, shape.segments and ev(shape.segments))
-                geometry.add_polygon(
-                    shape.layer, arc_points(ev(shape.x), ev(shape.y), r, 0, 360, n)
-                )
-            case ArcShape():
-                geometry.layers[shape.layer] = annular_sector(shape, ev)
-            case PathShape():
-                geometry.region(shape.layer).insert(path_of(shape, ev))
-            case RefShape():
-                child = self.lookup(shape.component)
-                built, points = child.compile(resolve_params(child, shape.params, v))
-                transform = _transform_of(shape, v)
-                geometry.merge(built, to_ictrans(transform))
-                declared = {name: apply_transform(transform, p) for name, p in points.items()}
-            case TransformShape():
-                if ev(shape.scale) <= 0:
-                    raise ValueError("transform scale must be positive")
-                transform = _transform_of(shape, v)
-                inverse = transform.inverted()
-                inner_scope = {k: p.seen_through(inverse) for k, p in scope.items()}
-                (inner,) = children([shape.children], inner_scope)
-                geometry.merge(inner, to_ictrans(transform))
-            case BooleanShape():
-                a, b = children([shape.a, shape.b])
-                geometry = boolean_op(shape.op, a, b)
-            case OffsetShape():
-                mode = 2 if shape.corners == "square" else 1
-                d = to_dbu(ev(shape.distance))
-                for layer, region in children([shape.children])[0].layers.items():
-                    geometry.layers[layer] = region.sized(d, mode)
-            case FilletShape():
-                r_out, r_in = ev(shape.radius), ev(shape.inner_radius)
-                if r_out < 0 or r_in < 0:
-                    raise ValueError("fillet radii must not be negative")
-                n = segments(
-                    max(r_out, r_in, ARC_TOLERANCE_UM), shape.segments and ev(shape.segments)
-                )
-                for layer, region in children([shape.children])[0].layers.items():
-                    geometry.layers[layer] = region.merged().rounded_corners(
-                        to_dbu(r_in), to_dbu(r_out), n
-                    )
-            case LayerMapShape():
-                for layer, region in children([shape.children])[0].layers.items():
-                    target = shape.mapping.get(layer, layer if shape.keep_unmapped else None)
-                    if target is not None:
-                        geometry.region(target).insert(region)
-        return geometry, declared
+        return shape.render(RenderContext(v, scope, self.lookup, render_lists))
 
 
-def _transform_of(shape: Shape, v: dict[str, float]) -> kdb.DCplxTrans:
-    """The placement a reference or transform applies to its content, in µm."""
-    if isinstance(shape, RefShape | TransformShape):
-        scale = evaluate(shape.scale, v) if isinstance(shape, TransformShape) else 1.0
-        return kdb.DCplxTrans(
-            scale,
-            evaluate(shape.rotation, v),
-            shape.mirror_x,
-            evaluate(shape.x, v),
-            evaluate(shape.y, v),
-        )
-    return kdb.DCplxTrans()
+def transform_of(shape: Shape, v: dict[str, float]) -> kdb.DCplxTrans:
+    """The placement a node applies to its content, in µm (identity if it has none)."""
+    transform = shape.placement(v)
+    return kdb.DCplxTrans() if transform is None else transform
 
 
 def _grid(repeat: Repeat, variables: dict[str, float]):

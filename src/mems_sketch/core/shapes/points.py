@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Iterator, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import klayout.db as kdb
 from pydantic import BaseModel
 
 from mems_sketch.core.component import DBU_UM, Geometry
 from mems_sketch.core.expressions import ExpressionError, names_in
-from mems_sketch.core.shapes.base import Point, Shape
+from mems_sketch.core.shapes.base import Point
 from mems_sketch.core.shapes.tree import walk
+
+if TYPE_CHECKING:
+    from mems_sketch.core.shapes.registry import Shape
 
 # Points every node has, from the bounding box of its geometry.
 BBOX_POINTS = (
@@ -130,12 +133,9 @@ def own_strings(shape: Shape) -> list[str]:
     return [
         text
         for field in type(shape).model_fields
-        if field not in _CHILD_FIELDS
+        if field not in type(shape).child_fields
         for text in _strings(getattr(shape, field))
     ]
-
-
-_CHILD_FIELDS = frozenset({"children", "a", "b"})
 
 
 def point_dependencies(shape: Shape) -> set[str]:

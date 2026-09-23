@@ -3,29 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import klayout.db as kdb
 
-from mems_sketch.core.component import to_dbu
-from mems_sketch.core.expressions import evaluate
-from mems_sketch.core.shapes.base import (
-    BooleanShape,
-    FilletShape,
-    LayerMapShape,
-    OffsetShape,
-    RefShape,
-    Shape,
-    TransformShape,
-)
+from mems_sketch.core.shapes.geometry import to_ictrans
+from mems_sketch.core.shapes.kinds.ref import RefShape
+
+if TYPE_CHECKING:
+    from mems_sketch.core.shapes.registry import Shape
 
 
 def child_lists(shape: Shape) -> list[list[Shape]]:
-    match shape:
-        case BooleanShape():
-            return [shape.a, shape.b]
-        case TransformShape() | OffsetShape() | FilletShape() | LayerMapShape():
-            return [shape.children]
-    return []
+    return shape.child_lists()
 
 
 def walk(shapes: list[Shape]) -> Iterator[Shape]:
@@ -86,15 +76,9 @@ def placement_of(
     transform = kdb.ICplxTrans()
     for depth in range(1, len(path)):
         ancestor = node_at(shapes, path[:depth])
-        if isinstance(ancestor, TransformShape):
-            v = {**variables, "i": 0.0, "j": 0.0}
-            transform = transform * kdb.ICplxTrans(
-                evaluate(ancestor.scale, v),
-                evaluate(ancestor.rotation, v),
-                ancestor.mirror_x,
-                to_dbu(evaluate(ancestor.x, v)),
-                to_dbu(evaluate(ancestor.y, v)),
-            )
+        ancestor_placement = ancestor.placement({**variables, "i": 0.0, "j": 0.0})
+        if ancestor_placement is not None:
+            transform = transform * to_ictrans(ancestor_placement)
     return transform
 
 

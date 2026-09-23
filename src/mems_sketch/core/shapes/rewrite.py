@@ -4,27 +4,16 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mems_sketch.core.expressions import ExpressionError, substitute
-from mems_sketch.core.shapes.base import (
-    SHAPE_ADAPTER,
-    ArcShape,
-    BooleanShape,
-    CircleShape,
-    FilletShape,
-    LayerMapShape,
-    OffsetShape,
-    PathShape,
-    PolygonShape,
-    RectShape,
-    RefShape,
-    Shape,
-    TransformShape,
-    Value,
-)
+from mems_sketch.core.shapes.base import Value
 from mems_sketch.core.shapes.points import point_names
+from mems_sketch.core.shapes.registry import SHAPE_ADAPTER
 from mems_sketch.core.shapes.tree import walk
+
+if TYPE_CHECKING:
+    from mems_sketch.core.shapes.registry import Shape
 
 
 def offset_value(value: Value, delta: float) -> Value:
@@ -91,23 +80,11 @@ def translated(shape: Shape, dx: float, dy: float, moving: frozenset[str] = froz
     def y(value: Value) -> Value:
         return value if _follows(value, "y", moving) else offset_value(value, dy)
 
-    match shape:
-        case RectShape():
-            update = {"x0": x(shape.x0), "x1": x(shape.x1), "y0": y(shape.y0), "y1": y(shape.y1)}
-        case PolygonShape() | PathShape():
-            update = {"points": [(x(px), y(py)) for px, py in shape.points]}
-        case CircleShape() | ArcShape() | RefShape() | TransformShape():
-            update = {"x": x(shape.x), "y": y(shape.y)}
-        case BooleanShape():
-            inner = moving | _names(shape)
-            update = {
-                "a": [translated(c, dx, dy, inner) for c in shape.a],
-                "b": [translated(c, dx, dy, inner) for c in shape.b],
-            }
-        case OffsetShape() | FilletShape() | LayerMapShape():
-            inner = moving | _names(shape)
-            update = {"children": [translated(c, dx, dy, inner) for c in shape.children]}
-    return shape.model_copy(update=update)
+    def inner(children: list[Shape]) -> list[Shape]:
+        nested = moving | _names(shape)
+        return [translated(c, dx, dy, nested) for c in children]
+
+    return shape.model_copy(update=shape.moved(x, y, inner))
 
 
 def _names(shape: Shape) -> frozenset[str]:

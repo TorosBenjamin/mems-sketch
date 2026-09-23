@@ -1,21 +1,30 @@
-"""Shape models: the nodes of the parametric shape tree."""
+"""What every shape kind is built on: the node base class, alignment and repeats.
+
+A kind is a pydantic model deriving from :class:`Node` (usually through
+:class:`Primitive` or :class:`Operation`) that renders itself, moves, lists
+its children and describes itself for the GUI. The kinds are listed in
+:mod:`mems_sketch.core.shapes.kinds`.
+"""
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    TypeAdapter,
-    field_validator,
-    model_validator,
-)
+import klayout.db as kdb
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from mems_sketch.core.expressions import evaluate
+
+if TYPE_CHECKING:
+    from mems_sketch.core.component import Component, Geometry
+    from mems_sketch.core.shapes.points import NodePoints
+    from mems_sketch.core.shapes.registry import Shape
 
 Value = float | str  # a number or an expression
-INDEX_NAMES = ("i", "j")
 Point = tuple[float, float]
+INDEX_NAMES = ("i", "j")
 
 
 def check_point_reference(reference: str) -> str:
@@ -63,170 +72,94 @@ class Align(BaseModel):
         return check_point_reference(to)
 
 
-class _Node(BaseModel):
+@dataclass(frozen=True)
+class RenderContext:
+    """What a kind needs to render one copy of itself."""
+
+    variables: dict[str, float]  # parameters, point coordinates and the repeat indices
+    scope: Mapping[str, NodePoints]  # the named nodes it can see
+    lookup: Callable[[str], Component]  # components by name, for references
+    render_lists: Callable[[list[list[Shape]], Mapping[str, NodePoints]], list[Geometry]]
+
+    def ev(self, value: Value) -> float:
+        return evaluate(value, self.variables)
+
+    def children(
+        self, lists: list[list[Shape]], scope: Mapping[str, NodePoints] | None = None
+    ) -> list[Geometry]:
+        """Geometry of each child list; ``scope`` replaces the visible points if given."""
+        return self.render_lists(lists, self.scope if scope is None else scope)
+
+
+class Node(BaseModel):
+    """The fields every node has, and the methods a kind overrides."""
+
     model_config = ConfigDict(extra="forbid")
+
+    category: ClassVar[str]  # "primitive", "operation" or "reference"
+    icon: ClassVar[str] = "point"  # its icon in the GUI
+    child_fields: ClassVar[tuple[str, ...]] = ()  # fields holding lists of child nodes
+    placed: ClassVar[bool] = False  # has x, y, rotation and mirroring; see placement()
+    wraps: ClassVar[tuple[str, ...]] = ()  # operations that create it around shapes
 
     name: str | None = None  # stable handle for the GUI and scripts
     align: Align | None = None
     enabled: bool = True
     repeat: Repeat | None = None
 
+    def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
+        """Geometry of one copy, and the points it declares (only references declare any)."""
+        raise NotImplementedError
 
-# -- primitives ------------------------------------------------------------
+    def child_lists(self) -> list[list[Shape]]:
+        return [getattr(self, field) for field in self.child_fields]
 
+    def moved(
+        self,
+        x: Callable[[Value], Value],
+        y: Callable[[Value], Value],
+        inner: Callable[[list[Shape]], list[Shape]],
+    ) -> dict[str, Any]:
+        """Fields changed by a move: ``x`` and ``y`` move one coordinate, ``inner`` a child list."""
+        return {field: inner(getattr(self, field)) for field in self.child_fields}
 
-class RectShape(_Node):
-    kind: Literal["rect"] = "rect"
-    layer: str
-    x0: Value
-    y0: Value
-    x1: Value
-    y1: Value
+    def placement(self, variables: dict[str, float]) -> kdb.DCplxTrans | None:
+        """The transform a ``placed`` kind applies to its content, in µm."""
+        return None
 
+    def summary(self) -> str:
+        """Short description next to its name in the shape tree."""
+        return self.kind
 
-class PolygonShape(_Node):
-    kind: Literal["polygon"] = "polygon"
-    layer: str
-    points: list[tuple[Value, Value]] = Field(min_length=3)
+    def icon_name(self) -> str:
+        return self.icon
 
-
-class CircleShape(_Node):
-    kind: Literal["circle"] = "circle"
-    layer: str
-    x: Value = 0.0
-    y: Value = 0.0
-    radius: Value
-    segments: Value | None = None  # default: from ARC_TOLERANCE_UM
-
-
-class ArcShape(_Node):
-    """Annular sector (a ring when the angles span 360°). Angles in degrees, CCW from +x."""
-
-    kind: Literal["arc"] = "arc"
-    layer: str
-    x: Value = 0.0
-    y: Value = 0.0
-    inner_radius: Value = 0.0
-    outer_radius: Value
-    start_angle: Value = 0.0
-    end_angle: Value = 360.0
-    segments: Value | None = None  # for a full circle; scaled by the swept angle
-
-
-class PathShape(_Node):
-    """A wire of constant ``width`` along a centreline, e.g. a beam or a trace."""
-
-    kind: Literal["path"] = "path"
-    layer: str
-    points: list[tuple[Value, Value]] = Field(min_length=2)
-    width: Value
-    ends: Literal["flush", "square", "round"] = "flush"
-
-
-class RefShape(_Node):
-    """An instance of a built-in or user-defined component."""
-
-    kind: Literal["ref"] = "ref"
-    component: str
-    params: dict[str, Value] = Field(default_factory=dict)
-    x: Value = 0.0
-    y: Value = 0.0
-    rotation: Value = 0.0  # degrees, counter-clockwise
-    mirror_x: bool = False
-
-
-# -- operations ------------------------------------------------------------
-
-
-class TransformShape(_Node):
-    """Mirror ``children`` about x, scale, rotate and move them as one piece.
-
-    For something reusable, make a component instead; a transform is for
-    moving a few shapes together once. Files written before the rename used
-    ``kind: group``, which is still read.
-    """
-
-    kind: Literal["transform", "group"] = "transform"
-    children: list[Shape] = Field(default_factory=list)
-    x: Value = 0.0
-    y: Value = 0.0
-    rotation: Value = 0.0
-    mirror_x: bool = False
-    scale: Value = 1.0
-
-    @field_validator("kind")
     @classmethod
-    def _current_kind(cls, kind: str) -> str:
-        return "transform"
+    def kind_name(cls) -> str:
+        return cls.model_fields["kind"].default
+
+    @classmethod
+    def default(cls, layer: str) -> Shape:
+        """A new shape of this kind to start editing from (primitives)."""
+        raise TypeError(f"'{cls.kind_name()}' has no default shape")
+
+    @classmethod
+    def wrap(cls, op: str, name: str, nodes: list[Shape]) -> Shape:
+        """A new node of this kind holding ``nodes`` (kinds that list ``op`` in ``wraps``)."""
+        raise TypeError(f"'{cls.kind_name()}' cannot wrap shapes")
 
 
-GroupShape = TransformShape  # the earlier name
+class Primitive(Node):
+    """A leaf drawn on one layer (subclasses declare ``layer``)."""
+
+    category: ClassVar[str] = "primitive"
+
+    def summary(self) -> str:
+        return f"{self.kind} · {self.layer}"
 
 
-class BooleanShape(_Node):
-    kind: Literal["boolean"] = "boolean"
-    op: Literal["union", "subtract", "intersect", "xor"]
-    a: list[Shape]
-    b: list[Shape]
+class Operation(Node):
+    """An inner node made from its children's geometry."""
 
-
-class OffsetShape(_Node):
-    """Grow (positive ``distance``) or shrink (negative) the children's outlines."""
-
-    kind: Literal["offset"] = "offset"
-    children: list[Shape]
-    distance: Value
-    corners: Literal["square", "bevel"] = "square"
-
-
-class FilletShape(_Node):
-    """Round corners: ``radius`` for convex corners, ``inner_radius`` for concave ones."""
-
-    kind: Literal["fillet"] = "fillet"
-    children: list[Shape]
-    radius: Value = 0.0
-    inner_radius: Value = 0.0
-    segments: Value | None = None  # per full circle; default from ARC_TOLERANCE_UM
-
-
-class LayerMapShape(_Node):
-    """Move children's geometry between layers.
-
-    ``mapping`` sends source layer -> target layer; several sources may merge
-    into one target. Layers not in ``mapping`` are dropped unless
-    ``keep_unmapped`` is set.
-    """
-
-    kind: Literal["layer_map"] = "layer_map"
-    children: list[Shape]
-    mapping: dict[str, str]
-    keep_unmapped: bool = False
-
-    @model_validator(mode="after")
-    def _not_empty(self):
-        if not self.mapping:
-            raise ValueError("layer_map needs at least one mapping")
-        return self
-
-
-Shape = Annotated[
-    RectShape
-    | PolygonShape
-    | CircleShape
-    | ArcShape
-    | PathShape
-    | RefShape
-    | TransformShape
-    | BooleanShape
-    | OffsetShape
-    | FilletShape
-    | LayerMapShape,
-    Field(discriminator="kind"),
-]
-
-for _model in (TransformShape, BooleanShape, OffsetShape, FilletShape, LayerMapShape):
-    _model.model_rebuild()
-
-PRIMITIVE_KINDS = ("rect", "polygon", "circle", "arc", "path")
-
-SHAPE_ADAPTER: TypeAdapter = TypeAdapter(Shape)
+    category: ClassVar[str] = "operation"
+    child_fields: ClassVar[tuple[str, ...]] = ("children",)

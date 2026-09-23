@@ -37,28 +37,35 @@ Semantics:
 
 from mems_sketch.core.shapes.base import (
     INDEX_NAMES,
-    PRIMITIVE_KINDS,
-    SHAPE_ADAPTER,
     Align,
+    Node,
+    Operation,
+    Point,
+    Primitive,
+    RenderContext,
+    Repeat,
+    Value,
+    check_point_reference,
+)
+from mems_sketch.core.shapes.geometry import (
+    ARC_TOLERANCE_UM,
+    MAX_ARC_SEGMENTS,
+    to_ictrans,
+)
+from mems_sketch.core.shapes.kinds import (
+    KINDS,
     ArcShape,
     BooleanShape,
     CircleShape,
     FilletShape,
-    GroupShape,
     LayerMapShape,
     OffsetShape,
     PathShape,
-    Point,
     PolygonShape,
     RectShape,
     RefShape,
-    Repeat,
-    Shape,
     TransformShape,
-    Value,
-    check_point_reference,
 )
-from mems_sketch.core.shapes.geometry import ARC_TOLERANCE_UM, MAX_ARC_SEGMENTS, to_ictrans
 from mems_sketch.core.shapes.points import (
     BBOX_POINTS,
     NodePoints,
@@ -67,7 +74,22 @@ from mems_sketch.core.shapes.points import (
     point_names,
     point_values,
 )
-from mems_sketch.core.shapes.render import Evaluator, NodeRecord, frame_of
+from mems_sketch.core.shapes.registry import (
+    BY_KIND,
+    PRIMITIVE_KINDS,
+    SHAPE_ADAPTER,
+    WRAPPERS,
+    Shape,
+    default_shape,
+    kind_class,
+    wrap_shapes,
+)
+from mems_sketch.core.shapes.render import (
+    Evaluator,
+    NodeRecord,
+    frame_of,
+    transform_of,
+)
 from mems_sketch.core.shapes.rewrite import (
     map_expressions,
     offset_value,
@@ -88,13 +110,18 @@ from mems_sketch.core.shapes.tree import (
     walk,
 )
 
+GroupShape = TransformShape  # the earlier name
+
 __all__ = [
     "ARC_TOLERANCE_UM",
     "BBOX_POINTS",
+    "BY_KIND",
     "INDEX_NAMES",
+    "KINDS",
     "MAX_ARC_SEGMENTS",
     "PRIMITIVE_KINDS",
     "SHAPE_ADAPTER",
+    "WRAPPERS",
     "Align",
     "ArcShape",
     "BooleanShape",
@@ -103,15 +130,19 @@ __all__ = [
     "FilletShape",
     "GroupShape",
     "LayerMapShape",
+    "Node",
     "NodePath",
     "NodePoints",
     "NodeRecord",
     "OffsetShape",
+    "Operation",
     "PathShape",
     "Point",
     "PolygonShape",
+    "Primitive",
     "RectShape",
     "RefShape",
+    "RenderContext",
     "Repeat",
     "Shape",
     "TransformShape",
@@ -119,8 +150,10 @@ __all__ = [
     "check_point_reference",
     "child_lists",
     "container_of",
+    "default_shape",
     "find",
     "frame_of",
+    "kind_class",
     "map_expressions",
     "node_at",
     "offset_value",
@@ -134,7 +167,9 @@ __all__ = [
     "rename_node_references",
     "rewrite",
     "to_ictrans",
+    "transform_of",
     "translated",
     "visible_from",
     "walk",
+    "wrap_shapes",
 ]

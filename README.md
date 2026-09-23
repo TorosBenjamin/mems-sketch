@@ -316,8 +316,33 @@ subtraction stays editable and parametric.
 - **Booleans, offsets and fillets act per layer.** Subtracting a device-layer
   hole only affects the device layer. To combine different layers, bring them
   onto one layer with `layer_map` first.
-- **Any node can repeat on a grid** (`repeat=Repeat(columns, rows, dx, dy)`),
-  with `i` and `j` as the column and row index.
+- **Any node can carry modifiers**, a stack applied in order as in Blender:
+
+  | Modifier | Makes |
+  |---|---|
+  | `array` | `columns` × `rows` copies, `dx`, `dy` apart; `i` and `j` are the copy's column and row, so each copy can differ (e.g. `length: 40 + 2*i`) |
+  | `polar_array` | `count` copies around a centre `x`, `y`, `step` degrees apart (a full circle by default), turned with the circle or (`rotate: false`) keeping their orientation; `i` is the copy's index |
+  | `mirror` | the node and its mirror image across the vertical line at `x` (`axis: x`), the horizontal line at `y` (`axis: y`) or both; `keep: false` leaves only the image |
+
+  ```yaml
+  - kind: ref
+    name: comb
+    component: comb_drive
+    modifiers:
+    - {kind: mirror, axis: x, x: mass.center.x}
+    - {kind: array, columns: 3, dx: 120}
+  ```
+
+  The order matters: mirroring an array is not arraying a mirror. Every value
+  can be an expression, including another shape's point (`mass.center.x`).
+  Modifiers work in the frame of the list holding the node, before its
+  alignment moves the result, so a mirror about `mass.center.x` stays put when
+  the part is moved and the halves move symmetrically. Each modifier can be
+  switched off (`enabled: false`). Editing from code or a frontend goes
+  through `session.modifiers` (`add`, `update`, `move`, `set_enabled`,
+  `remove`, and `apply`, which bakes the first modifier into real shapes, like
+  Blender's Apply). Files that use the earlier `repeat:` field still load: it
+  is an array modifier.
 - **`enabled=False`** skips a node without deleting it.
 - **Any node can be aligned** (`align=Align(point, to, dx, dy)`), see
   [Alignment points](#alignment-points).

@@ -40,6 +40,7 @@ _SPECIAL = {
     "name",
     "enabled",
     "repeat",
+    "modifiers",  # the Repeat section edits the first array; other modifiers are kept
     "align",
     "params",
     "points",

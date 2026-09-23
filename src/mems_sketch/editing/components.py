@@ -22,6 +22,7 @@ from mems_sketch.core.shapes import (
     rewrite,
     walk,
 )
+from mems_sketch.core.shapes.modifiers import total_copies
 from mems_sketch.core.user_component import ComponentDef
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
@@ -38,7 +39,8 @@ class ComponentEdits(Commands):
 
         Names are written as the project would write them (``lib.name`` for a
         library component), so they can be opened, placed or explored further.
-        Built-ins place nothing. Repeated references count every copy.
+        Built-ins place nothing. References with array or mirror modifiers count
+        every copy.
         """
         project = self.session.project
         found = project.definition(project.qualify(component))
@@ -52,13 +54,8 @@ class ComponentEdits(Commands):
                     target = project.qualify(shape.component, namespace)
                 except KeyError:
                     continue  # the messages panel reports it
-                copies = 1
-                if shape.repeat is not None:
-                    try:
-                        copies = int(float(shape.repeat.columns) * float(shape.repeat.rows))
-                    except (TypeError, ValueError):  # expressions: counted once
-                        copies = 1
-                counts[target] = counts.get(target, 0) + copies
+                # copies whose count is an expression are counted once
+                counts[target] = counts.get(target, 0) + total_copies(shape.modifiers)
         return list(counts.items())
 
     def users(self, component: str) -> list[str]:
@@ -176,7 +173,7 @@ class ComponentEdits(Commands):
         """Move sibling nodes into a new component and put a reference in their place.
 
         A single transform becomes a component of its children, placed where
-        the transform was (with its alignment, repeat and name). Parameters of the active component that the nodes use become parameters
+        the transform was (with its alignment, modifiers and name). Parameters of the active component that the nodes use become parameters
         of the new component (with the same defaults and limits) and are passed
         through by the reference, so the geometry is unchanged.
         """
@@ -197,7 +194,7 @@ class ComponentEdits(Commands):
                 "mirror_x": transform.mirror_x,
                 "align": transform.align,
                 "enabled": transform.enabled,
-                "repeat": transform.repeat,
+                "modifiers": transform.modifiers,
             }
         definition_params = {p.name: p for p in self.session.active_definition.parameters}
         used = _names_used(nodes) & definition_params.keys()
@@ -265,7 +262,7 @@ class ComponentEdits(Commands):
             mirror_x=node.mirror_x,
             align=node.align,
             enabled=node.enabled,
-            repeat=node.repeat,
+            modifiers=node.modifiers,
         )
 
         def change(project: Project) -> None:

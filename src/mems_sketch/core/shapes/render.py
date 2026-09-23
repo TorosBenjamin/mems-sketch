@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING
 
 import klayout.db as kdb
 
-from mems_sketch.core.component import DBU_UM, Geometry, placement, to_dbu
+from mems_sketch.core.component import DBU_UM, Geometry, to_dbu
 from mems_sketch.core.expressions import evaluate
-from mems_sketch.core.shapes.base import Point, RenderContext, Repeat
+from mems_sketch.core.shapes.base import Point, RenderContext
 from mems_sketch.core.shapes.geometry import apply_transform, to_ictrans
+from mems_sketch.core.shapes.modifiers import apply_stack
 from mems_sketch.core.shapes.points import NodePoints, own_strings, point_dependencies, point_values
 from mems_sketch.core.shapes.tree import NodePath
 
@@ -130,15 +131,9 @@ class Evaluator:
     ) -> tuple[Geometry, NodePoints]:
         v = {**variables, **point_values(own_strings(shape), scope)}
         first = {**v, "i": 0.0, "j": 0.0}
-        if shape.repeat is None:
-            geometry, declared = self._render_once(shape, first, scope, path)
-        else:
-            geometry, declared = Geometry(), None
-            for (dx, dy), copy_scope in _grid(shape.repeat, v):
-                copy, points = self._render_once(shape, copy_scope, scope, path)
-                geometry.merge(copy, placement(dx, dy, 0.0, False))
-                if declared is None:
-                    declared = points  # the first copy sits at the node's own origin
+        geometry, declared = apply_stack(
+            shape.modifiers, lambda copy: self._render_once(shape, copy, scope, path), first
+        )
         label = shape.name or shape.kind
         points = NodePoints(label, geometry, declared or {})
         shift = kdb.DCplxTrans()
@@ -194,17 +189,6 @@ def transform_of(shape: Shape, v: dict[str, float]) -> kdb.DCplxTrans:
     """The placement a node applies to its content, in µm (identity if it has none)."""
     transform = shape.placement(v)
     return kdb.DCplxTrans() if transform is None else transform
-
-
-def _grid(repeat: Repeat, variables: dict[str, float]):
-    columns = evaluate(repeat.columns, variables)
-    rows = evaluate(repeat.rows, variables)
-    if columns != int(columns) or rows != int(rows) or columns < 0 or rows < 0:
-        raise ValueError("repeat columns and rows must be non-negative integers")
-    pitch_x, pitch_y = evaluate(repeat.dx, variables), evaluate(repeat.dy, variables)
-    for j in range(int(rows)):
-        for i in range(int(columns)):
-            yield (i * pitch_x, j * pitch_y), {**variables, "i": float(i), "j": float(j)}
 
 
 def frame_of(record: Mapping[NodePath, NodeRecord], path: NodePath) -> kdb.DCplxTrans:

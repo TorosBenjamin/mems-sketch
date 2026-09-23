@@ -109,6 +109,9 @@ DEFAULT_OPTIONS = {
     "zoom_step": 1.25,
 }
 GIZMO_GRAB_PX = 7  # how close to a gizmo handle counts as on it
+# The world the user can pan over, in µm: ±1 m, inside the ±2.1 m that 32-bit
+# database units (nm) can hold. Cursor positions are kept inside it.
+WORLD = QRectF(-1e6, -1e6, 2e6, 2e6)
 
 
 def layer_color(index: int) -> QColor:
@@ -153,7 +156,10 @@ class LayoutCanvas(QGraphicsView):
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        # Wheel zoom keeps the point under the cursor itself (see wheelEvent):
+        # AnchorUnderMouse relies on QGraphicsView's own mouse tracking, which
+        # the mouse handlers here bypass.
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -187,8 +193,9 @@ class LayoutCanvas(QGraphicsView):
         self._overlay_buttons = self._build_overlay_buttons()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._has_content = False
+        self._wheel_anchor: QPointF | None = None  # scene point held under the cursor
         # A large scene rect lets the user pan freely beyond the geometry.
-        self.scene().setSceneRect(QRectF(-1e6, -1e6, 2e6, 2e6))
+        self.scene().setSceneRect(WORLD)
 
     # -- content -----------------------------------------------------------
 
@@ -551,11 +558,32 @@ class LayoutCanvas(QGraphicsView):
         factor = step if event.angleDelta().y() > 0 else 1 / step
         scale = abs(self.transform().m11()) * factor
         if 1e-4 < scale < 1e5:
-            self.scale(factor, factor)
+            self._zoom_about(event.position(), factor)
             self.view_changed.emit()
 
+    def _zoom_about(self, pos: QPointF, factor: float) -> None:
+        """Zoom keeping the scene point under ``pos`` (viewport pixels) in place."""
+        # Scrolling is in whole pixels; reusing the anchor of the previous step
+        # (while it is still under the cursor) keeps that rounding from adding up.
+        anchor = self._wheel_anchor
+        if anchor is None or (self.viewportTransform().map(anchor) - pos).manhattanLength() > 1:
+            anchor = self.viewportTransform().inverted()[0].map(pos)
+        self._wheel_anchor = anchor
+        self.scale(factor, factor)
+        shift = self.viewportTransform().map(anchor) - pos
+        for bar, delta in (
+            (self.horizontalScrollBar(), shift.x()),
+            (self.verticalScrollBar(), shift.y()),
+        ):
+            bar.setValue(bar.value() + round(delta))
+
     def _scene(self, event) -> QPointF:
-        return self.mapToScene(event.position().toPoint())
+        """The cursor in µm, kept inside ``WORLD`` (zoomed far out, the view shows more)."""
+        p = self.mapToScene(event.position().toPoint())
+        return QPointF(
+            min(max(p.x(), WORLD.left()), WORLD.right()),
+            min(max(p.y(), WORLD.top()), WORLD.bottom()),
+        )
 
     def _pans(self, event) -> bool:
         button = event.button()

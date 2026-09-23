@@ -49,7 +49,7 @@ def drag(canvas, start, end):
 
 
 def one_rect(window):
-    window.document.add_shape(RectShape(name="plate", layer="device", x0=0, y0=0, x1=40, y1=20))
+    window.document.nodes.add(RectShape(name="plate", layer="device", x0=0, y0=0, x1=40, y1=20))
     window.canvas.set_view_state(4, 20, 10)  # 4 px per µm around the plate
     window.tree.select_paths([((0, 0),)])
 
@@ -226,7 +226,7 @@ def test_tool_options_follow_the_tool(window):
 def test_status_bar_shows_problems_zoom_and_grid(window):
     one_rect(window)
     assert window.problems_button.text() == "No problems"
-    window.document.add_shape(RectShape(name="bad", layer="device", x0=50, y0=0, x1=51, y1=5))
+    window.document.nodes.add(RectShape(name="bad", layer="device", x0=50, y0=0, x1=51, y1=5))
     assert "violation" in window.problems_button.text()
     assert window.grid_label.text() == f"grid {window.canvas.grid_step():g} µm"
     assert "px/µm" in window.zoom_label.text()

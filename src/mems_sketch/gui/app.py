@@ -1,7 +1,7 @@
 """Main window and application entry point (``mems-sketch`` or ``python -m mems_sketch.gui``).
 
 The window is a frontend only: it shows and edits the project through
-:class:`ProjectDocument`, which is the single way into the backend.
+an :class:`~mems_sketch.editing.EditSession`, the backend's way to edit a project.
 """
 
 from __future__ import annotations
@@ -30,10 +30,10 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.core.shapes import NodePath
+from mems_sketch.editing import EditSession
 from mems_sketch.export.base import available_exporters
 from mems_sketch.gui import icons, theme
 from mems_sketch.gui.canvas import LayoutCanvas
-from mems_sketch.gui.document import VIEW_MODES, ProjectDocument
 from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.find_action import FindActionDialog, menu_actions
 from mems_sketch.gui.panels import (
@@ -49,7 +49,7 @@ from mems_sketch.gui.panels import (
 from mems_sketch.gui.properties import PropertyEditor
 from mems_sketch.gui.settings import PreferencesDialog, Settings
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
-from mems_sketch.gui.views import ComponentView, EditorArea
+from mems_sketch.gui.views import VIEW_MODES, ComponentView, EditorArea
 
 STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
@@ -95,9 +95,9 @@ OPERATIONS = [
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, document: ProjectDocument | None = None) -> None:
+    def __init__(self, document: EditSession | None = None) -> None:
         super().__init__()
-        self.document = document or ProjectDocument()
+        self.document = document or EditSession()
         self._problems: list[str] = []
         self._restoring = False  # while opening a project, the editor state is not saved
         self.rulers: dict[str, list[tuple[float, float, float, float]]] = {}  # per component
@@ -139,7 +139,7 @@ class MainWindow(QMainWindow):
         self.area.tab_menu_requested.connect(self._tab_menu)
         self.tree.selection_changed_paths.connect(self._tree_selected)
         self.tree.enabled_toggled.connect(
-            lambda p, e: self._run(lambda: self.document.set_enabled(p, e))
+            lambda p, e: self._run(lambda: self.document.nodes.set_enabled(p, e))
         )
         self.tree.itemDoubleClicked.connect(self._tree_double_clicked)
         self.components.place_requested.connect(self.add_component)
@@ -989,7 +989,7 @@ class MainWindow(QMainWindow):
 
     def add_drawn(self, shape) -> None:
         """Add a shape drawn with a drawing tool and select it."""
-        self._select_result(lambda: self.document.add_shape(shape))
+        self._select_result(lambda: self.document.nodes.add(shape))
 
     def _fill_component_menu(self) -> None:
         self.component_menu.clear()
@@ -1056,14 +1056,16 @@ class MainWindow(QMainWindow):
     def update_overlay(self) -> None:
         view = self.view
         markers = [v.bbox_um for v in view.violations if v.bbox_um]
-        self.canvas.show_overlay(self.document.highlight(view.selection), markers)
+        self.canvas.show_overlay(self.document.results.highlight(view.selection), markers)
         try:
-            declared = [(n, x, y) for n, (x, y) in self.document.declared_points().items()]
+            declared = [(n, x, y) for n, (x, y) in self.document.results.declared_points().items()]
         except Exception:  # noqa: BLE001 - the messages panel shows why
             declared = []
         self.canvas.show_points("declared", declared, labels=True)
         tool_markers = self.tool.markers()
-        selected = self.document.node_points(view.selection[0]) if len(view.selection) == 1 else []
+        selected = (
+            self.document.results.node_points(view.selection[0]) if len(view.selection) == 1 else []
+        )
         self.canvas.show_points("selected", [] if "pick" in tool_markers else selected)
         for style in ("pick", "anchor"):
             self.canvas.show_points(style, tool_markers.get(style, []))
@@ -1081,7 +1083,7 @@ class MainWindow(QMainWindow):
             and not self.document.read_only
             and not self.tool.busy
         )
-        center = self.document.selection_center(view.selection) if shown else None
+        center = self.document.results.selection_center(view.selection) if shown else None
         for other in self.area.views():
             other.canvas.set_gizmo(kind if other is view and center else None, center)
 
@@ -1170,7 +1172,7 @@ class MainWindow(QMainWindow):
         """Whether ``(x, y)`` lies on one of the selected shapes."""
         at = probe(x, y)
         for path in self.selection:
-            geometry = self.document.highlight([path])
+            geometry = self.document.results.highlight([path])
             if geometry and any(not (r & at).is_empty() for r in geometry.layers.values()):
                 return True
         return False
@@ -1241,13 +1243,13 @@ class MainWindow(QMainWindow):
             self.tree.select_paths([path])
 
     def add_primitive(self, kind: str) -> None:
-        self._select_result(lambda: self.document.add_primitive(kind))
+        self._select_result(lambda: self.document.nodes.add_primitive(kind))
 
     def add_component(self, name: str) -> None:
-        self._select_result(lambda: self.document.add_component(name))
+        self._select_result(lambda: self.document.nodes.add_component(name))
 
     def wrap(self, operation: str) -> None:
-        self._select_result(lambda: self.document.wrap(self.selection, operation))
+        self._select_result(lambda: self.document.nodes.wrap(self.selection, operation))
 
     def make_component(self) -> None:
         if not self.selection:
@@ -1255,7 +1257,7 @@ class MainWindow(QMainWindow):
             return
         name, ok = QInputDialog.getText(self, "Make component", "Name of the new component:")
         if ok and name.strip():
-            self._select_result(lambda: self.document.make_component(self.selection, name.strip()))
+            self._select_result(lambda: self.document.components.make(self.selection, name.strip()))
 
     # -- moving, rotating, mirroring ---------------------------------------
 
@@ -1265,7 +1267,7 @@ class MainWindow(QMainWindow):
             return
         step = self.canvas.grid_step() / (10 if fine else 1)
         paths = list(self.selection)
-        self._run(lambda: self.document.move(paths, steps_x * step, steps_y * step))
+        self._run(lambda: self.document.moves.move(paths, steps_x * step, steps_y * step))
 
     def move_by(self) -> None:
         """Move the selection by an exact amount, typed as ``dx, dy``."""
@@ -1281,48 +1283,48 @@ class MainWindow(QMainWindow):
             parts = [float(v) for v in text.replace(";", ",").split(",")]
             if len(parts) != 2:
                 raise ValueError("type two numbers: dx, dy")
-            self.document.move(paths, *parts)
+            self.document.moves.move(paths, *parts)
 
         self._run(move)
 
     def rotate_selection(self, angle: float) -> None:
         """Rotate the selection about the centre of its bounding box."""
-        center = self.document.selection_center(self.selection) if self.selection else None
+        center = self.document.results.selection_center(self.selection) if self.selection else None
         if center is None:
             self.report_error("select the shapes to rotate first")
             return
         paths = list(self.selection)
-        self._run(lambda: self.document.rotate(paths, angle, center))
+        self._run(lambda: self.document.moves.rotate(paths, angle, center))
 
     def mirror_selection(self, left_right: bool) -> None:
-        center = self.document.selection_center(self.selection) if self.selection else None
+        center = self.document.results.selection_center(self.selection) if self.selection else None
         if center is None:
             self.report_error("select the shapes to mirror first")
             return
         paths = list(self.selection)
-        self._run(lambda: self.document.mirror(paths, left_right, center))
+        self._run(lambda: self.document.moves.mirror(paths, left_right, center))
 
     def remove_alignment(self) -> None:
         if len(self.selection) == 1:
             path = self.selection[0]
-            self._run(lambda: self.document.set_align(path, None))
+            self._run(lambda: self.document.nodes.set_align(path, None))
 
     def unpack(self) -> None:
         if len(self.selection) == 1:
-            self._select_result(lambda: self.document.unpack(self.selection[0]))
+            self._select_result(lambda: self.document.components.unpack(self.selection[0]))
 
     def unwrap(self) -> None:
         if len(self.selection) == 1:
-            self._run(lambda: self.document.unwrap(self.selection[0]))
+            self._run(lambda: self.document.nodes.unwrap(self.selection[0]))
 
     def duplicate(self) -> None:
         if len(self.selection) == 1:
-            self._select_result(lambda: self.document.duplicate(self.selection[0]))
+            self._select_result(lambda: self.document.nodes.duplicate(self.selection[0]))
 
     def delete(self) -> None:
         if self.selection:
             paths, self.selection = self.selection, []
-            self._run(lambda: self.document.remove_nodes(paths))
+            self._run(lambda: self.document.nodes.remove(paths))
 
     # -- files -------------------------------------------------------------
 

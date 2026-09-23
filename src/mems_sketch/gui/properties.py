@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes import NodePath, Shape
-from mems_sketch.gui.document import ProjectDocument
+from mems_sketch.editing import EditSession
 from mems_sketch.gui.panels import parse_value
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
@@ -68,7 +68,7 @@ class PropertyEditor(QScrollArea):
     error = Signal(str)
     applied = Signal()
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.setWidgetResizable(True)
@@ -91,7 +91,7 @@ class PropertyEditor(QScrollArea):
             return
         self._editors = {}
         try:
-            self._scope = {**self.document.scope(path), "i": 0.0, "j": 0.0}
+            self._scope = {**self.document.results.scope(path), "i": 0.0, "j": 0.0}
         except Exception:  # noqa: BLE001 - previews then show "?"
             self._scope = {}
         body = QWidget()
@@ -108,7 +108,7 @@ class PropertyEditor(QScrollArea):
         enabled.setChecked(node.enabled)
         form.addRow("Enabled", enabled)
         self._editors["enabled"] = enabled.isChecked
-        extent = self.document.highlight([path])
+        extent = self.document.results.highlight([path])
         if extent is not None:
             box = kdb.Box()
             for region in extent.layers.values():
@@ -282,11 +282,11 @@ class PropertyEditor(QScrollArea):
         align = node.align
         own = QComboBox()
         own.setEditable(True)
-        own.addItems([name for name, _, _ in self.document.node_points(path)] or ["center"])
+        own.addItems([name for name, _, _ in self.document.results.node_points(path)] or ["center"])
         own.setCurrentText(align.point if align else "center")
         target = QComboBox()
         target.setEditable(True)
-        target.addItems([name for name, *_ in self.document.align_targets(path)])
+        target.addItems([name for name, *_ in self.document.results.align_targets(path)])
         target.setCurrentText(align.to if align else "")
         form.addRow("Point", own)
         form.addRow("To", target)
@@ -354,7 +354,7 @@ class PropertyEditor(QScrollArea):
             for field, read in self._editors.items():
                 data[field] = read()
             new = type(node).model_validate(data)
-            self.document.replace_node(self.path, new)
+            self.document.nodes.replace(self.path, new)
             self.applied.emit()
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))

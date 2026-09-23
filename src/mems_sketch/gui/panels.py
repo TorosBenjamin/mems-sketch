@@ -27,8 +27,8 @@ from mems_sketch.core.component import component_types
 from mems_sketch.core.expressions import ExpressionError, resolve_variables
 from mems_sketch.core.process import Layer
 from mems_sketch.core.shapes import NodePath, Shape, child_lists
+from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
-from mems_sketch.gui.document import ProjectDocument
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 SLOT_LABELS = {"boolean": ("A", "B")}
@@ -148,7 +148,7 @@ class ComponentsPanel(_Panel):
     open_requested = Signal(str)
     NAME_ROLE = Qt.ItemDataRole.UserRole
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.tree = QTreeWidget()
@@ -250,7 +250,7 @@ class ComponentsPanel(_Panel):
     def _new(self) -> None:
         name, ok = QInputDialog.getText(self, "New component", "Component name:")
         if ok and name.strip():
-            self._guard(lambda: self.document.new_component(name.strip()))
+            self._guard(lambda: self.document.components.new(name.strip()))
 
     def _rename(self) -> None:
         old = self.selected()
@@ -259,17 +259,17 @@ class ComponentsPanel(_Panel):
             return
         new, ok = QInputDialog.getText(self, "Rename component", "New name:", text=old)
         if ok and new.strip() and new.strip() != old:
-            self._guard(lambda: self.document.rename_component(old, new.strip()))
+            self._guard(lambda: self.document.components.rename(old, new.strip()))
 
     def _delete(self) -> None:
         name = self.selected()
         if self._is_local(name):
-            self._guard(lambda: self.document.delete_component(name))
+            self._guard(lambda: self.document.components.delete(name))
 
     def _set_top(self) -> None:
         name = self.selected()
         if self._is_local(name):
-            self._guard(lambda: self.document.set_top(name))
+            self._guard(lambda: self.document.components.set_top(name))
 
     def _place(self) -> None:
         name = self.selected()
@@ -287,7 +287,7 @@ class ShapeTree(QTreeWidget):
     enabled_toggled = Signal(tuple, bool)
     collapse_changed = Signal()
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.setHeaderLabels(["Shape", "Type"])
@@ -388,7 +388,7 @@ class ParametersPanel(_Panel):
     COLUMNS = ("Name", "Default", "Min", "Max", "Trial", "Value")
     TRIAL = 4
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.title = QLabel()
@@ -399,7 +399,7 @@ class ParametersPanel(_Panel):
         layout.setSpacing(0)
         self.actions = _action_bar(
             self.title,
-            ("add", "Add parameter", lambda: self._guard(self.document.add_parameter)),
+            ("add", "Add parameter", lambda: self._guard(self.document.parameters.add)),
             ("remove", "Remove the selected parameters", self._remove),
             ("clear", "Clear trial values", self._clear_trials),
         )
@@ -417,7 +417,7 @@ class ParametersPanel(_Panel):
         suffix = " (read-only; trial values work)" if read_only else ""
         self.title.setText(f"Parameters of <b>{self.document.active}</b>{suffix}")
         try:
-            values = self.document.scope()
+            values = self.document.results.scope()
         except Exception:  # noqa: BLE001 - shown as "error" per row
             values = {}
         trials = self.document.trials.get(self.document.active, {})
@@ -451,13 +451,13 @@ class ParametersPanel(_Panel):
             match item.column():
                 case 0:
                     if text != name:
-                        self.document.update_parameter(name, name=text)
+                        self.document.parameters.update(name, name=text)
                 case 1:
-                    self.document.update_parameter(name, default=parse_value(text))
+                    self.document.parameters.update(name, default=parse_value(text))
                 case 2:
-                    self.document.update_parameter(name, min=float(text) if text else None)
+                    self.document.parameters.update(name, min=float(text) if text else None)
                 case 3:
-                    self.document.update_parameter(name, max=float(text) if text else None)
+                    self.document.parameters.update(name, max=float(text) if text else None)
                 case self.TRIAL:
                     self.document.set_trial(name, parse_value(text) if text else None)
 
@@ -467,7 +467,7 @@ class ParametersPanel(_Panel):
     def _remove(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
         for row in rows:
-            self._guard(lambda n=self._names[row]: self.document.remove_parameter(n))
+            self._guard(lambda n=self._names[row]: self.document.parameters.remove(n))
 
 
 # -- points ------------------------------------------------------------------
@@ -483,7 +483,7 @@ class PointsPanel(_Panel):
     COLUMNS = ("Name", "At", "X", "Y", "Position")
     FIELDS = ("name", "at", "x", "y")
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.title = QLabel()
@@ -494,7 +494,7 @@ class PointsPanel(_Panel):
         layout.setSpacing(0)
         self.actions = _action_bar(
             self.title,
-            ("add", "Add point", lambda: self._guard(self.document.add_point)),
+            ("add", "Add point", lambda: self._guard(self.document.points.add)),
             ("remove", "Remove the selected points", self._remove),
         )
         layout.addLayout(self.actions)
@@ -505,7 +505,7 @@ class PointsPanel(_Panel):
         points = self.document.active_definition.points
         self.title.setText(f"Points of <b>{self.document.active}</b> (besides center, top, …)")
         try:
-            positions = self.document.declared_points()
+            positions = self.document.results.declared_points()
         except Exception:  # noqa: BLE001 - shown as "error" per row
             positions = {}
         self.table.blockSignals(True)
@@ -535,11 +535,11 @@ class PointsPanel(_Panel):
             match field:
                 case "name":
                     if text != name:
-                        self.document.update_point(name, name=text)
+                        self.document.points.update(name, name=text)
                 case "at":
-                    self.document.update_point(name, at=text or None)
+                    self.document.points.update(name, at=text or None)
                 case "x" | "y":
-                    self.document.update_point(name, **{field: parse_value(text or "0")})
+                    self.document.points.update(name, **{field: parse_value(text or "0")})
 
         if field is not None and not self._guard(apply):
             self.refresh()
@@ -547,7 +547,7 @@ class PointsPanel(_Panel):
     def _remove(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
         for row in rows:
-            self._guard(lambda n=self._names[row]: self.document.remove_point(n))
+            self._guard(lambda n=self._names[row]: self.document.points.remove(n))
 
 
 # -- process -------------------------------------------------------------------
@@ -559,7 +559,7 @@ class LayersPanel(_Panel):
     visibility_changed = Signal(str, bool)
     LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm")
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.visible: dict[str, bool] = {}
@@ -572,7 +572,7 @@ class LayersPanel(_Panel):
         layout.setSpacing(0)
         self.actions = _action_bar(
             None,
-            ("add", "Add layer", lambda: self._guard(self.document.add_layer)),
+            ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
             ("remove", "Remove the selected layers", self._remove_layers),
         )
         layout.addLayout(self.actions)
@@ -630,7 +630,7 @@ class LayersPanel(_Panel):
                 optional(texts[4]),
                 optional(texts[5]),
             )
-            self.document.set_layer(name, layer)
+            self.document.process.set_layer(name, layer)
             if layer.name != name:
                 self.visible[layer.name] = self.visible.pop(name, True)
 
@@ -640,13 +640,13 @@ class LayersPanel(_Panel):
     def _remove_layers(self) -> None:
         rows = sorted({i.row() for i in self.layers.selectedItems()}, reverse=True)
         for row in rows:
-            self._guard(lambda n=self._layer_names[row]: self.document.remove_layer(n))
+            self._guard(lambda n=self._layer_names[row]: self.document.process.remove_layer(n))
 
 
 class ConstantsPanel(_Panel):
     """Process constants, available in every expression as ``process.<name>``."""
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.constants = _table(["Constant", "Expression", "Value"])
@@ -656,7 +656,7 @@ class ConstantsPanel(_Panel):
         layout.setSpacing(0)
         self.actions = _action_bar(
             QLabel("Use in expressions as process.<name>"),
-            ("add", "Add constant", lambda: self._guard(self.document.add_constant)),
+            ("add", "Add constant", lambda: self._guard(self.document.process.add_constant)),
             ("remove", "Remove the selected constants", self._remove_constants),
         )
         layout.addLayout(self.actions)
@@ -686,9 +686,9 @@ class ConstantsPanel(_Panel):
 
         def apply() -> None:
             if item.column() == 0 and text != name:
-                self.document.rename_constant(name, text)
+                self.document.process.rename_constant(name, text)
             elif item.column() == 1:
-                self.document.set_constant(name, parse_value(text))
+                self.document.process.set_constant(name, parse_value(text))
 
         if not self._guard(apply):
             self.refresh()
@@ -696,7 +696,9 @@ class ConstantsPanel(_Panel):
     def _remove_constants(self) -> None:
         rows = sorted({i.row() for i in self.constants.selectedItems()}, reverse=True)
         for row in rows:
-            self._guard(lambda n=self._constant_names[row]: self.document.remove_constant(n))
+            self._guard(
+                lambda n=self._constant_names[row]: self.document.process.remove_constant(n)
+            )
 
 
 # -- messages ------------------------------------------------------------------

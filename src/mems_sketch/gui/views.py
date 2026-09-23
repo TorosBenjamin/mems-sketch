@@ -14,17 +14,19 @@ from PySide6.QtWidgets import QSplitter, QTabBar, QTabWidget, QToolButton, QVBox
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.shapes import NodePath
+from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import LayoutCanvas
-from mems_sketch.gui.document import ProjectDocument
 
 MAX_PANES = 2
+# How a tab can show its component (see EditSession.results.geometry).
+VIEW_MODES = {"drawn": "Drawn", "etched": "As etched", "compensated": "Etch compensated"}
 
 
 class ComponentView(QWidget):
     """One tab: a component, its canvas, selection and view mode."""
 
-    def __init__(self, document: ProjectDocument, component: str) -> None:
+    def __init__(self, document: EditSession, component: str) -> None:
         super().__init__()
         self.document = document
         self.component = component
@@ -66,20 +68,20 @@ class ComponentView(QWidget):
         """Recompile the component and redraw; errors are kept for the messages panel."""
         self.errors = []
         try:
-            drawn = self.document.geometry(component=self.component)
+            drawn = self.document.results.geometry(component=self.component)
             geometry = (
                 drawn
                 if self.view_mode == "drawn"
-                else self.document.geometry(self.view_mode, self.component)
+                else self.document.results.geometry(self.view_mode, self.component)
             )
-            self.violations = self.document.check(drawn)
+            self.violations = self.document.results.check(drawn)
         except Exception as exc:  # noqa: BLE001 - shown in the messages panel
             geometry = Geometry()
             self.violations = []
             self.errors.append(str(exc))
-        self.node_regions = self.document.node_regions(visible, self.component)
+        self.node_regions = self.document.results.node_regions(visible, self.component)
         self.selection = [
-            p for p in self.selection if p in self.document.inspection(self.component)
+            p for p in self.selection if p in self.document.results.inspection(self.component)
         ]
         self.canvas.show_geometry(geometry, colors, visible)
         if not self._fitted and geometry.layers:
@@ -98,7 +100,7 @@ class EditorArea(QSplitter):
     tabs_changed = Signal()  # tabs were opened, closed, moved or renamed
     tab_menu_requested = Signal(object, QPoint)  # ComponentView, global position
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__(Qt.Orientation.Horizontal)
         self.document = document
         self.panes: list[QTabWidget] = []

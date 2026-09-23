@@ -59,7 +59,7 @@ def test_component_parameters_show_declared_defaults(window):
     window.add_component("comb_drive")
     fields = window.properties.findChildren(QLineEdit)
     assert any(f.placeholderText() == "10" for f in fields)  # default finger count
-    window.document.set_parameter("n", 4.0)
+    window.document.parameters.set("n", 4.0)
     window.properties.show_node(((0, 0),))
     window.properties._editors["params"] = lambda: {"fingers": "n"}
     window.properties.apply()
@@ -130,7 +130,7 @@ def test_align_tool_picks_two_points_on_the_canvas(window):
 
     window.add_primitive("rect")  # rect1: 100 x 50 at the origin
     window._select_result(
-        lambda: window.document.add_shape(
+        lambda: window.document.nodes.add(
             RectShape(name="post", layer="device", x0=300, y0=300, x1=310, y1=320)
         )
     )

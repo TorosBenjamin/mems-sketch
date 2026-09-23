@@ -47,7 +47,7 @@ KINDS_DIR = PACKAGE / "core" / "shapes" / "kinds"
 # same for transforms. None means anywhere; otherwise the files allowed.
 ALLOWED_CLASSES = {
     "RefShape": None,
-    "TransformShape": {"gui/document.py", "editing/components.py"},
+    "TransformShape": {"editing/components.py"},
 }
 
 

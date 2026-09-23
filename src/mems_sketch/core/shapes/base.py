@@ -1,4 +1,4 @@
-"""What every shape kind is built on: the node base class, alignment and repeats.
+"""What every shape kind is built on: the node base class, alignment and modifiers.
 
 A kind is a pydantic model deriving from :class:`Node` (usually through
 :class:`Primitive` or :class:`Operation`) that renders itself, moves, lists
@@ -13,9 +13,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import klayout.db as kdb
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from mems_sketch.core.expressions import evaluate
+from mems_sketch.core.shapes.modifiers import AnyModifier, ArrayModifier
 
 if TYPE_CHECKING:
     from mems_sketch.core.component import Component, Geometry
@@ -35,13 +36,8 @@ def check_point_reference(reference: str) -> str:
     return reference
 
 
-class Repeat(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    columns: Value = 1
-    rows: Value = 1
-    dx: Value = 0.0
-    dy: Value = 0.0
+# ``repeat`` was a field of its own before modifiers existed; a Repeat is an array.
+Repeat = ArrayModifier
 
 
 class Align(BaseModel):
@@ -76,7 +72,7 @@ class Align(BaseModel):
 class RenderContext:
     """What a kind needs to render one copy of itself."""
 
-    variables: dict[str, float]  # parameters, point coordinates and the repeat indices
+    variables: dict[str, float]  # parameters, point coordinates and the array indices
     scope: Mapping[str, NodePoints]  # the named nodes it can see
     lookup: Callable[[str], Component]  # components by name, for references
     render_lists: Callable[[list[list[Shape]], Mapping[str, NodePoints]], list[Geometry]]
@@ -103,9 +99,36 @@ class Node(BaseModel):
     wraps: ClassVar[tuple[str, ...]] = ()  # operations that create it around shapes
 
     name: str | None = None  # stable handle for the GUI and scripts
+    modifiers: list[AnyModifier] = Field(default_factory=list)  # applied first to last
     align: Align | None = None
     enabled: bool = True
-    repeat: Repeat | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _repeat_is_an_array(cls, data: Any) -> Any:
+        """``repeat`` (the earlier field, still accepted) sets the first array modifier."""
+        if not isinstance(data, dict) or "repeat" not in data:
+            return data
+        data = dict(data)
+        repeat = data.pop("repeat")
+        modifiers = list(data.get("modifiers") or [])
+        index = next((k for k, m in enumerate(modifiers) if _modifier_kind(m) == "array"), None)
+        if repeat is not None:
+            array = repeat.model_dump() if isinstance(repeat, BaseModel) else dict(repeat)
+            array["kind"] = "array"
+            if index is None:
+                modifiers.insert(0, array)
+            else:
+                modifiers[index] = array
+        elif index is not None:
+            del modifiers[index]
+        data["modifiers"] = modifiers
+        return data
+
+    @property
+    def repeat(self) -> ArrayModifier | None:
+        """The first array modifier (what ``repeat`` used to be), or None."""
+        return next((m for m in self.modifiers if isinstance(m, ArrayModifier)), None)
 
     def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
         """Geometry of one copy, and the points it declares (only references declare any)."""
@@ -170,3 +193,9 @@ class Operation(Node):
 
     category: ClassVar[str] = "operation"
     child_fields: ClassVar[tuple[str, ...]] = ("children",)
+
+
+def _modifier_kind(modifier: Any) -> str | None:
+    if isinstance(modifier, dict):
+        return modifier.get("kind")
+    return getattr(modifier, "kind", None)

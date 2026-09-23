@@ -32,7 +32,8 @@ shapes:
     x: -size/2 + pitch/2
     y: -size/2 + pitch/2
     radius: hole_r
-    repeat:
+    modifiers:
+    - kind: array
       columns: floor(size/pitch)
       rows: floor(size/pitch)
       dx: pitch

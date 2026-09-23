@@ -105,7 +105,19 @@ def _follows(value: Value, axis: str, moving: frozenset[str]) -> bool:
 
 # Node fields that hold names or choices rather than expressions.
 _NOT_EXPRESSIONS = frozenset(
-    {"kind", "name", "layer", "component", "op", "ends", "corners", "mapping", "point", "to"}
+    {
+        "kind",
+        "name",
+        "layer",
+        "component",
+        "op",
+        "ends",
+        "corners",
+        "mapping",
+        "point",
+        "to",
+        "axis",
+    }
 )
 
 

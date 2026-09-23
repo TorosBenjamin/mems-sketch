@@ -20,8 +20,11 @@ Semantics:
 * Every value may be an expression over the variables in scope: the
   component's parameters inside a component, the design's global variables at
   the top level.
-* Any node can carry ``repeat`` to place copies on a grid; inside it the
-  column and row indices are ``i`` and ``j`` (the innermost repeat wins).
+* Any node can carry ``modifiers``, applied in order like Blender's modifier
+  stack: ``array`` (copies on a grid, indices ``i`` and ``j``),
+  ``polar_array`` (copies around a centre) and ``mirror`` (the node plus its
+  mirror image). See :mod:`mems_sketch.core.shapes.modifiers`. The earlier
+  ``repeat`` field is still read: it is an array modifier.
 * ``enabled=False`` skips a node, e.g. to try a variant in the GUI.
 * **Alignment points.** Every node has bounding-box points (``center``,
   ``top``, ``bottom_left``, ...); a component reference also has the points its
@@ -65,6 +68,14 @@ from mems_sketch.core.shapes.kinds import (
     RectShape,
     RefShape,
     TransformShape,
+)
+from mems_sketch.core.shapes.modifiers import (
+    MODIFIER_KINDS,
+    ArrayModifier,
+    MirrorModifier,
+    Modifier,
+    PolarArrayModifier,
+    new_modifier,
 )
 from mems_sketch.core.shapes.points import (
     BBOX_POINTS,
@@ -119,17 +130,21 @@ __all__ = [
     "INDEX_NAMES",
     "KINDS",
     "MAX_ARC_SEGMENTS",
+    "MODIFIER_KINDS",
     "PRIMITIVE_KINDS",
     "SHAPE_ADAPTER",
     "WRAPPERS",
     "Align",
     "ArcShape",
+    "ArrayModifier",
     "BooleanShape",
     "CircleShape",
     "Evaluator",
     "FilletShape",
     "GroupShape",
     "LayerMapShape",
+    "MirrorModifier",
+    "Modifier",
     "Node",
     "NodePath",
     "NodePoints",
@@ -138,6 +153,7 @@ __all__ = [
     "Operation",
     "PathShape",
     "Point",
+    "PolarArrayModifier",
     "PolygonShape",
     "Primitive",
     "RectShape",
@@ -155,6 +171,7 @@ __all__ = [
     "frame_of",
     "kind_class",
     "map_expressions",
+    "new_modifier",
     "node_at",
     "offset_value",
     "own_strings",

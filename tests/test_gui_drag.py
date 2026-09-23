@@ -58,7 +58,8 @@ def test_dragging_moves_the_shape_snapped_to_the_grid(window):
     step = window.canvas.grid_step()
     drag(window, (50, 10), (50 + 3.3 * step, 10 + 1.2 * step), Qt.KeyboardModifier.ControlModifier)
     base = window.document.node(((0, 0),))
-    assert base.x0 == pytest.approx(3.3 * step, abs=step / 20)  # Ctrl: no snapping
+    pixel = 1 / window.canvas.pixels_per_um()  # a drag is as exact as the mouse: a pixel
+    assert base.x0 == pytest.approx(3.3 * step, abs=pixel)  # Ctrl: no snapping
     window.document.undo()
     drag(window, (50, 10), (50 + 3.3 * step, 10 + 1.2 * step))
     base = window.document.node(((0, 0),))
@@ -92,7 +93,8 @@ def test_dragging_a_shape_brings_what_is_aligned_to_it(window):
     window.document.nodes.set_align(((0, 1),), Align(point="bottom", to="base.top"))
     drag(window, (20, 10), (20, -40), Qt.KeyboardModifier.ControlModifier)
     post = window.document.results.highlight([((0, 1),)]).layers["device"].bbox()
-    assert post.bottom == pytest.approx(-30000, abs=200)
+    pixel_nm = 1000 / window.canvas.pixels_per_um()  # a drag is as exact as the mouse
+    assert post.bottom == pytest.approx(-30000, abs=pixel_nm)
 
 
 def test_drag_keeps_a_multiple_selection_and_esc_cancels(window):

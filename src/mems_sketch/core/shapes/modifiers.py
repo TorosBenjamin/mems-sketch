@@ -7,13 +7,19 @@ the node (with the modifiers before it) produces and returns new geometry.
 * ``polar_array``: ``count`` copies around a centre ``x``, ``y``, ``step``
   degrees apart (a full circle by default), rotated with it or not
 * ``mirror``: the node plus its mirror image across the vertical line at
-  ``x`` (``axis: x``), the horizontal line at ``y`` (``axis: y``) or both
+  ``x`` (``axis: x``), the horizontal line at ``y`` (``axis: y``) or both; or,
+  with ``about``, across a guide line (``about: centerline``) or through a
+  point (``about: mass.center``, point symmetry: the image is turned 180°)
 
 Every value may be an expression, including point coordinates such as
 ``mass.center.x``. Modifiers work in the frame of the list holding the node,
 before its alignment moves the result. So a mirror about ``mass.center.x``
 stays where it is when the part is moved, and the two halves move
 symmetrically.
+
+``self`` is the node itself as it is just before the modifier (with the
+modifiers above it applied): ``about: self.left`` mirrors a half across its
+own left edge, ``x: self.center.x`` centres a polar array on the node.
 
 Inside an array the copy's column and row are ``i`` and ``j`` (for a polar
 array the copy's index is ``i``), so each copy can differ, e.g. finger lengths
@@ -29,13 +35,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 import klayout.db as kdb
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import evaluate
 
 if TYPE_CHECKING:
     from mems_sketch.core.shapes.base import Point, Value
+    from mems_sketch.core.shapes.points import NodePoints
     from mems_sketch.core.shapes.registry import Shape
 else:
     Value = float | str
@@ -66,15 +73,47 @@ class Modifier(BaseModel):
         self,
         node: Shape,
         variables: dict[str, float],
-        center: Callable[[Shape], tuple[float, float]],
+        measure: Callable[[Shape], NodePoints],
     ) -> list[Shape]:
         """The shapes this modifier makes of ``node`` (without modifiers), placed in
-        the node's frame: what Apply turns it into. ``center`` gives a shape's
-        centre, for copies that move without turning."""
+        the node's frame: what Apply turns it into. ``measure`` gives a shape's
+        points, for ``self`` and for copies that move without turning."""
         raise NotImplementedError
 
     def summary(self) -> str:
         return self.kind
+
+    def point_references(self) -> list[str]:
+        """Point coordinates of other nodes it needs (``node.point.x``) besides those
+        written in its expressions, e.g. for ``about``."""
+        return []
+
+    def _self_names(self) -> set[str]:
+        """The ``self.<point>.x`` / ``.y`` names it uses."""
+        from mems_sketch.core.shapes.points import _strings, point_names
+
+        names = {n for text in _strings(self) for n in point_names(text) if n.startswith("self.")}
+        return names | {n for n in self.point_references() if n.startswith("self.")}
+
+    def resolved(self, variables: dict[str, float], own: NodePoints | None) -> dict[str, float]:
+        """``variables`` plus the ``self`` points it uses, taken from ``own``."""
+        names = self._self_names()
+        if not names:
+            return variables
+        if own is None:
+            raise ValueError(f"'self' cannot be used in a {self.kind} here")
+        values = dict(variables)
+        for name in names:
+            _, point, axis = name.split(".")
+            values[name] = own.point(point)[0 if axis == "x" else 1]
+        return values
+
+    def _with_self(self, produce: Produce, variables: dict[str, float]) -> dict[str, float]:
+        """``variables`` plus its ``self`` points, measured on its input (made once more)."""
+        if not self._self_names():
+            return variables
+        geometry, declared = produce(variables)
+        return self.resolved(variables, _points("self", geometry, declared))
 
     @classmethod
     def kind_name(cls) -> str:
@@ -118,6 +157,7 @@ class ArrayModifier(Modifier):
     dy: Value = 0.0
 
     def apply(self, produce, variables):
+        variables = self._with_self(produce, variables)
         columns = _count(self.columns, variables, "array columns")
         rows = _count(self.rows, variables, "array rows")
         dx, dy = evaluate(self.dx, variables), evaluate(self.dy, variables)
@@ -137,9 +177,10 @@ class ArrayModifier(Modifier):
     def summary(self):
         return f"array {_format(self.columns)}×{_format(self.rows)}"
 
-    def baked(self, node, variables, center):
+    def baked(self, node, variables, measure):
         from mems_sketch.core.shapes.rewrite import translated
 
+        variables = self.resolved(variables, measure(node) if self._self_names() else None)
         columns = _count(self.columns, variables, "array columns")
         rows = _count(self.rows, variables, "array rows")
         dx, dy = evaluate(self.dx, variables), evaluate(self.dy, variables)
@@ -166,6 +207,7 @@ class PolarArrayModifier(Modifier):
     rotate: bool = True
 
     def apply(self, produce, variables):
+        variables = self._with_self(produce, variables)
         count = _count(self.count, variables, "polar array count")
         step = self._step(count, variables)
         cx, cy = evaluate(self.x, variables), evaluate(self.y, variables)
@@ -198,9 +240,10 @@ class PolarArrayModifier(Modifier):
             return evaluate(self.step, variables)
         return 360.0 / count if count else 0.0
 
-    def baked(self, node, variables, center):
+    def baked(self, node, variables, measure):
         from mems_sketch.core.shapes.rewrite import translated
 
+        variables = self.resolved(variables, measure(node) if self._self_names() else None)
         count = _count(self.count, variables, "polar array count")
         step = self._step(count, variables)
         cx, cy = evaluate(self.x, variables), evaluate(self.y, variables)
@@ -211,51 +254,112 @@ class PolarArrayModifier(Modifier):
                 turned = kdb.DCplxTrans(1, angle, False, 0, 0) * kdb.DPoint(cx, cy)
                 copies.append(_wrapped(copy, x=cx - turned.x, y=cy - turned.y, rotation=angle))
             else:
-                px, py = center(copy)
+                px, py = measure(copy).point("center")
                 turned = kdb.DCplxTrans(1, angle, False, 0, 0) * kdb.DPoint(px - cx, py - cy)
                 copies.append(translated(copy, _um(cx + turned.x - px), _um(cy + turned.y - py)))
         return copies
 
 
 class MirrorModifier(Modifier):
-    """The node and its mirror image across the line at ``x`` (vertical, ``axis: x``),
-    at ``y`` (horizontal, ``axis: y``), or both (four copies). Without ``keep``
-    only the mirror image remains."""
+    """The node and its mirror image.
+
+    Across the vertical line at ``x`` (``axis: x``), the horizontal line at
+    ``y`` (``axis: y``) or both (four copies). With ``about`` instead: across a
+    guide line (``about: centerline``, the name of a ``guide`` shape) or
+    through a point (``about: mass.center`` or ``self.left``: point symmetry,
+    the image turned 180° about it). Without ``keep`` only the image remains.
+    """
 
     kind: Literal["mirror"] = "mirror"
     icon: ClassVar[str] = "mirror_h"
     axis: Literal["x", "y", "both"] = "x"
     x: Value = 0.0
     y: Value = 0.0
+    about: str | None = None  # a guide's name, or a point: node.point / self.point
     keep: bool = True  # keep the original next to its mirror image
+
+    @field_validator("about")
+    @classmethod
+    def _about(cls, about: str | None) -> str | None:
+        if about is None:
+            return None
+        parts = about.split(".")
+        if len(parts) > 2 or not all(part.isidentifier() for part in parts):
+            raise ValueError(f"'{about}' is neither a guide's name nor a point like 'mass.center'")
+        if about == "self":
+            raise ValueError("mirror about a point of itself, e.g. 'self.center'")
+        return about
+
+    def point_references(self) -> list[str]:
+        if self.about is None:
+            return []
+        if "." in self.about:  # a point
+            return [f"{self.about}.x", f"{self.about}.y"]
+        return [f"{self.about}.{end}.{axis}" for end in ("start", "end") for axis in "xy"]
+
+    def transforms(self, variables: dict[str, float]) -> list[kdb.DCplxTrans]:
+        """Where the images go (the original not included)."""
+        if self.about is None:
+            x0, y0 = evaluate(self.x, variables), evaluate(self.y, variables)
+            flip_x = kdb.DCplxTrans(1, 180, True, 2 * x0, 0)  # x -> 2 x0 - x
+            flip_y = kdb.DCplxTrans(1, 0, True, 0, 2 * y0)  # y -> 2 y0 - y
+            return {"x": [flip_x], "y": [flip_y], "both": [flip_x, flip_y, flip_x * flip_y]}[
+                self.axis
+            ]
+        values = []
+        for name in self.point_references():
+            if name not in variables:
+                node = name.partition(".")[0]
+                raise ValueError(f"mirror about '{self.about}': no shape named '{node}' is visible")
+            values.append(variables[name])
+        if "." in self.about:  # point symmetry: turned 180° about the point
+            px, py = values
+            return [kdb.DCplxTrans(1, 180, False, 2 * px, 2 * py)]
+        sx, sy, ex, ey = values
+        if (sx, sy) == (ex, ey):
+            raise ValueError(f"guide '{self.about}' has no direction: its ends coincide")
+        angle = math.degrees(math.atan2(ey - sy, ex - sx))
+        reflect = kdb.DCplxTrans(1, 2 * angle, True, 0, 0)  # across the line through 0 at angle
+        moved = reflect * kdb.DPoint(sx, sy)
+        return [kdb.DCplxTrans(1, 2 * angle, True, sx - moved.x, sy - moved.y)]
 
     def apply(self, produce, variables):
         original, declared = produce(variables)
-        x0, y0 = evaluate(self.x, variables), evaluate(self.y, variables)
-        flip_x = kdb.DCplxTrans(1, 180, True, 2 * x0, 0)  # x -> 2 x0 - x
-        flip_y = kdb.DCplxTrans(1, 0, True, 0, 2 * y0)  # y -> 2 y0 - y
-        transforms = {"x": [flip_x], "y": [flip_y], "both": [flip_x, flip_y, flip_x * flip_y]}
+        variables = self.resolved(variables, _points("self", original, declared))
         geometry = Geometry()
         if self.keep:
             geometry.merge(original)
-        for transform in transforms[self.axis]:
+        for transform in self.transforms(variables):
             geometry.merge(_placed(original, transform))
         return geometry, declared
 
     def copies(self, variables=None):
-        return (2 if self.axis != "both" else 4) - (0 if self.keep else 1)
+        images = 3 if self.axis == "both" and self.about is None else 1
+        return images + (1 if self.keep else 0)
 
     def summary(self):
-        return f"mirror {self.axis}"
+        return f"mirror about {self.about}" if self.about else f"mirror {self.axis}"
 
-    def baked(self, node, variables, center):
-        x0, y0 = evaluate(self.x, variables), evaluate(self.y, variables)
-        flip_x = {"mirror_x": True, "rotation": 180.0, "x": 2 * x0}
-        flip_y = {"mirror_x": True, "y": 2 * y0}
-        both = {"rotation": 180.0, "x": 2 * x0, "y": 2 * y0}
-        flips = {"x": [flip_x], "y": [flip_y], "both": [flip_x, flip_y, both]}[self.axis]
+    def baked(self, node, variables, measure):
+        variables = self.resolved(variables, measure(node) if self._self_names() else None)
         copies = [node.model_copy(deep=True)] if self.keep else []
-        return copies + [_wrapped(node.model_copy(deep=True), **flip) for flip in flips]
+        for transform in self.transforms(variables):
+            copies.append(
+                _wrapped(
+                    node.model_copy(deep=True),
+                    mirror_x=transform.is_mirror(),
+                    rotation=transform.angle,
+                    x=transform.disp.x,
+                    y=transform.disp.y,
+                )
+            )
+        return copies
+
+
+def _points(name: str, geometry: Geometry, declared: dict[str, Point]) -> NodePoints:
+    from mems_sketch.core.shapes.points import NodePoints
+
+    return NodePoints(name, geometry, declared)
 
 
 def _um(value: float) -> float:

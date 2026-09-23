@@ -166,6 +166,15 @@ ICONS = {
     + '<path d="M6.5 6.5h3v3h-3z" fill="{blue}" fill-opacity=".35" stroke="none"/>',
     "component_builtin": _CHIP.replace("{purple}", "{orange}")  # a built-in: orange
     + '<path d="M6.5 6.5h3v3h-3z" fill="{orange}" fill-opacity=".35" stroke="none"/>',
+    "guide": '<path d="M3 13 13 3" stroke="{blue}" stroke-dasharray="2 1.6"/>'
+    '<circle cx="3" cy="13" r="1.4" fill="{blue}" stroke="none"/>'
+    '<circle cx="13" cy="3" r="1.4" fill="{blue}" stroke="none"/>',
+    "polar_array": '<circle cx="8" cy="8" r="5" stroke-dasharray="1.4 1.4"/>'
+    '<rect x="6.5" y="1.5" width="3" height="3" rx=".5" fill="{blue}" fill-opacity=".35" '
+    'stroke="{blue}"/><rect x="11.5" y="6.5" width="3" height="3" rx=".5" fill="{blue}" '
+    'fill-opacity=".35" stroke="{blue}"/><rect x="6.5" y="11.5" width="3" height="3" rx=".5" '
+    'fill="{blue}" fill-opacity=".35" stroke="{blue}"/><rect x="1.5" y="6.5" width="3" '
+    'height="3" rx=".5" fill="{blue}" fill-opacity=".35" stroke="{blue}"/>',
     "link": '<path d="M6.6 9.4l2.8-2.8"/><path d="M7.4 4.6l1.3-1.3a2.6 2.6 0 0 1 3.7 3.7'
     'l-1.3 1.3M8.6 11.4l-1.3 1.3a2.6 2.6 0 0 1-3.7-3.7l1.3-1.3" stroke="{blue}"/>',
     "collapse": '<path d="M4.5 3.5 8 6.5l3.5-3M4.5 12.5 8 9.5l3.5 3"/>',

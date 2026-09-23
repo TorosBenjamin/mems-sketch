@@ -8,9 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import klayout.db as kdb
-
-from mems_sketch.core.component import DBU_UM
 from mems_sketch.core.project import Project, check_shape_names
 from mems_sketch.core.shapes import (
     NodePath,
@@ -25,6 +22,7 @@ from mems_sketch.core.shapes.modifiers import (
     Modifier,
     new_modifier,
 )
+from mems_sketch.core.shapes.points import NodePoints
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
 
@@ -113,18 +111,13 @@ class ModifierEdits(Commands):
         self, modifier: Modifier, node: Shape, variables: dict[str, float], path: NodePath
     ) -> list[Shape]:
         """The shapes one modifier makes of ``node``, with fresh names for repeated parts."""
-        copies = modifier.baked(node, variables, lambda shape: self._center(shape, variables))
+        copies = modifier.baked(node, variables, lambda shape: self._measure(shape, variables))
         return _fresh_names(copies, {s.name for s in walk(self.session.shapes) if s.name})
 
-    def _center(self, node: Shape, variables: dict[str, float]) -> tuple[float, float]:
+    def _measure(self, node: Shape, variables: dict[str, float]) -> NodePoints:
+        """The points of ``node`` (without its modifiers) where it is."""
         geometry = self.session.project.render_shape(node, self.session.active, variables)
-        box = kdb.Box()
-        for region in geometry.layers.values():
-            box += region.bbox()
-        if box.empty():
-            return 0.0, 0.0
-        center = box.center()
-        return center.x * DBU_UM, center.y * DBU_UM
+        return NodePoints(node.name or node.kind, geometry, {})
 
 
 def _validated(modifier: Modifier, fields: dict[str, Any]) -> Modifier:

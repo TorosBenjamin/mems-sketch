@@ -117,6 +117,7 @@ _NOT_EXPRESSIONS = frozenset(
         "point",
         "to",
         "axis",
+        "about",
     }
 )
 
@@ -133,6 +134,8 @@ def map_expressions(shapes: list[Shape], change: Callable[[str], str | None]) ->
         if isinstance(value, dict):
             if key == "align" and value is not None:
                 value = {**value, "to": change(value["to"]) or value["to"]}
+            if value.get("kind") == "mirror" and value.get("about"):
+                value = {**value, "about": _about(value["about"], change)}
             if key == "mapping":
                 return value
             return {k: visit(v, None if key == "params" else k) for k, v in value.items()}
@@ -144,6 +147,14 @@ def map_expressions(shapes: list[Shape], change: Callable[[str], str | None]) ->
 
     data = [visit(shape.model_dump(), None) for shape in shapes]
     return [SHAPE_ADAPTER.validate_python(item) for item in data]
+
+
+def _about(about: str, change: Callable[[str], str | None]) -> str:
+    """A mirror's ``about`` (a point ``node.point`` or a guide's name) after ``change``."""
+    if "." in about:
+        return change(about) or about
+    changed = change(f"{about}.start")  # a guide: ask about one of its points
+    return changed.rpartition(".")[0] if changed else about
 
 
 def rewrite(expression: Value, change: Callable[[str], str | None]) -> Value:

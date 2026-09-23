@@ -58,7 +58,7 @@ class NodePoints:
         if point in self.declared:
             x, y = self.declared[point]
         elif point in BBOX_POINTS:
-            x, y = _bbox_point(self.geometry, point, self.name)
+            x, y = _bbox_point(self.geometry, point, self.name, self.declared)
         else:
             raise ValueError(f"shape '{self.name}' has no point '{point}'")
         if self.transform is None:
@@ -72,13 +72,19 @@ class NodePoints:
         return NodePoints(self.name, self.geometry, self.declared, combined)
 
 
-def _bbox_point(geometry: Geometry, point: str, name: str) -> Point:
+def _bbox_point(
+    geometry: Geometry, point: str, name: str, declared: Mapping[str, Point] | None = None
+) -> Point:
     box = kdb.Box()
     for region in geometry.layers.values():
         box += region.bbox()
-    if box.empty():
+    if box.empty() and declared:  # nothing drawn (a guide): the box of its own points
+        xs_, ys_ = [p[0] for p in declared.values()], [p[1] for p in declared.values()]
+        x0, y0, x1, y1 = min(xs_), min(ys_), max(xs_), max(ys_)
+    elif box.empty():
         raise ValueError(f"shape '{name}' has no geometry to align to")
-    x0, y0, x1, y1 = (v * DBU_UM for v in (box.left, box.bottom, box.right, box.top))
+    else:
+        x0, y0, x1, y1 = (v * DBU_UM for v in (box.left, box.bottom, box.right, box.top))
     xs = {"left": x0, "right": x1}
     ys = {"bottom": y0, "top": y1}
     vertical, _, horizontal = point.partition("_")
@@ -129,13 +135,17 @@ def _strings(value: Any) -> Iterator[str]:
 
 
 def own_strings(shape: Shape) -> list[str]:
-    """Every string in a node's own fields (its children excluded)."""
-    return [
+    """Every string in a node's own fields (its children excluded), plus the point
+    coordinates its modifiers need (e.g. a mirror's ``about``)."""
+    texts = [
         text
         for field in type(shape).model_fields
         if field not in type(shape).child_fields
         for text in _strings(getattr(shape, field))
     ]
+    for modifier in shape.modifiers:
+        texts += [n for n in modifier.point_references() if not n.startswith("self.")]
+    return texts
 
 
 def point_dependencies(shape: Shape) -> set[str]:

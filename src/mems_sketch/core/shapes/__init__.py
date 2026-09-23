@@ -26,6 +26,8 @@ Semantics:
   mirror image). See :mod:`mems_sketch.core.shapes.modifiers`. The earlier
   ``repeat`` field is still read: it is an array modifier.
 * ``enabled=False`` skips a node, e.g. to try a variant in the GUI.
+* A ``guide`` is a construction line: it draws nothing, but has points and
+  can be aligned, and mirror modifiers can mirror across it.
 * **Alignment points.** Every node has bounding-box points (``center``,
   ``top``, ``bottom_left``, ...); a component reference also has the points its
   component declares. ``align`` moves a node so that one of its points lands
@@ -61,6 +63,7 @@ from mems_sketch.core.shapes.kinds import (
     BooleanShape,
     CircleShape,
     FilletShape,
+    GuideShape,
     LayerMapShape,
     OffsetShape,
     PathShape,
@@ -142,6 +145,7 @@ __all__ = [
     "Evaluator",
     "FilletShape",
     "GroupShape",
+    "GuideShape",
     "LayerMapShape",
     "MirrorModifier",
     "Modifier",

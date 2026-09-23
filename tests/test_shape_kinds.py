@@ -34,7 +34,7 @@ def two_rects():
 
 def samples():
     """One node of every kind: the primitives' defaults, every wrap, a reference."""
-    shapes = [kind.default(LAYER) for kind in KINDS if kind.category == "primitive"]
+    shapes = [kind.default(LAYER) for kind in KINDS if kind.category in ("primitive", "guide")]
     shapes += [wrap_shapes(op, f"w_{op}", two_rects()) for kind in KINDS for op in kind.wraps]
     shapes.append(RefShape(component="rectangle", x=5))
     return shapes
@@ -48,9 +48,14 @@ def label(shape):
 
 
 def bbox(shape):
+    """The box around what the shape draws, or around its points if it draws nothing."""
+    record = {}
     box = kdb.Box()
-    for region in Evaluator(get_component).render([shape], {}).layers.values():
+    for region in Evaluator(get_component, record).render([shape], {}).layers.values():
         box += region.bbox()
+    if box.empty():  # a guide: measure its points
+        for x, y in record[((0, 0),)].points.declared.values():
+            box += kdb.Point(round(x * 1000), round(y * 1000))
     return box
 
 
@@ -60,7 +65,7 @@ def test_every_kind_has_a_sample():
 
 @pytest.mark.parametrize("kind", KINDS, ids=lambda k: k.kind_name())
 def test_every_kind_declares_what_it_is(kind):
-    assert kind.category in ("primitive", "operation", "reference")
+    assert kind.category in ("primitive", "operation", "reference", "guide")
     assert kind_class(kind.kind_name()) is kind
     assert kind.icon
 

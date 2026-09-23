@@ -5,13 +5,14 @@ import pytest
 
 from mems_sketch import (
     ArrayModifier,
+    GuideShape,
     MirrorModifier,
     PolarArrayModifier,
     RectShape,
     Repeat,
     TransformShape,
 )
-from mems_sketch.core.shapes import SHAPE_ADAPTER, CircleShape
+from mems_sketch.core.shapes import SHAPE_ADAPTER, CircleShape, default_shape
 from mems_sketch.editing import EditSession
 from mems_sketch.storage import yaml_format
 
@@ -212,3 +213,92 @@ def test_applying_gives_named_parts_fresh_names(doc):
     doc.modifiers.apply(path)
     names = [child.children[0].name for child in doc.node(path).children]
     assert names == ["pad", "pad1", "pad2"]
+
+
+# -- mirror about a point or a guide, and self ----------------------------------------------
+
+
+def test_mirror_through_a_point_is_point_symmetry(doc):
+    doc.nodes.add(rect("mass", x0=-5, y0=-5, x1=5, y1=5))
+    doc.nodes.add(
+        rect("tab", x0=20, y0=0, x1=24, y1=2, modifiers=[MirrorModifier(about="mass.center")])
+    )
+    assert pieces(doc) == [(-24, -2, -20, 0), (-5, -5, 5, 5), (20, 0, 24, 2)]
+
+
+def test_mirror_across_a_guide_line_at_any_angle(doc):
+    doc.nodes.add(GuideShape(name="diagonal", x0=0, y0=0, x1=10, y1=10))
+    doc.nodes.add(rect(modifiers=[MirrorModifier(about="diagonal")]))
+    assert pieces(doc) == [(0, 10, 4, 12), (10, 0, 12, 4)]  # x and y swapped
+    assert set(doc.results.geometry().layers) == {"device"}  # the guide draws nothing
+
+
+def test_a_guide_can_be_aligned_and_the_mirror_follows_it(doc):
+    doc.nodes.add(rect("mass", x0=-5, y0=-5, x1=5, y1=5))
+    doc.nodes.add(GuideShape(name="axis", align={"point": "center", "to": "mass.center"}))
+    doc.nodes.add(rect("comb", x0=20, y0=-1, x1=30, y1=1, modifiers=[MirrorModifier(about="axis")]))
+    assert pieces(doc)[0] == (-30, -1, -20, 1)
+    doc.nodes.replace(((0, 0),), rect("mass", x0=5, y0=-5, x1=15, y1=5))  # centre moves to 10
+    assert pieces(doc)[0] == (-10, -1, 0, 1)
+
+
+def test_shapes_can_align_to_a_guide(doc):
+    doc.nodes.add(GuideShape(name="axis", x0=40, y0=-10, x1=40, y1=10))
+    doc.nodes.add(rect(align={"point": "left", "to": "axis.center"}))
+    assert pieces(doc) == [(40, -2, 42, 2)]
+
+
+def test_self_is_the_shape_just_before_the_modifier(doc):
+    path = doc.nodes.add(rect(modifiers=[MirrorModifier(axis="x", x="self.left.x")]))
+    assert pieces(doc) == [(8, 0, 12, 4)]  # doubled across its own left edge
+    doc.modifiers.update(path, 0, about="self.bottom_left", x=0)
+    assert pieces(doc) == [(8, -4, 12, 4)]  # the image touches the original at the corner
+    assert region(doc).area() == 2 * 8 * 1e6
+    doc.modifiers.add(path, "polar_array", count=2, x="self.center.x", y="self.center.y")
+    assert pieces(doc) == [(8, -4, 12, 4)]  # the pair turned 180° about its own centre
+
+
+def test_renaming_updates_mirrors_that_use_the_shape(doc):
+    doc.nodes.add(rect("mass", x0=-5, y0=-5, x1=5, y1=5))
+    doc.nodes.add(GuideShape(name="axis"))
+    doc.nodes.add(
+        rect(modifiers=[MirrorModifier(about="axis"), MirrorModifier(about="mass.center")])
+    )
+    doc.nodes.replace(((0, 1),), GuideShape(name="centerline"))
+    doc.nodes.replace(((0, 0),), rect("plate", x0=-5, y0=-5, x1=5, y1=5))
+    assert [m.about for m in doc.node(((0, 2),)).modifiers] == ["centerline", "plate.center"]
+
+
+def test_bad_mirror_references_are_reported(doc):
+    with pytest.raises(ValueError, match="reserved"):
+        rect("self")
+    with pytest.raises(ValueError, match="neither a guide"):
+        MirrorModifier(about="a.b.c")
+    with pytest.raises(ValueError, match="no shape named 'nowhere'"):
+        doc.nodes.add(rect(modifiers=[MirrorModifier(about="nowhere")]))  # refused, rolled back
+    assert doc.shapes == []
+    with pytest.raises(ValueError, match="two different end points"):
+        doc.nodes.add(GuideShape(name="dot", x0=1, y0=1, x1=1, y1=1))
+
+
+def test_a_guide_is_a_new_shape_like_a_primitive():
+    guide = default_shape("guide")
+    assert isinstance(guide, GuideShape) and guide.summary() == "guide 90°"
+
+
+@pytest.mark.parametrize(
+    "modifier",
+    [
+        MirrorModifier(about="mass.center"),
+        MirrorModifier(about="diagonal", keep=False),
+        MirrorModifier(axis="x", x="self.left.x"),
+    ],
+    ids=["point", "guide", "self"],
+)
+def test_apply_bakes_point_and_guide_mirrors(doc, modifier):
+    doc.nodes.add(rect("mass", x0=-5, y0=-5, x1=5, y1=5))
+    doc.nodes.add(GuideShape(name="diagonal", x0=0, y0=3, x1=10, y1=17))
+    path = doc.nodes.add(rect(modifiers=[modifier]))
+    before = region(doc)
+    doc.modifiers.apply(path)
+    assert (region(doc) ^ before).is_empty()

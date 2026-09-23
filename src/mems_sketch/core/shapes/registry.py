@@ -32,9 +32,9 @@ def kind_class(kind: str) -> type[Node]:
 
 
 def default_shape(kind: str, layer: str = "device") -> Shape:
-    """A new primitive of ``kind`` to start editing from."""
+    """A new primitive (or guide) of ``kind`` to start editing from."""
     cls = BY_KIND.get(kind)
-    if cls is None or cls.category != "primitive":
+    if cls is None or cls.category not in ("primitive", "guide"):
         raise ValueError(f"unknown primitive '{kind}'")
     return cls.default(layer)
 

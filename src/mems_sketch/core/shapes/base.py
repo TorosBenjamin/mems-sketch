@@ -92,7 +92,7 @@ class Node(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    category: ClassVar[str]  # "primitive", "operation" or "reference"
+    category: ClassVar[str]  # "primitive", "operation", "reference" or "guide"
     icon: ClassVar[str] = "point"  # its icon in the GUI
     child_fields: ClassVar[tuple[str, ...]] = ()  # fields holding lists of child nodes
     placed: ClassVar[bool] = False  # has x, y, rotation and mirroring; see placement()
@@ -102,6 +102,13 @@ class Node(BaseModel):
     modifiers: list[AnyModifier] = Field(default_factory=list)  # applied first to last
     align: Align | None = None
     enabled: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def _not_self(cls, name: str | None) -> str | None:
+        if name == "self":
+            raise ValueError("'self' is reserved: modifiers use it for the shape itself")
+        return name
 
     @model_validator(mode="before")
     @classmethod

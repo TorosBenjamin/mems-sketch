@@ -322,7 +322,7 @@ subtraction stays editable and parametric.
   |---|---|
   | `array` | `columns` × `rows` copies, `dx`, `dy` apart; `i` and `j` are the copy's column and row, so each copy can differ (e.g. `length: 40 + 2*i`) |
   | `polar_array` | `count` copies around a centre `x`, `y`, `step` degrees apart (a full circle by default), turned with the circle or (`rotate: false`) keeping their orientation; `i` is the copy's index |
-  | `mirror` | the node and its mirror image across the vertical line at `x` (`axis: x`), the horizontal line at `y` (`axis: y`) or both; `keep: false` leaves only the image |
+  | `mirror` | the node and its mirror image across the vertical line at `x` (`axis: x`), the horizontal line at `y` (`axis: y`) or both; or, with `about`, across a guide (`about: centerline`) or through a point (`about: mass.center`, point symmetry); `keep: false` leaves only the image |
 
   ```yaml
   - kind: ref
@@ -335,6 +335,9 @@ subtraction stays editable and parametric.
 
   The order matters: mirroring an array is not arraying a mirror. Every value
   can be an expression, including another shape's point (`mass.center.x`).
+  `self` is the shape itself just before the modifier: `x: self.left.x`
+  mirrors a half across its own left edge, and `x: self.center.x` centres a
+  polar array on the shape.
   Modifiers work in the frame of the list holding the node, before its
   alignment moves the result, so a mirror about `mass.center.x` stays put when
   the part is moved and the halves move symmetrically. Each modifier can be
@@ -343,6 +346,21 @@ subtraction stays editable and parametric.
   `remove`, and `apply`, which bakes the first modifier into real shapes, like
   Blender's Apply). Files that use the earlier `repeat:` field still load: it
   is an array modifier.
+- **Guides** (`kind: guide`, two end points) are construction lines: they
+  draw nothing and are not exported, but have points (`start`, `end`,
+  `center`) and can be aligned like any shape. Mirror across one to keep a
+  symmetry axis in the middle of a component:
+
+  ```yaml
+  - kind: guide
+    name: centerline
+    align: {point: center, to: mass.center}   # vertical by default
+  - kind: ref
+    name: comb
+    component: comb_drive
+    modifiers:
+    - {kind: mirror, about: centerline}
+  ```
 - **`enabled=False`** skips a node without deleting it.
 - **Any node can be aligned** (`align=Align(point, to, dx, dy)`), see
   [Alignment points](#alignment-points).

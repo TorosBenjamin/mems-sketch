@@ -48,8 +48,8 @@ def rect(name, x0, y0, x1, y1, **kw):
 
 def setup_two(window):
     doc = window.document
-    doc.add_shape(rect("base", 0, 0, 100, 20))
-    doc.add_shape(rect("post", 150, 50, 160, 60))
+    doc.nodes.add(rect("base", 0, 0, 100, 20))
+    doc.nodes.add(rect("post", 150, 50, 160, 60))
     window.canvas.zoom_to(window.canvas.content_rect())
 
 
@@ -89,9 +89,9 @@ def test_dragging_near_a_point_snaps_and_shift_aligns(window):
 
 def test_dragging_a_shape_brings_what_is_aligned_to_it(window):
     setup_two(window)
-    window.document.set_align(((0, 1),), Align(point="bottom", to="base.top"))
+    window.document.nodes.set_align(((0, 1),), Align(point="bottom", to="base.top"))
     drag(window, (20, 10), (20, -40), Qt.KeyboardModifier.ControlModifier)
-    post = window.document.highlight([((0, 1),)]).layers["device"].bbox()
+    post = window.document.results.highlight([((0, 1),)]).layers["device"].bbox()
     assert post.bottom == pytest.approx(-30000, abs=200)
 
 
@@ -128,8 +128,16 @@ def test_read_only_tabs_cannot_be_dragged(window, tmp_path):
     from pathlib import Path
 
     examples = Path(__file__).parent.parent / "examples"
-    shutil.copytree(examples / "resonator", tmp_path / "resonator")
-    shutil.copytree(examples / "libraries", tmp_path / "libraries")
+    shutil.copytree(
+        examples / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    shutil.copytree(
+        examples / "libraries",
+        tmp_path / "libraries",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
     window.open_project(str(tmp_path / "resonator"))
     window.open_component("std.perforated_plate")
     window.canvas.fit()

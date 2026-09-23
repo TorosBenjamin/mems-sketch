@@ -51,8 +51,8 @@ from mems_sketch.core.shapes import (
 )
 
 if TYPE_CHECKING:
+    from mems_sketch.editing import DragPlan
     from mems_sketch.gui.app import MainWindow
-    from mems_sketch.gui.document import DragPlan
 
 SNAP_PX = 10  # default: a point snaps to another within this many pixels
 DRAG_THRESHOLD_PX = 4  # a press moving less than this is a click, not a drag
@@ -215,7 +215,7 @@ class Tool:
             return False
         if not self.editable():
             return True
-        plan = self.document.drag_plan(self.window.selection)
+        plan = self.document.moves.plan_drag(self.window.selection)
         if not plan.roots:
             return True
         self._gizmo_drag = (part, (x, y), plan)
@@ -248,7 +248,7 @@ class Tool:
         roots = self._gizmo_drag[2].roots
         self.gizmo_cancel()
         if dx or dy:
-            self.window.run(lambda: self.document.move(roots, dx, dy))
+            self.window.run(lambda: self.document.moves.move(roots, dx, dy))
         self.window.prompt(self.hint())
 
     def gizmo_cancel(self) -> None:
@@ -311,7 +311,7 @@ class SelectTool(Tool):
         if not self.editable():
             self._mode = "blocked"
             return
-        self._plan = self.document.drag_plan(self.window.selection)
+        self._plan = self.document.moves.plan_drag(self.window.selection)
         if not self._plan.roots:
             self._mode = "blocked"
             return
@@ -351,12 +351,14 @@ class SelectTool(Tool):
         window = self.window
         if modifiers & SHIFT and snap is not None and plan.roots == [snap[0]]:
             path, point, target = snap[0], snap[1], snap[2]
-            ok, _ = window.run(lambda: self.document.set_align(path, Align(point=point, to=target)))
+            ok, _ = window.run(
+                lambda: self.document.nodes.set_align(path, Align(point=point, to=target))
+            )
             if ok:
                 window.statusBar().showMessage(f"Aligned {point} to {target}", 5000)
             return
         detach = bool(modifiers & ALT)
-        window.run(lambda: self.document.move(plan.roots, dx, dy, detach=detach))
+        window.run(lambda: self.document.moves.move(plan.roots, dx, dy, detach=detach))
 
     @property
     def busy(self) -> bool:
@@ -416,7 +418,7 @@ class MoveTool(Tool):
 
     def _points(self) -> list[Candidate]:
         if self._candidates is None:
-            self._candidates = self.document.all_points()
+            self._candidates = self.document.results.all_points()
         return self._candidates
 
     def press(self, x, y, modifiers) -> None:
@@ -430,7 +432,7 @@ class MoveTool(Tool):
             if not self.editable():
                 return
             bx, by, label = self.snap(x, y, self._points(), modifiers)
-            self._plan = self.document.drag_plan(self.window.selection)
+            self._plan = self.document.moves.plan_drag(self.window.selection)
             if not self._plan.roots:
                 return
             self._base = (bx, by, label)
@@ -441,7 +443,7 @@ class MoveTool(Tool):
         dx, dy = self._destination(x, y, modifiers)
         roots = self._plan.roots
         self.cancel()
-        self.window.run(lambda: self.document.move(roots, dx, dy))
+        self.window.run(lambda: self.document.moves.move(roots, dx, dy))
         self.window.prompt(self.hint())
 
     def _destination(self, x, y, modifiers) -> tuple[float, float]:
@@ -522,7 +524,7 @@ class RotateTool(Tool):
             if not self.editable():
                 return
             _, cx, cy = self.canvas.gizmo
-            self._plan = self.document.drag_plan(self.window.selection)
+            self._plan = self.document.moves.plan_drag(self.window.selection)
             if not self._plan.roots:
                 return
             self._pivot = (cx, cy)
@@ -534,9 +536,9 @@ class RotateTool(Tool):
             if not self.editable():
                 return
             if self._candidates is None:
-                self._candidates = self.document.all_points()
+                self._candidates = self.document.results.all_points()
             px, py, _ = self.snap(x, y, self._candidates, modifiers)
-            self._plan = self.document.drag_plan(self.window.selection)
+            self._plan = self.document.moves.plan_drag(self.window.selection)
             if not self._plan.roots:
                 return
             self._pivot = (px, py)
@@ -547,7 +549,7 @@ class RotateTool(Tool):
         angle, pivot, roots = self._angle_at(x, y, modifiers), self._pivot, self._plan.roots
         self.cancel()
         if angle:
-            self.window.run(lambda: self.document.rotate(roots, angle, pivot))
+            self.window.run(lambda: self.document.moves.rotate(roots, angle, pivot))
         self.window.prompt(self.hint())
 
     def _angle_at(self, x, y, modifiers) -> float:
@@ -577,7 +579,7 @@ class RotateTool(Tool):
         angle, pivot, roots = self._angle_at(x, y, modifiers), self._pivot, self._plan.roots
         self.cancel()
         if angle:
-            self.window.run(lambda: self.document.rotate(roots, angle, pivot))
+            self.window.run(lambda: self.document.moves.rotate(roots, angle, pivot))
         self.window.prompt(self.hint())
 
     def cancel(self) -> bool:
@@ -623,7 +625,7 @@ class AlignTool(Tool):
     def begin(self, path: NodePath) -> None:
         if not self.editable():
             return
-        candidates = self.document.node_points(path)
+        candidates = self.document.results.node_points(path)
         if not candidates:
             self.window.report_error("this shape has no points to align (does it have geometry?)")
             return
@@ -645,7 +647,9 @@ class AlignTool(Tool):
             )
             return
         if self.step == "own":
-            targets = [(n, tx, ty) for n, _, tx, ty in self.document.align_targets(self.path)]
+            targets = [
+                (n, tx, ty) for n, _, tx, ty in self.document.results.align_targets(self.path)
+            ]
             if not targets:
                 self.reset()
                 self.window.report_error("there is no other named shape here to align to")
@@ -658,7 +662,7 @@ class AlignTool(Tool):
         self.reset()
         self.window.update_overlay()
         ok, _ = self.window.run(
-            lambda: self.document.set_align(path, Align(point=point, to=picked))
+            lambda: self.document.nodes.set_align(path, Align(point=point, to=picked))
         )
         if ok:
             self.window.statusBar().showMessage(f"Aligned {point} to {picked}", 5000)
@@ -705,7 +709,7 @@ class MeasureTool(Tool):
 
     def _points(self) -> list[Candidate]:
         if self._candidates is None:
-            self._candidates = self.document.all_points()
+            self._candidates = self.document.results.all_points()
         return self._candidates
 
     def press(self, x, y, modifiers) -> None:
@@ -760,7 +764,7 @@ class DrawTool(Tool):
 
     def _points(self) -> list[Candidate]:
         if self._candidates is None:
-            self._candidates = self.document.all_points()
+            self._candidates = self.document.results.all_points()
         mine = [(f"point {i + 1}", x, y) for i, (x, y) in enumerate(self.placed)]
         return self._candidates + mine
 

@@ -70,8 +70,8 @@ def rect(name, x0, y0, x1, y1):
 
 
 def two_rects(window):
-    window.document.add_shape(rect("base", 0, 0, 100, 20))
-    window.document.add_shape(rect("post", 150, 50, 160, 60))
+    window.document.nodes.add(rect("base", 0, 0, 100, 20))
+    window.document.nodes.add(rect("post", 150, 50, 160, 60))
     window.canvas.zoom_to(window.canvas.content_rect())
 
 
@@ -140,7 +140,7 @@ def test_move_by_typed_amount(window, monkeypatch):
 
 
 def test_rotate_tool_snaps_to_15_degrees(window):
-    window.document.add_shape(RefShape(name="pad", component="anchor", x=0, y=0))
+    window.document.nodes.add(RefShape(name="pad", component="anchor", x=0, y=0))
     window.canvas.zoom_to(window.canvas.content_rect())
     window.tree.select_paths([((0, 0),)])
     window.set_tool("rotate")
@@ -151,12 +151,12 @@ def test_rotate_tool_snaps_to_15_degrees(window):
 
 
 def test_rotate_and_mirror_buttons(window):
-    window.document.add_shape(rect("r", 0, 0, 20, 10))
+    window.document.nodes.add(rect("r", 0, 0, 20, 10))
     window.tree.select_paths([((0, 0),)])
     window.rotate_selection(90)
     node = window.document.node(((0, 0),))
     assert isinstance(node, TransformShape) and node.rotation == 90
-    box = window.document.highlight([((0, 0),)]).layers["device"].bbox()
+    box = window.document.results.highlight([((0, 0),)]).layers["device"].bbox()
     assert (box.width(), box.height()) == (10000, 20000)
     assert box.center().x == 10000 and box.center().y == 5000  # about its own centre
     window.mirror_selection(True)
@@ -187,8 +187,16 @@ def test_measure_works_on_read_only_tabs(window):
 
 @pytest.fixture
 def example(window, tmp_path):
-    shutil.copytree(EXAMPLES / "resonator", tmp_path / "resonator")
-    shutil.copytree(EXAMPLES / "libraries", tmp_path / "libraries")
+    shutil.copytree(
+        EXAMPLES / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    shutil.copytree(
+        EXAMPLES / "libraries",
+        tmp_path / "libraries",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
     window.open_project(str(tmp_path / "resonator"))
     return tmp_path / "resonator"
 

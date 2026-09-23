@@ -25,8 +25,16 @@ def window(qtbot, monkeypatch):
 
 @pytest.fixture
 def example(window, tmp_path):
-    shutil.copytree(EXAMPLES / "resonator", tmp_path / "resonator")
-    shutil.copytree(EXAMPLES / "libraries", tmp_path / "libraries")
+    shutil.copytree(
+        EXAMPLES / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    shutil.copytree(
+        EXAMPLES / "libraries",
+        tmp_path / "libraries",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
     window.open_project(str(tmp_path / "resonator" / "project.yaml"))
     return window
 
@@ -66,12 +74,12 @@ def test_library_tabs_are_read_only_but_take_trial_values(example):
     assert w.document.read_only and "viewing" in w.windowTitle()
     w.add_primitive("rect")
     assert "read-only" in w.statusBar().currentMessage()
-    area_before = w.document.geometry().layers["device"].area()
+    area_before = w.document.results.geometry().layers["device"].area()
     w.document.set_trial("pitch", 40)
-    assert w.document.geometry().layers["device"].area() != area_before  # other holes
+    assert w.document.results.geometry().layers["device"].area() != area_before  # other holes
     assert not w.document.dirty and not w.document.can_undo()
     w.parameters._clear_trials()
-    assert w.document.geometry().layers["device"].area() == area_before
+    assert w.document.results.geometry().layers["device"].area() == area_before
 
 
 def test_trial_values_do_not_change_the_design(example):
@@ -89,7 +97,7 @@ def test_trial_values_do_not_change_the_design(example):
 def test_undo_goes_back_to_the_tab_of_the_change(example):
     w = example
     w.open_component("suspension")
-    w.document.set_parameter("turns", 5)
+    w.document.parameters.set("turns", 5)
     w.open_component("top")
     w.add_primitive("rect")
     w.open_component("std.perforated_plate")
@@ -107,7 +115,7 @@ def test_undo_goes_back_to_the_tab_of_the_change(example):
 def test_undo_reopens_a_closed_tab(example):
     w = example
     w.open_component("suspension")
-    w.document.set_parameter("turns", 4)
+    w.document.parameters.set("turns", 4)
     w.close_tab()
     assert "suspension" not in [v.component for v in w.area.views()]
     w.document.undo()
@@ -125,7 +133,7 @@ def test_split_view_shows_edits_in_both_panes(example):
     left = w.area.find("suspension", w.area.panes[0])
     w.area.set_current(left)
     before = top_view.canvas.content_rect()
-    w.document.set_parameter("turns", 12)  # edited on the left...
+    w.document.parameters.set("turns", 12)  # edited on the left...
     assert top_view.canvas.content_rect().height() > before.height()  # ...seen on the right
     w.area.unsplit()
     assert len(w.area.panes) == 1
@@ -135,10 +143,10 @@ def test_rename_and_delete_follow_the_tabs(window):
     w = window
     w.document.edit("add", lambda p: p.components.__setitem__("cell", ComponentDef(name="cell")))
     w.open_component("cell")
-    w.document.rename_component("cell", "unit")
+    w.document.components.rename("cell", "unit")
     assert "unit*" in tab_names(w)  # * : changed since the project was saved
     w.open_component("top")
-    w.document.delete_component("unit")
+    w.document.components.delete("unit")
     assert tab_names(w) == ["top"]
 
 
@@ -157,7 +165,7 @@ def test_new_reference_placed_in_a_tab_does_not_change_other_tabs_selection(exam
     w = example
     w.tree.select_paths([((0, 1),)])
     w.open_component("suspension")
-    w._select_result(lambda: w.document.add_component("anchor"))
+    w._select_result(lambda: w.document.nodes.add_component("anchor"))
     w.open_component("top")
     assert w.selection == [((0, 1),)]
     assert isinstance(w.document.node(((0, 1),)), RefShape)

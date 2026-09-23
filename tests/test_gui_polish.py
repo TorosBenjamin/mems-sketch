@@ -8,7 +8,7 @@ from PySide6.QtCore import QEvent, QPointF, QSettings, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QToolButton
 
-from mems_sketch.core.shapes import RectShape
+from mems_sketch.core.shapes import KINDS, RectShape, RefShape, wrap_shapes
 from mems_sketch.gui import icons, theme
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.settings import SETTINGS, PreferencesDialog, Settings
@@ -49,7 +49,7 @@ def drag(canvas, start, end):
 
 
 def one_rect(window):
-    window.document.add_shape(RectShape(name="plate", layer="device", x0=0, y0=0, x1=40, y1=20))
+    window.document.nodes.add(RectShape(name="plate", layer="device", x0=0, y0=0, x1=40, y1=20))
     window.canvas.set_view_state(4, 20, 10)  # 4 px per µm around the plate
     window.tree.select_paths([((0, 0),)])
 
@@ -226,7 +226,7 @@ def test_tool_options_follow_the_tool(window):
 def test_status_bar_shows_problems_zoom_and_grid(window):
     one_rect(window)
     assert window.problems_button.text() == "No problems"
-    window.document.add_shape(RectShape(name="bad", layer="device", x0=50, y0=0, x1=51, y1=5))
+    window.document.nodes.add(RectShape(name="bad", layer="device", x0=50, y0=0, x1=51, y1=5))
     assert "violation" in window.problems_button.text()
     assert window.grid_label.text() == f"grid {window.canvas.grid_step():g} µm"
     assert "px/µm" in window.zoom_label.text()
@@ -252,3 +252,11 @@ def test_canvas_caption_and_palette_labels(window):
     assert "read-only" in window.canvas._caption[1]
     window.settings.set("appearance/palette_labels", True)
     assert window.palette.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+
+
+def test_every_shape_kind_has_an_icon():
+    rects = [RectShape(layer="device", x0=0, y0=0, x1=1, y1=1) for _ in range(2)]
+    shapes = [kind.default("device") for kind in KINDS if kind.category == "primitive"]
+    shapes += [wrap_shapes(op, "w", rects) for kind in KINDS for op in kind.wraps]
+    shapes.append(RefShape(component="rectangle"))
+    assert {s.icon_name() for s in shapes} <= set(icons.ICONS)

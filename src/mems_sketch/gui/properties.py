@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes import NodePath, Shape
-from mems_sketch.gui.document import ProjectDocument
+from mems_sketch.editing import EditSession
 from mems_sketch.gui.panels import parse_value
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
@@ -68,7 +68,7 @@ class PropertyEditor(QScrollArea):
     error = Signal(str)
     applied = Signal()
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.setWidgetResizable(True)
@@ -93,7 +93,7 @@ class PropertyEditor(QScrollArea):
             return
         self._editors = {}
         try:
-            self._scope = {**self.document.scope(path), "i": 0.0, "j": 0.0}
+            self._scope = {**self.document.results.scope(path), "i": 0.0, "j": 0.0}
         except Exception:  # noqa: BLE001 - previews then show "?"
             self._scope = {}
         body = QWidget()
@@ -115,7 +115,7 @@ class PropertyEditor(QScrollArea):
         enabled.setChecked(node.enabled)
         form.addRow("Enabled", enabled)
         self._editors["enabled"] = enabled.isChecked
-        extent = self.document.highlight([path])
+        extent = self.document.results.highlight([path])
         if extent is not None:
             box = kdb.Box()
             for region in extent.layers.values():
@@ -135,11 +135,12 @@ class PropertyEditor(QScrollArea):
             label = _LABELS.get(field, field.replace("_", " ").capitalize())
             form.addRow(label, self._field_editor(field, info.annotation, getattr(node, field)))
 
-        if node.kind in ("polygon", "path"):
+        fields = type(node).model_fields
+        if "points" in fields:
             form.addRow("Points (x, y per line)", self._points_editor(node.points))
-        if node.kind == "layer_map":
+        if "mapping" in fields:
             form.addRow("Mapping (from → to)", self._mapping_editor(node.mapping))
-        if node.kind == "ref":
+        if "params" in fields:
             layout.addWidget(self._params_editor(node))
         layout.addWidget(self._align_editor(node, path))
         layout.addWidget(self._repeat_editor(node))
@@ -288,11 +289,11 @@ class PropertyEditor(QScrollArea):
         align = node.align
         own = QComboBox()
         own.setEditable(True)
-        own.addItems([name for name, _, _ in self.document.node_points(path)] or ["center"])
+        own.addItems([name for name, _, _ in self.document.results.node_points(path)] or ["center"])
         own.setCurrentText(align.point if align else "center")
         target = QComboBox()
         target.setEditable(True)
-        target.addItems([name for name, *_ in self.document.align_targets(path)])
+        target.addItems([name for name, *_ in self.document.results.align_targets(path)])
         target.setCurrentText(align.to if align else "")
         form.addRow("Point", own)
         form.addRow("To", target)
@@ -301,7 +302,7 @@ class PropertyEditor(QScrollArea):
             value = getattr(align, field) if align else 0.0
             form.addRow(f"Offset {field[1]}", self._value_editor(f"align:{field}", value))
             offsets[field] = self._editors.pop(f"align:{field}")
-        if node.kind in ("ref", "transform"):
+        if type(node).placed:
             note = QLabel("While aligned, x and y do not move it; rotation and mirroring do.")
             note.setWordWrap(True)
             note.setObjectName("muted")
@@ -360,7 +361,7 @@ class PropertyEditor(QScrollArea):
             for field, read in self._editors.items():
                 data[field] = read()
             new = type(node).model_validate(data)
-            self.document.replace_node(self.path, new)
+            self.document.nodes.replace(self.path, new)
             self.applied.emit()
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))

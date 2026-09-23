@@ -23,6 +23,11 @@ grid; Ctrl turns snapping off and Shift keeps squares and 45° angles.
 A tool stays active until another one is chosen; Esc cancels what the tool
 is doing, and pressed again goes back to Select. Tools that change the design
 are refused on read-only tabs.
+
+With a selection, Move shows a move gizmo (drag an arrow to move along x or
+y, the centre circle to move freely) and Rotate a ring (drag it to rotate
+about the selection's centre), as in Unity and Blender. Snapping distance, whether points and
+the grid snap, and the rotation step come from the settings.
 """
 
 from __future__ import annotations
@@ -49,9 +54,9 @@ if TYPE_CHECKING:
     from mems_sketch.gui.app import MainWindow
     from mems_sketch.gui.document import DragPlan
 
-SNAP_PX = 10  # a point snaps to another within this many pixels
+SNAP_PX = 10  # default: a point snaps to another within this many pixels
 DRAG_THRESHOLD_PX = 4  # a press moving less than this is a click, not a drag
-ANGLE_STEP = 15.0  # degrees the Rotate tool snaps to
+ANGLE_STEP = 15.0  # default: degrees the Rotate tool snaps to
 CTRL = Qt.KeyboardModifier.ControlModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
 ALT = Qt.KeyboardModifier.AltModifier
@@ -68,10 +73,14 @@ class Tool:
     shortcut: ClassVar[str]
     edits: ClassVar[bool] = True  # changes the design, so refused on read-only tabs
     draws: ClassVar[bool] = False  # a drawing tool (grouped separately in the palette)
+    gizmo: ClassVar[str | None] = None  # the gizmo shown on the selection, if any
+    hovers: ClassVar[bool] = False  # outline the shape under the cursor
+    icon: ClassVar[str] = "select"
     cursor: ClassVar[Qt.CursorShape] = Qt.CursorShape.ArrowCursor
 
     def __init__(self, window: MainWindow) -> None:
         self.window = window
+        self._gizmo_drag = None
 
     @property
     def document(self):
@@ -143,31 +152,116 @@ class Tool:
             return False
         return True
 
+    def setting(self, key: str, default):
+        settings = getattr(self.window, "settings", None)
+        return default if settings is None else settings.get(key)
+
+    @property
+    def reach(self) -> float:
+        """The snapping distance in µm at the current zoom."""
+        return self.setting("snapping/distance_px", SNAP_PX) / self.canvas.pixels_per_um()
+
     def snap(
         self, x: float, y: float, candidates: list[Candidate], modifiers, grid: bool = True
     ) -> tuple[float, float, str | None]:
         """``(x, y)`` snapped to the nearest candidate point in reach, else to the grid.
 
-        Ctrl turns snapping off. Returns the point and the candidate's label.
+        Ctrl turns snapping off, and so do the settings for points or the grid.
+        Returns the point and the candidate's label.
         """
         if modifiers & CTRL:
             return x, y, None
-        best, found = SNAP_PX / self.canvas.pixels_per_um(), None
-        for label, px, py in candidates:
-            distance = math.hypot(px - x, py - y)
-            if distance < best:
-                best, found = distance, (label, px, py)
+        best, found = self.reach, None
+        if self.setting("snapping/points", True):
+            for label, px, py in candidates:
+                distance = math.hypot(px - x, py - y)
+                if distance < best:
+                    best, found = distance, (label, px, py)
         if found is not None:
             return found[1], found[2], found[0]
-        if grid:
+        if grid and self.setting("snapping/grid", True):
             step = self.canvas.grid_step()
             return round(x / step) * step, round(y / step) * step, None
         return x, y, None
+
+    def snapped_move(self, plan, dx, dy, modifiers):
+        """A move, snapped: a moving point onto another shape's point, else the grid.
+
+        Returns ``dx, dy`` and, when a point snapped, ``(path, point, target, x, y)``.
+        """
+        if modifiers & CTRL:
+            return dx, dy, None
+        if self.setting("snapping/points", True):
+            best, found = self.reach, None
+            for path, name, px, py in plan.points:
+                for target, tx, ty in plan.targets:
+                    distance = math.hypot(px + dx - tx, py + dy - ty)
+                    if distance < best:
+                        best, found = distance, (path, name, target, tx, ty, px, py)
+            if found is not None:
+                path, name, target, tx, ty, px, py = found
+                return tx - px, ty - py, (path, name, target, tx, ty)
+        if not self.setting("snapping/grid", True):
+            return dx, dy, None
+        step = self.canvas.grid_step()
+        return round(dx / step) * step, round(dy / step) * step, None
+
+    # -- the move gizmo (Select and Move) ---------------------------------
+
+    def gizmo_press(self, x: float, y: float) -> bool:
+        """Start dragging a part of the move gizmo under ``(x, y)``; False if none."""
+        part = self.canvas.gizmo_hit(x, y) if self.canvas.gizmo else None
+        if part not in ("x", "y", "free") or not self.window.selection:
+            return False
+        if not self.editable():
+            return True
+        plan = self.document.drag_plan(self.window.selection)
+        if not plan.roots:
+            return True
+        self._gizmo_drag = (part, (x, y), plan)
+        self.canvas.set_gizmo_active(part)
+        self.canvas.show_drag_preview(plan.preview, self.window.layers.colors)
+        return True
+
+    @property
+    def gizmo_dragging(self) -> bool:
+        return getattr(self, "_gizmo_drag", None) is not None
+
+    def _gizmo_delta(self, x, y, modifiers):
+        part, (x0, y0), plan = self._gizmo_drag
+        dx, dy = x - x0, y - y0
+        if part == "free":
+            return self.snapped_move(plan, dx, dy, modifiers)[:2]
+        step = self.canvas.grid_step()
+        snap = not modifiers & CTRL and self.setting("snapping/grid", True)
+        along = dx if part == "x" else dy
+        along = round(along / step) * step if snap else along
+        return (along, 0.0) if part == "x" else (0.0, along)
+
+    def gizmo_move(self, x, y, modifiers) -> None:
+        dx, dy = self._gizmo_delta(x, y, modifiers)
+        self.canvas.move_drag_preview(dx, dy)
+        self.window.prompt(f"Move Δx {dx:g} µm, Δy {dy:g} µm   (Ctrl: no snapping)")
+
+    def gizmo_release(self, x, y, modifiers) -> None:
+        dx, dy = self._gizmo_delta(x, y, modifiers)
+        roots = self._gizmo_drag[2].roots
+        self.gizmo_cancel()
+        if dx or dy:
+            self.window.run(lambda: self.document.move(roots, dx, dy))
+        self.window.prompt(self.hint())
+
+    def gizmo_cancel(self) -> None:
+        if self.gizmo_dragging:
+            self._gizmo_drag = None
+            self.canvas.clear_drag_preview()
+            self.canvas.set_gizmo_active(None)
 
 
 class SelectTool(Tool):
     name, label, shortcut = "select", "Select", "V"
     edits = False
+    hovers, icon = True, "select"
 
     def reset(self) -> None:
         self._press: tuple[float, float] | None = None
@@ -177,17 +271,15 @@ class SelectTool(Tool):
         self._plan: DragPlan | None = None
         self._snap = None
 
-    @property
-    def busy(self) -> bool:
-        return self._mode in ("move", "box")
-
     def hint(self) -> str:
         return "Click to select, drag to move, drag on empty space to select with a box"
 
     def press(self, x, y, modifiers) -> None:
+        self.reset()
+        if self.gizmo_press(x, y):
+            return
         additive = bool(modifiers & (CTRL | SHIFT))
         hit = self.window.hit(x, y)
-        self.reset()
         self._press, self._press_hit = (x, y), hit
         if hit is not None and not additive and self.window.on_selection(x, y):
             self._pending = hit  # keep the selection: this may become a drag
@@ -195,6 +287,10 @@ class SelectTool(Tool):
         self.window.select_click(hit, additive)
 
     def move(self, x, y, modifiers, left) -> None:
+        if self.gizmo_dragging:
+            if left:
+                self.gizmo_move(x, y, modifiers)
+            return
         if not left or self._press is None:
             return
         x0, y0 = self._press
@@ -222,25 +318,10 @@ class SelectTool(Tool):
         self._mode = "move"
         self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
 
-    def _snapped_move(self, plan, dx, dy, modifiers):
-        """The move, snapped: a moving point onto another shape's point, else the grid."""
-        if not modifiers & CTRL:
-            best, found = SNAP_PX / self.canvas.pixels_per_um(), None
-            for path, name, px, py in plan.points:
-                for target, tx, ty in plan.targets:
-                    distance = math.hypot(px + dx - tx, py + dy - ty)
-                    if distance < best:
-                        best, found = distance, (path, name, target, tx, ty, px, py)
-            if found is not None:
-                path, name, target, tx, ty, px, py = found
-                return tx - px, ty - py, (path, name, target, tx, ty)
-        if modifiers & CTRL:
-            return dx, dy, None
-        step = self.canvas.grid_step()
-        return round(dx / step) * step, round(dy / step) * step, None
+    _snapped_move = Tool.snapped_move
 
     def _drag_to(self, dx, dy, modifiers) -> None:
-        dx, dy, self._snap = self._snapped_move(self._plan, dx, dy, modifiers)
+        dx, dy, self._snap = self.snapped_move(self._plan, dx, dy, modifiers)
         self.canvas.move_drag_preview(dx, dy)
         snap = self._snap
         self.canvas.show_points("snap", [(snap[2], snap[3], snap[4])] if snap else [])
@@ -250,11 +331,14 @@ class SelectTool(Tool):
         self.window.prompt(text)
 
     def release(self, x, y, modifiers) -> None:
+        if self.gizmo_dragging:
+            self.gizmo_release(x, y, modifiers)
+            return
         mode, press, pending, plan = self._mode, self._press, self._pending, self._plan
         self.cancel()
         self.canvas.show_points("snap", [])
         if mode == "move":
-            dx, dy, snap = self._snapped_move(plan, x - press[0], y - press[1], modifiers)
+            dx, dy, snap = self.snapped_move(plan, x - press[0], y - press[1], modifiers)
             self._finish_move(plan, dx, dy, snap, modifiers)
         elif mode == "box":
             self.window.select_box(press[0], press[1], x, y, bool(modifiers & (CTRL | SHIFT)))
@@ -274,8 +358,14 @@ class SelectTool(Tool):
         detach = bool(modifiers & ALT)
         window.run(lambda: self.document.move(plan.roots, dx, dy, detach=detach))
 
+    @property
+    def busy(self) -> bool:
+        return self._mode in ("move", "box") or self.gizmo_dragging
+
     def cancel(self) -> bool:
-        busy = super().cancel()
+        busy = self.busy
+        self.gizmo_cancel()
+        super().cancel()
         self.canvas.show_points("snap", [])
         return busy
 
@@ -284,6 +374,7 @@ class HandTool(Tool):
     name, label, shortcut = "hand", "Hand", "H"
     edits = False
     cursor = Qt.CursorShape.OpenHandCursor
+    icon = "hand"
 
     def activate(self) -> None:
         self.window.set_left_pans(True)
@@ -301,6 +392,7 @@ class MoveTool(Tool):
 
     name, label, shortcut = "move", "Move", "M"
     cursor = Qt.CursorShape.CrossCursor
+    gizmo, hovers, icon = "move", True, "move"
 
     def reset(self) -> None:
         self._base: tuple[float, float, str | None] | None = None
@@ -310,13 +402,16 @@ class MoveTool(Tool):
 
     @property
     def busy(self) -> bool:
-        return self._base is not None
+        return self._base is not None or self.gizmo_dragging
 
     def hint(self) -> str:
         if not self.window.selection:
             return "Move: click a shape to move"
         if self._base is None:
-            return "Move: click the base point (snaps to shape points; Ctrl: no snapping)"
+            return (
+                "Move: drag an arrow of the gizmo, or click a base point (snaps to shape "
+                "points; Ctrl: no snapping)"
+            )
         return "Move: click where the base point goes (Esc cancels)"
 
     def _points(self) -> list[Candidate]:
@@ -328,6 +423,8 @@ class MoveTool(Tool):
         if not self.window.selection:  # nothing to move yet: this click selects
             self.window.select_click(self.window.hit(x, y), False)
             self.window.prompt(self.hint())
+            return
+        if self._base is None and self.gizmo_press(x, y):
             return
         if self._base is None:
             if not self.editable():
@@ -353,6 +450,10 @@ class MoveTool(Tool):
         return tx - self._base[0], ty - self._base[1]
 
     def move(self, x, y, modifiers, left) -> None:
+        if self.gizmo_dragging:
+            if left:
+                self.gizmo_move(x, y, modifiers)
+            return
         if self._base is None:
             return
         dx, dy = self._destination(x, y, modifiers)
@@ -365,11 +466,17 @@ class MoveTool(Tool):
             return self.snap(x, y, self._points(), NONE, grid=False)[2]
         return None
 
+    def release(self, x, y, modifiers) -> None:
+        if self.gizmo_dragging:
+            self.gizmo_release(x, y, modifiers)
+
     def markers(self) -> dict[str, list[Candidate]]:
         return {"anchor": [("base", self._base[0], self._base[1])]} if self._base else {}
 
     def cancel(self) -> bool:
-        busy = super().cancel()
+        busy = self.busy
+        self.gizmo_cancel()
+        super().cancel()
         self.canvas.show_points("snap", [])
         return busy
 
@@ -379,28 +486,49 @@ class RotateTool(Tool):
 
     name, label, shortcut = "rotate", "Rotate", "R"
     cursor = Qt.CursorShape.CrossCursor
+    gizmo, hovers, icon = "rotate", True, "rotate"
 
     def reset(self) -> None:
         self._pivot: tuple[float, float] | None = None
         self._plan: DragPlan | None = None
         self._angle = 0.0
         self._candidates: list[Candidate] | None = None
+        self._ring: float | None = None  # dragging the ring: the angle it was grabbed at
 
     @property
     def busy(self) -> bool:
         return self._pivot is not None
 
+    @property
+    def step(self) -> float:
+        return self.setting("snapping/angle_step", ANGLE_STEP)
+
     def hint(self) -> str:
         if not self.window.selection:
             return "Rotate: click a shape to rotate"
         if self._pivot is None:
-            return "Rotate: click the pivot (snaps to shape points)"
-        return "Rotate: move to set the angle, click to apply (Ctrl: free angle, Esc cancels)"
+            return "Rotate: drag the ring to rotate about the centre, or click a pivot"
+        return (
+            f"Rotate: move to set the angle ({self.step:g}° steps; Ctrl: free), click to apply, "
+            "Esc cancels"
+        )
 
     def press(self, x, y, modifiers) -> None:
         if not self.window.selection:
             self.window.select_click(self.window.hit(x, y), False)
             self.window.prompt(self.hint())
+            return
+        if self._pivot is None and self.canvas.gizmo_hit(x, y) == "ring":
+            if not self.editable():
+                return
+            _, cx, cy = self.canvas.gizmo
+            self._plan = self.document.drag_plan(self.window.selection)
+            if not self._plan.roots:
+                return
+            self._pivot = (cx, cy)
+            self._ring = math.degrees(math.atan2(y - cy, x - cx))
+            self.canvas.set_gizmo_active("ring")
+            self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
             return
         if self._pivot is None:
             if not self.editable():
@@ -427,8 +555,10 @@ class RotateTool(Tool):
         if math.hypot(x - px, y - py) * self.canvas.pixels_per_um() < DRAG_THRESHOLD_PX:
             return 0.0
         angle = math.degrees(math.atan2(y - py, x - px))
+        if self._ring is not None:  # relative to where the ring was grabbed
+            angle = (angle - self._ring + 180) % 360 - 180
         if not modifiers & CTRL:
-            angle = round(angle / ANGLE_STEP) * ANGLE_STEP
+            angle = round(angle / self.step) * self.step
         return round(angle, 6)
 
     def move(self, x, y, modifiers, left) -> None:
@@ -436,7 +566,24 @@ class RotateTool(Tool):
             return
         self._angle = self._angle_at(x, y, modifiers)
         self.canvas.rotate_drag_preview(self._angle, self._pivot)
-        self.window.prompt(f"Rotate by {self._angle:g}°   (click to apply, Esc cancels)")
+        if self._ring is not None:
+            self.canvas.set_gizmo_sweep(self._ring, self._angle)
+        finish = "release" if self._ring is not None else "click"
+        self.window.prompt(f"Rotate by {self._angle:g}°   ({finish} to apply, Esc cancels)")
+
+    def release(self, x, y, modifiers) -> None:
+        if self._ring is None:
+            return
+        angle, pivot, roots = self._angle_at(x, y, modifiers), self._pivot, self._plan.roots
+        self.cancel()
+        if angle:
+            self.window.run(lambda: self.document.rotate(roots, angle, pivot))
+        self.window.prompt(self.hint())
+
+    def cancel(self) -> bool:
+        if self._ring is not None:
+            self.canvas.set_gizmo_active(None)
+        return super().cancel()
 
     def markers(self) -> dict[str, list[Candidate]]:
         return {"anchor": [("pivot", *self._pivot)]} if self._pivot else {}
@@ -447,6 +594,7 @@ class AlignTool(Tool):
 
     name, label, shortcut = "align", "Align", "A"
     cursor = Qt.CursorShape.CrossCursor
+    hovers, icon = True, "align"
 
     def reset(self) -> None:
         self.step: str | None = None  # None (pick a shape), "own" or "target"
@@ -538,6 +686,7 @@ class MeasureTool(Tool):
     name, label, shortcut = "measure", "Measure", "D"
     edits = False
     cursor = Qt.CursorShape.CrossCursor
+    icon = "measure"
 
     def reset(self) -> None:
         self._start: tuple[float, float] | None = None
@@ -728,6 +877,7 @@ class _TwoPointTool(DrawTool):
 
 class RectTool(_TwoPointTool):
     name, label, shortcut, noun = "rect", "Rectangle", "B", "rectangle"
+    icon = "rect"
 
     def hint(self) -> str:
         if not self.placed:
@@ -762,6 +912,7 @@ class RectTool(_TwoPointTool):
 
 class CircleTool(_TwoPointTool):
     name, label, shortcut, noun = "circle", "Circle", "C", "circle"
+    icon = "circle"
 
     def hint(self) -> str:
         if not self.placed:
@@ -862,6 +1013,7 @@ class _PointsTool(DrawTool):
 
 class PolygonTool(_PointsTool):
     name, label, shortcut, noun = "polygon", "Polygon", "P", "polygon"
+    icon = "polygon"
     minimum, closes = 3, True
 
     def shape(self, points) -> Shape | None:
@@ -870,6 +1022,7 @@ class PolygonTool(_PointsTool):
 
 class PathTool(_PointsTool):
     name, label, shortcut, noun = "path", "Path", "W", "path"
+    icon = "path"
     minimum = 2
 
     def hint(self) -> str:

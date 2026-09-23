@@ -9,11 +9,12 @@ of the main window follow the current tab.
 from __future__ import annotations
 
 import klayout.db as kdb
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QSplitter, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtWidgets import QSplitter, QTabBar, QTabWidget, QToolButton, QVBoxLayout, QWidget
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.shapes import NodePath
+from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.document import ProjectDocument
 
@@ -47,6 +48,19 @@ class ComponentView(QWidget):
         if self.read_only:
             return f"{name} (read-only)"
         return f"{name}*" if self.document.modified(name) else name
+
+    def icon_name(self) -> str:
+        if self.read_only:
+            return "lock"
+        return "top" if self.component == self.document.project.top else "component"
+
+    def tooltip(self) -> str:
+        if self.read_only:
+            where = "library" if "." in self.component else "built-in"
+            return f"{self.component} — {where} component, read-only (trial values work)"
+        top = " (top)" if self.component == self.document.project.top else ""
+        changed = ", changed since the last save" if self.document.modified(self.component) else ""
+        return f"{self.component}{top} — project component{changed}"
 
     def refresh(self, colors: dict, visible: dict[str, bool]) -> None:
         """Recompile the component and redraw; errors are kept for the messages panel."""
@@ -82,6 +96,7 @@ class EditorArea(QSplitter):
 
     current_changed = Signal(object)  # ComponentView
     tabs_changed = Signal()  # tabs were opened, closed, moved or renamed
+    tab_menu_requested = Signal(object, QPoint)  # ComponentView, global position
 
     def __init__(self, document: ProjectDocument) -> None:
         super().__init__(Qt.Orientation.Horizontal)
@@ -94,15 +109,40 @@ class EditorArea(QSplitter):
 
     def _add_pane(self) -> QTabWidget:
         pane = QTabWidget()
-        pane.setTabsClosable(True)
         pane.setMovable(True)
         pane.setDocumentMode(True)
         pane.tabCloseRequested.connect(lambda index, p=pane: self.close_tab(p, index))
         pane.currentChanged.connect(lambda _index, p=pane: self._pane_changed(p))
         pane.tabBarClicked.connect(lambda index, p=pane: self._focus(p, index))
+        bar = pane.tabBar()
+        bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        bar.customContextMenuRequested.connect(lambda pos, p=pane: self._tab_menu(p, pos))
         self.addWidget(pane)
         self.panes.append(pane)
         return pane
+
+    def _close_button(self, pane: QTabWidget, view: ComponentView) -> None:
+        """A small close button on the tab (the style's own one does not fit the theme)."""
+        button = QToolButton()
+        icons.bind(button, "close")
+        button.setIconSize(QSize(12, 12))
+        button.setAutoRaise(True)
+        button.setToolTip("Close (Ctrl+W)")
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setObjectName("tab-close")
+        button.clicked.connect(lambda: self.close_view(view))
+        pane.tabBar().setTabButton(pane.indexOf(view), QTabBar.ButtonPosition.RightSide, button)
+
+    def _tab_menu(self, pane: QTabWidget, pos: QPoint) -> None:
+        index = pane.tabBar().tabAt(pos)
+        if index >= 0:
+            self.tab_menu_requested.emit(pane.widget(index), pane.tabBar().mapToGlobal(pos))
+
+    def close_others(self, view: ComponentView) -> None:
+        for other in self.views():
+            if other is not view:
+                self.close_view(other)
+        self.set_current(view)
 
     def _remove_pane(self, pane: QTabWidget) -> None:
         self.panes.remove(pane)
@@ -143,7 +183,9 @@ class EditorArea(QSplitter):
             view = self.find(component)
         if view is None:
             view = ComponentView(self.document, component)
-            pane.addTab(view, view.title())
+            pane.addTab(view, icons.icon(view.icon_name()), view.title())
+            pane.setTabToolTip(pane.indexOf(view), view.tooltip())
+            self._close_button(pane, view)
             self.tabs_changed.emit()
         self.set_current(view)
         return view
@@ -206,7 +248,8 @@ class EditorArea(QSplitter):
                 title = pane.tabText(0)
                 pane.removeTab(0)
                 if self.find(view.component, self.panes[0]) is None:
-                    self.panes[0].addTab(view, title)
+                    self.panes[0].addTab(view, icons.icon(view.icon_name()), title)
+                    self._close_button(self.panes[0], view)
                 else:
                     if self.current is view:
                         self.current = None
@@ -230,7 +273,10 @@ class EditorArea(QSplitter):
     def update_titles(self) -> None:
         for pane in self.panes:
             for i in range(pane.count()):
-                pane.setTabText(i, pane.widget(i).title())
+                view = pane.widget(i)
+                pane.setTabText(i, view.title())
+                pane.setTabIcon(i, icons.icon(view.icon_name()))
+                pane.setTabToolTip(i, view.tooltip())
 
     def layout_state(self) -> dict:
         """Open tabs per pane and the current one, e.g. to restore them next time."""

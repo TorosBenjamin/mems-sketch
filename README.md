@@ -127,35 +127,63 @@ MATLAB with `system(...)`.
 
 ## GUI
 
+The window follows JetBrains IDEs for the editor parts (tabs, tool windows,
+settings, Find Action) and Blender/Unity for the geometry (tool palette, tool
+options, gizmos, coloured axes). Icons are small SVG drawings coloured for the
+light or dark theme (`gui/icons.py`).
+
+- **Look**: a light and a dark theme (**File → Settings… → Appearance**, or
+  follow the system). The canvas follows the interface or keeps its own light
+  or dark background (**View → Dark canvas**).
+- **Settings** (Ctrl+Alt+S): appearance, canvas (fill opacity, outlines, grid
+  density, overlays, gizmo size, zoom step), snapping (points, grid, distance,
+  rotation step), editor (restore state, default path width) and a keymap
+  list. A search field filters them; changes apply at once and are kept per
+  user.
+- **Find Action** (Ctrl+Shift+A, the magnifier in the toolbar): type part of a
+  command's name, Enter runs it.
+- **Toolbars**: file and history, insert, operations, make/unpack component,
+  then the view mode, split, Find Action and settings. Under it, the **tool
+  options** of the active tool (as in Blender): the drawing layer and path
+  width for the drawing tools, the angle step for Rotate, and on the right the
+  snapping toggles (shape points, grid) and the gizmo toggle.
+- **Status bar**: the current hint, then problems (click to open Messages),
+  grid step, zoom and cursor position.
 - **Tabs**: every component opens in its own tab, with its own zoom, selection
   and view mode; the panels show the current tab. Double-click a component in
   the Components panel, or a placed component in the canvas or the Shapes
   tree, to open it. Library and built-in components open read-only. **View →
   Split view** (Ctrl+\\) shows two tabs side by side: edit a spring on one side
   and watch the resonator that uses it on the other. A `*` on a tab marks a
-  component changed since the last save.
+  component changed since the last save. Tabs show whether a component is the
+  top one (star) or read-only (lock); right-click a tab to close it, the
+  others or all, or to open it in the other pane.
 - **Editor state**: how the project was being looked at comes back when it is
   reopened: open tabs and the split, zoom and position per tab, view modes,
   selections, rulers, collapsed tree items, hidden layers, trial values, and
   the drawing layer and path width. It is kept in `.mems-sketch/state.json` in
   the project folder, which carries its own `.gitignore`, so it moves with the
   project but never reaches git.
-  Deleting the folder resets the views. Window layout, canvas theme and the
-  active tool are per user, in the app settings.
+  Deleting the folder resets the views. Window layout, settings and the
+  active tool are per user.
 - **Undo/redo** is one history for the whole project and goes back to the tab
   where the change was made, reopening it if it was closed.
-- **Components**: the project's components (✎ marks the one in the current
-  tab), library components and built-ins. **Place** inserts the selected one.
-  New, Rename (updates every reference and tab), Delete, Set top.
+- **Components**: the project's components (a pencil marks the one in the
+  current tab, an eye a read-only one), library components and built-ins. The
+  buttons above the list: New, Rename (updates every reference and tab),
+  Delete, Set top, and **Place**, which inserts the selected one.
 - **Shapes**: the shape tree of the component being edited. Checkboxes enable
   or disable a node; Ctrl/Shift-click selects several. Boolean operands appear
   under A and B, and each alignment is shown (e.g. `bottom at spring.end`).
 - **Canvas**: wheel to zoom, middle or right drag (or Space + drag, in any
-  tool) to pan, F to fit. The selection is outlined with its alignment points, rule
+  tool) to pan, F to fit; the buttons in the top-right corner zoom and fit
+  too. The selection is outlined in orange with its alignment points, the
+  shape under the cursor is outlined dashed (what a click would select), rule
   violations are boxed in red and the component's own points are marked in
-  green. The background is white; **View → Dark canvas** switches to dark
-  (remembered). The View box switches between drawn, as-etched and etch-compensated
-  geometry.
+  green. The x axis is red and the y axis green; the corner shows an axis
+  indicator and a scale bar, and the top left what is shown (component, view
+  mode, read-only). **View → Overlays** switches each of these on or off. The
+  View box switches between drawn, as-etched and etch-compensated geometry.
 - **Properties**: generated from the selected node's schema. Any numeric field
   takes a number or an expression, with its value shown beside it. For a
   component the component's own parameters are listed, with their declared
@@ -176,10 +204,13 @@ MATLAB with `system(...)`.
     snapping); releasing with **Shift** on a snapped point aligns the shape
     there. Shapes aligned to the moved ones move along.
   - **Hand** (H): the left button pans (for trackpads without a middle button).
-  - **Move** (M): click a base point, then where it goes; both snap to shape
+  - **Move** (M): the selection gets a move gizmo: drag the red arrow to move
+    along x, the green one along y, the centre circle freely (grid steps;
+    Ctrl: free). Or click a base point, then where it goes; both snap to shape
     points, so parts can be placed exactly. **Edit → Move by…** takes a typed
     dx, dy; the arrow keys nudge by a grid step (Shift: a tenth).
-  - **Rotate** (R): click the pivot, then set the angle (15° steps; Ctrl:
+  - **Rotate** (R): drag the ring around the selection to rotate about its
+    centre, or click a pivot, then set the angle (15° steps by default; Ctrl:
     free). **Rotate 90°** (Ctrl+R, Ctrl+Shift+R) and **Mirror** left-right or
     up-down act about the selection's centre.
   - **Align** (A, Ctrl+L): click a shape, one of its points, then the point to
@@ -194,9 +225,9 @@ MATLAB with `system(...)`.
     or (for a polygon) a click on the first point finishes, Backspace takes
     back the last point. Shift keeps segments at 0°, 45° or 90°.
 
-  The drawing tools draw on the layer chosen under **Draw on** in the toolbar
-  (clicking a layer in the Layers panel also chooses it); paths get the
-  **Path width** next to it. Points snap to shape points, else to the grid
+  The drawing tools draw on the layer chosen in the tool options (clicking a
+  layer in the Layers panel also chooses it); paths get the **Width** next to
+  it. Points snap to shape points, else to the grid
   (Ctrl: no snapping). A drawn shape is added at the top of the edited
   component with a fresh name, selected, and editable like any other; the
   numbers can be turned into expressions in Properties afterwards.
@@ -325,7 +356,7 @@ code. MATLAB can use the same API through its Python interface
 | `storage/` | Project folders (canonical YAML) and the legacy SQLite importer |
 | `export/` | Exporter plugins: GDSII, OASIS, DXF |
 | `cli.py` | `mems-sketch-cli` |
-| `gui/` | PySide6 frontend: document (transactions, undo), tabs, canvas and tools, panels, property editor, editor state |
+| `gui/` | PySide6 frontend: document (transactions, undo), tabs, canvas and tools, panels, property editor, editor state, settings, theme and icons |
 
 ## Extending
 

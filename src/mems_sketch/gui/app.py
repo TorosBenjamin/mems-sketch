@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 
 import klayout.db as kdb
-from PySide6.QtCore import QRectF, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon, QKeySequence, QPixmap
+from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -23,14 +23,19 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QSizePolicy,
+    QToolBar,
     QToolButton,
+    QWidget,
 )
 
 from mems_sketch.core.shapes import NodePath
 from mems_sketch.export.base import available_exporters
-from mems_sketch.gui.canvas import DEFAULT_THEME, THEMES, LayoutCanvas
+from mems_sketch.gui import icons, theme
+from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.document import VIEW_MODES, ProjectDocument
 from mems_sketch.gui.editor_state import load_state, save_state
+from mems_sketch.gui.find_action import FindActionDialog, menu_actions
 from mems_sketch.gui.panels import (
     ComponentsPanel,
     ConstantsPanel,
@@ -39,8 +44,10 @@ from mems_sketch.gui.panels import (
     ParametersPanel,
     PointsPanel,
     ShapeTree,
+    swatch_icon,
 )
 from mems_sketch.gui.properties import PropertyEditor
+from mems_sketch.gui.settings import PreferencesDialog, Settings
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
 from mems_sketch.gui.views import ComponentView, EditorArea
 
@@ -54,6 +61,26 @@ PRIMITIVES = [
     ("arc", "Arc / ring"),
     ("polygon", "Polygon"),
     ("path", "Path"),
+]
+# Canvas options and the settings they come from (see gui/settings.py).
+CANVAS_OPTIONS = {
+    "fill_opacity": "canvas/fill_opacity",
+    "outline_width": "canvas/outline_width",
+    "show_grid": "canvas/show_grid",
+    "grid_spacing_px": "canvas/grid_spacing_px",
+    "show_axes": "canvas/show_axes",
+    "show_axis_gizmo": "canvas/show_axis_gizmo",
+    "show_scale_bar": "canvas/show_scale_bar",
+    "gizmo_size_px": "canvas/gizmo_size_px",
+    "zoom_step": "canvas/zoom_step",
+}
+OVERLAYS = [  # View › Overlays: setting, label, icon
+    ("canvas/show_grid", "Grid", "grid"),
+    ("canvas/show_axes", "Coloured axes", "axes"),
+    ("canvas/show_axis_gizmo", "Axis indicator", "axes"),
+    ("canvas/show_scale_bar", "Scale bar", "ruler"),
+    ("canvas/show_gizmos", "Move and rotate gizmos", "move"),
+    ("canvas/hover_highlight", "Highlight under cursor", "select"),
 ]
 OPERATIONS = [
     ("transform", "Transform"),
@@ -74,11 +101,11 @@ class MainWindow(QMainWindow):
         self._problems: list[str] = []
         self._restoring = False  # while opening a project, the editor state is not saved
         self.rulers: dict[str, list[tuple[float, float, float, float]]] = {}  # per component
-        settings = QSettings("mems-sketch", "mems-sketch")
-        theme = settings.value("canvas/theme", DEFAULT_THEME)
-        self.canvas_theme = theme if theme in THEMES else DEFAULT_THEME
+        self.settings = Settings(self)
+        self.ui_theme = self._apply_ui_theme()
         self.draw_layer: str | None = None  # the layer the drawing tools draw on
-        self.path_width = DEFAULT_PATH_WIDTH
+        self.path_width = self.settings.get("editor/path_width")
+        self._hovered: NodePath | None = None
         self.tools: dict[str, Tool] = {cls.name: cls(self) for cls in TOOLS}
         self.tool: Tool = self.tools["select"]
         self.tool.reset()
@@ -100,9 +127,8 @@ class MainWindow(QMainWindow):
         self.messages = MessagesPanel()
         self._build_docks()
 
-        self.coordinates = QLabel()
-        self.statusBar().addPermanentWidget(self.coordinates)
         self._build_actions()
+        self._build_status_bar()
 
         self.document.changed.connect(self.refresh)
         self.document.active_changed.connect(self._active_changed)
@@ -110,6 +136,7 @@ class MainWindow(QMainWindow):
         self.document.component_renamed.connect(self.area.rename)
         self.area.current_changed.connect(self._view_activated)
         self.area.tabs_changed.connect(self.state_changed)
+        self.area.tab_menu_requested.connect(self._tab_menu)
         self.tree.selection_changed_paths.connect(self._tree_selected)
         self.tree.enabled_toggled.connect(
             lambda p, e: self._run(lambda: self.document.set_enabled(p, e))
@@ -122,6 +149,8 @@ class MainWindow(QMainWindow):
         self.components.collapse_changed.connect(self.state_changed)
         self.document.changed.connect(self.state_changed)  # e.g. trial values
         self.messages.zoom_requested.connect(self._zoom_to_bbox)
+        self.messages.counts_changed.connect(self._show_problem_count)
+        self.settings.changed.connect(self._setting_changed)
         for panel in (
             self.properties,
             self.parameters,
@@ -132,10 +161,11 @@ class MainWindow(QMainWindow):
         ):
             panel.error.connect(self.report_error)
 
+        self.setWindowIcon(icons.icon("component"))
         self.resize(1500, 950)
         self.refresh()
         self._update_title()
-        saved_tool = settings.value("tool", "select")
+        saved_tool = self.settings.value("tool", "select")
         self.set_tool(saved_tool if saved_tool in self.tools else "select")
 
     # -- construction ------------------------------------------------------
@@ -184,7 +214,10 @@ class MainWindow(QMainWindow):
             canvas.nudged.connect(self.nudge)
             canvas.key_pressed.connect(lambda key: self.tool.key(key))
             canvas.view_changed.connect(self.state_changed)
+            canvas.view_changed.connect(self._show_zoom)
             canvas.set_theme(self.canvas_theme)
+            canvas.configure(**self._canvas_options())
+            self._caption(view)
             canvas.left_pans = self.tool.name == "hand"
             canvas.set_tool_cursor(self.tool.cursor)
             canvas.show_rulers(self.rulers.get(view.component, []))
@@ -194,11 +227,14 @@ class MainWindow(QMainWindow):
         """The user switched tabs (or panes): the panels follow the new current tab."""
         for tool in self.tools.values():
             tool.reset()  # what a tool was doing belongs to the previous tab
+            tool._gizmo_drag = None
         for other in self.area.views():  # ... and so do its previews
             other.canvas.clear_drag_preview()
             other.canvas.show_sketch([], False)
             other.canvas.show_box(None)
             other.canvas.show_points("snap", [])
+            other.canvas.show_hover(None)
+        self._hovered = None
         self._render(view)
         self.state_changed()
         if self.document.active != view.component:
@@ -215,17 +251,82 @@ class MainWindow(QMainWindow):
         for view in self.area.views():
             view.canvas.set_layer_visible(layer, visible)
 
+    # -- appearance and settings ------------------------------------------
+
+    @property
+    def canvas_theme(self) -> str:
+        chosen = self.settings.get("appearance/canvas_theme")
+        return self.ui_theme if chosen == "auto" else chosen
+
     def set_canvas_theme(self, theme: str) -> None:
         """Light or dark canvas background for every tab; remembered for next time."""
-        self.canvas_theme = theme
-        for view in self.area.views():
-            view.canvas.set_theme(theme)
-        self.dark_action.setChecked(theme == "dark")
-        QSettings("mems-sketch", "mems-sketch").setValue("canvas/theme", theme)
-        self._update_overlay()
+        self.settings.set("appearance/canvas_theme", theme)
 
     def _toggle_dark(self, checked: bool) -> None:
         self.set_canvas_theme("dark" if checked else "light")
+
+    def _apply_ui_theme(self) -> str:
+        app = QApplication.instance()
+        return theme.apply(app, self.settings.get("appearance/ui_theme"))
+
+    def _canvas_options(self) -> dict:
+        return {option: self.settings.get(key) for option, key in CANVAS_OPTIONS.items()}
+
+    def _setting_changed(self, key: str) -> None:
+        """Apply a changed setting at once."""
+        if key == "appearance/ui_theme":
+            self.ui_theme = self._apply_ui_theme()
+            self.refresh()  # panels and tabs pick up the new icon colours
+        if key in ("appearance/ui_theme", "appearance/canvas_theme"):
+            for view in self.area.views():
+                view.canvas.set_theme(self.canvas_theme)
+            self.dark_action.setChecked(self.canvas_theme == "dark")
+            self.update_overlay()
+        if key in CANVAS_OPTIONS.values():
+            options = self._canvas_options()
+            for view in self.area.views():
+                view.canvas.configure(**options)
+            self._show_zoom()
+        if key == "appearance/palette_labels":
+            self._palette_style()
+        if key in ("canvas/show_gizmos", "canvas/hover_highlight"):
+            self.canvas.show_hover(None)
+            self._hovered = None
+            self.update_overlay()
+        if key == "snapping/angle_step":
+            self.angle_box.blockSignals(True)
+            self.angle_box.setValue(self.settings.get(key))
+            self.angle_box.blockSignals(False)
+        for setting_key, action in self.setting_actions.items():
+            if setting_key == key:
+                action.blockSignals(True)
+                action.setChecked(self.settings.get(key))
+                action.blockSignals(False)
+        self.prompt(self.tool.hint())
+
+    def show_settings(self, page: str | None = None) -> None:
+        """The settings dialog (Ctrl+Alt+S); ``page`` opens a page, e.g. ``Keymap``."""
+        shortcuts = [
+            (action.text().replace("&", ""), action.shortcut().toString())
+            for _path, action in menu_actions(self.menuBar())
+            if not action.shortcut().isEmpty()
+        ]
+        dialog = PreferencesDialog(self.settings, shortcuts, self)
+        if page is not None:
+            names = [dialog.pages.item(i).text() for i in range(dialog.pages.count())]
+            if page in names:
+                dialog.pages.setCurrentRow(names.index(page))
+        self._preferences = dialog
+        dialog.show()
+
+    def find_action(self) -> None:
+        """Find Action (Ctrl+Shift+A): run a command by typing its name."""
+        dialog = FindActionDialog(menu_actions(self.menuBar()), self)
+        center = self.geometry().center()
+        dialog.move(center.x() - dialog.width() // 2, self.geometry().top() + 90)
+        self._find_dialog = dialog
+        dialog.show()
+        dialog.search.setFocus()
 
     def split_view(self) -> None:
         view = self.area.split_view()
@@ -289,7 +390,7 @@ class MainWindow(QMainWindow):
 
     def restore_editor_state(self) -> None:
         """Bring back how the project was being looked at the last time it was open."""
-        if self.document.path is None:
+        if self.document.path is None or not self.settings.get("editor/restore_state"):
             return
         state = load_state(self.document.path)
         if not state:
@@ -365,8 +466,11 @@ class MainWindow(QMainWindow):
         self.tool_actions[name].setChecked(True)
         for view in self.area.views():
             view.canvas.set_tool_cursor(tool.cursor)
+            view.canvas.show_hover(None)
+        self._hovered = None
         tool.activate()
-        QSettings("mems-sketch", "mems-sketch").setValue("tool", name)
+        self.settings.set_value("tool", name)
+        self._show_tool_options()
         self.update_overlay()
 
     def set_left_pans(self, pans: bool) -> None:
@@ -472,52 +576,81 @@ class MainWindow(QMainWindow):
         self.resizeDocks([shapes, properties], [320, 360], horizontal)
         self.resizeDocks([messages], [110], vertical)
 
-    def _action(self, text: str, slot, shortcut=None, menu: QMenu | None = None) -> QAction:
+    def _action(
+        self, text: str, slot, shortcut=None, menu: QMenu | None = None, icon: str | None = None
+    ) -> QAction:
         action = QAction(text, self)
         action.triggered.connect(slot)
         if shortcut is not None:
             action.setShortcut(QKeySequence(shortcut))
+        if icon is not None:
+            icons.bind(action, icon)
         if menu is not None:
             menu.addAction(action)
+        keys = action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+        action.setToolTip(f"{text.replace('…', '')} ({keys})" if keys else text.replace("…", ""))
         return action
 
     def _build_actions(self) -> None:
         bar = self.menuBar()
         file = bar.addMenu("&File")
-        self._action("New project", self.new_project, QKeySequence.StandardKey.New, file)
-        self._action("Open project…", self.open_project, QKeySequence.StandardKey.Open, file)
-        self._action("Save", self.save_project, QKeySequence.StandardKey.Save, file)
+        self._action("New project", self.new_project, QKeySequence.StandardKey.New, file, "new")
+        self._action(
+            "Open project…", self.open_project, QKeySequence.StandardKey.Open, file, "open"
+        )
+        self.save_action = self._action(
+            "Save", self.save_project, QKeySequence.StandardKey.Save, file, "save"
+        )
         self._action("Save as…", self.save_project_as, QKeySequence.StandardKey.SaveAs, file)
         file.addSeparator()
         export = file.addMenu("Export")
+        icons.bind(export.menuAction(), "export")
         for mode, label in VIEW_MODES.items():
             self._action(
                 f"{label} geometry…", lambda _=False, m=mode: self.export_file(m), menu=export
             )
         file.addSeparator()
+        self._action("Settings…", self.show_settings, "Ctrl+Alt+S", file, "settings")
+        file.addSeparator()
         self._action("Quit", self.close, QKeySequence.StandardKey.Quit, file)
 
         edit = bar.addMenu("&Edit")
         self.undo_action = self._action(
-            "Undo", self.document.undo, QKeySequence.StandardKey.Undo, edit
+            "Undo", self.document.undo, QKeySequence.StandardKey.Undo, edit, "undo"
         )
         self.redo_action = self._action(
-            "Redo", self.document.redo, QKeySequence.StandardKey.Redo, edit
+            "Redo", self.document.redo, QKeySequence.StandardKey.Redo, edit, "redo"
         )
         edit.addSeparator()
-        self._action("Duplicate", self.duplicate, "Ctrl+D", edit)
-        self._action("Delete", self.delete, QKeySequence.StandardKey.Delete, edit)
+        self._action("Duplicate", self.duplicate, "Ctrl+D", edit, "duplicate")
+        self._action("Delete", self.delete, QKeySequence.StandardKey.Delete, edit, "delete")
         self._action("Unwrap operation", self.unwrap, "Ctrl+Shift+U", edit)
-        self._action("Make component from selection…", self.make_component, "Ctrl+K", edit)
-        self._action("Unpack component", self.unpack, "Ctrl+Shift+K", edit)
+        self.make_action = self._action(
+            "Make component from selection…", self.make_component, "Ctrl+K", edit, "make_component"
+        )
+        self.unpack_action = self._action(
+            "Unpack component", self.unpack, "Ctrl+Shift+K", edit, "unpack"
+        )
         edit.addSeparator()
-        self._action("Move by…", self.move_by, "Ctrl+Shift+M", edit)
-        self._action("Rotate 90° left", lambda: self.rotate_selection(90), "Ctrl+R", edit)
-        self._action("Rotate 90° right", lambda: self.rotate_selection(-90), "Ctrl+Shift+R", edit)
-        self._action("Mirror left-right", lambda: self.mirror_selection(True), None, edit)
-        self._action("Mirror up-down", lambda: self.mirror_selection(False), None, edit)
+        self._action("Move by…", self.move_by, "Ctrl+Shift+M", edit, "move")
+        self.rotate_left_action = self._action(
+            "Rotate 90° left", lambda: self.rotate_selection(90), "Ctrl+R", edit, "rotate_left"
+        )
+        self.rotate_right_action = self._action(
+            "Rotate 90° right",
+            lambda: self.rotate_selection(-90),
+            "Ctrl+Shift+R",
+            edit,
+            "rotate_right",
+        )
+        self.mirror_h_action = self._action(
+            "Mirror left-right", lambda: self.mirror_selection(True), None, edit, "mirror_h"
+        )
+        self.mirror_v_action = self._action(
+            "Mirror up-down", lambda: self.mirror_selection(False), None, edit, "mirror_v"
+        )
         edit.addSeparator()
-        self._action("Align…", self.start_align, "Ctrl+L", edit)
+        self._action("Align…", self.start_align, "Ctrl+L", edit, "align")
         self._action("Remove alignment", self.remove_alignment, None, edit)
         self._action("Cancel", self.escape, "Esc", edit)
 
@@ -526,102 +659,295 @@ class MainWindow(QMainWindow):
         group = QActionGroup(self)
         group.setExclusive(True)
         for name, tool in self.tools.items():
+            if name == TOOLS_DRAWING_FIRST:
+                tools_menu.addSeparator()
             action = self._action(
-                tool.label, lambda _=False, n=name: self.set_tool(n), tool.shortcut, tools_menu
+                tool.label,
+                lambda _=False, n=name: self.set_tool(n),
+                tool.shortcut,
+                tools_menu,
+                tool.icon,
             )
             action.setCheckable(True)
-            action.setToolTip(f"{tool.label} ({tool.shortcut})")
             group.addAction(action)
             self.tool_actions[name] = action
         tools_menu.addSeparator()
-        self._action("Clear rulers", self.clear_rulers, None, tools_menu)
+        self._action("Clear rulers", self.clear_rulers, None, tools_menu, "clear")
 
         insert = bar.addMenu("&Insert")
         self.primitive_menu = insert.addMenu("Primitive")
+        icons.bind(self.primitive_menu.menuAction(), "rect")
         for kind, label in PRIMITIVES:
             self._action(
-                label, lambda _=False, k=kind: self.add_primitive(k), menu=self.primitive_menu
+                label,
+                lambda _=False, k=kind: self.add_primitive(k),
+                menu=self.primitive_menu,
+                icon=kind,
             )
         self.component_menu = insert.addMenu("Component")
+        icons.bind(self.component_menu.menuAction(), "place")
         self.component_menu.aboutToShow.connect(self._fill_component_menu)
 
         operations = bar.addMenu("&Operations")
+        self.operation_actions: dict[str, QAction] = {}
         for op, label in OPERATIONS:
-            self._action(label, lambda _=False, o=op: self.wrap(o), menu=operations)
+            self.operation_actions[op] = self._action(
+                label, lambda _=False, o=op: self.wrap(o), menu=operations, icon=op
+            )
 
         view = bar.addMenu("&View")
-        self._action("Fit", lambda: self.canvas.fit(), "F", view)
-        self._action("Recompile and check", self.refresh, "F5", view)
+        self._action("Fit", lambda: self.canvas.fit(), "F", view, "fit")
+        self._action("Zoom in", lambda: self.canvas.zoom_by(1.25), "Ctrl+=", view, "zoom_in")
+        self._action("Zoom out", lambda: self.canvas.zoom_by(0.8), "Ctrl+-", view, "zoom_out")
+        self._action("Recompile and check", self.refresh, "F5", view, "recompile")
+        view.addSeparator()
+        overlays = view.addMenu("Overlays")
+        icons.bind(overlays.menuAction(), "eye")
+        self.setting_actions: dict[str, QAction] = {}
+        for key, label, icon_name in OVERLAYS:
+            action = self._action(
+                label, lambda checked, k=key: self.settings.set(k, checked), menu=overlays
+            )
+            icons.bind(action, icon_name)
+            action.setCheckable(True)
+            action.setChecked(self.settings.get(key))
+            self.setting_actions[key] = action
         self.dark_action = self._action("Dark canvas", self._toggle_dark, None, view)
         self.dark_action.setCheckable(True)
         self.dark_action.setChecked(self.canvas_theme == "dark")
         view.addSeparator()
-        self._action("Open top component", self._edit_top, "Ctrl+T", view)
-        self._action("Split view", self.split_view, "Ctrl+\\", view)
+        self._action("Open top component", self._edit_top, "Ctrl+T", view, "top")
+        self._action("Split view", self.split_view, "Ctrl+\\", view, "split")
         self._action("Merge split view", self.area.unsplit, None, view)
-        self._action("Close tab", self.close_tab, QKeySequence.StandardKey.Close, view)
+        self._action("Close tab", self.close_tab, QKeySequence.StandardKey.Close, view, "close")
         panels = view.addMenu("Panels")
         for dock in self.findChildren(QDockWidget):
             panels.addAction(dock.toggleViewAction())
 
-        tools = self.addToolBar("Main")
-        tools.setObjectName("main-toolbar")
-        for text, slot in (
-            ("New", self.new_project),
-            ("Open", self.open_project),
-            ("Save", self.save_project),
-        ):
-            tools.addAction(text, slot)
+        help_menu = bar.addMenu("&Help")
+        self.find_action_action = self._action(
+            "Find action…", self.find_action, "Ctrl+Shift+A", help_menu, "search"
+        )
+        self._action("Keyboard shortcuts", lambda: self.show_settings("Keymap"), None, help_menu)
+
+        self._build_main_toolbar()
+        self._build_palette()
+        self._build_tool_options()
+
+    def _toolbar(self, title: str, name: str) -> QToolBar:
+        toolbar = self.addToolBar(title)
+        toolbar.setObjectName(name)
+        toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(18, 18))
+        return toolbar
+
+    def _menu_button(self, toolbar: QToolBar, menu: QMenu, icon: str, tip: str) -> QToolButton:
+        button = QToolButton()
+        icons.bind(button, icon)
+        button.setMenu(menu)
+        button.setToolTip(tip)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        toolbar.addWidget(button)
+        return button
+
+    def _build_main_toolbar(self) -> None:
+        tools = self._toolbar("Main", "main-toolbar")
+        for action in self.findChildren(QAction):
+            if action.text() in ("New project", "Open project…"):
+                tools.addAction(action)
+        tools.addAction(self.save_action)
         tools.addSeparator()
         tools.addAction(self.undo_action)
         tools.addAction(self.redo_action)
         tools.addSeparator()
-        for label, menu in (("Primitive", self.primitive_menu), ("Component", self.component_menu)):
-            button = QToolButton()
-            button.setText(label)
-            button.setMenu(menu)
-            button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-            tools.addWidget(button)
-        tools.addWidget(QLabel(" Draw on: "))
-        self.layer_box = QComboBox()
-        self.layer_box.setToolTip("The layer the drawing tools draw on")
-        self.layer_box.currentIndexChanged.connect(self._draw_layer_chosen)
-        tools.addWidget(self.layer_box)
-        tools.addWidget(QLabel(" Path width: "))
-        self.width_box = QDoubleSpinBox()
-        self.width_box.setRange(0.001, 1e6)
-        self.width_box.setDecimals(3)
-        self.width_box.setSuffix(" µm")
-        self.width_box.setValue(self.path_width)
-        self.width_box.setToolTip("The width of paths drawn with the Path tool")
-        self.width_box.valueChanged.connect(self._path_width_chosen)
-        tools.addWidget(self.width_box)
+        self._menu_button(tools, self.primitive_menu, "rect", "Insert a primitive")
+        self._menu_button(tools, self.component_menu, "place", "Place a component")
         tools.addSeparator()
-        for op in ("union", "subtract", "intersect", "offset", "fillet", "transform"):
-            tools.addAction(dict(OPERATIONS)[op], lambda o=op: self.wrap(o))
-        tools.addAction("Make component", self.make_component)
+        for op in ("union", "subtract", "intersect", "xor", "offset", "fillet", "transform"):
+            tools.addAction(self.operation_actions[op])
         tools.addSeparator()
-        tools.addWidget(QLabel(" View: "))
+        tools.addAction(self.make_action)
+        tools.addAction(self.unpack_action)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tools.addWidget(spacer)
         self.mode_box = QComboBox()
+        self.mode_box.setToolTip("What the canvas shows: the drawn layout or a process view")
         for mode, label in VIEW_MODES.items():
             self.mode_box.addItem(label, mode)
         self.mode_box.currentIndexChanged.connect(self._mode_changed)
+        self.mode_box.setMaximumWidth(160)
         tools.addWidget(self.mode_box)
-        tools.addAction("Fit", lambda: self.canvas.fit())
-        tools.addAction("Split", self.split_view)
+        split = next(a for a in self.findChildren(QAction) if a.text() == "Split view")
+        tools.addAction(split)
+        tools.addSeparator()
+        tools.addAction(self.find_action_action)
+        settings = next(a for a in self.findChildren(QAction) if a.text() == "Settings…")
+        tools.addAction(settings)
 
-        palette = self.addToolBar("Tools")
+    def _build_palette(self) -> None:
+        palette = QToolBar("Tools")
         palette.setObjectName("tools-toolbar")
+        palette.setMovable(False)
+        palette.setIconSize(QSize(20, 20))
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, palette)  # a vertical tool palette
         for name, action in self.tool_actions.items():
             if name == TOOLS_DRAWING_FIRST:
                 palette.addSeparator()
             palette.addAction(action)
         palette.addSeparator()
-        palette.addAction("⟲ 90°", lambda: self.rotate_selection(90))
-        palette.addAction("⟳ 90°", lambda: self.rotate_selection(-90))
-        palette.addAction("⇆", lambda: self.mirror_selection(True)).setToolTip("Mirror left-right")
-        palette.addAction("⇅", lambda: self.mirror_selection(False)).setToolTip("Mirror up-down")
+        for action in (
+            self.rotate_left_action,
+            self.rotate_right_action,
+            self.mirror_h_action,
+            self.mirror_v_action,
+        ):
+            palette.addAction(action)
+        self.palette = palette
+        self._palette_style()
+
+    def _palette_style(self) -> None:
+        labels = self.settings.get("appearance/palette_labels")
+        self.palette.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+            if labels
+            else Qt.ToolButtonStyle.ToolButtonIconOnly
+        )
+
+    def _build_tool_options(self) -> None:
+        """The tool's own settings under the main toolbar, as in Blender's tool header."""
+        self.addToolBarBreak()
+        bar = self._toolbar("Tool options", "tool-options")
+        bar.setIconSize(QSize(16, 16))
+        self.tool_icon = QLabel()
+        self.tool_name = QLabel()
+        self.tool_name.setObjectName("heading")
+        bar.addWidget(self.tool_icon)
+        bar.addWidget(self.tool_name)
+        bar.addSeparator()
+
+        self.layer_box = QComboBox()
+        self.layer_box.setToolTip("The layer the drawing tools draw on")
+        self.layer_box.setMinimumWidth(120)
+        self.layer_box.currentIndexChanged.connect(self._draw_layer_chosen)
+        self.width_box = QDoubleSpinBox()
+        self.width_box.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self.width_box.setRange(0.001, 1e6)
+        self.width_box.setDecimals(3)
+        self.width_box.setSuffix(" µm")
+        self.width_box.setValue(self.path_width)
+        self.width_box.setToolTip("The width of paths drawn with the Path tool")
+        self.width_box.valueChanged.connect(self._path_width_chosen)
+        self.angle_box = QDoubleSpinBox()
+        self.angle_box.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self.angle_box.setRange(1, 90)
+        self.angle_box.setDecimals(1)
+        self.angle_box.setSuffix(" °")
+        self.angle_box.setValue(self.settings.get("snapping/angle_step"))
+        self.angle_box.setToolTip("The Rotate tool snaps to multiples of this angle")
+        self.angle_box.valueChanged.connect(lambda v: self.settings.set("snapping/angle_step", v))
+        self.tool_widgets = {}
+        for key, label, widget in (
+            ("layer", "Layer", self.layer_box),
+            ("width", "Width", self.width_box),
+            ("angle", "Step", self.angle_box),
+        ):
+            caption = QLabel(f" {label} ")
+            caption.setObjectName("muted")
+            self.tool_widgets[key] = (bar.addWidget(caption), bar.addWidget(widget))
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bar.addWidget(spacer)
+        snapping = QLabel("Snap ")
+        snapping.setObjectName("muted")
+        bar.addWidget(snapping)
+        for key, label, icon_name in (
+            ("snapping/points", "Snap to shape points", "snap_points"),
+            ("snapping/grid", "Snap to the grid", "grid"),
+        ):
+            action = QAction(label, self)
+            icons.bind(action, icon_name)
+            action.setCheckable(True)
+            action.setChecked(self.settings.get(key))
+            action.toggled.connect(lambda checked, k=key: self.settings.set(k, checked))
+            bar.addAction(action)
+            self.setting_actions[key] = action
+        bar.addSeparator()
+        gizmos = self.setting_actions["canvas/show_gizmos"]
+        bar.addAction(gizmos)
+        self.tool_options = bar
+
+    def _show_tool_options(self) -> None:
+        tool = self.tool
+        self.tool_icon.setPixmap(icons.pixmap(tool.icon, 16))
+        self.tool_name.setText(f"{tool.label} ")
+        shown = {
+            "layer": tool.draws,
+            "width": tool.name == "path",
+            "angle": tool.name == "rotate",
+        }
+        for key, actions in self.tool_widgets.items():
+            for action in actions:
+                action.setVisible(shown[key])
+
+    def _build_status_bar(self) -> None:
+        status = self.statusBar()
+        status.setSizeGripEnabled(False)
+        self.problems_button = QToolButton()
+        self.problems_button.setToolTip("Errors and rule violations (click to show)")
+        self.problems_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.problems_button.clicked.connect(self._show_messages_panel)
+        self.grid_label = QLabel()
+        self.grid_label.setToolTip("Grid step at this zoom")
+        self.zoom_label = QLabel()
+        self.zoom_label.setToolTip("Zoom (screen pixels per µm)")
+        self.coordinates = QLabel()
+        self.coordinates.setMinimumWidth(230)
+        for widget in (self.problems_button, self.grid_label, self.zoom_label, self.coordinates):
+            status.addPermanentWidget(widget)
+
+    def _show_zoom(self) -> None:
+        canvas = self.canvas
+        self.grid_label.setText(f"grid {canvas.grid_step():g} µm")
+        self.zoom_label.setText(f"{canvas.pixels_per_um():.3g} px/µm")
+
+    def _show_problem_count(self, errors: int, violations: int) -> None:
+        if errors:
+            icons.bind(self.problems_button, "error")
+            text = f"{errors} error{'s' if errors > 1 else ''}"
+        elif violations:
+            icons.bind(self.problems_button, "warning")
+            text = f"{violations} violation{'s' if violations > 1 else ''}"
+        else:
+            icons.bind(self.problems_button, "ok")
+            text = "No problems"
+        self.problems_button.setText(text)
+
+    def _show_messages_panel(self) -> None:
+        dock = next(d for d in self.findChildren(QDockWidget) if d.windowTitle() == "Messages")
+        dock.show()
+        dock.raise_()
+
+    def _tab_menu(self, view: ComponentView, position: QPoint) -> None:
+        menu = QMenu(self)
+        self._action("Close", lambda: self.area.close_view(view), None, menu, "close")
+        self._action("Close others", lambda: self.area.close_others(view), None, menu)
+        self._action("Close all", self._close_all_tabs, None, menu)
+        menu.addSeparator()
+        self._action(
+            "Open in the other pane" if self.area.split else "Split right",
+            lambda: (self.area.set_current(view), self.split_view()),
+            None,
+            menu,
+            "split",
+        )
+        if self.area.split:
+            self._action("Merge panes", self.area.unsplit, None, menu)
+        menu.exec(position)
+
+    def _close_all_tabs(self) -> None:
+        for view in self.area.views():
+            self.area.close_view(view)  # the top component opens again when none is left
 
     # -- drawing -----------------------------------------------------------
 
@@ -635,9 +961,7 @@ class MainWindow(QMainWindow):
             self.layer_box.addItem(name)
             color = self.layers.colors.get(name)
             if color is not None:
-                swatch = QPixmap(12, 12)
-                swatch.fill(color)
-                self.layer_box.setItemIcon(self.layer_box.count() - 1, QIcon(swatch))
+                self.layer_box.setItemIcon(self.layer_box.count() - 1, swatch_icon(color))
         self.layer_box.setCurrentIndex(layers.index(self.draw_layer) if self.draw_layer else -1)
         self.layer_box.blockSignals(False)
 
@@ -691,6 +1015,7 @@ class MainWindow(QMainWindow):
         for view in self.area.views():
             view.rendered = True
             view.refresh(self.layers.colors, self.layers.visible)
+            self._caption(view)
         self.area.update_titles()
         self.draw_rulers()
         self._problems = self.document.problems()
@@ -714,6 +1039,15 @@ class MainWindow(QMainWindow):
         self.redo_action.setText(f"Redo {self.document.redo_text()}".strip())
         self._update_title()
 
+    def _caption(self, view: ComponentView) -> None:
+        """The canvas caption: component, view mode and whether it can be edited."""
+        details = [VIEW_MODES.get(view.view_mode, view.view_mode)]
+        if view.read_only:
+            details.append("read-only")
+        if view.component == self.document.project.top:
+            details.append("top component")
+        view.canvas.set_caption(view.component, " · ".join(details))
+
     def _show_messages(self, *extra: str) -> None:
         view = self.view
         errors = [*extra, *view.errors, *(p for p in self._problems if p not in view.errors)]
@@ -733,6 +1067,23 @@ class MainWindow(QMainWindow):
         self.canvas.show_points("selected", [] if "pick" in tool_markers else selected)
         for style in ("pick", "anchor"):
             self.canvas.show_points(style, tool_markers.get(style, []))
+        self._place_gizmo()
+        self._show_zoom()
+
+    def _place_gizmo(self) -> None:
+        """The active tool's gizmo on the selection's centre (only in the current tab)."""
+        view = self.view
+        kind = self.tool.gizmo
+        shown = (
+            kind is not None
+            and view.selection
+            and self.settings.get("canvas/show_gizmos")
+            and not self.document.read_only
+            and not self.tool.busy
+        )
+        center = self.document.selection_center(view.selection) if shown else None
+        for other in self.area.views():
+            other.canvas.set_gizmo(kind if other is view and center else None, center)
 
     _update_overlay = update_overlay
 
@@ -761,11 +1112,30 @@ class MainWindow(QMainWindow):
         self.state_changed()
 
     def _cursor_moved(self, x: float, y: float) -> None:
-        text = f"x {x:.3f} µm   y {y:.3f} µm"
+        text = f"x {x:.3f}  y {y:.3f} µm"
         label = self.tool.hover_label(x, y)
         if label is not None:
             text = f"{label}   {text}"
         self.coordinates.setText(text)
+        self._hover(x, y)
+
+    def _hover(self, x: float, y: float) -> None:
+        """Outline the shape under the cursor (what a click would select)."""
+        tool = self.tool
+        hovered = None
+        if (
+            tool.hovers
+            and not tool.busy
+            and self.settings.get("canvas/hover_highlight")
+            and self.canvas.gizmo_hit(x, y) is None
+        ):
+            hovered = self.hit(x, y)
+            if hovered in self.selection:
+                hovered = None
+        if hovered != self._hovered:
+            self._hovered = hovered
+            region = dict(self.view.node_regions).get(hovered) if hovered else None
+            self.canvas.show_hover(region)
 
     def _view_double_clicked(self, view: ComponentView, x: float, y: float) -> None:
         """Double-clicking a placed component opens it in a tab (unless a tool uses it)."""
@@ -844,6 +1214,7 @@ class MainWindow(QMainWindow):
         view = self.view
         view.view_mode = self.mode_box.currentData()
         view.refresh(self.layers.colors, self.layers.visible)
+        self._caption(view)
         self._show_messages()
         self._update_overlay()
 
@@ -1047,10 +1418,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Exported {path}", 5000)
 
     def _last_dir(self) -> str:
-        return str(QSettings("mems-sketch", "mems-sketch").value("last_dir", str(Path.home())))
+        return str(self.settings.value("last_dir", str(Path.home())))
 
     def _remember_dir(self, path: str) -> None:
-        QSettings("mems-sketch", "mems-sketch").setValue("last_dir", str(Path(path).parent))
+        self.settings.set_value("last_dir", str(Path(path).parent))
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._confirm_discard():

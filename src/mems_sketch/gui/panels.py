@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPixmap
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -14,9 +14,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -27,6 +27,7 @@ from mems_sketch.core.component import component_types
 from mems_sketch.core.expressions import ExpressionError, resolve_variables
 from mems_sketch.core.process import Layer
 from mems_sketch.core.shapes import NodePath, Shape, child_lists
+from mems_sketch.gui import icons
 from mems_sketch.gui.document import ProjectDocument
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -75,12 +76,53 @@ def _format(value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
 
 
-def _button_row(*buttons: QPushButton) -> QHBoxLayout:
+def _action_bar(title: QLabel | None, *actions: tuple[str, str, object]) -> QHBoxLayout:
+    """A tool window's header row: an optional title, then small icon buttons.
+
+    ``actions`` are ``(icon, tooltip, slot)``; the buttons are also returned in
+    the layout's ``buttons`` attribute (by tooltip) for tests and shortcuts.
+    """
     row = QHBoxLayout()
-    for button in buttons:
+    row.setContentsMargins(6, 2, 4, 2)
+    row.setSpacing(1)
+    if title is not None:
+        title.setObjectName("muted")
+        row.addWidget(title, 1)
+    else:
+        row.addStretch(1)
+    row.buttons = {}
+    for name, tip, slot in actions:
+        button = QToolButton()
+        icons.bind(button, name)
+        button.setIconSize(QSize(16, 16))
+        button.setToolTip(tip)
+        button.setAutoRaise(True)
+        button.clicked.connect(slot)
         row.addWidget(button)
-    row.addStretch()
+        row.buttons[tip] = button
     return row
+
+
+def swatch_icon(color: QColor) -> QIcon:
+    """A small rounded square in a layer's colour."""
+    pixmap = QPixmap(24, 24)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(color.darker(130))
+    fill = QColor(color)
+    fill.setAlpha(200)
+    painter.setBrush(fill)
+    painter.drawRoundedRect(3, 3, 18, 18, 4, 4)
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    return QIcon(pixmap)
+
+
+def shape_icon(shape: Shape) -> QIcon:
+    if shape.kind == "boolean":
+        return icons.icon(shape.op)
+    return icons.icon(icons.KIND_ICONS.get(shape.kind, "point"))
 
 
 def _table(columns: Sequence[str]) -> QTableWidget:
@@ -95,7 +137,7 @@ def _table(columns: Sequence[str]) -> QTableWidget:
 def _readonly(text: str) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-    item.setForeground(QBrush(QColor("#808080")))
+    item.setForeground(QBrush(QColor("#8c8f99")))
     return item
 
 
@@ -137,19 +179,17 @@ class ComponentsPanel(_Panel):
         self._refreshing = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            None,
+            ("add", "New component", self._new),
+            ("edit", "Rename", self._rename),
+            ("delete", "Delete", self._delete),
+            ("top", "Set as top component", self._set_top),
+            ("place", "Place in the edited component", self._place),
+        )
+        layout.addLayout(self.actions)
         layout.addWidget(self.tree)
-        row = QHBoxLayout()
-        for text, slot in (
-            ("New", self._new),
-            ("Rename", self._rename),
-            ("Delete", self._delete),
-            ("Set top", self._set_top),
-            ("Place", self._place),
-        ):
-            button = QPushButton(text)
-            button.clicked.connect(slot)
-            row.addWidget(button)
-        layout.addLayout(row)
 
     collapse_changed = Signal()
 
@@ -175,22 +215,30 @@ class ComponentsPanel(_Panel):
         project = self.document.project
         self.tree.clear()
         local = QTreeWidgetItem(self.tree, [f"Project: {project.name}"])
+        local.setIcon(0, icons.icon("folder"))
         for name, definition in project.components.items():
             label = name + ("  (top)" if name == project.top else "")
             item = QTreeWidgetItem(local, [label])
             item.setData(0, self.NAME_ROLE, name)
             item.setToolTip(0, definition.description or name)
+            item.setIcon(0, icons.icon("top" if name == project.top else "component"))
             self._mark_active(item, name, label)
         for library in project.libraries.values():
             group = QTreeWidgetItem(self.tree, [f"Library: {library.name}"])
+            group.setIcon(0, icons.icon("library"))
             for name in library.components:
                 item = QTreeWidgetItem(group, [name])
                 item.setData(0, self.NAME_ROLE, f"{library.name}.{name}")
+                item.setIcon(0, icons.icon("component"))
+                item.setToolTip(0, f"{library.name}.{name} (library, read-only)")
                 self._mark_active(item, f"{library.name}.{name}", name)
         builtins = QTreeWidgetItem(self.tree, ["Built-in"])
+        builtins.setIcon(0, icons.icon("builtin"))
         for name in component_types():
             item = QTreeWidgetItem(builtins, [name])
             item.setData(0, self.NAME_ROLE, name)
+            item.setIcon(0, icons.icon("component"))
+            item.setToolTip(0, f"{name} (built-in, read-only)")
             self._mark_active(item, name, name)
         self.tree.expandAll()
         for i in range(self.tree.topLevelItemCount()):
@@ -203,7 +251,8 @@ class ComponentsPanel(_Panel):
             font = QFont()
             font.setBold(True)
             item.setFont(0, font)
-            item.setText(0, f"✎ {label}" if not self.document.read_only else f"👁 {label}")
+            item.setIcon(0, icons.icon("eye" if self.document.read_only else "edit", "blue"))
+            item.setToolTip(0, ("Viewing " if self.document.read_only else "Editing ") + label)
 
     def selected(self) -> str | None:
         items = self.tree.selectedItems()
@@ -299,11 +348,14 @@ class ShapeTree(QTreeWidget):
     def _add(self, parent: QTreeWidgetItem, shape: Shape, path: NodePath) -> None:
         item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})", describe(shape)])
         item.setData(0, PATH_ROLE, path)
+        item.setIcon(0, shape_icon(shape))
+        if shape.repeat is not None:
+            item.setIcon(1, icons.icon("repeat"))
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(0, Qt.CheckState.Checked if shape.enabled else Qt.CheckState.Unchecked)
         if not shape.enabled:
             for column in (0, 1):
-                item.setForeground(column, QBrush(QColor("#808080")))
+                item.setForeground(column, QBrush(QColor("#8c8f99")))
         labels = SLOT_LABELS.get(shape.kind)
         for slot, children in enumerate(child_lists(shape)):
             holder = item
@@ -361,16 +413,17 @@ class ParametersPanel(_Panel):
         self.title = QLabel()
         self.table = _table(self.COLUMNS)
         self.table.itemChanged.connect(self._changed)
-        add, remove = QPushButton("Add"), QPushButton("Remove")
-        add.clicked.connect(lambda: self._guard(self.document.add_parameter))
-        remove.clicked.connect(self._remove)
-        clear = QPushButton("Clear trials")
-        clear.clicked.connect(self._clear_trials)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.title)
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            self.title,
+            ("add", "Add parameter", lambda: self._guard(self.document.add_parameter)),
+            ("remove", "Remove the selected parameters", self._remove),
+            ("clear", "Clear trial values", self._clear_trials),
+        )
+        layout.addLayout(self.actions)
         layout.addWidget(self.table)
-        layout.addLayout(_button_row(add, remove, clear))
         self._names: list[str] = []
 
     def _clear_trials(self) -> None:
@@ -381,7 +434,7 @@ class ParametersPanel(_Panel):
         parameters = self.document.active_definition.parameters
         read_only = self.document.read_only
         suffix = " (read-only; trial values work)" if read_only else ""
-        self.title.setText(f" Parameters of <b>{self.document.active}</b>{suffix}")
+        self.title.setText(f"Parameters of <b>{self.document.active}</b>{suffix}")
         try:
             values = self.document.scope()
         except Exception:  # noqa: BLE001 - shown as "error" per row
@@ -455,19 +508,21 @@ class PointsPanel(_Panel):
         self.title = QLabel()
         self.table = _table(self.COLUMNS)
         self.table.itemChanged.connect(self._changed)
-        add, remove = QPushButton("Add"), QPushButton("Remove")
-        add.clicked.connect(lambda: self._guard(self.document.add_point))
-        remove.clicked.connect(self._remove)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.title)
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            self.title,
+            ("add", "Add point", lambda: self._guard(self.document.add_point)),
+            ("remove", "Remove the selected points", self._remove),
+        )
+        layout.addLayout(self.actions)
         layout.addWidget(self.table)
-        layout.addLayout(_button_row(add, remove))
         self._names: list[str] = []
 
     def refresh(self) -> None:
         points = self.document.active_definition.points
-        self.title.setText(f" Points of <b>{self.document.active}</b> (besides center, top, …)")
+        self.title.setText(f"Points of <b>{self.document.active}</b> (besides center, top, …)")
         try:
             positions = self.document.declared_points()
         except Exception:  # noqa: BLE001 - shown as "error" per row
@@ -530,13 +585,17 @@ class LayersPanel(_Panel):
         self.colors: dict[str, QColor] = {}
         self.layers = _table(self.LAYER_COLUMNS)
         self.layers.itemChanged.connect(self._layer_changed)
-        add_layer, remove_layer = QPushButton("Add layer"), QPushButton("Remove")
-        add_layer.clicked.connect(lambda: self._guard(self.document.add_layer))
-        remove_layer.clicked.connect(self._remove_layers)
+        self.layers.setToolTip("Tick to show a layer; click a layer to draw on it")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            None,
+            ("add", "Add layer", lambda: self._guard(self.document.add_layer)),
+            ("remove", "Remove the selected layers", self._remove_layers),
+        )
+        layout.addLayout(self.actions)
         layout.addWidget(self.layers)
-        layout.addLayout(_button_row(add_layer, remove_layer))
         self._layer_names: list[str] = []
 
     def refresh(self) -> None:
@@ -562,9 +621,7 @@ class LayersPanel(_Panel):
             name_cell.setFlags(name_cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             shown = self.visible.get(layer.name, True)
             name_cell.setCheckState(Qt.CheckState.Checked if shown else Qt.CheckState.Unchecked)
-            swatch = QPixmap(12, 12)
-            swatch.fill(self.colors[layer.name])
-            name_cell.setIcon(QIcon(swatch))
+            name_cell.setIcon(swatch_icon(self.colors[layer.name]))
         self.layers.blockSignals(False)
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:
@@ -613,14 +670,16 @@ class ConstantsPanel(_Panel):
         self.document = document
         self.constants = _table(["Constant", "Expression", "Value"])
         self.constants.itemChanged.connect(self._constant_changed)
-        add_const, remove_const = QPushButton("Add constant"), QPushButton("Remove")
-        add_const.clicked.connect(lambda: self._guard(self.document.add_constant))
-        remove_const.clicked.connect(self._remove_constants)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel(" Use in expressions as process.<name>"))
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            QLabel("Use in expressions as process.<name>"),
+            ("add", "Add constant", lambda: self._guard(self.document.add_constant)),
+            ("remove", "Remove the selected constants", self._remove_constants),
+        )
+        layout.addLayout(self.actions)
         layout.addWidget(self.constants)
-        layout.addLayout(_button_row(add_const, remove_const))
         self._constant_names: list[str] = []
 
     def refresh(self) -> None:
@@ -672,27 +731,33 @@ class MessagesPanel(QListWidget):
         self.itemActivated.connect(self._activated)
         self.itemClicked.connect(self._activated)
 
+    counts_changed = Signal(int, int)  # errors, violations
+
     def show_messages(self, errors: list[str], violations) -> None:
         self.clear()
         for text in errors:
-            item = QListWidgetItem(f"Error: {text}")
-            item.setForeground(QBrush(QColor("#ff6b6b")))
+            item = QListWidgetItem(icons.icon("error"), text)
+            item.setToolTip(text)
             self.addItem(item)
         if violations:
             summary = QListWidgetItem(
                 f"{len(violations)} rule violation(s) — click one to zoom to it"
             )
-            summary.setForeground(QBrush(QColor("#ffb347")))
+            font = QFont()
+            font.setBold(True)
+            summary.setFont(font)
             self.addItem(summary)
         for v in violations:
             x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
             where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
-            item = QListWidgetItem(f"    [{v.rule}] {v.layer}: {v.message}{where}")
+            item = QListWidgetItem(
+                icons.icon("warning"), f"[{v.rule}] {v.layer}: {v.message}{where}"
+            )
             item.setData(PATH_ROLE, v.bbox_um)
-            item.setForeground(QBrush(QColor("#ffb347")))
             self.addItem(item)
         if not errors and not violations:
-            self.addItem(QListWidgetItem("No rule violations."))
+            self.addItem(QListWidgetItem(icons.icon("ok"), "No rule violations."))
+        self.counts_changed.emit(len(errors), len(violations))
 
     def _activated(self, item: QListWidgetItem) -> None:
         bbox = item.data(PATH_ROLE)

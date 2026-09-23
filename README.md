@@ -136,9 +136,10 @@ MATLAB with `system(...)`.
   component changed since the last save.
 - **Editor state**: how the project was being looked at comes back when it is
   reopened: open tabs and the split, zoom and position per tab, view modes,
-  selections, rulers, collapsed tree items, hidden layers and trial values. It
-  is kept in `.mems-sketch/state.json` in the project folder, which carries its
-  own `.gitignore`, so it moves with the project but never reaches git.
+  selections, rulers, collapsed tree items, hidden layers, trial values, and
+  the drawing layer and path width. It is kept in `.mems-sketch/state.json` in
+  the project folder, which carries its own `.gitignore`, so it moves with the
+  project but never reaches git.
   Deleting the folder resets the views. Window layout, canvas theme and the
   active tool are per user, in the app settings.
 - **Undo/redo** is one history for the whole project and goes back to the tab
@@ -187,6 +188,18 @@ MATLAB with `system(...)`.
   - **Measure** (D): click two points (they snap) to see the distance, dx and
     dy. Rulers stay until **Tools → Clear rulers**; they also work on
     read-only tabs.
+  - **Rectangle** (B) and **Circle** (C): drag, or click twice (corner and
+    opposite corner; centre and radius). Shift draws a square.
+  - **Polygon** (P) and **Path** (W): click the points; a double-click, Enter
+    or (for a polygon) a click on the first point finishes, Backspace takes
+    back the last point. Shift keeps segments at 0°, 45° or 90°.
+
+  The drawing tools draw on the layer chosen under **Draw on** in the toolbar
+  (clicking a layer in the Layers panel also chooses it); paths get the
+  **Path width** next to it. Points snap to shape points, else to the grid
+  (Ctrl: no snapping). A drawn shape is added at the top of the edited
+  component with a fresh name, selected, and editable like any other; the
+  numbers can be turned into expressions in Properties afterwards.
 
   Moving and rotating change what a shape stores, always relative to its
   parent: `x`, `y` and `rotation` of a component or transform, the

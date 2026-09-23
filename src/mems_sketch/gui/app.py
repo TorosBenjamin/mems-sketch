@@ -11,11 +11,12 @@ from pathlib import Path
 
 import klayout.db as kdb
 from PySide6.QtCore import QRectF, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDockWidget,
+    QDoubleSpinBox,
     QFileDialog,
     QInputDialog,
     QLabel,
@@ -44,6 +45,8 @@ from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
 from mems_sketch.gui.views import ComponentView, EditorArea
 
 STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
+DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
+TOOLS_DRAWING_FIRST = next(t.name for t in TOOLS if t.draws)  # the palette separates them
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 PRIMITIVES = [
     ("rect", "Rectangle"),
@@ -74,6 +77,8 @@ class MainWindow(QMainWindow):
         settings = QSettings("mems-sketch", "mems-sketch")
         theme = settings.value("canvas/theme", DEFAULT_THEME)
         self.canvas_theme = theme if theme in THEMES else DEFAULT_THEME
+        self.draw_layer: str | None = None  # the layer the drawing tools draw on
+        self.path_width = DEFAULT_PATH_WIDTH
         self.tools: dict[str, Tool] = {cls.name: cls(self) for cls in TOOLS}
         self.tool: Tool = self.tools["select"]
         self.tool.reset()
@@ -89,6 +94,7 @@ class MainWindow(QMainWindow):
         self.properties = PropertyEditor(self.document)
         self.parameters = ParametersPanel(self.document)
         self.layers = LayersPanel(self.document)
+        self.layers.layers.currentCellChanged.connect(self._layer_row_chosen)
         self.constants = ConstantsPanel(self.document)
         self.points = PointsPanel(self.document)
         self.messages = MessagesPanel()
@@ -176,6 +182,7 @@ class MainWindow(QMainWindow):
             canvas.double_clicked.connect(lambda x, y, v=view: self._view_double_clicked(v, x, y))
             canvas.cursor_moved.connect(self._cursor_moved)
             canvas.nudged.connect(self.nudge)
+            canvas.key_pressed.connect(lambda key: self.tool.key(key))
             canvas.view_changed.connect(self.state_changed)
             canvas.set_theme(self.canvas_theme)
             canvas.left_pans = self.tool.name == "hand"
@@ -187,6 +194,11 @@ class MainWindow(QMainWindow):
         """The user switched tabs (or panes): the panels follow the new current tab."""
         for tool in self.tools.values():
             tool.reset()  # what a tool was doing belongs to the previous tab
+        for other in self.area.views():  # ... and so do its previews
+            other.canvas.clear_drag_preview()
+            other.canvas.show_sketch([], False)
+            other.canvas.show_box(None)
+            other.canvas.show_points("snap", [])
         self._render(view)
         self.state_changed()
         if self.document.active != view.component:
@@ -264,6 +276,7 @@ class MainWindow(QMainWindow):
                 },
             },
             "trials": {c: dict(v) for c, v in self.document.trials.items() if v},
+            "drawing": {"layer": self.draw_layer, "path_width": self.path_width},
         }
 
     def save_editor_state(self) -> None:
@@ -291,6 +304,15 @@ class MainWindow(QMainWindow):
         layers = self.document.project.layers
         self.layers.visible = {n: False for n in state.get("hidden_layers", []) if n in layers}
         self.document.restore_trials(state.get("trials", {}))
+        drawing = state.get("drawing", {})
+        if drawing.get("layer") in layers:
+            self.draw_layer = drawing["layer"]
+        width = drawing.get("path_width")
+        if isinstance(width, (int, float)) and width > 0:
+            self.path_width = float(width)
+            self.width_box.blockSignals(True)
+            self.width_box.setValue(self.path_width)
+            self.width_box.blockSignals(False)
         self.rulers = {
             c: [tuple(float(v) for v in r) for r in rs]
             for c, rs in state.get("rulers", {}).items()
@@ -560,6 +582,20 @@ class MainWindow(QMainWindow):
             button.setMenu(menu)
             button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             tools.addWidget(button)
+        tools.addWidget(QLabel(" Draw on: "))
+        self.layer_box = QComboBox()
+        self.layer_box.setToolTip("The layer the drawing tools draw on")
+        self.layer_box.currentIndexChanged.connect(self._draw_layer_chosen)
+        tools.addWidget(self.layer_box)
+        tools.addWidget(QLabel(" Path width: "))
+        self.width_box = QDoubleSpinBox()
+        self.width_box.setRange(0.001, 1e6)
+        self.width_box.setDecimals(3)
+        self.width_box.setSuffix(" µm")
+        self.width_box.setValue(self.path_width)
+        self.width_box.setToolTip("The width of paths drawn with the Path tool")
+        self.width_box.valueChanged.connect(self._path_width_chosen)
+        tools.addWidget(self.width_box)
         tools.addSeparator()
         for op in ("union", "subtract", "intersect", "offset", "fillet", "transform"):
             tools.addAction(dict(OPERATIONS)[op], lambda o=op: self.wrap(o))
@@ -577,13 +613,59 @@ class MainWindow(QMainWindow):
         palette = self.addToolBar("Tools")
         palette.setObjectName("tools-toolbar")
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, palette)  # a vertical tool palette
-        for action in self.tool_actions.values():
+        for name, action in self.tool_actions.items():
+            if name == TOOLS_DRAWING_FIRST:
+                palette.addSeparator()
             palette.addAction(action)
         palette.addSeparator()
         palette.addAction("⟲ 90°", lambda: self.rotate_selection(90))
         palette.addAction("⟳ 90°", lambda: self.rotate_selection(-90))
         palette.addAction("⇆", lambda: self.mirror_selection(True)).setToolTip("Mirror left-right")
         palette.addAction("⇅", lambda: self.mirror_selection(False)).setToolTip("Mirror up-down")
+
+    # -- drawing -----------------------------------------------------------
+
+    def _refresh_layer_box(self) -> None:
+        layers = list(self.document.project.layers)
+        if self.draw_layer not in layers:
+            self.draw_layer = layers[0] if layers else None
+        self.layer_box.blockSignals(True)
+        self.layer_box.clear()
+        for name in layers:
+            self.layer_box.addItem(name)
+            color = self.layers.colors.get(name)
+            if color is not None:
+                swatch = QPixmap(12, 12)
+                swatch.fill(color)
+                self.layer_box.setItemIcon(self.layer_box.count() - 1, QIcon(swatch))
+        self.layer_box.setCurrentIndex(layers.index(self.draw_layer) if self.draw_layer else -1)
+        self.layer_box.blockSignals(False)
+
+    def set_draw_layer(self, name: str) -> None:
+        """The layer the drawing tools draw on."""
+        if name in self.document.project.layers and name != self.draw_layer:
+            self.draw_layer = name
+            self._refresh_layer_box()
+            self.state_changed()
+
+    def _draw_layer_chosen(self, index: int) -> None:
+        if index >= 0:
+            self.set_draw_layer(self.layer_box.itemText(index))
+
+    def _layer_row_chosen(self, row: int, *_) -> None:
+        """Clicking a layer in the Layers panel makes it the drawing layer."""
+        names = list(self.document.project.layers)
+        if 0 <= row < len(names):
+            self.set_draw_layer(names[row])
+
+    def _path_width_chosen(self, value: float) -> None:
+        self.path_width = round(value, 6)
+        self.prompt(self.tool.hint())
+        self.state_changed()
+
+    def add_drawn(self, shape) -> None:
+        """Add a shape drawn with a drawing tool and select it."""
+        self._select_result(lambda: self.document.add_shape(shape))
 
     def _fill_component_menu(self) -> None:
         self.component_menu.clear()
@@ -619,6 +701,7 @@ class MainWindow(QMainWindow):
         view = self.view
         self.parameters.refresh()
         self.points.refresh()
+        self._refresh_layer_box()
         self.components.refresh()
         self.mode_box.blockSignals(True)
         self.mode_box.setCurrentIndex(self.mode_box.findData(view.view_mode))
@@ -685,7 +768,9 @@ class MainWindow(QMainWindow):
         self.coordinates.setText(text)
 
     def _view_double_clicked(self, view: ComponentView, x: float, y: float) -> None:
-        """Double-clicking a placed component opens it in a tab."""
+        """Double-clicking a placed component opens it in a tab (unless a tool uses it)."""
+        if view is self.area.current and self.tool.double_click(x, y):
+            return
         hit = self._hit(view, x, y)
         if hit is not None:
             self._open_reference(hit, view.component)

@@ -244,3 +244,158 @@ def test_damaged_or_foreign_state_is_ignored(window, example):
     path.write_text(json.dumps({"version": 1, "panes": [{"tabs": [{"component": 3}]}]}))
     window.open_project(str(example))
     assert [v.component for v in window.area.views()] == ["top"]
+
+
+# -- drawing tools -----------------------------------------------------------
+
+SHIFT = Qt.KeyboardModifier.ShiftModifier
+
+
+def canvas_area(window):
+    window.canvas.set_view_state(4, 45, 40)  # 4 px per µm: a 5 µm grid
+    assert 5 % window.canvas.grid_step() == 0  # the coordinates below lie on the grid
+
+
+def key(window, which):
+    event = QKeyEvent(QEvent.Type.KeyPress, which, NONE)
+    QApplication.sendEvent(window.canvas, event)
+
+
+def double_click(window, x, y):
+    mouse(window.canvas, QEvent.Type.MouseButtonPress, x, y)
+    mouse(window.canvas, QEvent.Type.MouseButtonRelease, x, y)
+    mouse(window.canvas, QEvent.Type.MouseButtonDblClick, x, y)
+    mouse(window.canvas, QEvent.Type.MouseButtonRelease, x, y)
+
+
+def drawn(window):
+    return window.document.shapes[-1]
+
+
+def test_rectangle_by_dragging_or_two_clicks(window):
+    canvas_area(window)
+    window.set_tool("rect")
+    drag(window, (0.2, -0.3), (40.1, 20.2))  # snaps to the grid
+    rect_ = drawn(window)
+    assert isinstance(rect_, RectShape) and rect_.layer == "device"
+    assert (rect_.x0, rect_.y0, rect_.x1, rect_.y1) == (0, 0, 40, 20)
+    assert rect_.name == "rect1" and window.selection == [((0, 0),)]
+    click(window, 100, 50)  # opposite corners, in either order
+    hover(window, 60, 10)
+    click(window, 60, 10)
+    assert (drawn(window).x0, drawn(window).y0, drawn(window).x1) == (60, 10, 100)
+    assert window.tool.name == "rect"  # stays active for the next one
+
+
+def test_rectangle_with_shift_is_a_square_and_snaps_to_corners(window):
+    canvas_area(window)
+    window.set_tool("rect")
+    click(window, 0, 0)
+    click(window, 30, 10, SHIFT)
+    square = drawn(window)
+    assert (square.x1 - square.x0, square.y1 - square.y0) == (30, 30)
+    click(window, 30.4, 29.7)  # the square's corner, a little off
+    click(window, 50, 50)
+    assert (drawn(window).x0, drawn(window).y0) == (30, 30)
+
+
+def test_empty_rectangle_is_refused(window, monkeypatch):
+    errors = []
+    monkeypatch.setattr(window, "report_error", errors.append)
+    canvas_area(window)
+    window.set_tool("rect")
+    click(window, 10, 10)
+    click(window, 10, 40)
+    assert window.document.shapes == [] and errors == ["the rectangle has no area"]
+
+
+def test_circle_by_centre_and_radius(window):
+    canvas_area(window)
+    window.set_tool("circle")
+    click(window, 20, 20)
+    hover(window, 45.2, 20)
+    click(window, 45.2, 20)
+    circle = drawn(window)
+    assert (circle.kind, circle.x, circle.y, circle.radius) == ("circle", 20, 20, 25)
+
+
+def test_polygon_closes_on_the_first_point_and_backspace_takes_back(window):
+    canvas_area(window)
+    window.set_tool("polygon")
+    for x, y in [(0, 0), (60, 0), (80, 80), (30, 50)]:
+        click(window, x, y)
+    key(window, Qt.Key.Key_Backspace)  # takes back (30, 50)
+    assert window.tool.placed == [(0, 0), (60, 0), (80, 80)]
+    click(window, 0.3, 0.4)  # on the first point: closes
+    polygon = drawn(window)
+    assert polygon.kind == "polygon" and polygon.points == [(0, 0), (60, 0), (80, 80)]
+    assert not window.tool.busy
+
+
+def test_polygon_with_shift_keeps_45_degrees_and_enter_finishes(window):
+    canvas_area(window)
+    window.set_tool("polygon")
+    click(window, 0, 0)
+    click(window, 50, 3, SHIFT)  # horizontal
+    click(window, 80, 21, SHIFT)  # (80, 20) on the grid, pulled onto the 45° line
+    key(window, Qt.Key.Key_Return)
+    assert drawn(window).points == [(0, 0), (50, 0), (75, 25)]
+
+
+def test_path_by_clicks_and_double_click_with_the_chosen_width(window):
+    canvas_area(window)
+    window.set_tool("path")
+    window.width_box.setValue(3.5)
+    click(window, 0, 0)
+    click(window, 100, 0)
+    double_click(window, 100, 60)
+    path = drawn(window)
+    assert path.kind == "path" and path.width == 3.5
+    assert path.points == [(0, 0), (100, 0), (100, 60)]
+
+
+def test_drawing_layer_from_the_toolbar_or_layers_panel(window):
+    canvas_area(window)
+    window.layer_box.setCurrentText("metal")
+    window.set_tool("rect")
+    drag(window, (0, 0), (20, 20))
+    assert drawn(window).layer == "metal"
+    window.layers.layers.setCurrentCell(1, 0)  # the anchor layer
+    assert window.draw_layer == "anchor" and window.layer_box.currentText() == "anchor"
+    assert window.editor_state()["drawing"] == {"layer": "anchor", "path_width": 2.0}
+
+
+def test_drawing_is_refused_on_read_only_tabs(window, monkeypatch):
+    errors = []
+    monkeypatch.setattr(window, "report_error", errors.append)
+    window.open_component("comb_drive")
+    assert window.document.read_only
+    canvas_area(window)
+    window.set_tool("rect")
+    click(window, 0, 0)
+    assert not window.tool.busy and errors and "read-only" in errors[0]
+
+
+def test_esc_cancels_drawing_then_leaves_the_tool(window):
+    canvas_area(window)
+    window.set_tool("polygon")
+    click(window, 0, 0)
+    click(window, 50, 0)
+    window.escape()
+    assert window.tool.name == "polygon" and not window.tool.busy
+    window.escape()
+    assert window.tool.name == "select"
+    assert window.document.shapes == []
+
+
+def test_switching_tabs_drops_a_shape_being_drawn(window):
+    canvas_area(window)
+    first = window.area.current
+    window.set_tool("polygon")
+    for x, y in [(0, 0), (50, 0), (50, 40)]:
+        click(window, x, y)
+    hover(window, 20, 40)
+    assert first.canvas._sketch_item is not None and first.canvas._drag_items
+    window.open_component("comb_drive")
+    assert first.canvas._sketch_item is None and not first.canvas._drag_items
+    assert not window.tool.busy

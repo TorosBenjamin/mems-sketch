@@ -11,6 +11,14 @@ goes to the active tool:
 * **Rotate** (R): click a pivot, then the angle (snaps to 15°)
 * **Align** (A): click a shape, one of its points, then the point to align to
 * **Measure** (D): click two points; rulers stay until cleared
+* **Rectangle** (B) and **Circle** (C): drag, or click twice (corner and
+  corner, centre and radius)
+* **Polygon** (P) and **Path** (W): click the points; double-click, Enter or
+  a click on the first point finishes, Backspace takes back the last point
+
+Drawing tools draw on the layer chosen in the toolbar, at the top level of
+the component being edited. Their points snap to shape points, else to the
+grid; Ctrl turns snapping off and Shift keeps squares and 45° angles.
 
 A tool stays active until another one is chosen; Esc cancels what the tool
 is doing, and pressed again goes back to Select. Tools that change the design
@@ -26,7 +34,16 @@ import klayout.db as kdb
 from PySide6.QtCore import Qt
 
 from mems_sketch.core.component import to_dbu
-from mems_sketch.core.shapes import Align, NodePath
+from mems_sketch.core.shapes import (
+    Align,
+    CircleShape,
+    Evaluator,
+    NodePath,
+    PathShape,
+    PolygonShape,
+    RectShape,
+    Shape,
+)
 
 if TYPE_CHECKING:
     from mems_sketch.gui.app import MainWindow
@@ -50,6 +67,7 @@ class Tool:
     label: ClassVar[str]
     shortcut: ClassVar[str]
     edits: ClassVar[bool] = True  # changes the design, so refused on read-only tabs
+    draws: ClassVar[bool] = False  # a drawing tool (grouped separately in the palette)
     cursor: ClassVar[Qt.CursorShape] = Qt.CursorShape.ArrowCursor
 
     def __init__(self, window: MainWindow) -> None:
@@ -100,6 +118,14 @@ class Tool:
 
     def release(self, x: float, y: float, modifiers) -> None:
         pass
+
+    def double_click(self, x: float, y: float) -> bool:
+        """A double click; False lets the window use it (to open a placed component)."""
+        return False
+
+    def key(self, key: Qt.Key) -> bool:
+        """Enter or Backspace on the canvas; True if the tool used it."""
+        return False
 
     def hover_label(self, x: float, y: float) -> str | None:
         """What the cursor is on, for the status bar (e.g. the point it would snap to)."""
@@ -567,6 +593,294 @@ class MeasureTool(Tool):
         return busy
 
 
+class DrawTool(Tool):
+    """Base of the drawing tools: points snap to shape points, else to the grid."""
+
+    draws = True
+    cursor = Qt.CursorShape.CrossCursor
+    noun: ClassVar[str]
+
+    def reset(self) -> None:
+        self.placed: list[tuple[float, float]] = []
+        self._snap: Candidate | None = None
+        self._candidates: list[Candidate] | None = None
+
+    @property
+    def busy(self) -> bool:
+        return bool(self.placed)
+
+    def _points(self) -> list[Candidate]:
+        if self._candidates is None:
+            self._candidates = self.document.all_points()
+        mine = [(f"point {i + 1}", x, y) for i, (x, y) in enumerate(self.placed)]
+        return self._candidates + mine
+
+    def locate(self, x: float, y: float, modifiers) -> tuple[float, float]:
+        """Where a click at ``(x, y)`` puts a point: snapped, and with Shift constrained."""
+        px, py, label = self.snap(x, y, self._points(), modifiers)
+        self._snap = (label, px, py) if label else None
+        if modifiers & SHIFT and self.placed:
+            px, py = self.constrain(self.placed[-1], (px, py))
+        return _um(px), _um(py)
+
+    def constrain(self, anchor, point) -> tuple[float, float]:
+        """Shift: the point on the nearest 45° line through the previous point."""
+        ax, ay = anchor
+        dx, dy = point[0] - ax, point[1] - ay
+        angle = round(math.atan2(dy, dx) / (math.pi / 4)) * (math.pi / 4)
+        ux, uy = round(math.cos(angle), 12), round(math.sin(angle), 12)
+        length = dx * ux + dy * uy
+        return ax + length * ux, ay + length * uy
+
+    def start(self) -> bool:
+        """Checks before the first point: the tab can be edited and a layer is chosen."""
+        if not self.editable():
+            return False
+        if self.window.draw_layer is None:
+            self.window.report_error("add a layer to draw on first")
+            return False
+        return True
+
+    def preview(self, shape: Shape | None, outline: list[tuple[float, float]], closed: bool):
+        """Show the shape as it would be drawn, plus the outline of the placed points."""
+        self.canvas.show_points("snap", [self._snap] if self._snap else [])
+        self.canvas.show_sketch(outline, closed)
+        if shape is None:
+            self.canvas.clear_drag_preview()
+            return
+        try:
+            geometry = Evaluator(_no_components).render_shape(shape, {})
+        except Exception:  # noqa: BLE001 - e.g. a degenerate shape: just no fill
+            self.canvas.clear_drag_preview()
+            return
+        self.canvas.show_drag_preview(geometry, self.window.layers.colors)
+
+    def add(self, shape: Shape | None, problem: str) -> None:
+        """Add the finished shape to the component (and select it), or say what is wrong."""
+        self.cancel()
+        if shape is None:
+            self.window.report_error(problem)
+            return
+        self.window.add_drawn(shape)
+        self.window.prompt(self.hint())
+
+    def hover_label(self, x, y) -> str | None:
+        return self.snap(x, y, self._points(), NONE, grid=False)[2]
+
+    def markers(self) -> dict[str, list[Candidate]]:
+        return {"anchor": [(f"point {i + 1}", x, y) for i, (x, y) in enumerate(self.placed)]}
+
+    def cancel(self) -> bool:
+        busy = super().cancel()
+        self.canvas.show_points("snap", [])
+        self.canvas.show_sketch([], False)
+        if busy:
+            self.window.update_overlay()
+        return busy
+
+
+class _TwoPointTool(DrawTool):
+    """Rectangle and circle: press, drag and release, or click twice."""
+
+    def reset(self) -> None:
+        super().reset()
+        self._pressed_at: tuple[float, float] | None = None
+
+    def shape(self, start, end, modifiers) -> Shape | None:
+        raise NotImplementedError
+
+    def describe(self, shape: Shape) -> str:
+        raise NotImplementedError
+
+    def press(self, x, y, modifiers) -> None:
+        if not self.placed:
+            if not self.start():
+                return
+            self.placed = [self.locate(x, y, modifiers)]
+            self._pressed_at = (x, y)
+            self.window.update_overlay()
+            self.window.prompt(self.hint())
+            return
+        self._finish(x, y, modifiers)
+
+    def move(self, x, y, modifiers, left) -> None:
+        if not self.placed:
+            self.locate(x, y, modifiers)
+            self.canvas.show_points("snap", [self._snap] if self._snap else [])
+            return
+        shape = self.shape(self.placed[0], self.locate(x, y, modifiers), modifiers)
+        self.preview(shape, [], False)
+        if shape is not None:
+            self.window.prompt(f"{self.describe(shape)}   (click to finish, Esc cancels)")
+
+    def release(self, x, y, modifiers) -> None:
+        pressed, self._pressed_at = self._pressed_at, None
+        if pressed is None or not self.placed:
+            return
+        dragged = math.hypot(x - pressed[0], y - pressed[1]) * self.canvas.pixels_per_um()
+        if dragged >= DRAG_THRESHOLD_PX:  # press, drag, release: done
+            self._finish(x, y, modifiers)
+
+    def _finish(self, x, y, modifiers) -> None:
+        shape = self.shape(self.placed[0], self.locate(x, y, modifiers), modifiers)
+        self.add(shape, f"the {self.noun} has no area")
+
+
+class RectTool(_TwoPointTool):
+    name, label, shortcut, noun = "rect", "Rectangle", "B", "rectangle"
+
+    def hint(self) -> str:
+        if not self.placed:
+            return "Rectangle: drag, or click the first corner (snaps to points; Ctrl: no snapping)"
+        return "Rectangle: click the opposite corner (Shift: square, Esc cancels)"
+
+    def locate(self, x, y, modifiers) -> tuple[float, float]:
+        if not (modifiers & SHIFT and self.placed):
+            return super().locate(x, y, modifiers)
+        px, py = super().locate(x, y, modifiers & ~SHIFT)
+        (ax, ay), side = (
+            self.placed[0],
+            max(abs(px - self.placed[0][0]), abs(py - self.placed[0][1])),
+        )
+        return _um(ax + math.copysign(side, px - ax)), _um(ay + math.copysign(side, py - ay))
+
+    def shape(self, start, end, modifiers) -> Shape | None:
+        (x0, y0), (x1, y1) = start, end
+        if x0 == x1 or y0 == y1:
+            return None
+        return RectShape(
+            layer=self.window.draw_layer,
+            x0=min(x0, x1),
+            y0=min(y0, y1),
+            x1=max(x0, x1),
+            y1=max(y0, y1),
+        )
+
+    def describe(self, shape) -> str:
+        return f"Rectangle {shape.x1 - shape.x0:g} × {shape.y1 - shape.y0:g} µm"
+
+
+class CircleTool(_TwoPointTool):
+    name, label, shortcut, noun = "circle", "Circle", "C", "circle"
+
+    def hint(self) -> str:
+        if not self.placed:
+            return "Circle: click the centre (snaps to points; Ctrl: no snapping)"
+        return "Circle: click to set the radius (Esc cancels)"
+
+    def shape(self, start, end, modifiers) -> Shape | None:
+        radius = math.hypot(end[0] - start[0], end[1] - start[1])
+        if self._snap is None and not modifiers & CTRL:  # a round radius, unless on a point
+            step = self.canvas.grid_step()
+            radius = round(radius / step) * step
+        radius = _um(radius)
+        if radius <= 0:
+            return None
+        return CircleShape(layer=self.window.draw_layer, x=start[0], y=start[1], radius=radius)
+
+    def describe(self, shape) -> str:
+        return f"Circle radius {shape.radius:g} µm"
+
+
+class _PointsTool(DrawTool):
+    """Polygon and path: click the points, then finish."""
+
+    minimum: ClassVar[int]
+    closes: ClassVar[bool] = False
+
+    def reset(self) -> None:
+        super().reset()
+        self._cursor: tuple[float, float] | None = None
+
+    def shape(self, points: list[tuple[float, float]]) -> Shape | None:
+        raise NotImplementedError
+
+    def hint(self) -> str:
+        noun = self.noun.capitalize()
+        if not self.placed:
+            return f"{noun}: click the first point (snaps to points; Ctrl: no snapping)"
+        return (
+            f"{noun}: click the next point (Shift: 45°); double-click or Enter finishes, "
+            "Backspace takes back a point, Esc cancels"
+        )
+
+    def press(self, x, y, modifiers) -> None:
+        if not self.placed and not self.start():
+            return
+        point = self.locate(x, y, modifiers)
+        if self.closes and len(self.placed) >= self.minimum and point == self.placed[0]:
+            self.finish()  # clicked on the first point: closed
+            return
+        if not self.placed or point != self.placed[-1]:
+            self.placed.append(point)
+        self._cursor = point
+        self._show()
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+
+    def move(self, x, y, modifiers, left) -> None:
+        self._cursor = self.locate(x, y, modifiers)
+        if not self.placed:
+            self.canvas.show_points("snap", [self._snap] if self._snap else [])
+            return
+        self._show()
+
+    def _show(self) -> None:
+        points = list(self.placed)
+        if self._cursor is not None and self._cursor != points[-1]:
+            points.append(self._cursor)
+        shape = self.shape(points) if len(points) >= self.minimum else None
+        self.preview(shape, points, self.closes)
+
+    def double_click(self, x, y) -> bool:
+        if self.placed:
+            self.finish()
+        return True  # never open a component while drawing
+
+    def key(self, key) -> bool:
+        if not self.placed:
+            return False
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.finish()
+            return True
+        if key == Qt.Key.Key_Backspace:
+            self.placed.pop()
+            if self.placed:
+                self._show()
+                self.window.update_overlay()
+            else:
+                self.cancel()
+            self.window.prompt(self.hint())
+            return True
+        return False
+
+    def finish(self) -> None:
+        points = self.placed
+        shape = self.shape(points) if len(points) >= self.minimum else None
+        self.add(shape, f"a {self.noun} needs at least {self.minimum} different points")
+
+
+class PolygonTool(_PointsTool):
+    name, label, shortcut, noun = "polygon", "Polygon", "P", "polygon"
+    minimum, closes = 3, True
+
+    def shape(self, points) -> Shape | None:
+        return PolygonShape(layer=self.window.draw_layer, points=list(points))
+
+
+class PathTool(_PointsTool):
+    name, label, shortcut, noun = "path", "Path", "W", "path"
+    minimum = 2
+
+    def hint(self) -> str:
+        return super().hint().replace("Path:", f"Path ({self.window.path_width:g} µm wide):", 1)
+
+    def shape(self, points) -> Shape | None:
+        return PathShape(
+            layer=self.window.draw_layer, points=list(points), width=self.window.path_width
+        )
+
+
 TOOLS: tuple[type[Tool], ...] = (
     SelectTool,
     HandTool,
@@ -574,7 +888,20 @@ TOOLS: tuple[type[Tool], ...] = (
     RotateTool,
     AlignTool,
     MeasureTool,
+    RectTool,
+    CircleTool,
+    PolygonTool,
+    PathTool,
 )
+
+
+def _um(value: float) -> float:
+    """A coordinate without floating-point noise (grid steps like 0.1 add up badly)."""
+    return round(value, 6) + 0.0  # + 0.0 turns -0.0 into 0.0
+
+
+def _no_components(name: str):
+    raise KeyError(name)  # drawn primitives never refer to components
 
 
 def probe(x: float, y: float) -> kdb.Region:

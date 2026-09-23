@@ -104,6 +104,7 @@ class LayoutCanvas(QGraphicsView):
     released = Signal(float, float, object)
     double_clicked = Signal(float, float)
     nudged = Signal(int, int, bool)  # arrow keys: steps in x and y; True for fine steps
+    key_pressed = Signal(object)  # Enter or Backspace, for the active tool
     cursor_moved = Signal(float, float)
     view_changed = Signal()  # zoomed or panned
 
@@ -130,6 +131,7 @@ class LayoutCanvas(QGraphicsView):
         self._drag_items: list = []
         self._ruler_items: list = []
         self._box_item: QGraphicsRectItem | None = None
+        self._sketch_item: QGraphicsPathItem | None = None
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._has_content = False
         # A large scene rect lets the user pan freely beyond the geometry.
@@ -276,6 +278,26 @@ class LayoutCanvas(QGraphicsView):
             self.scene().addItem(self._box_item)
         self._box_item.setRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)).normalized())
 
+    def show_sketch(self, points: list[tuple[float, float]], closed: bool) -> None:
+        """The outline of a shape being drawn (no points hides it)."""
+        if self._sketch_item is not None:
+            self.scene().removeItem(self._sketch_item)
+            self._sketch_item = None
+        if len(points) < 2:
+            return
+        path = QPainterPath(QPointF(*points[0]))
+        for point in points[1:]:
+            path.lineTo(QPointF(*point))
+        if closed:
+            path.closeSubpath()
+        pen = QPen(QColor(self.theme["pick"]), 1.5)
+        pen.setCosmetic(True)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        self._sketch_item = QGraphicsPathItem(path)
+        self._sketch_item.setPen(pen)
+        self._sketch_item.setZValue(1100)
+        self.scene().addItem(self._sketch_item)
+
     def show_rulers(self, rulers: list[tuple[float, float, float, float]]) -> None:
         """Measurement lines with their length, dx and dy."""
         for item in self._ruler_items:
@@ -418,6 +440,9 @@ class LayoutCanvas(QGraphicsView):
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F:
             self.fit()
+            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Backspace):
+            self.key_pressed.emit(event.key())
             return
         if event.key() == Qt.Key.Key_Space:
             if not event.isAutoRepeat():

@@ -4,16 +4,22 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QMimeData, QSize, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -26,20 +32,34 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.component import component_types
 from mems_sketch.core.expressions import ExpressionError, resolve_variables
 from mems_sketch.core.process import Layer
-from mems_sketch.core.shapes import NodePath, Shape, child_lists
+from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
+from mems_sketch.gui.canvas import COMPONENT_MIME
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 SLOT_LABELS = {"boolean": ("A", "B")}
 
 
 def describe(shape: Shape) -> str:
-    """Short summary shown next to a node's name, with its alignment if it has one."""
+    """A node's summary with its alignment, if it has one (the shape list's tooltip)."""
     summary = shape.summary()
     if shape.align is not None:
-        summary += f" · {shape.align.point} at {shape.align.to}"
+        summary += f" · {alignment(shape)}"
     return summary
+
+
+def alignment(shape: Shape) -> str:
+    return f"{shape.align.point} at {shape.align.to}"
+
+
+def detail(shape: Shape) -> str:
+    """The muted text after a node's name: what it is, briefly, and how often it repeats."""
+    text = shape.detail()
+    repeat = shape.repeat
+    if repeat is not None:
+        text += f"  {_format(repeat.columns)}×{_format(repeat.rows)}"
+    return text
 
 
 def parse_value(text: str) -> float | str:
@@ -111,7 +131,11 @@ def _table(columns: Sequence[str]) -> QTableWidget:
     table.setHorizontalHeaderLabels(list(columns))
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
     table.horizontalHeader().setStretchLastSection(True)
+    table.horizontalHeader().setHighlightSections(False)
     table.verticalHeader().hide()
+    table.verticalHeader().setDefaultSectionSize(26)
+    table.setShowGrid(False)
+    table.setFrameShape(QTableWidget.Shape.NoFrame)
     return table
 
 
@@ -138,54 +162,53 @@ class _Panel(QWidget):
 
 
 class ComponentsPanel(_Panel):
-    """The project's components, library components and built-ins.
+    """An explorer of the components: the project's, each library's and the built-ins.
 
-    Double-click to open one in a tab (library and built-in components open
-    read-only); Place inserts the selected one into the component being edited.
+    These are definitions: every component expands to the components it
+    uses, and those expand in turn. The placements themselves (each with its
+    own name) are in the Shapes list. Double-click
+    opens a component in a tab (library and built-in ones read-only); drag one
+    onto the canvas, or use Place, to put it into the component being edited.
+    Right-click for everything else.
     """
 
     place_requested = Signal(str)
     open_requested = Signal(str)
+    open_aside_requested = Signal(str)  # open in the other pane
     process_requested = Signal()
+    collapse_changed = Signal()
     NAME_ROLE = Qt.ItemDataRole.UserRole
-    PROCESS_ROLE = Qt.ItemDataRole.UserRole + 1
+    GROUP_ROLE = Qt.ItemDataRole.UserRole + 1  # "project", "library:<name>", "builtin"
+    PROCESS_ROLE = Qt.ItemDataRole.UserRole + 2  # the Process item
+    PENDING = "…"  # placeholder child: filled in when the item is expanded
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.tree = QTreeWidget()
+        self.tree = _ComponentTree()
         self.tree.setHeaderHidden(True)
+        self.tree.setItemDelegate(DetailDelegate(self.tree))
         self.tree.itemDoubleClicked.connect(self._activated)
-        self.collapsed: set[str] = set()  # group titles, e.g. "Built-in"
-        self.tree.itemCollapsed.connect(lambda item: self._set_collapsed(item, True))
-        self.tree.itemExpanded.connect(lambda item: self._set_collapsed(item, False))
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._context_menu)
+        self.collapsed: set[str] = set()  # collapsed groups, e.g. "Built-in"
+        self.expanded: set[str] = set()  # expanded components, by their path in the tree
+        self.tree.itemCollapsed.connect(lambda item: self._set_expanded(item, False))
+        self.tree.itemExpanded.connect(lambda item: self._set_expanded(item, True))
         self._refreshing = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self.actions = _action_bar(
             None,
-            ("add", "New component", self._new),
-            ("edit", "Rename", self._rename),
-            ("delete", "Delete", self._delete),
-            ("top", "Set as top component", self._set_top),
-            ("place", "Place in the edited component", self._place),
+            ("add", "New component or library", self._add_menu),
+            ("place", "Place the selected component in the edited one", self._place),
+            ("collapse", "Collapse all", self._collapse_all),
         )
-        layout.addLayout(self.actions)
+        self.header_buttons = list(self.actions.buttons.values())  # shown in the dock header
         layout.addWidget(self.tree)
 
-    collapse_changed = Signal()
-
-    def _set_collapsed(self, item: QTreeWidgetItem, collapsed: bool) -> None:
-        if self._refreshing or item.parent() is not None:
-            return
-        key = self._group_key(item.text(0))
-        (self.collapsed.add if collapsed else self.collapsed.discard)(key)
-        self.collapse_changed.emit()
-
-    @staticmethod
-    def _group_key(title: str) -> str:
-        return "project" if title.startswith("Project: ") else title
+    # -- building ------------------------------------------------------------
 
     def refresh(self) -> None:
         self._refreshing = True
@@ -196,50 +219,119 @@ class ComponentsPanel(_Panel):
 
     def _fill(self) -> None:
         project = self.document.project
+        scroll = self.tree.verticalScrollBar().value()
         self.tree.clear()
-        local = QTreeWidgetItem(self.tree, [f"Project: {project.name}"])
-        local.setIcon(0, icons.icon("folder"))
+        local = self._group(project.name, "project", "folder", "Project components")
         process = QTreeWidgetItem(local, ["Process"])
         process.setData(0, self.PROCESS_ROLE, True)
         process.setIcon(0, icons.icon("layers"))
         process.setToolTip(0, "The process's layers and constants (opens in a tab)")
-        for name, definition in project.components.items():
-            label = name + ("  (top)" if name == project.top else "")
-            item = QTreeWidgetItem(local, [label])
-            item.setData(0, self.NAME_ROLE, name)
-            item.setToolTip(0, definition.description or name)
-            item.setIcon(0, icons.icon("top" if name == project.top else "component"))
-            self._mark_active(item, name, label)
+        names = sorted(project.components, key=lambda n: n != project.top)  # top first
+        for name in names:
+            self._component(local, name, name)
         for library in project.libraries.values():
-            group = QTreeWidgetItem(self.tree, [f"Library: {library.name}"])
-            group.setIcon(0, icons.icon("library"))
+            where = f" — {library.path}" if library.path else ""
+            group = self._group(
+                library.name, f"library:{library.name}", "library", f"Library{where}"
+            )
             for name in library.components:
-                item = QTreeWidgetItem(group, [name])
-                item.setData(0, self.NAME_ROLE, f"{library.name}.{name}")
-                item.setIcon(0, icons.icon("component"))
-                item.setToolTip(0, f"{library.name}.{name} (library, read-only)")
-                self._mark_active(item, f"{library.name}.{name}", name)
-        builtins = QTreeWidgetItem(self.tree, ["Built-in"])
-        builtins.setIcon(0, icons.icon("builtin"))
+                self._component(group, f"{library.name}.{name}", name)
+        builtins = self._group("Built-in", "builtin", "builtin", "Built-in components")
         for name in component_types():
-            item = QTreeWidgetItem(builtins, [name])
-            item.setData(0, self.NAME_ROLE, name)
-            item.setIcon(0, icons.icon("component"))
-            item.setToolTip(0, f"{name} (built-in, read-only)")
-            self._mark_active(item, name, name)
-        self.tree.expandAll()
-        for i in range(self.tree.topLevelItemCount()):
-            group = self.tree.topLevelItem(i)
-            if self._group_key(group.text(0)) in self.collapsed:
-                group.setExpanded(False)
+            self._component(builtins, name, name)
+        self.tree.verticalScrollBar().setValue(scroll)
 
-    def _mark_active(self, item: QTreeWidgetItem, name: str, label: str) -> None:
-        if name == self.document.active:
+    def _group(self, title: str, key: str, icon: str, tip: str) -> QTreeWidgetItem:
+        item = QTreeWidgetItem(self.tree, [title])
+        item.setIcon(0, icons.icon(icon))
+        item.setData(0, self.GROUP_ROLE, key)
+        item.setToolTip(0, tip)
+        font = QFont()
+        font.setBold(True)
+        item.setFont(0, font)
+        item.setExpanded(self._state_key(item) not in self.collapsed)
+        return item
+
+    def _component(self, parent: QTreeWidgetItem, name: str, label: str):
+        project = self.document.project
+        item = QTreeWidgetItem(parent, [label])
+        item.setData(0, self.NAME_ROLE, name)
+        item.setIcon(0, icons.icon(component_icon(project, name)))
+        if name == project.top and name != "top":  # the star shows it too
+            item.setData(0, DETAIL_ROLE, "top")
+        item.setToolTip(0, self._tooltip(name))
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
+        if parent.parent() is None and name == self.document.active:  # the tab being edited
             font = QFont()
             font.setBold(True)
             item.setFont(0, font)
             item.setIcon(0, icons.icon("eye" if self.document.read_only else "edit", "blue"))
-            item.setToolTip(0, ("Viewing " if self.document.read_only else "Editing ") + label)
+        if self.document.components.placed(name):
+            QTreeWidgetItem(item, [self.PENDING])  # filled in when expanded
+            if self._path_key(item) in self.expanded or (
+                parent.parent() is None and name == project.top and not self.expanded
+            ):
+                item.setExpanded(True)
+        return item
+
+    def _tooltip(self, name: str) -> str:
+        project = self.document.project
+        if "." in name:
+            kind = "library component, read-only: copy it into the project to edit it"
+        elif name in project.components:
+            kind = "top component" if name == project.top else "project component"
+        else:
+            kind = "built-in component, read-only"
+        users = self.document.components.users(name)
+        placed = f"\nplaced in {', '.join(users)}" if users else ""
+        return f"{name} — {kind}{placed}"
+
+    def _fill_children(self, item: QTreeWidgetItem) -> None:
+        if item.childCount() == 1 and item.child(0).text(0) == self.PENDING:
+            item.takeChild(0)
+            for child, _count in self.document.components.placed(item.data(0, self.NAME_ROLE)):
+                self._component(item, child, child)
+
+    # -- expanded state --------------------------------------------------------
+
+    def _state_key(self, item: QTreeWidgetItem) -> str:
+        """Groups keep the keys the editor state has always used."""
+        key = item.data(0, self.GROUP_ROLE)
+        if key == "project":
+            return "project"
+        if key == "builtin":
+            return "Built-in"
+        return f"Library: {key.partition(':')[2]}"
+
+    def _path_key(self, item: QTreeWidgetItem) -> str:
+        names = []
+        while item is not None and item.data(0, self.GROUP_ROLE) is None:
+            names.append(item.data(0, self.NAME_ROLE))
+            item = item.parent()
+        group = item.data(0, self.GROUP_ROLE) if item is not None else ""
+        return "/".join([group, *reversed(names)])
+
+    def _set_expanded(self, item: QTreeWidgetItem, expanded: bool) -> None:
+        if expanded:
+            self._fill_children(item)
+        if self._refreshing:
+            return
+        if item.data(0, self.GROUP_ROLE) is not None:
+            key = self._state_key(item)
+            (self.collapsed.discard if expanded else self.collapsed.add)(key)
+        else:
+            key = self._path_key(item)
+            (self.expanded.add if expanded else self.expanded.discard)(key)
+        self.collapse_changed.emit()
+
+    def _collapse_all(self) -> None:
+        self.expanded.clear()
+        self.tree.collapseAll()
+        for i in range(self.tree.topLevelItemCount()):
+            self.tree.topLevelItem(i).setExpanded(True)
+        self.collapse_changed.emit()
+
+    # -- actions -----------------------------------------------------------------
 
     def selected(self) -> str | None:
         items = self.tree.selectedItems()
@@ -256,13 +348,105 @@ class ComponentsPanel(_Panel):
         if name is not None:
             self.open_requested.emit(name)
 
+    def _add_menu(self) -> None:
+        menu = QMenu(self)
+        _menu_action(menu, "New component…", self._new, "add")
+        _menu_action(menu, "Add library…", self.add_library, "library")
+        button = self.actions.buttons["New component or library"]
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+
+    def _context_menu(self, position) -> None:
+        menu = self.menu_for(self.tree.itemAt(position))
+        if not menu.isEmpty():
+            menu.exec(self.tree.viewport().mapToGlobal(position))
+
+    def menu_for(self, item: QTreeWidgetItem | None) -> QMenu:
+        """The right-click menu for an item of the explorer (or its empty space)."""
+        menu = QMenu(self)
+        if item is None:
+            self._project_actions(menu)
+        elif item.data(0, self.PROCESS_ROLE):
+            _menu_action(menu, "Open the process", self.process_requested.emit, "layers")
+        elif item.data(0, self.GROUP_ROLE) is not None:
+            group = item.data(0, self.GROUP_ROLE)
+            if group == "project":
+                self._project_actions(menu)
+            elif group.startswith("library:"):
+                library = group.partition(":")[2]
+                _menu_action(
+                    menu,
+                    f"Remove library {library}",
+                    lambda: self._guard(lambda: self.document.components.remove_library(library)),
+                    "remove",
+                )
+        else:
+            self.tree.setCurrentItem(item)
+            self._component_actions(menu, item.data(0, self.NAME_ROLE))
+        return menu
+
+    def _project_actions(self, menu) -> None:
+        _menu_action(menu, "New component…", self._new, "add")
+        _menu_action(menu, "Add library…", self.add_library, "library")
+        if self.document.project.top is not None:
+            menu.addSeparator()
+            _menu_action(menu, "Make the project a library (no top component)", self._no_top)
+
+    def _component_actions(self, menu, name: str) -> None:
+        project = self.document.project
+        active = self.document.active
+        _menu_action(menu, "Open", lambda: self.open_requested.emit(name), "edit")
+        _menu_action(
+            menu, "Open in the other pane", lambda: self.open_aside_requested.emit(name), "split"
+        )
+        place = _menu_action(
+            menu, f"Place in {active}", lambda: self.place_requested.emit(name), "place"
+        )
+        place.setEnabled(active in project.components and name != active)
+        menu.addSeparator()
+        if name in project.components:
+            _menu_action(menu, "Rename…", lambda: self._rename(name), "edit")
+            _menu_action(
+                menu,
+                "Duplicate",
+                lambda: self._guard(lambda: self.document.components.copy(name)),
+                "duplicate",
+            )
+            _menu_action(menu, "Delete", lambda: self._delete(name), "delete")
+            menu.addSeparator()
+            if name == project.top:
+                _menu_action(menu, "Make the project a library (no top component)", self._no_top)
+            else:
+                _menu_action(
+                    menu,
+                    "Set as top component",
+                    lambda: self._guard(lambda: self.document.components.set_top(name)),
+                    "top",
+                )
+        elif "." in name:
+            _menu_action(
+                menu,
+                "Copy into the project",
+                lambda: self._guard(lambda: self.document.components.copy(name)),
+                "duplicate",
+            )
+
     def _new(self) -> None:
         name, ok = QInputDialog.getText(self, "New component", "Component name:")
         if ok and name.strip():
             self._guard(lambda: self.document.components.new(name.strip()))
 
-    def _rename(self) -> None:
-        old = self.selected()
+    def add_library(self, folder: str | None = None) -> None:
+        """Load a folder of components (a library or another project) as a library."""
+        if folder is None:
+            folder = QFileDialog.getExistingDirectory(self, "Add library: choose its folder")
+        if folder:
+            self._guard(lambda: self.document.components.add_library(folder))
+
+    def _no_top(self) -> None:
+        self._guard(lambda: self.document.components.set_top(None))
+
+    def _rename(self, old: str | None = None) -> None:
+        old = old or self.selected()
         if not self._is_local(old):
             self.error.emit("select a project component to rename")
             return
@@ -270,8 +454,8 @@ class ComponentsPanel(_Panel):
         if ok and new.strip() and new.strip() != old:
             self._guard(lambda: self.document.components.rename(old, new.strip()))
 
-    def _delete(self) -> None:
-        name = self.selected()
+    def _delete(self, name: str | None = None) -> None:
+        name = name or self.selected()
         if self._is_local(name):
             self._guard(lambda: self.document.components.delete(name))
 
@@ -286,36 +470,135 @@ class ComponentsPanel(_Panel):
             self.place_requested.emit(name)
 
 
+class _ComponentTree(QTreeWidget):
+    """The explorer's tree: components can be dragged onto a canvas to place them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+
+    def mimeTypes(self) -> list[str]:
+        return [COMPONENT_MIME]
+
+    def mimeData(self, items) -> QMimeData:
+        data = QMimeData()
+        names = [i.data(0, ComponentsPanel.NAME_ROLE) for i in items]
+        names = [n for n in names if n]
+        if names:
+            data.setData(COMPONENT_MIME, names[0].encode())
+            data.setText(names[0])
+        return data
+
+
+def component_icon(project, name: str) -> str:
+    """Project, library and built-in components have their own icons."""
+    if "." in name:
+        return "component_library"
+    if name in project.components:
+        return "top" if name == project.top else "component"
+    return "component_builtin"
+
+
+def _menu_action(menu, text: str, slot, icon: str | None = None):
+    action = menu.addAction(text)
+    action.triggered.connect(slot)
+    if icon is not None:
+        action.setIcon(icons.icon(icon))
+    return action
+
+
+DETAIL_ROLE = Qt.ItemDataRole.UserRole + 5  # muted text drawn after an item's name
+PLACES_ROLE = Qt.ItemDataRole.UserRole + 6  # a shape row placing a component: its name
+INSIDE_ROLE = Qt.ItemDataRole.UserRole + 7  # a row inside a placed component: (owner, path)
+
+
+class DetailDelegate(QStyledItemDelegate):
+    """Draws an item's name, then its detail (``DETAIL_ROLE``) in a muted colour."""
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+        detail = index.data(DETAIL_ROLE)
+        if not detail:
+            return
+        style_option = QStyleOptionViewItem(option)
+        self.initStyleOption(style_option, index)
+        style = style_option.widget.style() if style_option.widget else QApplication.style()
+        text_rect = style.subElementRect(
+            QStyle.SubElement.SE_ItemViewItemText, style_option, style_option.widget
+        )
+        metrics = style_option.fontMetrics
+        used = metrics.horizontalAdvance(style_option.text) + 8
+        rect = text_rect.adjusted(used, 0, 0, 0)
+        if rect.width() <= 10:
+            return
+        painter.save()
+        font = QFont(style_option.font)
+        font.setBold(False)
+        painter.setFont(font)
+        painter.setPen(option.palette.placeholderText().color())
+        text = QFontMetrics(font).elidedText(detail, Qt.TextElideMode.ElideRight, rect.width())
+        painter.drawText(
+            rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text
+        )
+        painter.restore()
+
+
 # -- shape tree ----------------------------------------------------------------
 
 
 class ShapeTree(QTreeWidget):
-    """The active component's shape tree. Emits the selected node paths."""
+    """The active component's shapes, as an outliner. Emits the selected node paths.
+
+    The component's own shapes can be selected and edited. A placed component
+    expands to show what is inside it: greyed and read-only, because it
+    belongs to that component's definition and changing it changes every
+    copy. Double-clicking such a row opens the component that owns it, with
+    that shape selected.
+    """
 
     selection_changed_paths = Signal(list)
     enabled_toggled = Signal(tuple, bool)
     collapse_changed = Signal()
 
+    STATUS = 1  # the narrow column with the alignment icon
+
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.setHeaderLabels(["Shape", "Type"])
+        self.setColumnCount(2)
+        self.setHeaderHidden(True)
+        self.setItemDelegateForColumn(0, DetailDelegate(self))
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header = self.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(self.STATUS, QHeaderView.ResizeMode.Fixed)
+        self.setColumnWidth(self.STATUS, 26)
         self.itemSelectionChanged.connect(self._emit_selection)
         self.itemChanged.connect(self._item_changed)
         self._rebuilding = False
-        # Collapsed nodes per component (everything else is expanded).
+        # Per component: collapsed operations (others are open) and opened
+        # placed components (others are closed).
         self.collapsed: dict[str, set[NodePath]] = {}
+        self.opened: dict[str, set[NodePath]] = {}
         self.itemCollapsed.connect(lambda item: self._set_collapsed(item, True))
-        self.itemExpanded.connect(lambda item: self._set_collapsed(item, False))
+        self.itemExpanded.connect(self._expanded)
+
+    def _expanded(self, item: QTreeWidgetItem) -> None:
+        self._fill_placed(item)
+        self._set_collapsed(item, False)
 
     def _set_collapsed(self, item: QTreeWidgetItem, collapsed: bool) -> None:
         path = item.data(0, PATH_ROLE)
         if self._rebuilding or path is None:
             return
-        paths = self.collapsed.setdefault(self.document.active, set())
-        (paths.add if collapsed else paths.discard)(path)
+        if item.data(0, PLACES_ROLE) is not None:
+            paths = self.opened.setdefault(self.document.active, set())
+            (paths.discard if collapsed else paths.add)(path)
+        else:
+            paths = self.collapsed.setdefault(self.document.active, set())
+            (paths.add if collapsed else paths.discard)(path)
         self.collapse_changed.emit()
 
     def rebuild(self, keep: list[NodePath] | None = None) -> None:
@@ -324,36 +607,104 @@ class ShapeTree(QTreeWidget):
         self.clear()
         for index, shape in enumerate(self.document.shapes):
             self._add(self.invisibleRootItem(), shape, ((0, index),))
-        self.expandAll()
         collapsed = self.collapsed.get(self.document.active, set())
+        opened = self.opened.get(self.document.active, set())
         pending = [self.topLevelItem(i) for i in range(self.topLevelItemCount())]
-        while pending:
+        while pending:  # the component's own nodes only: placed contents load when opened
             item = pending.pop()
-            if item.data(0, PATH_ROLE) in collapsed:
-                item.setExpanded(False)
-            pending.extend(item.child(i) for i in range(item.childCount()))
+            path = item.data(0, PATH_ROLE)
+            if item.data(0, PLACES_ROLE) is not None:
+                item.setExpanded(path in opened)
+            elif item.childCount():
+                item.setExpanded(path not in collapsed)
+            if item.data(0, INSIDE_ROLE) is None:
+                pending.extend(item.child(i) for i in range(item.childCount()))
         self._rebuilding = False
         self.select_paths(keep)
 
     def _add(self, parent: QTreeWidgetItem, shape: Shape, path: NodePath) -> None:
-        item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})", describe(shape)])
+        item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})"])
         item.setData(0, PATH_ROLE, path)
+        item.setData(0, DETAIL_ROLE, detail(shape))
+        item.setToolTip(0, describe(shape))
         item.setIcon(0, shape_icon(shape))
-        if shape.repeat is not None:
-            item.setIcon(1, icons.icon("repeat"))
+        if shape.align is not None:
+            item.setIcon(self.STATUS, icons.icon("link"))
+            item.setToolTip(self.STATUS, f"Aligned: {alignment(shape)}")
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(0, Qt.CheckState.Checked if shape.enabled else Qt.CheckState.Unchecked)
         if not shape.enabled:
-            for column in (0, 1):
-                item.setForeground(column, QBrush(QColor("#8c8f99")))
+            item.setForeground(0, QBrush(QColor("#8c8f99")))
+        self._placeholder(item, shape, None)
         labels = SLOT_LABELS.get(shape.kind)
         for slot, children in enumerate(child_lists(shape)):
             holder = item
             if labels:
-                holder = QTreeWidgetItem(item, [labels[slot], "operand"])
+                holder = QTreeWidgetItem(item, [labels[slot]])
+                holder.setData(0, DETAIL_ROLE, "operand")
                 holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
             for index, child in enumerate(children):
                 self._add(holder, child, (*path, (slot, index)))
+
+    # -- what is inside placed components (read-only) -------------------------
+
+    def _placeholder(self, item: QTreeWidgetItem, shape: Shape, namespace: str | None) -> None:
+        """Let a placed component's row expand into its shapes (loaded when opened)."""
+        if not isinstance(shape, RefShape):
+            return
+        project = self.document.project
+        try:
+            target = project.qualify(shape.component, namespace)
+        except KeyError:
+            return
+        found = project.definition(target)
+        if found is None or not found[0].shapes:
+            return  # a built-in (or empty) component has nothing to show
+        item.setData(0, PLACES_ROLE, target)
+        QTreeWidgetItem(item, ["…"])
+
+    def _fill_placed(self, item: QTreeWidgetItem) -> None:
+        target = item.data(0, PLACES_ROLE)
+        if target is None or item.childCount() != 1 or item.child(0).data(0, INSIDE_ROLE):
+            return
+        item.takeChild(0)
+        found = self.document.project.definition(target)
+        if found is None:
+            return
+        definition, namespace = found
+        for index, shape in enumerate(definition.shapes):
+            self._add_inside(item, shape, target, namespace, ((0, index),))
+
+    def _add_inside(self, parent, shape: Shape, owner: str, namespace, path: NodePath) -> None:
+        item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})"])
+        item.setData(0, INSIDE_ROLE, (owner, path))
+        item.setData(0, DETAIL_ROLE, detail(shape))
+        item.setIcon(0, shape_icon(shape))
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # not selectable: it belongs to ``owner``
+        item.setForeground(0, QBrush(QColor("#8c8f99")))
+        font = QFont()
+        font.setItalic(True)
+        item.setFont(0, font)
+        item.setToolTip(
+            0,
+            f"{describe(shape)}\nPart of {owner}: double-click to edit it there "
+            "(changes every copy)",
+        )
+        if shape.align is not None:
+            item.setIcon(self.STATUS, icons.icon("link"))
+            item.setToolTip(self.STATUS, f"Aligned: {alignment(shape)}")
+        self._placeholder(item, shape, namespace)
+        labels = SLOT_LABELS.get(shape.kind)
+        for slot, children in enumerate(child_lists(shape)):
+            holder = item
+            if labels:
+                holder = QTreeWidgetItem(item, [labels[slot]])
+                holder.setData(0, DETAIL_ROLE, "operand")
+                holder.setData(0, INSIDE_ROLE, (owner, path))
+                holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            for index, child in enumerate(children):
+                self._add_inside(holder, child, owner, namespace, (*path, (slot, index)))
+            holder.setExpanded(True)
 
     def selected_paths(self) -> list[NodePath]:
         return [p for item in self.selectedItems() if (p := item.data(0, PATH_ROLE)) is not None]
@@ -653,6 +1004,12 @@ class LayerDefinitionsPanel(_Panel):
             for column, value in enumerate(values):
                 self.layers.setItem(row, column, QTableWidgetItem(_format(value)))
         self.layers.blockSignals(False)
+        # the name column also holds the check box and the colour swatch
+        header = self.layers.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        metrics = self.layers.fontMetrics()
+        widest = max((metrics.horizontalAdvance(n) for n in layers), default=40)
+        self.layers.setColumnWidth(0, max(widest, metrics.horizontalAdvance("Layer")) + 64)
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:
         name = self._layer_names[item.row()]

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.gui import icons
+from mems_sketch.gui.theme import HEADER_HEIGHT
 
 ANCHORS = ("left-top", "left-bottom", "bottom", "right")
 STRIPE_WIDTH = 38
@@ -41,10 +42,12 @@ class _Window:
     widget: QWidget
     anchor: str
     button: QToolButton
+    header_buttons: QWidget
 
 
 class _Host(QFrame):
-    """The panel of one anchor: a header with the open window's title, and the window."""
+    """The panel of one anchor: a header with the open window's title and its own
+    buttons (a panel's ``header_buttons``), and the window."""
 
     def __init__(self, hide) -> None:
         super().__init__()
@@ -53,13 +56,15 @@ class _Host(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         header = QWidget()
-        header.setObjectName("tool-window-header")
-        row = QHBoxLayout(header)
-        row.setContentsMargins(10, 4, 4, 2)
+        header.setObjectName("dock-title")
+        header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        header.setFixedHeight(HEADER_HEIGHT)  # as tall as the editor tabs: edges line up
+        row = self.row = QHBoxLayout(header)
+        row.setContentsMargins(10, 0, 4, 0)
+        row.setSpacing(1)
         self.title = QLabel()
-        self.title.setObjectName("heading")
-        row.addWidget(self.title)
-        row.addStretch()
+        self.title.setObjectName("dock-title-label")
+        row.addWidget(self.title, 1)
         close = QToolButton()
         close.setAutoRaise(True)
         close.setToolTip("Hide")
@@ -150,8 +155,17 @@ class ToolWindows(QWidget):
         icons.bind(button, icon)
         button.clicked.connect(lambda _=False, n=name: self.toggle(n))
         self._groups[anchor].addWidget(button)
-        self._hosts[anchor].stack.addWidget(widget)
-        self._windows[name] = _Window(name, title, widget, anchor, button)
+        host = self._hosts[anchor]
+        host.stack.addWidget(widget)
+        buttons = QWidget()  # the panel's own buttons, shown in the header while it is open
+        row = QHBoxLayout(buttons)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(1)
+        for header_button in getattr(widget, "header_buttons", []):
+            row.addWidget(header_button)
+        buttons.hide()
+        host.row.insertWidget(host.row.count() - 1, buttons)  # before the hide button
+        self._windows[name] = _Window(name, title, widget, anchor, button, buttons)
 
     def names(self) -> list[str]:
         return list(self._windows)
@@ -172,9 +186,11 @@ class ToolWindows(QWidget):
         host = self._hosts[window.anchor]
         if host.current is not None and host.current is not window:
             host.current.button.setChecked(False)
+            host.current.header_buttons.hide()
         host.current = window
         host.stack.setCurrentWidget(window.widget)
         host.title.setText(window.title)
+        window.header_buttons.show()
         window.button.setChecked(True)
         self._update()
         self.changed.emit()
@@ -184,6 +200,7 @@ class ToolWindows(QWidget):
         host = self._hosts[window.anchor]
         window.button.setChecked(False)
         if host.current is window:
+            window.header_buttons.hide()
             host.current = None
             self._update()
             self.changed.emit()

@@ -1,5 +1,8 @@
 """Themes, icons, settings, gizmos, hover and the IDE-like chrome."""
 
+import shutil
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -11,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QToolButton
 from mems_sketch.core.shapes import KINDS, RectShape, RefShape, wrap_shapes
 from mems_sketch.gui import icons, theme
 from mems_sketch.gui.app import MainWindow
+from mems_sketch.gui.panels import DETAIL_ROLE
 from mems_sketch.gui.settings import SETTINGS, PreferencesDialog, Settings
 
 NONE = Qt.KeyboardModifier.NoModifier
@@ -259,3 +263,115 @@ def test_every_shape_kind_has_an_icon():
     shapes += [wrap_shapes(op, "w", rects) for kind in KINDS for op in kind.wraps]
     shapes.append(RefShape(component="rectangle"))
     assert {s.icon_name() for s in shapes} <= set(icons.ICONS)
+
+
+# -- components explorer and shape list --------------------------------------------
+
+EXAMPLES = Path(__file__).parent.parent / "examples"
+
+
+@pytest.fixture
+def resonator(window, tmp_path):
+    for name in ("resonator", "libraries"):
+        shutil.copytree(
+            EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
+        )
+    window.open_project(str(tmp_path / "resonator"))
+    return window
+
+
+def explorer_item(window, *names):
+    """The explorer item reached by expanding ``names`` from the project group."""
+    item = window.components.tree.topLevelItem(0)
+    for name in names:
+        item.setExpanded(True)
+        item = next(
+            item.child(i)
+            for i in range(item.childCount())
+            if item.child(i).data(0, window.components.NAME_ROLE) == name
+        )
+    return item
+
+
+def test_the_explorer_shows_what_each_component_places(resonator):
+    suspension = explorer_item(resonator, "top", "suspension")
+    assert suspension.data(0, DETAIL_ROLE) is None  # definitions: no counts
+    assert "placed in top" in suspension.toolTip(0)
+    suspension.setExpanded(True)
+    children = [suspension.child(i).text(0) for i in range(suspension.childCount())]
+    assert children == ["serpentine_spring", "anchor"]
+    assert "project/top/suspension" in resonator.components.expanded
+    assert resonator.editor_state()["collapsed"]["explorer"]
+
+
+def test_the_explorer_copies_library_components_and_adds_libraries(resonator, tmp_path):
+    from PySide6.QtWidgets import QMenu
+
+    menu = QMenu()
+    resonator.components._component_actions(menu, "std.perforated_plate")
+    copy = next(a for a in menu.actions() if a.text() == "Copy into the project")
+    copy.trigger()
+    assert "perforated_plate" in resonator.document.project.components
+    assert resonator.area.current.component == "perforated_plate"  # opened to edit
+    resonator.components.add_library(str(tmp_path / "libraries" / "mems_std"))
+    groups = [
+        resonator.components.tree.topLevelItem(i).text(0)
+        for i in range(resonator.components.tree.topLevelItemCount())
+    ]
+    assert groups == ["resonator", "std", "mems_std", "Built-in"]
+
+
+def test_a_component_dropped_on_the_canvas_is_placed_there(resonator):
+    resonator.open_component("suspension")
+    canvas = resonator.canvas
+    canvas.component_dropped.emit("anchor", 120.0, -40.0)
+    placed = resonator.document.shapes[-1]
+    assert (placed.component, placed.x, placed.y) == ("anchor", 120, -40)
+    assert resonator.selection == [((0, len(resonator.document.shapes) - 1),)]
+
+
+def test_open_in_the_other_pane(resonator):
+    resonator.open_aside("suspension")
+    assert resonator.area.split
+    assert [v.component for v in resonator.area.views()] == ["top", "suspension"]
+
+
+def test_a_new_library_has_no_top_and_its_tab_shows_a_component(window):
+    window.new_library()
+    assert window.document.project.top is None
+    assert [v.component for v in window.area.views()] == ["component1"]
+    window._edit_top()  # no top component to open
+    assert "library" in window.statusBar().currentMessage()
+
+
+def test_the_shape_list_shows_details_and_alignment_icons(resonator):
+    tree = resonator.tree
+    mass, comb = tree.topLevelItem(0), tree.topLevelItem(1)
+    assert mass.data(0, DETAIL_ROLE) == "std.perforated_plate"
+    assert mass.icon(tree.STATUS).isNull() and not comb.icon(tree.STATUS).isNull()
+    assert comb.toolTip(tree.STATUS) == "Aligned: moving at mass.top"
+    resonator.document.nodes.add_primitive("rect")
+    assert tree.topLevelItem(tree.topLevelItemCount() - 1).data(0, DETAIL_ROLE) == "device"
+
+
+def test_placed_components_open_read_only_in_the_shape_list(resonator):
+    from mems_sketch.gui.panels import INSIDE_ROLE, PATH_ROLE, PLACES_ROLE
+
+    tree = resonator.tree
+    left = next(
+        tree.topLevelItem(i)
+        for i in range(tree.topLevelItemCount())
+        if tree.topLevelItem(i).text(0) == "suspension_left"
+    )
+    assert left.data(0, PLACES_ROLE) == "suspension" and not left.isExpanded()
+    left.setExpanded(True)  # loads what is inside
+    inside = [left.child(i) for i in range(left.childCount())]
+    assert [i.text(0) for i in inside] == ["spring", "anchor"]
+    assert inside[0].data(0, INSIDE_ROLE) == ("suspension", ((0, 0),))
+    assert not inside[0].flags() & Qt.ItemFlag.ItemIsSelectable  # read-only
+    assert tree.opened["top"] == {left.data(0, PATH_ROLE)}  # remembered per component
+    comb = tree.topLevelItem(1)
+    assert comb.childCount() == 0  # a built-in has nothing inside to show
+    resonator._tree_double_clicked(inside[1], 0)  # edit the anchor where it lives
+    assert resonator.document.active == "suspension"
+    assert resonator.selection == [((0, 1),)]

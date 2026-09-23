@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 import klayout.db as kdb
-from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer
+from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QToolBar,
     QToolButton,
 )
 
@@ -34,6 +33,7 @@ from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.find_action import FindActionDialog, menu_actions
 from mems_sketch.gui.panels import (
+    INSIDE_ROLE,
     ComponentsPanel,
     LayersPanel,
     MessagesPanel,
@@ -121,6 +121,7 @@ class MainWindow(QMainWindow):
         self.components.open_requested.connect(self.open_component)
         self.components.process_requested.connect(self.open_process)
         self.area.process_factory = self._make_process_view
+        self.components.open_aside_requested.connect(self.open_aside)
         self.layers.visibility_changed.connect(self._set_layer_visible)
         self.tree.collapse_changed.connect(self.state_changed)
         self.components.collapse_changed.connect(self.state_changed)
@@ -206,6 +207,9 @@ class MainWindow(QMainWindow):
                 lambda x, y, at, v=view: self._context_menu(v, x, y, at)
             )
             canvas.set_mode_actions([self.tool_actions[name] for name in CANVAS_MODES])
+            canvas.component_dropped.connect(
+                lambda name, x, y, v=view: self._component_dropped(v, name, x, y)
+            )
             canvas.set_theme(self.canvas_theme)
             canvas.configure(**self._canvas_options())
             self._caption(view)
@@ -317,6 +321,22 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.search.setFocus()
 
+    def open_aside(self, name: str) -> None:
+        """Open a component in the other pane (splitting the editor if needed)."""
+        if not self.document.exists(name):
+            self.report_error(f"unknown component '{name}'")
+            return
+        self._render(self.area.open(name, self.area.other_pane()))
+
+    def _component_dropped(self, view: ComponentView, name: str, x: float, y: float) -> None:
+        """A component dragged from the explorer onto a canvas: place it there."""
+        if view is not self.area.current:
+            self.area.set_current(view)
+        if name == view.component:
+            self.report_error("a component cannot be placed inside itself")
+            return
+        self._select_result(lambda: self.document.nodes.add_component(name, x, y))
+
     def split_view(self) -> None:
         view = self.area.split_view()
         if view is not None:
@@ -362,6 +382,7 @@ class MainWindow(QMainWindow):
             "hidden_layers": sorted(n for n, shown in self.layers.visible.items() if not shown),
             "collapsed": {
                 "components": sorted(self.components.collapsed),
+                "explorer": sorted(self.components.expanded),
                 "shapes": {
                     c: [[list(step) for step in p] for p in sorted(paths)]
                     for c, paths in self.tree.collapsed.items()
@@ -413,6 +434,7 @@ class MainWindow(QMainWindow):
         }
         collapsed = state.get("collapsed", {})
         self.components.collapsed = set(collapsed.get("components", []))
+        self.components.expanded = set(collapsed.get("explorer", []))
         self.tree.collapsed = {
             c: {_path(p) for p in paths} for c, paths in collapsed.get("shapes", {}).items()
         }
@@ -608,22 +630,6 @@ class MainWindow(QMainWindow):
         self.setting_actions = actions.settings_toggles
         self.primitive_menu, self.component_menu = actions.add, actions.place
         self.addToolBar(build_toolbar(self))
-
-    def _toolbar(self, title: str, name: str) -> QToolBar:
-        toolbar = self.addToolBar(title)
-        toolbar.setObjectName(name)
-        toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(18, 18))
-        return toolbar
-
-    def _menu_button(self, toolbar: QToolBar, menu: QMenu, icon: str, tip: str) -> QToolButton:
-        button = QToolButton()
-        icons.bind(button, icon)
-        button.setMenu(menu)
-        button.setToolTip(tip)
-        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        toolbar.addWidget(button)
-        return button
 
     def _show_tool_options(self) -> None:
         self.tool_status.show_for(self.tool)
@@ -891,6 +897,13 @@ class MainWindow(QMainWindow):
             self._open_reference(hit, view.component)
 
     def _tree_double_clicked(self, item, _column: int) -> None:
+        inside = item.data(0, INSIDE_ROLE)
+        if inside is not None:  # part of a placed component: edit it in its own tab
+            owner, path = inside
+            self.open_component(owner)
+            if self.document.active == owner:
+                self.tree.select_paths([path])
+            return
         path = item.data(0, Qt.ItemDataRole.UserRole)
         if path is not None:
             self._open_reference(path, self.document.active)
@@ -988,6 +1001,9 @@ class MainWindow(QMainWindow):
         self.tool.start_at(x, y)
 
     def _edit_top(self) -> None:
+        if self.document.project.top is None:
+            self.report_error("this project is a library: it has no top component")
+            return
         self.open_component(self.document.project.top)
 
     # -- commands ----------------------------------------------------------
@@ -1110,12 +1126,16 @@ class MainWindow(QMainWindow):
             return self.save_project()
         return answer == QMessageBox.StandardButton.Discard
 
-    def new_project(self) -> None:
+    def new_project(self, library: bool = False) -> None:
         if self._confirm_discard():
             self.save_editor_state()
             self.area.close_all()
             self.rulers = {}
-            self.document.new()
+            self.document.new(library=library)
+
+    def new_library(self) -> None:
+        """A new project without a top component: a set of components to place elsewhere."""
+        self.new_project(library=True)
 
     def open_project(self, path: str | None = None) -> None:
         if not self._confirm_discard():
@@ -1142,6 +1162,7 @@ class MainWindow(QMainWindow):
             self.rulers = {}
             self.layers.visible = {}
             self.components.collapsed = set()
+            self.components.expanded = set()
             self.tree.collapsed = {}
             self.refresh()
             self.restore_editor_state()

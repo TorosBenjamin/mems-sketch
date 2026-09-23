@@ -81,7 +81,8 @@ class Actions:
         act = functools.partial(make_action, w)
 
         file = self.file = QMenu("&File", w)
-        act("New project", w.new_project, QKeySequence.StandardKey.New, file, "new")
+        act("New project", lambda: w.new_project(), QKeySequence.StandardKey.New, file, "new")
+        act("New library", w.new_library, None, file, "library")
         act("Open project…", w.open_project, QKeySequence.StandardKey.Open, file, "open")
         self.save = act("Save", w.save_project, QKeySequence.StandardKey.Save, file, "save")
         act("Save as…", w.save_project_as, QKeySequence.StandardKey.SaveAs, file)

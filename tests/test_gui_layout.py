@@ -313,3 +313,22 @@ def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window)
     definitions.item(0, column).setText("0.5")
     first = next(iter(window.document.project.layers.values()))
     assert first.undercut == 0.5
+
+
+def test_a_tool_window_header_carries_the_panels_own_buttons(window):
+    buttons = window.components.header_buttons
+    assert buttons and all(b.isVisible() for b in buttons)  # Components is open
+    window.tool_windows.close("components")
+    window.tool_windows.open("components")
+    assert all(b.isVisible() for b in buttons)
+    from mems_sketch.gui.theme import HEADER_HEIGHT
+
+    header = buttons[0].parentWidget().parentWidget()
+    assert header.height() == HEADER_HEIGHT  # lines up with the editor tabs
+
+
+def test_the_process_item_has_its_own_right_click_entry(window):
+    menu = window.components.menu_for(process_item(window))
+    assert [a.text() for a in menu.actions()] == ["Open the process"]
+    menu.actions()[0].trigger()
+    assert window.area.process_view is not None

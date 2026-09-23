@@ -470,3 +470,67 @@ def test_a_script_can_edit_and_save_a_project(tmp_path):
     after = again.results.geometry(component="suspension")
     assert before.layers.keys() == after.layers.keys()
     assert all((before.layers[k] ^ after.layers[k]).is_empty() for k in before.layers)
+
+
+# -- components: hierarchy, copies, libraries, top ---------------------------------
+
+
+@pytest.fixture
+def resonator(tmp_path) -> EditSession:
+    for name in ("resonator", "libraries"):
+        shutil.copytree(
+            EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
+        )
+    return EditSession.open_project(tmp_path / "resonator")
+
+
+def test_placed_components_form_a_hierarchy(resonator):
+    placed = resonator.components.placed
+    assert placed("top") == [("std.perforated_plate", 1), ("comb_drive", 2), ("suspension", 2)]
+    assert placed("suspension") == [("serpentine_spring", 1), ("anchor", 1)]
+    assert placed("comb_drive") == []  # a built-in places nothing
+    assert resonator.components.users("suspension") == ["top"]
+
+
+def test_a_library_component_can_be_copied_into_the_project(resonator):
+    name = resonator.components.copy("std.perforated_plate")
+    assert name == "perforated_plate" and resonator.active == name
+    assert not resonator.read_only
+    assert resonator.components.copy("std.perforated_plate") == "perforated_plate_copy1"
+    with pytest.raises(ValueError, match="built in"):
+        resonator.components.copy("anchor")
+    resonator.undo()
+    resonator.undo()
+    assert "perforated_plate" not in resonator.project.components
+
+
+def test_libraries_can_be_added_and_removed_with_undo(resonator, tmp_path):
+    with pytest.raises(ValueError, match="still used by: top"):
+        resonator.components.remove_library("std")
+    name = resonator.components.add_library(tmp_path / "libraries" / "mems_std", "extra")
+    assert name == "extra" and "extra.perforated_plate" in resonator.project.component_names()
+    resonator.components.remove_library("extra")
+    assert "extra" not in resonator.project.libraries
+    resonator.undo()
+    assert "extra" in resonator.project.libraries
+    resonator.undo()
+    assert "extra" not in resonator.project.libraries
+    with pytest.raises(ValueError, match="no components"):
+        resonator.components.add_library(tmp_path)
+
+
+def test_a_project_can_become_a_library_and_back(doc):
+    doc.components.new("spring")
+    doc.components.set_top(None)
+    assert doc.project.is_library
+    doc.components.delete("top")
+    assert list(doc.project.components) == ["spring"] and doc.active == "spring"
+    with pytest.raises(ValueError, match="at least one component"):
+        doc.components.delete("spring")
+    doc.components.set_top("spring")
+    assert doc.project.top == "spring"
+
+
+def test_a_new_library_has_one_component_and_no_top(doc):
+    doc.new(library=True)
+    assert doc.project.top is None and doc.active == "component1"

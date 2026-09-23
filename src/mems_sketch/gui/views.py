@@ -237,7 +237,7 @@ class EditorArea(QSplitter):
             self._make_current(shown if isinstance(shown, ComponentView) else remaining[0])
         self.tabs_changed.emit()
         if not remaining:
-            self.open(self.document.project.top)
+            self.open(self.document.project.default_component())
 
     def close_view(self, view: ComponentView) -> None:
         pane = self.pane_of(view)
@@ -254,6 +254,15 @@ class EditorArea(QSplitter):
             view.deleteLater()
         self.current = None
         self.process_view = None
+
+    def other_pane(self) -> QTabWidget:
+        """The pane that is not the current one, creating it (a split) if needed."""
+        current = self._current_pane()
+        if not self.split:
+            pane = self._add_pane()
+            self.setSizes([1, 1])
+            return pane
+        return next(p for p in self.panes if p is not current)
 
     def split_view(self) -> ComponentView | None:
         """Open the current component in the other pane (creating it), like a code editor."""

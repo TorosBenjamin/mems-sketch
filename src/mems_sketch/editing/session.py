@@ -30,8 +30,7 @@ from typing import Any
 
 from mems_sketch.core.compiler import Compiler, Session
 from mems_sketch.core.component import Component
-from mems_sketch.core.process import default_process
-from mems_sketch.core.project import Project
+from mems_sketch.core.project import Project, new_project
 from mems_sketch.core.shapes import (
     NodePath,
     RefShape,
@@ -57,10 +56,6 @@ from mems_sketch.storage.project_files import project_folder
 UNDO_LIMIT = 200
 
 
-def new_project(name: str = "untitled") -> Project:
-    return Project(name=name, process=default_process())
-
-
 class EditSession:
     """An open project being edited; see the module docstring."""
 
@@ -70,7 +65,7 @@ class EditSession:
         self.file_changed = Event()  # path or dirty flag changed
         self.component_renamed = Event()  # old, new
         self.project = project or new_project()
-        self.active = self.project.top
+        self.active = self.project.default_component()
         self.path: Path | None = None
         self.dirty = False
         self.compiler = Compiler()
@@ -116,7 +111,7 @@ class EditSession:
             self.project, self.active = before, active
             raise
         if not self.exists(self.active):
-            self.active = self.project.top
+            self.active = self.project.default_component()
         self._undo.append((description, before, active, self.active))
         del self._undo[:-UNDO_LIMIT]
         self._redo.clear()
@@ -127,8 +122,10 @@ class EditSession:
         return result
 
     def _snapshot(self) -> Project:
-        # Libraries are read-only: share them instead of copying.
-        return copy.deepcopy(self.project, {id(self.project.libraries): self.project.libraries})
+        # Libraries are read-only: share them instead of copying (the dict is
+        # copied, so adding or removing a library can be undone).
+        shared = {id(lib): lib for lib in self.project.libraries.values()}
+        return copy.deepcopy(self.project, shared)
 
     def problems(self, project: Project | None = None) -> list[str]:
         """Why the project does not compile (empty when it does)."""
@@ -173,12 +170,13 @@ class EditSession:
 
     def _restore(self, project: Project, active: str) -> None:
         self.project = project
-        self.active = active if self.exists(active) else project.top
+        self.active = active if self.exists(active) else project.default_component()
         self._set_dirty(self._fingerprints() != self._saved)
         self.changed.emit()
 
-    def new(self) -> None:
-        self._reset(new_project(), None)
+    def new(self, library: bool = False) -> None:
+        """Start a new design, or a new library (no top component)."""
+        self._reset(new_project(library=library), None)
 
     def open(self, path: str | Path) -> None:
         """Open a project folder, its project.yaml, or a legacy .mems file."""
@@ -206,7 +204,7 @@ class EditSession:
 
     def _reset(self, project: Project, path: Path | None) -> None:
         self.project = project
-        self.active = project.top
+        self.active = project.default_component()
         self.path = path
         self._undo.clear()
         self._redo.clear()

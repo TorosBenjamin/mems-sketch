@@ -18,6 +18,7 @@ from mems_sketch import (
     save,
 )
 from mems_sketch.core.component import to_dbu
+from mems_sketch.core.project import new_project
 from mems_sketch.storage.project_files import ProjectFormatError
 
 
@@ -87,12 +88,26 @@ def test_rename_component_updates_references():
         project.rename_component("beam", "anchor")
 
 
-def test_top_cannot_be_removed_and_used_components_are_kept():
+def test_used_components_are_kept_and_removing_the_top_leaves_a_library():
     project = make_project()
-    with pytest.raises(ValueError, match="top"):
-        project.remove_component("top")
     with pytest.raises(ValueError, match="still used by: top"):
         project.remove_component("bar")
+    project.remove_component("top")
+    assert project.top is None and project.is_library
+    assert project.default_component() == "bar"
+    with pytest.raises(ValueError, match="no top component"):
+        project.render()  # a library has no default component to render
+    assert project.render("bar").layers
+
+
+def test_a_library_is_saved_and_loaded_without_a_top_component(tmp_path):
+    library = Project(name="lib", top=None)
+    library.define_component(bar())
+    save(library, tmp_path / "lib")
+    assert "top: null" in (tmp_path / "lib" / "project.yaml").read_text()
+    loaded = load(tmp_path / "lib")
+    assert loaded.top is None and list(loaded.components) == ["bar"]
+    assert new_project("x", library=True).top is None
 
 
 def test_libraries_are_namespaced_and_self_contained(tmp_path):

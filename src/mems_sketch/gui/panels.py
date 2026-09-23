@@ -358,8 +358,8 @@ class ParametersPanel(_Panel):
 # -- process -------------------------------------------------------------------
 
 
-class ProcessPanel(_Panel):
-    """Process layers (visibility, colour, GDS mapping, etch loss, rules) and constants."""
+class LayersPanel(_Panel):
+    """Process layers: visibility, colour, GDS mapping, etch loss and rules."""
 
     visibility_changed = Signal(str, bool)
     LAYER_COLUMNS = ["Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm"]
@@ -371,29 +371,19 @@ class ProcessPanel(_Panel):
         self.colors: dict[str, QColor] = {}
         self.layers = _table(self.LAYER_COLUMNS)
         self.layers.itemChanged.connect(self._layer_changed)
-        self.constants = _table(["Constant", "Expression", "Value"])
-        self.constants.itemChanged.connect(self._constant_changed)
         add_layer, remove_layer = QPushButton("Add layer"), QPushButton("Remove")
         add_layer.clicked.connect(lambda: self._guard(self.document.add_layer))
         remove_layer.clicked.connect(self._remove_layers)
-        add_const, remove_const = QPushButton("Add constant"), QPushButton("Remove")
-        add_const.clicked.connect(lambda: self._guard(self.document.add_constant))
-        remove_const.clicked.connect(self._remove_constants)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.layers, 3)
+        layout.addWidget(self.layers)
         layout.addLayout(_button_row(add_layer, remove_layer))
-        layout.addWidget(QLabel(" Constants (use as process.<name>)"))
-        layout.addWidget(self.constants, 2)
-        layout.addLayout(_button_row(add_const, remove_const))
         self._layer_names: list[str] = []
-        self._constant_names: list[str] = []
 
     def refresh(self) -> None:
         from mems_sketch.gui.canvas import layer_color
 
-        project = self.document.project
-        layers = project.layers
+        layers = self.document.project.layers
         self._layer_names = list(layers)
         self.colors = {name: layer_color(i) for i, name in enumerate(layers)}
         self.layers.blockSignals(True)
@@ -417,21 +407,6 @@ class ProcessPanel(_Panel):
             swatch.fill(self.colors[layer.name])
             name_cell.setIcon(QIcon(swatch))
         self.layers.blockSignals(False)
-
-        constants = project.process.constants
-        try:
-            values = resolve_variables(constants)
-        except (ExpressionError, ZeroDivisionError, ValueError):
-            values = {}
-        self._constant_names = list(constants)
-        self.constants.blockSignals(True)
-        self.constants.setRowCount(len(constants))
-        for row, (name, expression) in enumerate(constants.items()):
-            value = values.get(name)
-            self.constants.setItem(row, 0, QTableWidgetItem(name))
-            self.constants.setItem(row, 1, QTableWidgetItem(_format(expression)))
-            self.constants.setItem(row, 2, _readonly("error" if value is None else f"{value:g}"))
-        self.constants.blockSignals(False)
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:
         name = self._layer_names[item.row()]
@@ -465,6 +440,47 @@ class ProcessPanel(_Panel):
         if not self._guard(apply):
             self.refresh()
 
+    def _remove_layers(self) -> None:
+        rows = sorted({i.row() for i in self.layers.selectedItems()}, reverse=True)
+        for row in rows:
+            self._guard(lambda n=self._layer_names[row]: self.document.remove_layer(n))
+
+
+class ConstantsPanel(_Panel):
+    """Process constants, available in every expression as ``process.<name>``."""
+
+    def __init__(self, document: ProjectDocument) -> None:
+        super().__init__()
+        self.document = document
+        self.constants = _table(["Constant", "Expression", "Value"])
+        self.constants.itemChanged.connect(self._constant_changed)
+        add_const, remove_const = QPushButton("Add constant"), QPushButton("Remove")
+        add_const.clicked.connect(lambda: self._guard(self.document.add_constant))
+        remove_const.clicked.connect(self._remove_constants)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(QLabel(" Use in expressions as process.<name>"))
+        layout.addWidget(self.constants)
+        layout.addLayout(_button_row(add_const, remove_const))
+        self._constant_names: list[str] = []
+
+    def refresh(self) -> None:
+        project = self.document.project
+        constants = project.process.constants
+        try:
+            values = resolve_variables(constants)
+        except (ExpressionError, ZeroDivisionError, ValueError):
+            values = {}
+        self._constant_names = list(constants)
+        self.constants.blockSignals(True)
+        self.constants.setRowCount(len(constants))
+        for row, (name, expression) in enumerate(constants.items()):
+            value = values.get(name)
+            self.constants.setItem(row, 0, QTableWidgetItem(name))
+            self.constants.setItem(row, 1, QTableWidgetItem(_format(expression)))
+            self.constants.setItem(row, 2, _readonly("error" if value is None else f"{value:g}"))
+        self.constants.blockSignals(False)
+
     def _constant_changed(self, item: QTableWidgetItem) -> None:
         name = self._constant_names[item.row()]
         text = item.text().strip()
@@ -477,11 +493,6 @@ class ProcessPanel(_Panel):
 
         if not self._guard(apply):
             self.refresh()
-
-    def _remove_layers(self) -> None:
-        rows = sorted({i.row() for i in self.layers.selectedItems()}, reverse=True)
-        for row in rows:
-            self._guard(lambda n=self._layer_names[row]: self.document.remove_layer(n))
 
     def _remove_constants(self) -> None:
         rows = sorted({i.row() for i in self.constants.selectedItems()}, reverse=True)

@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QDockWidget, QInputDialog, QLineEdit, QMessageBox  # noqa: E402
 
 from mems_sketch.gui.app import MainWindow  # noqa: E402
 
@@ -100,3 +100,18 @@ def test_undo_restores_tree_and_view_mode_switch(window):
     assert window.tree.topLevelItemCount() == 1
     window.mode_box.setCurrentIndex(1)
     assert window.view_mode == "etched"
+
+
+def test_layers_panel_is_shown_on_its_own_and_every_panel_can_be_reopened(window):
+    docks = {d.windowTitle(): d for d in window.findChildren(QDockWidget)}
+    layers = docks["Layers"]
+    assert not layers.visibleRegion().isEmpty()  # not hidden behind another tab
+    assert window.tabifiedDockWidgets(layers) == []
+    assert window.layers.layers.rowCount() == len(window.document.project.layers)
+
+    layers.close()
+    panels = next(a.menu() for a in window.menuBar().actions() if a.text() == "&View")
+    panels = next(a.menu() for a in panels.actions() if a.text() == "Panels")
+    reopen = next(a for a in panels.actions() if a.text() == "Layers")
+    reopen.trigger()
+    assert layers.isVisible()

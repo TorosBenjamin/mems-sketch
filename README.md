@@ -114,8 +114,11 @@ MATLAB with `system(...)`.
   defaults as placeholders.
 - **Parameters**: the edited component's parameters: default (number or
   expression), min, max and the resolved value.
-- **Process**: layers (visibility, colour, GDS numbers, undercut, minimum
-  width and spacing) and process constants.
+- **Layers**: visibility, colour, GDS numbers, undercut, minimum width and
+  spacing.
+- **Process constants** (tabbed with Parameters): values available in every
+  expression as `process.<name>`.
+- **View → Panels** reopens any panel that was closed.
 - **Operations** (Group, Union, Subtract, Intersect, XOR, Offset, Fillet, Layer
   map) wrap the selected sibling shapes in a new operation node; **Edit →
   Unwrap** reverses it. **Make component** (Ctrl+K) moves the selection into a

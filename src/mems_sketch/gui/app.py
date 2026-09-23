@@ -32,9 +32,10 @@ from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.document import VIEW_MODES, ProjectDocument
 from mems_sketch.gui.panels import (
     ComponentsPanel,
+    ConstantsPanel,
+    LayersPanel,
     MessagesPanel,
     ParametersPanel,
-    ProcessPanel,
     ShapeTree,
 )
 from mems_sketch.gui.properties import PropertyEditor
@@ -76,7 +77,8 @@ class MainWindow(QMainWindow):
         self.tree = ShapeTree(self.document)
         self.properties = PropertyEditor(self.document)
         self.parameters = ParametersPanel(self.document)
-        self.process = ProcessPanel(self.document)
+        self.layers = LayersPanel(self.document)
+        self.constants = ConstantsPanel(self.document)
         self.messages = MessagesPanel()
         self._build_docks()
 
@@ -95,9 +97,15 @@ class MainWindow(QMainWindow):
         self.canvas.cursor_moved.connect(
             lambda x, y: self.coordinates.setText(f"x {x:.3f} µm   y {y:.3f} µm")
         )
-        self.process.visibility_changed.connect(self.canvas.set_layer_visible)
+        self.layers.visibility_changed.connect(self.canvas.set_layer_visible)
         self.messages.zoom_requested.connect(self._zoom_to_bbox)
-        for panel in (self.properties, self.parameters, self.process, self.components):
+        for panel in (
+            self.properties,
+            self.parameters,
+            self.layers,
+            self.constants,
+            self.components,
+        ):
             panel.error.connect(self.report_error)
 
         self.resize(1500, 950)
@@ -117,14 +125,15 @@ class MainWindow(QMainWindow):
         left, right = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea
         components = self._dock("Components", self.components, left)
         shapes = self._dock("Shapes", self.tree, left)
-        process = self._dock("Process", self.process, left)
-        self.tabifyDockWidget(shapes, process)
-        shapes.raise_()
+        layers = self._dock("Layers", self.layers, left)
         properties = self._dock("Properties", self.properties, right)
         parameters = self._dock("Parameters", self.parameters, right)
+        constants = self._dock("Process constants", self.constants, right)
+        self.tabifyDockWidget(parameters, constants)
+        parameters.raise_()
         messages = self._dock("Messages", self.messages, Qt.DockWidgetArea.BottomDockWidgetArea)
         vertical, horizontal = Qt.Orientation.Vertical, Qt.Orientation.Horizontal
-        self.resizeDocks([components, shapes], [260, 520], vertical)
+        self.resizeDocks([components, shapes, layers], [240, 330, 200], vertical)
         self.resizeDocks([properties, parameters], [560, 220], vertical)
         self.resizeDocks([shapes, properties], [320, 360], horizontal)
         self.resizeDocks([messages], [110], vertical)
@@ -184,6 +193,9 @@ class MainWindow(QMainWindow):
         self._action("Fit", self.canvas.fit, "F", view)
         self._action("Recompile and check", self.refresh, "F5", view)
         self._action("Edit top component", self._edit_top, "Ctrl+T", view)
+        panels = view.addMenu("Panels")
+        for dock in self.findChildren(QDockWidget):
+            panels.addAction(dock.toggleViewAction())
 
         tools = self.addToolBar("Main")
         tools.setObjectName("main-toolbar")
@@ -242,11 +254,12 @@ class MainWindow(QMainWindow):
             self._violations = []
             self._errors.append(str(exc))
         self._errors += [p for p in self.document.problems() if p not in self._errors]
-        self.process.refresh()
+        self.layers.refresh()
+        self.constants.refresh()
         self.parameters.refresh()
         self.components.refresh()
-        self._node_regions = self.document.node_regions(self.process.visible)
-        self.canvas.show_geometry(geometry, self.process.colors, self.process.visible)
+        self._node_regions = self.document.node_regions(self.layers.visible)
+        self.canvas.show_geometry(geometry, self.layers.colors, self.layers.visible)
         if self._shown_component != self.document.active:
             self._shown_component = self.document.active
             self.canvas.fit()

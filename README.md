@@ -41,6 +41,7 @@ See `examples/comb_actuator.py` for a complete script.
 |---|---|
 | `core/component.py` | `Component` base class, `Params` (pydantic), `Geometry`, component registry |
 | `core/design.py` | `Design`, `Layer`, `Instance`; resolves expressions and renders geometry |
+| `core/user_component.py` | User-defined components: parametric polygons, rects and references |
 | `core/expressions.py` | Safe arithmetic expression evaluator with dependency resolution |
 | `components/library.py` | Built-in components: `rectangle`, `anchor`, `comb_drive`, `serpentine_spring` |
 | `process/etch.py` | Lateral etch loss: `etched()` predicts, `compensated()` pre-biases |
@@ -50,9 +51,43 @@ See `examples/comb_actuator.py` for a complete script.
 
 Units are micrometres; the database unit is 1 nm.
 
+## User-defined components
+
+Besides the built-in library, users can define their own components from
+parametric primitives. Definitions are plain data, saved in the `.mems` file
+and editable from the GUI:
+
+```python
+from mems_sketch import ComponentDef, ParamDef, RectShape, PolygonShape, RefShape, Repeat
+
+fingers = ComponentDef(
+    name="finger_array",
+    parameters=[
+        ParamDef(name="n", default=4, min=1, integer=True),
+        ParamDef(name="w", default=2, min=0.5),
+        ParamDef(name="pitch", default=6),
+        ParamDef(name="taper", default=0),
+    ],
+    shapes=[
+        # `i` and `j` are the column/row index inside a repeated shape
+        RectShape(layer="device", x0=0, y0=0, x1="w", y1="30 + i * taper",
+                  repeat=Repeat(columns="n", dx="pitch")),
+        RefShape(component="anchor", params={"size": 20}, x="n * pitch / 2", y=-15),
+    ],
+)
+design.define_component(fingers)
+design.add_instance(Instance("f1", "finger_array", {"n": 12, "w": "w_global"}))
+```
+
+Shapes are `polygon`, `rect` and `ref` (a built-in or user-defined component,
+so definitions can be nested). Any coordinate can be an expression over the
+component's own parameters, and parameters can have limits and be integers.
+Unknown references, circular references and invalid defaults are rejected
+when the component is defined.
+
 ## Extending
 
-**New component:** subclass `Component`, define a nested `Params` model and
+**New built-in component:** subclass `Component`, define a nested `Params` model and
 `build()`, and decorate the class with `@register_component`.
 
 **New export format:** write a class with `format_name`, `file_extension` and

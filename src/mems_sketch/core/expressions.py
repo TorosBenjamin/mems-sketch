@@ -34,6 +34,7 @@ _FUNCTIONS = {
     "floor": math.floor,
 }
 _CONSTANTS = {"pi": math.pi}
+RESERVED_NAMES = frozenset(_FUNCTIONS) | frozenset(_CONSTANTS)
 
 
 class ExpressionError(ValueError):

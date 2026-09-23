@@ -1,7 +1,7 @@
 """Design files as SQLite databases (``*.mems``).
 
-The file holds the parametric model only (layers, variables, instances), never
-generated geometry. Values that may be expressions are stored as JSON so that
+The file holds the parametric model only (layers, variables, user-defined
+components, instances), never generated geometry. Values that may be expressions are stored as JSON so that
 numbers and expression strings round-trip unchanged.
 """
 
@@ -13,8 +13,10 @@ import sqlite3
 from pathlib import Path
 
 from mems_sketch.core.design import Design, Instance, Layer
+from mems_sketch.core.user_component import ComponentDef
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+READABLE_VERSIONS = {1, 2}  # version 1 had no components table
 
 _SCHEMA = """
 CREATE TABLE meta (
@@ -32,6 +34,11 @@ CREATE TABLE layers (
 CREATE TABLE variables (
     name  TEXT PRIMARY KEY,
     value TEXT NOT NULL            -- JSON: number or expression string
+);
+CREATE TABLE components (
+    position   INTEGER NOT NULL,
+    name       TEXT PRIMARY KEY,
+    definition TEXT NOT NULL        -- JSON ComponentDef
 );
 CREATE TABLE instances (
     position  INTEGER NOT NULL,     -- keeps instance order stable
@@ -74,6 +81,13 @@ def save(design: Design, path: str | Path) -> None:
             [(name, json.dumps(value)) for name, value in design.variables.items()],
         )
         conn.executemany(
+            "INSERT INTO components VALUES (?, ?, ?)",
+            [
+                (i, definition.name, definition.model_dump_json())
+                for i, definition in enumerate(design.components.values())
+            ],
+        )
+        conn.executemany(
             "INSERT INTO instances VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
@@ -100,13 +114,19 @@ def load(path: str | Path) -> Design:
     try:
         meta = dict(conn.execute("SELECT key, value FROM meta"))
         version = int(meta.get("schema_version", 0))
-        if version != SCHEMA_VERSION:
+        if version not in READABLE_VERSIONS:
             raise ValueError(f"unsupported design file version {version}")
         design = Design(name=meta.get("name", "untitled"))
         for row in conn.execute("SELECT * FROM layers"):
             design.add_layer(Layer(*row))
         for name, value in conn.execute("SELECT name, value FROM variables"):
             design.variables[name] = json.loads(value)
+        if version >= 2:
+            for (definition,) in conn.execute(
+                "SELECT definition FROM components ORDER BY position"
+            ):
+                parsed = ComponentDef.model_validate_json(definition)
+                design.components[parsed.name] = parsed
         rows = conn.execute(
             "SELECT name, component, params, x, y, rotation, mirror_x FROM instances ORDER BY position"
         )

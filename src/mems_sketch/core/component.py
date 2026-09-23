@@ -7,11 +7,13 @@ share one code path.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import ClassVar
+from collections.abc import Iterable, Mapping
+from typing import Any, ClassVar
 
 import klayout.db as kdb
 from pydantic import BaseModel, ConfigDict
+
+from mems_sketch.core.expressions import evaluate
 
 DBU_UM = 0.001  # database unit: 1 nm, in micrometres
 
@@ -65,6 +67,27 @@ class Component:
         raise NotImplementedError
 
 
+def resolve_params(
+    component: Component, raw: Mapping[str, Any], variables: Mapping[str, float]
+) -> Params:
+    """Evaluate expression-valued parameters and validate them against the component schema.
+
+    Strings are treated as expressions except for fields declared as ``str``
+    (e.g. a layer name), which are passed through unchanged.
+    """
+    fields = component.Params.model_fields
+    values: dict[str, Any] = {}
+    for key, value in raw.items():
+        is_text = key in fields and fields[key].annotation is str
+        values[key] = value if is_text or not isinstance(value, str) else evaluate(value, variables)
+    return component.Params(**values)
+
+
+def placement(x_um: float, y_um: float, rotation_deg: float, mirror_x: bool) -> kdb.ICplxTrans:
+    """Mirror about the x axis (if requested), rotate counter-clockwise, then translate."""
+    return kdb.ICplxTrans(1.0, rotation_deg, mirror_x, to_dbu(x_um), to_dbu(y_um))
+
+
 _REGISTRY: dict[str, type[Component]] = {}
 
 
@@ -73,6 +96,11 @@ def register_component(cls: type[Component]) -> type[Component]:
         raise ValueError(f"component type '{cls.type_name}' is already registered")
     _REGISTRY[cls.type_name] = cls
     return cls
+
+
+def is_builtin(type_name: str) -> bool:
+    _ensure_builtin_components()
+    return type_name in _REGISTRY
 
 
 def get_component(type_name: str) -> Component:

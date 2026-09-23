@@ -1,8 +1,11 @@
+import shutil
+from pathlib import Path
+
 import pytest
 
 from mems_sketch.core.process import Layer
 from mems_sketch.core.shapes import BooleanShape, RectShape, RefShape
-from mems_sketch.editing import EditSession
+from mems_sketch.editing import EditSession, Event
 from mems_sketch.storage import load
 
 
@@ -427,3 +430,43 @@ def test_mirroring_and_expressions(doc):
     doc.moves.mirror([ref], left_right=True, center=(0, 0))
     node = doc.node(ref)
     assert node.x == "d" and not node.mirror_x and node.rotation == 0
+
+
+EXAMPLES = Path(__file__).parent.parent / "examples"
+
+
+def test_events_call_slots_in_order_and_survive_a_failing_one(monkeypatch):
+    reported = []
+    monkeypatch.setattr("sys.excepthook", lambda *exc: reported.append(exc[0]))
+    event, calls = Event(), []
+
+    def fail(*args):
+        raise RuntimeError("listener broke")
+
+    event.connect(lambda *a: calls.append(("first", a)))
+    event.connect(fail)
+    event.connect(lambda *a: calls.append(("last", a)))
+    event.emit("old", "new")
+    assert calls == [("first", ("old", "new")), ("last", ("old", "new"))]
+    assert reported == [RuntimeError]
+    event.disconnect(fail)
+    event.emit()
+    assert reported == [RuntimeError]
+
+
+def test_a_script_can_edit_and_save_a_project(tmp_path):
+    for name in ("resonator", "libraries"):
+        shutil.copytree(
+            EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
+        )
+    session = EditSession.open_project(tmp_path / "resonator")
+    session.set_active("suspension")
+    before = session.results.geometry()
+    session.components.make([((0, 0),), ((0, 1),)], "spring_with_anchor")
+    session.save()
+
+    again = EditSession.open_project(tmp_path / "resonator")
+    assert "spring_with_anchor" in again.project.components
+    after = again.results.geometry(component="suspension")
+    assert before.layers.keys() == after.layers.keys()
+    assert all((before.layers[k] ^ after.layers[k]).is_empty() for k in before.layers)

@@ -30,7 +30,7 @@ def test_backend_source_has_no_gui_imports():
 
 def test_importing_the_backend_loads_no_gui():
     code = (
-        "import sys, mems_sketch, mems_sketch.cli;"
+        "import sys, mems_sketch, mems_sketch.cli, mems_sketch.editing;"
         "bad = [m for m in sys.modules if m.startswith(('PySide6', 'mems_sketch.gui'))];"
         "print(bad); sys.exit(1 if bad else 0)"
     )

@@ -38,6 +38,19 @@ mems-sketch-cli check examples/resonator       # the same compiler, from the com
   be persisted, e.g. in SQLite, for large layouts.
 - **Frontends:** the GUI edits through the backend's API and displays compiled
   results. The CLI and Python scripts work on the same project files.
+- **Editing:** `mems_sketch.editing` is how every frontend changes a project:
+  an `EditSession` with undo, and command groups for components, shapes,
+  moves, points, parameters and the process. The GUI is one user; a script
+  is another:
+
+  ```python
+  from mems_sketch.editing import EditSession
+
+  session = EditSession.open_project("examples/resonator")
+  session.set_active("suspension")
+  session.components.make([((0, 0),), ((0, 1),)], "spring_with_anchor")
+  session.save()
+  ```
 
 ## Projects
 

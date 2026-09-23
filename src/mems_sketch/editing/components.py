@@ -206,8 +206,10 @@ class ComponentEdits(Commands):
                     if dep not in used:
                         used.add(dep)
                         pending.append(dep)
-        parameters = [
-            p.model_copy() for p in self.session.active_definition.parameters if p.name in used
+        parameters = [  # passed in by the reference, so public in the new component
+            p.model_copy(update={"internal": False})
+            for p in self.session.active_definition.parameters
+            if p.name in used
         ]
         definition = ComponentDef(
             name=name, parameters=parameters, shapes=[n.model_copy(deep=True) for n in nodes]

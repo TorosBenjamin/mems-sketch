@@ -140,6 +140,12 @@ def _table(columns: Sequence[str]) -> QTableWidget:
     return table
 
 
+def _blank_icon() -> QIcon:
+    pixmap = QPixmap(16, 16)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    return QIcon(pixmap)
+
+
 def _readonly(text: str) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
@@ -756,6 +762,8 @@ class ParametersPanel(_Panel):
 
     A trial value overrides the default for viewing only; it is not saved.
     Library and built-in components are read-only, but trial values work.
+    A lock marks an internal parameter: one only the component itself uses,
+    not offered where it is placed.
     """
 
     COLUMNS = ("Name", "Default", "Min", "Max", "Trial", "Value")
@@ -774,6 +782,7 @@ class ParametersPanel(_Panel):
             self.title,
             ("add", "Add parameter", lambda: self._guard(self.document.parameters.add)),
             ("remove", "Remove the selected parameters", self._remove),
+            ("lock", "Make the selected parameters internal (or public)", self._toggle_internal),
             ("clear", "Clear trial values", self._clear_trials),
         )
         layout.addLayout(self.actions)
@@ -808,7 +817,13 @@ class ParametersPanel(_Panel):
                 QTableWidgetItem(_format(trials.get(p.name))),
                 _readonly("error" if value is None else f"{value:g}"),
             ]
-            cells[0].setToolTip(p.description)
+            cells[0].setIcon(icons.icon("lock") if p.internal else _blank_icon())  # aligned
+            access = (
+                "Internal: only this component uses it"
+                if p.internal
+                else "Public: can be set where the component is placed"
+            )
+            cells[0].setToolTip("\n".join(t for t in (p.description, access) if t))
             cells[self.TRIAL].setToolTip("Try a value without changing the design (not saved)")
             if p.name in trials:
                 cells[-1].setForeground(QBrush(QColor("#e0a000")))
@@ -836,6 +851,17 @@ class ParametersPanel(_Panel):
 
         if not self._guard(apply):
             self.refresh()
+
+    def _toggle_internal(self) -> None:
+        """Make the selected parameters internal, or public if they all are already."""
+        rows = sorted({i.row() for i in self.table.selectedItems()})
+        if not rows:
+            self.error.emit("select the parameters to make internal or public")
+            return
+        definitions = {p.name: p for p in self.document.active_definition.parameters}
+        names = [self._names[row] for row in rows]
+        internal = not all(definitions[n].internal for n in names)
+        self._guard(lambda: self.document.parameters.set_internal(names, internal))
 
     def _remove(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
@@ -916,6 +942,17 @@ class PointsPanel(_Panel):
 
         if field is not None and not self._guard(apply):
             self.refresh()
+
+    def _toggle_internal(self) -> None:
+        """Make the selected parameters internal, or public if they all are already."""
+        rows = sorted({i.row() for i in self.table.selectedItems()})
+        if not rows:
+            self.error.emit("select the parameters to make internal or public")
+            return
+        definitions = {p.name: p for p in self.document.active_definition.parameters}
+        names = [self._names[row] for row in rows]
+        internal = not all(definitions[n].internal for n in names)
+        self._guard(lambda: self.document.parameters.set_internal(names, internal))
 
     def _remove(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)

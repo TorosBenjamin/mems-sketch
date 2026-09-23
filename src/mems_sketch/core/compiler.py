@@ -179,6 +179,7 @@ class _CachedComponent(Component):
         self.inner = inner
         self.type_name = qualified
         self.Params = inner.Params
+        self.internal = inner.internal
         self._session = session
 
     def build(self, params: Params) -> Geometry:

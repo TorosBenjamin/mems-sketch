@@ -363,14 +363,19 @@ class PropertyEditor(QScrollArea):
         box = _section(f"Parameters of {node.component}")
         form = _form(box)
         try:
-            schema = self.document.component(node.component).Params.model_fields
+            component = self.document.component(node.component)
             defaults = self.document.parameter_defaults(node.component)
         except KeyError:
             form.addRow(QLabel("Unknown component."))
             self._editors["params"] = lambda: node.params
             return box
         readers = {}
-        for field, info in schema.items():
+        # Internal parameters are not offered; one still set here (made internal
+        # later) is shown marked, so the value can be cleared.
+        schema = component.Params.model_fields
+        shown = [f for f in schema if f not in component.internal or f in node.params]
+        for field in shown:
+            info = schema[field]
             current = node.params.get(field)
             default = defaults.get(field)
             if info.annotation is str:
@@ -382,7 +387,14 @@ class PropertyEditor(QScrollArea):
                 widget = self._value_editor(f"param:{field}", current, optional=True)
                 readers[field] = self._editors.pop(f"param:{field}")
                 widget.setPlaceholderText(_format(default))
-            form.addRow(info.description or field, widget)
+            label = info.description or field
+            if field in component.internal:
+                label = f"{field} (internal)"
+                widget.setProperty("invalid", True)
+                widget.setToolTip(
+                    f"'{field}' is internal to {node.component}: clear it (it cannot be set here)"
+                )
+            form.addRow(label, widget)
 
         def read():
             values = {field: reader() for field, reader in readers.items()}

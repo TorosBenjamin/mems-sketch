@@ -73,6 +73,11 @@ changes one line. See `examples/resonator` and the library it uses,
 - A component has **parameters** (with defaults, limits and optional integer
   constraint) and a **shape tree**. A default may be an expression over other
   parameters, e.g. `hole_r` defaulting to `pitch / 6`.
+- A parameter is **public** (the default: whoever places the component may
+  set it) or **internal** (`internal: true`): used only inside the component,
+  typically a derived value such as `hole_r`. Where the component is placed,
+  internal parameters are not offered, and setting one is an error. Trial
+  values still work on them while you edit the component itself.
 - The design is the **top** component. Its parameters play the role of global
   variables, so any project can be placed inside another one.
 - Values passed to a component are evaluated in the caller's scope. Parameters
@@ -263,7 +268,8 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   (`self.left`, ...) and the other shapes' points; leave it empty to mirror
   across the axis given below it.
 - **Parameters**: the current tab's parameters: default (number or
-  expression), min, max, trial and the resolved value. A **trial** value shows
+  expression), min, max, trial and the resolved value. The lock button makes
+  the selected parameters internal (a lock beside the name) or public again. A **trial** value shows
   the component with another value without changing the design: it is not
   saved or undone, and only affects that component's own tab (the components
   that place it still pass their own values). It also works on library and

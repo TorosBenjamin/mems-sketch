@@ -36,6 +36,22 @@ class ParameterEdits(Commands):
 
         self.session.edit(f"Edit parameter {name}", change)
 
+    def set_internal(self, names: list[str], internal: bool = True) -> None:
+        """Make parameters internal (only the component uses them) or public again."""
+
+        def change(project: Project) -> None:
+            parameters = self.session.local(project).parameters
+            missing = set(names) - {p.name for p in parameters}
+            if missing:
+                raise KeyError(", ".join(sorted(missing)))
+            parameters[:] = [
+                p.model_copy(update={"internal": internal}) if p.name in names else p
+                for p in parameters
+            ]
+
+        which = "internal" if internal else "public"
+        self.session.edit(f"Make {', '.join(names)} {which}", change)
+
     def add(self) -> str:
         taken = {p.name for p in self.session.active_definition.parameters}
         name = fresh_name("param", taken)

@@ -136,3 +136,24 @@ def test_long_names_are_cut_and_do_not_widen_the_panel(window):
     assert QLabel.text(summary).endswith("…")  # shown cut; text() is all of it
     from_x.setFocus()
     assert not from_x._elided()  # all of it while editing
+
+
+def test_internal_parameters_are_locked_and_not_offered_where_placed(window):
+    doc = window.document
+    doc.components.new("pad")
+    doc.parameters.set("size", 20.0)
+    doc.parameters.set("inner", "size / 2")
+    doc.nodes.add(RectShape(layer="device", x0=0, y0=0, x1="size", y1="inner"))
+    panel = window.parameters
+    panel.refresh()
+    panel.table.selectRow(1)
+    panel.actions.buttons["Make the selected parameters internal (or public)"].click()
+    assert doc.active_definition.parameter("inner").internal
+    panel.refresh()
+    assert panel.table.item(1, 0).toolTip().startswith("Internal")  # and a lock
+    assert panel.table.item(0, 0).toolTip().startswith("Public")
+    doc.set_active("top")
+    path = doc.nodes.add_component("pad")
+    window.tree.select_paths([path])
+    labels = [lab.text() for lab in window.properties.findChildren(QLabel)]
+    assert "size" in labels and "inner" not in labels

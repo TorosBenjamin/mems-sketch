@@ -12,7 +12,8 @@ parameters:
 - name: hole_r
   default: pitch / 6
   min: 0.5
-  description: Hole radius (µm)
+  internal: true
+  description: Hole radius (µm), follows the pitch
 shapes:
 - kind: boolean
   name: plate

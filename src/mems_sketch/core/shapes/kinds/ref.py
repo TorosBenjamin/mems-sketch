@@ -30,6 +30,7 @@ class RefShape(Node):
 
     def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
         child = ctx.lookup(self.component)
+        child.check_placement(self.params)
         built, points = child.compile(resolve_params(child, self.params, ctx.variables))
         transform = self.placement(ctx.variables)
         geometry = Geometry()

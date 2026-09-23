@@ -35,15 +35,16 @@ OVERLAYS = [  # View › Overlays: setting, label, icon
     ("canvas/hover_highlight", "Highlight under cursor", "select"),
 ]
 OPERATIONS = [
-    ("transform", "Transform"),
     ("union", "Union"),
     ("subtract", "Subtract"),
     ("intersect", "Intersect"),
     ("xor", "XOR"),
     ("offset", "Offset"),
     ("fillet", "Fillet"),
+    ("transform", "Transform"),
     ("layer_map", "Layer map"),
 ]
+BOOLEANS = ("union", "subtract", "intersect", "xor")  # under Operations › Combine
 
 
 def make_action(
@@ -142,20 +143,30 @@ class Actions:
         act("Clear rulers", w.clear_rulers, None, tools_menu, "clear")
 
         insert = self.insert = QMenu("&Insert", w)
-        self.add = insert.addMenu("Primitive")
+        self.add = insert.addMenu("Add")
         icons.bind(self.add.menuAction(), "rect")
         for kind, label in PRIMITIVES:
-            act(label, lambda _=False, k=kind: w.add_primitive(k), menu=self.add, icon=kind)
-        self.place = insert.addMenu("Component")
+            # Drawn shapes start their drawing tool; an arc is added as a default one.
+            slot = (
+                (lambda _=False, k=kind: w.set_tool(k))
+                if kind in w.tools
+                else (lambda _=False, k=kind: w.add_primitive(k))
+            )
+            act(label, slot, menu=self.add, icon=kind)
+        self.place = insert.addMenu("Place component")
         icons.bind(self.place.menuAction(), "place")
         self.place.aboutToShow.connect(self._fill_place_menu)
 
         operations = self.operations_menu = QMenu("&Operations", w)
+        combine = self.combine = operations.addMenu("Combine")
+        icons.bind(combine.menuAction(), "union")
         self.operations: dict[str, QAction] = {}
         for op, label in OPERATIONS:
-            self.operations[op] = act(
-                label, lambda _=False, o=op: w.wrap(o), menu=operations, icon=op
-            )
+            menu = combine if op in BOOLEANS else operations
+            self.operations[op] = act(label, lambda _=False, o=op: w.wrap(o), menu=menu, icon=op)
+        operations.addSeparator()
+        operations.addAction(self.make)
+        operations.addAction(self.unpack)
 
         view = self.view = QMenu("&View", w)
         act("Fit", lambda: w.canvas.fit(), "F", view, "fit")
@@ -187,6 +198,23 @@ class Actions:
         act("Keyboard shortcuts", lambda: w.show_settings("Keymap"), None, help_menu)
 
         self.root_menus = [file, edit, tools_menu, insert, operations, view, help_menu]
+        self.root = QMenu(w)  # the ☰ button's menu
+        for menu in self.root_menus:
+            self.root.addMenu(menu)
+
+    def all_actions(self) -> list[QAction]:
+        """Every command in the menus, once each (to register their shortcuts on the window)."""
+        found: dict[int, QAction] = {}
+
+        def visit(menu: QMenu) -> None:
+            for action in menu.actions():
+                if action.menu() is not None:
+                    visit(action.menu())
+                elif not action.isSeparator():
+                    found.setdefault(id(action), action)
+
+        visit(self.root)
+        return list(found.values())
 
     def _fill_place_menu(self) -> None:
         w = self.window

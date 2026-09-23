@@ -12,21 +12,18 @@ from pathlib import Path
 
 import klayout.db as kdb
 from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
-    QDoubleSpinBox,
     QFileDialog,
     QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
-    QSizePolicy,
     QToolBar,
     QToolButton,
-    QWidget,
 )
 
 from mems_sketch.core.shapes import NodePath
@@ -49,6 +46,8 @@ from mems_sketch.gui.panels import (
 )
 from mems_sketch.gui.properties import PropertyEditor
 from mems_sketch.gui.settings import PreferencesDialog, Settings
+from mems_sketch.gui.statusbar import ToolStatus
+from mems_sketch.gui.toolbar import build_toolbar
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
 from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import VIEW_MODES, ComponentView, EditorArea
@@ -286,7 +285,7 @@ class MainWindow(QMainWindow):
         """The settings dialog (Ctrl+Alt+S); ``page`` opens a page, e.g. ``Keymap``."""
         shortcuts = [
             (action.text().replace("&", ""), action.shortcut().toString())
-            for _path, action in menu_actions(self.menuBar())
+            for _path, action in menu_actions(self.actions_.root)
             if not action.shortcut().isEmpty()
         ]
         dialog = PreferencesDialog(self.settings, shortcuts, self)
@@ -299,7 +298,7 @@ class MainWindow(QMainWindow):
 
     def find_action(self) -> None:
         """Find Action (Ctrl+Shift+A): run a command by typing its name."""
-        dialog = FindActionDialog(menu_actions(self.menuBar()), self)
+        dialog = FindActionDialog(menu_actions(self.actions_.root), self)
         center = self.geometry().center()
         dialog.move(center.x() - dialog.width() // 2, self.geometry().top() + 90)
         self._find_dialog = dialog
@@ -561,8 +560,7 @@ class MainWindow(QMainWindow):
 
     def _build_actions(self) -> None:
         self.actions_ = actions = Actions(self)
-        for menu in actions.root_menus:
-            self.menuBar().addMenu(menu)
+        self.addActions(actions.all_actions())  # shortcuts work without a menu bar
         for name in self.tool_windows.names():
             action = make_action(
                 self,
@@ -589,9 +587,9 @@ class MainWindow(QMainWindow):
         self.tool_actions, self.operation_actions = actions.tools, actions.operations
         self.setting_actions = actions.settings_toggles
         self.primitive_menu, self.component_menu = actions.add, actions.place
-        self._build_main_toolbar()
+        self._build_mode_box()
+        self.addToolBar(build_toolbar(self))
         self._build_palette()
-        self._build_tool_options()
 
     def _toolbar(self, title: str, name: str) -> QToolBar:
         toolbar = self.addToolBar(title)
@@ -609,40 +607,13 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(button)
         return button
 
-    def _build_main_toolbar(self) -> None:
-        tools = self._toolbar("Main", "main-toolbar")
-        for action in self.findChildren(QAction):
-            if action.text() in ("New project", "Open project…"):
-                tools.addAction(action)
-        tools.addAction(self.save_action)
-        tools.addSeparator()
-        tools.addAction(self.undo_action)
-        tools.addAction(self.redo_action)
-        tools.addSeparator()
-        self._menu_button(tools, self.primitive_menu, "rect", "Insert a primitive")
-        self._menu_button(tools, self.component_menu, "place", "Place a component")
-        tools.addSeparator()
-        for op in ("union", "subtract", "intersect", "xor", "offset", "fillet", "transform"):
-            tools.addAction(self.operation_actions[op])
-        tools.addSeparator()
-        tools.addAction(self.make_action)
-        tools.addAction(self.unpack_action)
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        tools.addWidget(spacer)
+    def _build_mode_box(self) -> None:
         self.mode_box = QComboBox()
         self.mode_box.setToolTip("What the canvas shows: the drawn layout or a process view")
         for mode, label in VIEW_MODES.items():
             self.mode_box.addItem(label, mode)
         self.mode_box.currentIndexChanged.connect(self._mode_changed)
         self.mode_box.setMaximumWidth(160)
-        tools.addWidget(self.mode_box)
-        split = next(a for a in self.findChildren(QAction) if a.text() == "Split view")
-        tools.addAction(split)
-        tools.addSeparator()
-        tools.addAction(self.find_action_action)
-        settings = next(a for a in self.findChildren(QAction) if a.text() == "Settings…")
-        tools.addAction(settings)
 
     def _build_palette(self) -> None:
         palette = QToolBar("Tools")
@@ -673,85 +644,34 @@ class MainWindow(QMainWindow):
             else Qt.ToolButtonStyle.ToolButtonIconOnly
         )
 
-    def _build_tool_options(self) -> None:
-        """The tool's own settings under the main toolbar, as in Blender's tool header."""
-        self.addToolBarBreak()
-        bar = self._toolbar("Tool options", "tool-options")
-        bar.setIconSize(QSize(16, 16))
-        self.tool_icon = QLabel()
-        self.tool_name = QLabel()
-        self.tool_name.setObjectName("heading")
-        bar.addWidget(self.tool_icon)
-        bar.addWidget(self.tool_name)
-        bar.addSeparator()
-
-        self.layer_box = QComboBox()
-        self.layer_box.setToolTip("The layer the drawing tools draw on")
-        self.layer_box.setMinimumWidth(120)
-        self.layer_box.currentIndexChanged.connect(self._draw_layer_chosen)
-        self.width_box = QDoubleSpinBox()
-        self.width_box.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-        self.width_box.setRange(0.001, 1e6)
-        self.width_box.setDecimals(3)
-        self.width_box.setSuffix(" µm")
-        self.width_box.setValue(self.path_width)
-        self.width_box.setToolTip("The width of paths drawn with the Path tool")
-        self.width_box.valueChanged.connect(self._path_width_chosen)
-        self.angle_box = QDoubleSpinBox()
-        self.angle_box.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-        self.angle_box.setRange(1, 90)
-        self.angle_box.setDecimals(1)
-        self.angle_box.setSuffix(" °")
-        self.angle_box.setValue(self.settings.get("snapping/angle_step"))
-        self.angle_box.setToolTip("The Rotate tool snaps to multiples of this angle")
-        self.angle_box.valueChanged.connect(lambda v: self.settings.set("snapping/angle_step", v))
-        self.tool_widgets = {}
-        for key, label, widget in (
-            ("layer", "Layer", self.layer_box),
-            ("width", "Width", self.width_box),
-            ("angle", "Step", self.angle_box),
-        ):
-            caption = QLabel(f" {label} ")
-            caption.setObjectName("muted")
-            self.tool_widgets[key] = (bar.addWidget(caption), bar.addWidget(widget))
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        bar.addWidget(spacer)
-        snapping = QLabel("Snap ")
-        snapping.setObjectName("muted")
-        bar.addWidget(snapping)
-        for key, label, icon_name in (
-            ("snapping/points", "Snap to shape points", "snap_points"),
-            ("snapping/grid", "Snap to the grid", "grid"),
-        ):
-            action = QAction(label, self)
-            icons.bind(action, icon_name)
-            action.setCheckable(True)
-            action.setChecked(self.settings.get(key))
-            action.toggled.connect(lambda checked, k=key: self.settings.set(k, checked))
-            bar.addAction(action)
-            self.setting_actions[key] = action
-        bar.addSeparator()
-        gizmos = self.setting_actions["canvas/show_gizmos"]
-        bar.addAction(gizmos)
-        self.tool_options = bar
-
     def _show_tool_options(self) -> None:
-        tool = self.tool
-        self.tool_icon.setPixmap(icons.pixmap(tool.icon, 16))
-        self.tool_name.setText(f"{tool.label} ")
-        shown = {
-            "layer": tool.draws,
-            "width": tool.name == "path",
-            "angle": tool.name == "rotate",
-        }
-        for key, actions in self.tool_widgets.items():
-            for action in actions:
-                action.setVisible(shown[key])
+        self.tool_status.show_for(self.tool)
 
     def _build_status_bar(self) -> None:
         status = self.statusBar()
         status.setSizeGripEnabled(False)
+        tool_status = self.tool_status = ToolStatus()
+        # The names the tools and tests use.
+        self.tool_icon, self.tool_name = tool_status.tool_icon, tool_status.tool_name
+        self.layer_box, self.width_box = tool_status.layer_box, tool_status.width_box
+        self.angle_box, self.tool_widgets = tool_status.angle_box, tool_status.tool_widgets
+        self.layer_box.currentIndexChanged.connect(self._draw_layer_chosen)
+        self.width_box.setValue(self.path_width)
+        self.width_box.valueChanged.connect(self._path_width_chosen)
+        self.angle_box.setValue(self.settings.get("snapping/angle_step"))
+        self.angle_box.valueChanged.connect(lambda v: self.settings.set("snapping/angle_step", v))
+        for key, label, icon_name in (
+            ("snapping/points", "Snap to shape points", "snap_points"),
+            ("snapping/grid", "Snap to the grid", "grid"),
+        ):
+            action = make_action(self, label, lambda checked, k=key: self.settings.set(k, checked))
+            icons.bind(action, icon_name)
+            action.setCheckable(True)
+            action.setChecked(self.settings.get(key))
+            tool_status.add_toggle(action)
+            self.setting_actions[key] = action
+        tool_status.add_toggle(self.setting_actions["canvas/show_gizmos"])
+
         self.problems_button = QToolButton()
         self.problems_button.setToolTip("Errors and rule violations (click to show)")
         self.problems_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -762,7 +682,13 @@ class MainWindow(QMainWindow):
         self.zoom_label.setToolTip("Zoom (screen pixels per µm)")
         self.coordinates = QLabel()
         self.coordinates.setMinimumWidth(230)
-        for widget in (self.problems_button, self.grid_label, self.zoom_label, self.coordinates):
+        for widget in (
+            tool_status,
+            self.problems_button,
+            self.grid_label,
+            self.zoom_label,
+            self.coordinates,
+        ):
             status.addPermanentWidget(widget)
 
     def _show_zoom(self) -> None:
@@ -939,6 +865,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(
             f"{star}{project.name} — {doing} {self.document.active} — {where} — MEMS Sketch"
         )
+        self.project_label.setText(f"{star}{project.name}")
+        self.project_label.setToolTip(where)
 
     # -- selection ---------------------------------------------------------
 

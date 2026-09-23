@@ -72,6 +72,8 @@ class PropertyEditor(QScrollArea):
         super().__init__()
         self.document = document
         self.setWidgetResizable(True)
+        self.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.path: NodePath | None = None
         self._editors: dict[str, typing.Callable[[], object]] = {}
         self._scope: dict[str, float] = {}
@@ -95,10 +97,15 @@ class PropertyEditor(QScrollArea):
         except Exception:  # noqa: BLE001 - previews then show "?"
             self._scope = {}
         body = QWidget()
+        body.setObjectName("properties-body")
         layout = QVBoxLayout(body)
-        form = QFormLayout()
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(4)
+        form = _form()
         layout.addLayout(form)
-        form.addRow(QLabel(f"<b>{node.kind}</b>"))
+        kind = QLabel(node.kind)
+        kind.setObjectName("heading")
+        form.addRow(kind)
 
         name = QLineEdit(node.name or "")
         name.returnPressed.connect(self.apply)
@@ -118,7 +125,7 @@ class PropertyEditor(QScrollArea):
                     *(v / 1000 for v in (box.left, box.right, box.bottom, box.top))
                 )
             )
-            where.setStyleSheet("color: gray")
+            where.setObjectName("muted")
             where.setToolTip("Where the shape ends up in this component (stored values are local)")
             form.addRow("Extent", where)
 
@@ -181,8 +188,8 @@ class PropertyEditor(QScrollArea):
         edit = QLineEdit("" if value is None else _format(value))
         edit.returnPressed.connect(self.apply)
         result = QLabel()
-        result.setMinimumWidth(60)
-        result.setStyleSheet("color: gray")
+        result.setMinimumWidth(54)
+        result.setObjectName("muted")
 
         def update_result() -> None:
             text = edit.text().strip()
@@ -242,8 +249,8 @@ class PropertyEditor(QScrollArea):
         return edit
 
     def _params_editor(self, node: Shape) -> QWidget:
-        box = QGroupBox(f"Parameters of {node.component}")
-        form = QFormLayout(box)
+        box = _section(f"Parameters of {node.component}")
+        form = _form(box)
         try:
             schema = self.document.component(node.component).Params.model_fields
             defaults = self.document.parameter_defaults(node.component)
@@ -274,10 +281,10 @@ class PropertyEditor(QScrollArea):
         return box
 
     def _align_editor(self, node: Shape, path: NodePath) -> QWidget:
-        box = QGroupBox("Align a point of this shape to another shape's point")
+        box = _section("Align to another shape's point")
         box.setCheckable(True)
         box.setChecked(node.align is not None)
-        form = QFormLayout(box)
+        form = _form(box)
         align = node.align
         own = QComboBox()
         own.setEditable(True)
@@ -297,7 +304,7 @@ class PropertyEditor(QScrollArea):
         if node.kind in ("ref", "transform"):
             note = QLabel("While aligned, x and y do not move it; rotation and mirroring do.")
             note.setWordWrap(True)
-            note.setStyleSheet("color: gray")
+            note.setObjectName("muted")
             form.addRow(note)
 
         def read():
@@ -316,10 +323,10 @@ class PropertyEditor(QScrollArea):
         return box
 
     def _repeat_editor(self, node: Shape) -> QWidget:
-        box = QGroupBox("Repeat on grid (index i, j)")
+        box = _section("Repeat on grid (index i, j)")
         box.setCheckable(True)
         box.setChecked(node.repeat is not None)
-        form = QFormLayout(box)
+        form = _form(box)
         repeat = node.repeat
         fields = {}
         for field, default in (("columns", 1), ("rows", 1), ("dx", 0.0), ("dy", 0.0)):
@@ -339,7 +346,7 @@ class PropertyEditor(QScrollArea):
         label = QLabel(text)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setWordWrap(True)
-        label.setStyleSheet("color: gray")
+        label.setObjectName("muted")
         self.setWidget(label)
 
     # -- applying ----------------------------------------------------------
@@ -357,6 +364,24 @@ class PropertyEditor(QScrollArea):
             self.applied.emit()
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))
+
+
+def _section(title: str) -> QGroupBox:
+    """A titled section: flat, with one divider above it (see the theme)."""
+    box = QGroupBox(title)
+    box.setObjectName("section")
+    return box
+
+
+def _form(parent: QWidget | None = None) -> QFormLayout:
+    form = QFormLayout(parent) if parent is not None else QFormLayout()
+    form.setHorizontalSpacing(10)
+    form.setVerticalSpacing(5)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    if parent is not None:
+        form.setContentsMargins(0, 4, 0, 4)
+    return form
 
 
 def _format(value) -> str:

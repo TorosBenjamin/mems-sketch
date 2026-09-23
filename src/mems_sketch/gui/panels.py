@@ -130,7 +130,11 @@ def _table(columns: Sequence[str]) -> QTableWidget:
     table.setHorizontalHeaderLabels(list(columns))
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
     table.horizontalHeader().setStretchLastSection(True)
+    table.horizontalHeader().setHighlightSections(False)
     table.verticalHeader().hide()
+    table.verticalHeader().setDefaultSectionSize(26)
+    table.setShowGrid(False)
+    table.setFrameShape(QTableWidget.Shape.NoFrame)
     return table
 
 
@@ -188,7 +192,7 @@ class ComponentsPanel(_Panel):
             ("top", "Set as top component", self._set_top),
             ("place", "Place in the edited component", self._place),
         )
-        layout.addLayout(self.actions)
+        self.header_buttons = list(self.actions.buttons.values())  # shown in the dock header
         layout.addWidget(self.tree)
 
     collapse_changed = Signal()
@@ -594,7 +598,7 @@ class LayersPanel(_Panel):
             ("add", "Add layer", lambda: self._guard(self.document.add_layer)),
             ("remove", "Remove the selected layers", self._remove_layers),
         )
-        layout.addLayout(self.actions)
+        self.header_buttons = list(self.actions.buttons.values())  # shown in the dock header
         layout.addWidget(self.layers)
         self._layer_names: list[str] = []
 
@@ -623,6 +627,12 @@ class LayersPanel(_Panel):
             name_cell.setCheckState(Qt.CheckState.Checked if shown else Qt.CheckState.Unchecked)
             name_cell.setIcon(swatch_icon(self.colors[layer.name]))
         self.layers.blockSignals(False)
+        # the name column also holds the check box and the colour swatch
+        header = self.layers.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        metrics = self.layers.fontMetrics()
+        widest = max((metrics.horizontalAdvance(n) for n in layers), default=40)
+        self.layers.setColumnWidth(0, max(widest, metrics.horizontalAdvance("Layer")) + 64)
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:
         name = self._layer_names[item.row()]

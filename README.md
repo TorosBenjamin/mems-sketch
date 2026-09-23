@@ -142,11 +142,15 @@ light or dark theme (`gui/icons.py`).
   user.
 - **Find Action** (Ctrl+Shift+A, the magnifier in the toolbar): type part of a
   command's name, Enter runs it.
-- **Toolbars**: file and history, insert, operations, make/unpack component,
-  then the view mode, split, Find Action and settings. Under it, the **tool
-  options** of the active tool (as in Blender): the drawing layer and path
-  width for the drawing tools, the angle step for Rotate, and on the right the
-  snapping toggles (shape points, grid) and the gizmo toggle.
+- **Toolbar** (one row): file and history, insert, operations, make/unpack
+  component, then the active tool and its **options** (as in Blender): the
+  drawing layer and path width for the drawing tools, the angle step for
+  Rotate. On the right: snapping toggles (shape points, grid), the gizmo
+  toggle, the view mode, split, Find Action and settings.
+- **Tool windows**: the side panels run the full height, with Messages under
+  the editor. Panel headers line up with the editor tabs and carry the panel's
+  own buttons (e.g. add or remove a layer); tabbed panels show their tabs on
+  top.
 - **Status bar**: the current hint, then problems (click to open Messages),
   grid step, zoom and cursor position.
 - **Tabs**: every component opens in its own tab, with its own zoom, selection

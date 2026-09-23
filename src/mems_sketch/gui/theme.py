@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication
 
 from mems_sketch.gui import icons
 
+HEADER_HEIGHT = 32  # tool window headers and tab bars share this height, so edges line up
 UI_THEMES = {"system": "Same as the system", "light": "Light", "dark": "Dark"}
 
 TOKENS = {
@@ -86,16 +87,15 @@ QMenu::separator {{ height: 1px; background: {border_strong}; margin: 4px 6px; }
 QMenu::icon {{ padding-left: 6px; }}
 
 QDockWidget {{ titlebar-close-icon: none; titlebar-normal-icon: none; }}
-QDockWidget::title {{
-    background: {window}; padding: 6px 8px; border-bottom: 1px solid {border};
-    text-align: left;
-}}
+QDockWidget::title {{ background: {window}; padding: 0 10px; text-align: left; }}
+QWidget#dock-title {{ background: {window}; }}
+QLabel#dock-title-label {{ font-weight: 600; }}
 QDockWidget > QWidget {{ background: {window}; }}
 
 QTabWidget::pane {{ border: none; }}
 QTabBar {{ background: {window}; qproperty-drawBase: 0; }}
 QTabBar::tab {{
-    background: transparent; color: {text}; padding: 6px 10px; margin: 0;
+    background: transparent; color: {text}; height: 22px; padding: 4px 10px; margin: 0;
     border: none; border-bottom: 2px solid transparent;
 }}
 QTabBar::tab:selected {{ border-bottom: 2px solid {accent}; }}
@@ -113,13 +113,13 @@ QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {{
     background: {selected}; color: {text};
 }}
 QHeaderView::section {{
-    background: {window}; color: {muted}; border: none;
-    border-bottom: 1px solid {border}; border-right: 1px solid {border}; padding: 3px 6px;
+    background: {window}; color: {muted}; border: none; padding: 4px 6px;
 }}
+QTableView::item {{ padding: 0 4px; }}
 QTableCornerButton::section {{ background: {window}; border: none; }}
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
-    background: {editor}; border: 1px solid {input_border}; border-radius: 4px;
+    background: {editor}; border: 1px solid {border_strong}; border-radius: 4px;
     padding: 3px 6px; selection-background-color: {selected}; selection-color: {text};
 }}
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QSpinBox:focus,
@@ -143,6 +143,20 @@ QPushButton:default {{ background: {accent}; color: {accent_text}; border-color:
 QPushButton:disabled {{ color: {muted}; }}
 
 QCheckBox, QRadioButton {{ spacing: 6px; }}
+QScrollArea {{ background: {window}; border: none; }}
+QWidget#properties-body {{ background: {window}; }}
+QGroupBox#section {{
+    border: none; border-top: 1px solid {border_strong}; margin-top: 18px; padding-top: 8px;
+    font-weight: 600;
+}}
+QGroupBox#section::title {{ subcontrol-origin: margin; left: 0; top: 6px; padding: 0; }}
+QGroupBox#section::indicator {{
+    width: 13px; height: 13px; border: 1px solid {input_border}; border-radius: 3px;
+    background: {editor};
+}}
+QGroupBox#section::indicator:checked {{
+    background: {accent}; border-color: {accent}; image: url({check});
+}}
 QCheckBox::indicator, QTreeView::indicator, QTableView::indicator {{
     width: 13px; height: 13px; border: 1px solid {input_border}; border-radius: 3px;
     background: {editor};
@@ -152,7 +166,8 @@ QCheckBox::indicator:checked, QTreeView::indicator:checked, QTableView::indicato
 }}
 QCheckBox::indicator:disabled {{ background: {window}; }}
 
-QStatusBar {{ background: {window}; border-top: 1px solid {border}; color: {muted}; }}
+QStatusBar {{ background: {window}; border-top: 1px solid {border}; color: {muted};
+    min-height: 26px; }}
 QStatusBar::item {{ border: none; }}
 QStatusBar QLabel {{ color: {muted}; padding: 0 6px; }}
 QStatusBar QToolButton {{ padding: 2px 5px; }}
@@ -179,7 +194,7 @@ QWidget#view-header {{ background: {editor}; border-bottom: 1px solid {border}; 
 QWidget#view-header QLabel {{ color: {muted}; }}
 QWidget#view-header QLabel#crumb-current {{ color: {text}; font-weight: 600; }}
 QListWidget#settings-pages {{ background: {window}; border-right: 1px solid {border}; }}
-QListWidget#settings-pages::item {{ padding: 6px 10px; border-radius: 4px; }}
+QListWidget#settings-pages::item {{ border-radius: 4px; padding-left: 6px; }}
 QDialog#find-action {{ background: {editor}; border: 1px solid {border_strong}; }}
 QTreeWidget#command-list {{ background: {editor}; }}
 QListWidget#command-list {{ background: {editor}; }}

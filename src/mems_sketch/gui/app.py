@@ -18,12 +18,14 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QDoubleSpinBox,
     QFileDialog,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
     QSizePolicy,
+    QTabWidget,
     QToolBar,
     QToolButton,
     QWidget,
@@ -550,22 +552,45 @@ class MainWindow(QMainWindow):
                 rulers.append(extra)
             view.canvas.show_rulers(rulers)
 
-    def _dock(self, title: str, widget, area) -> QDockWidget:
+    def _dock(self, title: str, widget, area, header: bool = True) -> QDockWidget:
+        """A tool window. Its header has the title and the panel's own buttons
+        (``header_buttons``); ``header=False`` leaves the header to the tabs of
+        docks tabbed together."""
         dock = QDockWidget(title, self)
         dock.setObjectName(title)
         dock.setWidget(widget)
+        bar = _DockHeader(theme.HEADER_HEIGHT if header else 0)
+        if header:
+            bar.setObjectName("dock-title")
+            bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            row = QHBoxLayout(bar)
+            row.setContentsMargins(10, 0, 6, 0)
+            row.setSpacing(1)
+            label = QLabel(title)
+            label.setObjectName("dock-title-label")
+            row.addWidget(label, 1)
+            for button in getattr(widget, "header_buttons", []):
+                row.addWidget(button)
+        dock.setTitleBarWidget(bar)
         self.addDockWidget(area, dock)
         return dock
 
     def _build_docks(self) -> None:
         left, right = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea
+        # The side panels run the full height; Messages sits under the editor only.
+        self.setCorner(Qt.Corner.BottomLeftCorner, left)
+        self.setCorner(Qt.Corner.BottomRightCorner, right)
+        self.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QTabWidget.TabPosition.North)
+        self.setDockOptions(
+            QMainWindow.DockOption.AnimatedDocks | QMainWindow.DockOption.AllowTabbedDocks
+        )
         components = self._dock("Components", self.components, left)
         shapes = self._dock("Shapes", self.tree, left)
         layers = self._dock("Layers", self.layers, left)
         properties = self._dock("Properties", self.properties, right)
-        parameters = self._dock("Parameters", self.parameters, right)
-        points = self._dock("Points", self.points, right)
-        constants = self._dock("Process constants", self.constants, right)
+        parameters = self._dock("Parameters", self.parameters, right, header=False)
+        points = self._dock("Points", self.points, right, header=False)
+        constants = self._dock("Process constants", self.constants, right, header=False)
         self.tabifyDockWidget(parameters, points)
         self.tabifyDockWidget(parameters, constants)
         parameters.raise_()
@@ -574,7 +599,7 @@ class MainWindow(QMainWindow):
         self.resizeDocks([components, shapes, layers], [240, 330, 200], vertical)
         self.resizeDocks([properties, parameters], [560, 220], vertical)
         self.resizeDocks([shapes, properties], [320, 360], horizontal)
-        self.resizeDocks([messages], [110], vertical)
+        self.resizeDocks([messages], [120], vertical)
 
     def _action(
         self, text: str, slot, shortcut=None, menu: QMenu | None = None, icon: str | None = None
@@ -732,7 +757,6 @@ class MainWindow(QMainWindow):
 
         self._build_main_toolbar()
         self._build_palette()
-        self._build_tool_options()
 
     def _toolbar(self, title: str, name: str) -> QToolBar:
         toolbar = self.addToolBar(title)
@@ -768,9 +792,13 @@ class MainWindow(QMainWindow):
         tools.addSeparator()
         tools.addAction(self.make_action)
         tools.addAction(self.unpack_action)
+        tools.addSeparator()
+        self._build_tool_options(tools)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tools.addWidget(spacer)
+        self._build_snapping(tools)
+        tools.addSeparator()
         self.mode_box = QComboBox()
         self.mode_box.setToolTip("What the canvas shows: the drawn layout or a process view")
         for mode, label in VIEW_MODES.items():
@@ -814,21 +842,17 @@ class MainWindow(QMainWindow):
             else Qt.ToolButtonStyle.ToolButtonIconOnly
         )
 
-    def _build_tool_options(self) -> None:
-        """The tool's own settings under the main toolbar, as in Blender's tool header."""
-        self.addToolBarBreak()
-        bar = self._toolbar("Tool options", "tool-options")
-        bar.setIconSize(QSize(16, 16))
+    def _build_tool_options(self, bar: QToolBar) -> None:
+        """The active tool and its own settings (as in Blender's tool header):
+        the drawing layer and path width, or the rotation step."""
         self.tool_icon = QLabel()
         self.tool_name = QLabel()
         self.tool_name.setObjectName("heading")
         bar.addWidget(self.tool_icon)
         bar.addWidget(self.tool_name)
-        bar.addSeparator()
-
         self.layer_box = QComboBox()
         self.layer_box.setToolTip("The layer the drawing tools draw on")
-        self.layer_box.setMinimumWidth(120)
+        self.layer_box.setMinimumWidth(110)
         self.layer_box.currentIndexChanged.connect(self._draw_layer_chosen)
         self.width_box = QDoubleSpinBox()
         self.width_box.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
@@ -852,15 +876,12 @@ class MainWindow(QMainWindow):
             ("width", "Width", self.width_box),
             ("angle", "Step", self.angle_box),
         ):
-            caption = QLabel(f" {label} ")
+            caption = QLabel(f"  {label} ")
             caption.setObjectName("muted")
             self.tool_widgets[key] = (bar.addWidget(caption), bar.addWidget(widget))
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        bar.addWidget(spacer)
-        snapping = QLabel("Snap ")
-        snapping.setObjectName("muted")
-        bar.addWidget(snapping)
+
+    def _build_snapping(self, bar: QToolBar) -> None:
+        """Snapping toggles (shape points, grid) and the gizmo toggle."""
         for key, label, icon_name in (
             ("snapping/points", "Snap to shape points", "snap_points"),
             ("snapping/grid", "Snap to the grid", "grid"),
@@ -872,10 +893,7 @@ class MainWindow(QMainWindow):
             action.toggled.connect(lambda checked, k=key: self.settings.set(k, checked))
             bar.addAction(action)
             self.setting_actions[key] = action
-        bar.addSeparator()
-        gizmos = self.setting_actions["canvas/show_gizmos"]
-        bar.addAction(gizmos)
-        self.tool_options = bar
+        bar.addAction(self.setting_actions["canvas/show_gizmos"])
 
     def _show_tool_options(self) -> None:
         tool = self.tool
@@ -1429,6 +1447,21 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+
+class _DockHeader(QWidget):
+    """A tool window header of a fixed height (the dock lays out by the size hint)."""
+
+    def __init__(self, height: int) -> None:
+        super().__init__()
+        self._height = height
+        self.setFixedHeight(height)
+
+    def sizeHint(self) -> QSize:
+        return QSize(super().sizeHint().width(), self._height)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, self._height)
 
 
 def _path(steps) -> NodePath:

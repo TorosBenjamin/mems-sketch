@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from PySide6.QtCore import QObject, QSettings, Qt, Signal
+from PySide6.QtCore import QObject, QSettings, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -343,8 +343,11 @@ class PreferencesDialog(QDialog):
         self.pages.setObjectName("settings-pages")
         self.pages.setFixedWidth(180)
         self.stack = QStackedWidget()
+        self.pages.setIconSize(QSize(18, 18))
+        self.pages.setSpacing(1)
         for page, icon_name in PAGES.items():
             item = QListWidgetItem(icons.icon(icon_name), page)
+            item.setSizeHint(QSize(0, 30))  # the highlight stays inside its row
             self.pages.addItem(item)
             if page == "Keymap":
                 self.stack.addWidget(self._keymap_page(shortcuts))
@@ -400,6 +403,7 @@ class PreferencesDialog(QDialog):
                 self._rows[setting.key] = (editor,)
                 continue
             label = QLabel(setting.label)
+            label.setFixedWidth(170)  # the same for every group, so the fields line up
             label.setToolTip(setting.help)
             groups[setting.group].addRow(label, editor)
             self._rows[setting.key] = (label, editor)

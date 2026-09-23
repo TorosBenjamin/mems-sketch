@@ -8,7 +8,7 @@ from PySide6.QtCore import QEvent, QPointF, QSettings, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QToolButton
 
-from mems_sketch.core.shapes import RectShape
+from mems_sketch.core.shapes import KINDS, RectShape, RefShape, wrap_shapes
 from mems_sketch.gui import icons, theme
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.settings import SETTINGS, PreferencesDialog, Settings
@@ -252,3 +252,11 @@ def test_canvas_caption_and_palette_labels(window):
     assert "read-only" in window.canvas._caption[1]
     window.settings.set("appearance/palette_labels", True)
     assert window.palette.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+
+
+def test_every_shape_kind_has_an_icon():
+    rects = [RectShape(layer="device", x0=0, y0=0, x1=1, y1=1) for _ in range(2)]
+    shapes = [kind.default("device") for kind in KINDS if kind.category == "primitive"]
+    shapes += [wrap_shapes(op, "w", rects) for kind in KINDS for op in kind.wraps]
+    shapes.append(RefShape(component="rectangle"))
+    assert {s.icon_name() for s in shapes} <= set(icons.ICONS)

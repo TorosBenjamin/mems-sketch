@@ -11,7 +11,7 @@ from pathlib import Path
 
 import klayout.db as kdb
 from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -33,6 +33,7 @@ from mems_sketch.core.shapes import NodePath
 from mems_sketch.editing import EditSession
 from mems_sketch.export.base import available_exporters
 from mems_sketch.gui import icons, theme
+from mems_sketch.gui.actions import Actions
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.find_action import FindActionDialog, menu_actions
@@ -55,13 +56,6 @@ STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the la
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
 TOOLS_DRAWING_FIRST = next(t.name for t in TOOLS if t.draws)  # the palette separates them
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
-PRIMITIVES = [
-    ("rect", "Rectangle"),
-    ("circle", "Circle"),
-    ("arc", "Arc / ring"),
-    ("polygon", "Polygon"),
-    ("path", "Path"),
-]
 # Canvas options and the settings they come from (see gui/settings.py).
 CANVAS_OPTIONS = {
     "fill_opacity": "canvas/fill_opacity",
@@ -74,24 +68,6 @@ CANVAS_OPTIONS = {
     "gizmo_size_px": "canvas/gizmo_size_px",
     "zoom_step": "canvas/zoom_step",
 }
-OVERLAYS = [  # View › Overlays: setting, label, icon
-    ("canvas/show_grid", "Grid", "grid"),
-    ("canvas/show_axes", "Coloured axes", "axes"),
-    ("canvas/show_axis_gizmo", "Axis indicator", "axes"),
-    ("canvas/show_scale_bar", "Scale bar", "ruler"),
-    ("canvas/show_gizmos", "Move and rotate gizmos", "move"),
-    ("canvas/hover_highlight", "Highlight under cursor", "select"),
-]
-OPERATIONS = [
-    ("transform", "Transform"),
-    ("union", "Union"),
-    ("subtract", "Subtract"),
-    ("intersect", "Intersect"),
-    ("xor", "XOR"),
-    ("offset", "Offset"),
-    ("fillet", "Fillet"),
-    ("layer_map", "Layer map"),
-]
 
 
 class MainWindow(QMainWindow):
@@ -576,160 +552,28 @@ class MainWindow(QMainWindow):
         self.resizeDocks([shapes, properties], [320, 360], horizontal)
         self.resizeDocks([messages], [110], vertical)
 
-    def _action(
-        self, text: str, slot, shortcut=None, menu: QMenu | None = None, icon: str | None = None
-    ) -> QAction:
-        action = QAction(text, self)
-        action.triggered.connect(slot)
-        if shortcut is not None:
-            action.setShortcut(QKeySequence(shortcut))
-        if icon is not None:
-            icons.bind(action, icon)
-        if menu is not None:
-            menu.addAction(action)
-        keys = action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
-        action.setToolTip(f"{text.replace('…', '')} ({keys})" if keys else text.replace("…", ""))
-        return action
-
     def _build_actions(self) -> None:
-        bar = self.menuBar()
-        file = bar.addMenu("&File")
-        self._action("New project", self.new_project, QKeySequence.StandardKey.New, file, "new")
-        self._action(
-            "Open project…", self.open_project, QKeySequence.StandardKey.Open, file, "open"
-        )
-        self.save_action = self._action(
-            "Save", self.save_project, QKeySequence.StandardKey.Save, file, "save"
-        )
-        self._action("Save as…", self.save_project_as, QKeySequence.StandardKey.SaveAs, file)
-        file.addSeparator()
-        export = file.addMenu("Export")
-        icons.bind(export.menuAction(), "export")
-        for mode, label in VIEW_MODES.items():
-            self._action(
-                f"{label} geometry…", lambda _=False, m=mode: self.export_file(m), menu=export
-            )
-        file.addSeparator()
-        self._action("Settings…", self.show_settings, "Ctrl+Alt+S", file, "settings")
-        file.addSeparator()
-        self._action("Quit", self.close, QKeySequence.StandardKey.Quit, file)
-
-        edit = bar.addMenu("&Edit")
-        self.undo_action = self._action(
-            "Undo", self.document.undo, QKeySequence.StandardKey.Undo, edit, "undo"
-        )
-        self.redo_action = self._action(
-            "Redo", self.document.redo, QKeySequence.StandardKey.Redo, edit, "redo"
-        )
-        edit.addSeparator()
-        self._action("Duplicate", self.duplicate, "Ctrl+D", edit, "duplicate")
-        self._action("Delete", self.delete, QKeySequence.StandardKey.Delete, edit, "delete")
-        self._action("Unwrap operation", self.unwrap, "Ctrl+Shift+U", edit)
-        self.make_action = self._action(
-            "Make component from selection…", self.make_component, "Ctrl+K", edit, "make_component"
-        )
-        self.unpack_action = self._action(
-            "Unpack component", self.unpack, "Ctrl+Shift+K", edit, "unpack"
-        )
-        edit.addSeparator()
-        self._action("Move by…", self.move_by, "Ctrl+Shift+M", edit, "move")
-        self.rotate_left_action = self._action(
-            "Rotate 90° left", lambda: self.rotate_selection(90), "Ctrl+R", edit, "rotate_left"
-        )
-        self.rotate_right_action = self._action(
-            "Rotate 90° right",
-            lambda: self.rotate_selection(-90),
-            "Ctrl+Shift+R",
-            edit,
-            "rotate_right",
-        )
-        self.mirror_h_action = self._action(
-            "Mirror left-right", lambda: self.mirror_selection(True), None, edit, "mirror_h"
-        )
-        self.mirror_v_action = self._action(
-            "Mirror up-down", lambda: self.mirror_selection(False), None, edit, "mirror_v"
-        )
-        edit.addSeparator()
-        self._action("Align…", self.start_align, "Ctrl+L", edit, "align")
-        self._action("Remove alignment", self.remove_alignment, None, edit)
-        self._action("Cancel", self.escape, "Esc", edit)
-
-        tools_menu = bar.addMenu("&Tools")
-        self.tool_actions: dict[str, QAction] = {}
-        group = QActionGroup(self)
-        group.setExclusive(True)
-        for name, tool in self.tools.items():
-            if name == TOOLS_DRAWING_FIRST:
-                tools_menu.addSeparator()
-            action = self._action(
-                tool.label,
-                lambda _=False, n=name: self.set_tool(n),
-                tool.shortcut,
-                tools_menu,
-                tool.icon,
-            )
-            action.setCheckable(True)
-            group.addAction(action)
-            self.tool_actions[name] = action
-        tools_menu.addSeparator()
-        self._action("Clear rulers", self.clear_rulers, None, tools_menu, "clear")
-
-        insert = bar.addMenu("&Insert")
-        self.primitive_menu = insert.addMenu("Primitive")
-        icons.bind(self.primitive_menu.menuAction(), "rect")
-        for kind, label in PRIMITIVES:
-            self._action(
-                label,
-                lambda _=False, k=kind: self.add_primitive(k),
-                menu=self.primitive_menu,
-                icon=kind,
-            )
-        self.component_menu = insert.addMenu("Component")
-        icons.bind(self.component_menu.menuAction(), "place")
-        self.component_menu.aboutToShow.connect(self._fill_component_menu)
-
-        operations = bar.addMenu("&Operations")
-        self.operation_actions: dict[str, QAction] = {}
-        for op, label in OPERATIONS:
-            self.operation_actions[op] = self._action(
-                label, lambda _=False, o=op: self.wrap(o), menu=operations, icon=op
-            )
-
-        view = bar.addMenu("&View")
-        self._action("Fit", lambda: self.canvas.fit(), "F", view, "fit")
-        self._action("Zoom in", lambda: self.canvas.zoom_by(1.25), "Ctrl+=", view, "zoom_in")
-        self._action("Zoom out", lambda: self.canvas.zoom_by(0.8), "Ctrl+-", view, "zoom_out")
-        self._action("Recompile and check", self.refresh, "F5", view, "recompile")
-        view.addSeparator()
-        overlays = view.addMenu("Overlays")
-        icons.bind(overlays.menuAction(), "eye")
-        self.setting_actions: dict[str, QAction] = {}
-        for key, label, icon_name in OVERLAYS:
-            action = self._action(
-                label, lambda checked, k=key: self.settings.set(k, checked), menu=overlays
-            )
-            icons.bind(action, icon_name)
-            action.setCheckable(True)
-            action.setChecked(self.settings.get(key))
-            self.setting_actions[key] = action
-        self.dark_action = self._action("Dark canvas", self._toggle_dark, None, view)
-        self.dark_action.setCheckable(True)
-        self.dark_action.setChecked(self.canvas_theme == "dark")
-        view.addSeparator()
-        self._action("Open top component", self._edit_top, "Ctrl+T", view, "top")
-        self._action("Split view", self.split_view, "Ctrl+\\", view, "split")
-        self._action("Merge split view", self.area.unsplit, None, view)
-        self._action("Close tab", self.close_tab, QKeySequence.StandardKey.Close, view, "close")
-        panels = view.addMenu("Panels")
+        self.actions_ = actions = Actions(self)
+        for menu in actions.root_menus:
+            self.menuBar().addMenu(menu)
         for dock in self.findChildren(QDockWidget):
-            panels.addAction(dock.toggleViewAction())
-
-        help_menu = bar.addMenu("&Help")
-        self.find_action_action = self._action(
-            "Find action…", self.find_action, "Ctrl+Shift+A", help_menu, "search"
+            actions.panels.addAction(dock.toggleViewAction())
+        # The names the rest of the window (and its tests) use.
+        self.save_action, self.undo_action, self.redo_action = (
+            actions.save,
+            actions.undo,
+            actions.redo,
         )
-        self._action("Keyboard shortcuts", lambda: self.show_settings("Keymap"), None, help_menu)
-
+        self.make_action, self.unpack_action = actions.make, actions.unpack
+        self.rotate_left_action, self.rotate_right_action = (
+            actions.rotate_left,
+            actions.rotate_right,
+        )
+        self.mirror_h_action, self.mirror_v_action = actions.mirror_h, actions.mirror_v
+        self.find_action_action, self.dark_action = actions.find, actions.dark
+        self.tool_actions, self.operation_actions = actions.tools, actions.operations
+        self.setting_actions = actions.settings_toggles
+        self.primitive_menu, self.component_menu = actions.add, actions.place
         self._build_main_toolbar()
         self._build_palette()
         self._build_tool_options()
@@ -929,21 +773,7 @@ class MainWindow(QMainWindow):
         dock.raise_()
 
     def _tab_menu(self, view: ComponentView, position: QPoint) -> None:
-        menu = QMenu(self)
-        self._action("Close", lambda: self.area.close_view(view), None, menu, "close")
-        self._action("Close others", lambda: self.area.close_others(view), None, menu)
-        self._action("Close all", self._close_all_tabs, None, menu)
-        menu.addSeparator()
-        self._action(
-            "Open in the other pane" if self.area.split else "Split right",
-            lambda: (self.area.set_current(view), self.split_view()),
-            None,
-            menu,
-            "split",
-        )
-        if self.area.split:
-            self._action("Merge panes", self.area.unsplit, None, menu)
-        menu.exec(position)
+        self.actions_.tab_menu(view).exec(position)
 
     def _close_all_tabs(self) -> None:
         for view in self.area.views():
@@ -990,14 +820,6 @@ class MainWindow(QMainWindow):
     def add_drawn(self, shape) -> None:
         """Add a shape drawn with a drawing tool and select it."""
         self._select_result(lambda: self.document.nodes.add(shape))
-
-    def _fill_component_menu(self) -> None:
-        self.component_menu.clear()
-        for name in self.document.component_names():
-            if name != self.document.active:
-                self._action(
-                    name, lambda _=False, n=name: self.add_component(n), menu=self.component_menu
-                )
 
     # -- refresh -----------------------------------------------------------
 

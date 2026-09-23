@@ -108,7 +108,8 @@ DEFAULT_OPTIONS = {
     "gizmo_size_px": 70,
     "zoom_step": 1.25,
 }
-GIZMO_GRAB_PX = 7  # how close to a gizmo handle counts as on it
+GIZMO_GRAB_PX = 7
+COMPONENT_MIME = "application/x-mems-sketch-component"  # a component dragged from the explorer  # how close to a gizmo handle counts as on it
 # The world the user can pan over, in µm: ±1 m, inside the ±2.1 m that 32-bit
 # database units (nm) can hold. Cursor positions are kept inside it.
 WORLD = QRectF(-1e6, -1e6, 2e6, 2e6)
@@ -151,6 +152,7 @@ class LayoutCanvas(QGraphicsView):
     key_pressed = Signal(object)  # Enter or Backspace, for the active tool
     cursor_moved = Signal(float, float)
     view_changed = Signal()  # zoomed or panned
+    component_dropped = Signal(str, float, float)  # a component dragged in: name, x, y (µm)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -192,6 +194,7 @@ class LayoutCanvas(QGraphicsView):
         self._gizmo_sweep: tuple[float, float] | None = None  # start angle, angle
         self._overlay_buttons = self._build_overlay_buttons()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAcceptDrops(True)
         self._has_content = False
         self._wheel_anchor: QPointF | None = None  # scene point held under the cursor
         # A large scene rect lets the user pan freely beyond the geometry.
@@ -641,6 +644,31 @@ class LayoutCanvas(QGraphicsView):
             self.released.emit(p.x(), p.y(), event.modifiers())
             return
         super().mouseReleaseEvent(event)
+
+    # -- dropping components from the explorer -------------------------------
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(COMPONENT_MIME):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(COMPONENT_MIME):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        data = event.mimeData()
+        if not data.hasFormat(COMPONENT_MIME):
+            super().dropEvent(event)
+            return
+        name = bytes(data.data(COMPONENT_MIME)).decode()
+        p = self.mapToScene(event.position().toPoint())
+        step = self.grid_step()
+        event.acceptProposedAction()
+        self.component_dropped.emit(name, round(p.x() / step) * step, round(p.y() / step) * step)
 
     def keyReleaseEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():

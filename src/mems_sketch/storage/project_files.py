@@ -3,7 +3,7 @@
 Layout::
 
     my_project/
-      project.yaml          format, name, top component, libraries
+      project.yaml          format, name, top component (null for a library), libraries
       process.yaml          layers and process constants
       components/
         top.yaml            one file per local component
@@ -113,8 +113,8 @@ def load_project(path: str | Path) -> Project:
         name: load_library(name, (folder / rel) if not Path(rel).is_absolute() else Path(rel))
         for name, rel in (header.get("libraries") or {}).items()
     }
-    top = header.get("top", "top")
-    if top not in components:
+    top = header.get("top", "top")  # null: a library, with no top component
+    if top is not None and top not in components:
         raise ProjectFormatError(f"top component '{top}' has no file in {COMPONENTS_DIR}/")
     return Project(
         name=str(header.get("name", folder.name)),

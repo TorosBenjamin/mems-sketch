@@ -56,7 +56,7 @@ mems-sketch-cli check examples/resonator       # the same compiler, from the com
 
 ```
 my_project/
-  project.yaml        format, name, top component, libraries
+  project.yaml        format, name, top component (null for a library), libraries
   process.yaml        layers (GDS numbers, undercut, rules) and process constants
   components/
     top.yaml          one file per component; the design itself is the top component
@@ -123,10 +123,18 @@ Its components are placed as `std.perforated_plate`. Libraries are read-only
 and self-contained: inside a library, bare names refer to that library's own
 components (then built-ins), never to the project's.
 
+A project without a top component (`top: null` in `project.yaml`) is a
+library: just components, meant to be placed elsewhere
+(`mems-sketch-cli new --library`, **File → New library**, or **Make the
+project a library** in the Components explorer). To change a library
+component for one project, copy it into the project (**Copy into the
+project**): the copy is editable and keeps using the library's other
+components.
+
 ## Command line
 
 ```bash
-mems-sketch-cli new     my_project
+mems-sketch-cli new     my_project [--library]
 mems-sketch-cli info    my_project
 mems-sketch-cli check   my_project [--component NAME] [--set pitch=15] [--etch etched] [--json]
 mems-sketch-cli export  my_project out.gds [--etch compensated] [--set pitch=15]
@@ -185,13 +193,22 @@ light or dark theme (`gui/icons.py`).
   active tool are per user.
 - **Undo/redo** is one history for the whole project and goes back to the tab
   where the change was made, reopening it if it was closed.
-- **Components**: the project's components (a pencil marks the one in the
-  current tab, an eye a read-only one), library components and built-ins. The
-  buttons above the list: New, Rename (updates every reference and tab),
-  Delete, Set top, and **Place**, which inserts the selected one.
-- **Shapes**: the shape tree of the component being edited. Checkboxes enable
-  or disable a node; Ctrl/Shift-click selects several. Boolean operands appear
-  under A and B, and each alignment is shown (e.g. `bottom at spring.end`).
+- **Components** (an explorer): the project, each library and the built-ins,
+  with their own icons (purple project components, blue library ones, orange
+  built-ins; a star for the top component). Every component expands to the
+  components it places, with how many (`suspension ×2`), and those expand in
+  turn. Double-click opens a component in a tab; drag one onto the canvas, or
+  use **Place**, to put it into the component being edited. Right-click for
+  the rest: open in the other pane, rename (updates every reference and tab),
+  duplicate, delete, set as top, copy a library component into the project,
+  new component, add or remove a library, make the project a library. The +
+  button adds a component or a library.
+- **Shapes**: the shapes of the component being edited, one line each: the
+  name, then briefly what it is (the layer of a primitive, the component a
+  reference places, `3×2` when repeated) in grey; a link icon marks an aligned
+  shape (hover it for e.g. `bottom at spring.end`). Checkboxes enable or
+  disable a node; Ctrl/Shift-click selects several. Operations show their
+  operands under them (booleans under A and B).
 - **Canvas**: wheel to zoom, middle or right drag (or Space + drag, in any
   tool) to pan, F to fit; the buttons in the top-right corner zoom and fit
   too. The selection is outlined in orange with its alignment points, the

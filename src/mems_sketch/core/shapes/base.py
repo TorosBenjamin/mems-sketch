@@ -128,8 +128,12 @@ class Node(BaseModel):
         return None
 
     def summary(self) -> str:
-        """Short description next to its name in the shape tree."""
+        """Short description of the node, e.g. for a tooltip or a listing."""
         return self.kind
+
+    def detail(self) -> str:
+        """The shortest description, for next to the name where an icon shows the kind."""
+        return self.summary()
 
     def icon_name(self) -> str:
         return self.icon
@@ -156,6 +160,9 @@ class Primitive(Node):
 
     def summary(self) -> str:
         return f"{self.kind} · {self.layer}"
+
+    def detail(self) -> str:
+        return self.layer
 
 
 class Operation(Node):

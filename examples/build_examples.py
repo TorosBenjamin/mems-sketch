@@ -28,7 +28,7 @@ HERE = Path(__file__).parent
 
 # -- a reusable component library ------------------------------------------
 
-library = Project(name="mems_std")
+library = Project(name="mems_std", top=None)  # a library: no top component
 library.define_component(
     ComponentDef(
         name="perforated_plate",

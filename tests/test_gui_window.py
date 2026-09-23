@@ -97,7 +97,7 @@ def test_open_example_project_with_library(window, tmp_path):
         window.components.tree.topLevelItem(i).text(0)
         for i in range(window.components.tree.topLevelItemCount())
     ]
-    assert labels == ["Project: resonator", "Library: std", "Built-in"]
+    assert labels == ["resonator", "std", "Built-in"]
     assert window.messages.item(0).text() == "No rule violations."
 
 
@@ -143,7 +143,7 @@ def test_align_tool_picks_two_points_on_the_canvas(window):
     assert window.align_step is None
     align = window.document.node(((0, 1),)).align
     assert (align.point, align.to) == ("bottom", "rect1.top")
-    assert "bottom at rect1.top" in window.tree.topLevelItem(1).text(1)
+    assert "bottom at rect1.top" in window.tree.topLevelItem(1).toolTip(1)
 
 
 def test_align_tool_cancels_and_needs_a_selection(window):

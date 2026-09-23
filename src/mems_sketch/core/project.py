@@ -2,7 +2,8 @@
 
 Everything is a component. The design itself is the *top* component; what
 used to be global variables are its parameters, so any project can be placed
-inside another one. Components contain shape trees (see
+inside another one. A project without a top component (``top=None``) is a
+library: a set of components meant to be placed elsewhere. Components contain shape trees (see
 :mod:`mems_sketch.core.shapes`) that may reference other components.
 
 Component names are resolved like this:
@@ -23,16 +24,28 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mems_sketch.core.component import Component, Geometry, is_builtin
-from mems_sketch.core.process import Layer, Process, Value
+from mems_sketch.core.process import Layer, Process, Value, default_process
 from mems_sketch.core.shapes import RefShape, Shape, child_lists, find, walk
 from mems_sketch.core.user_component import ComponentDef, ParamDef
 
 if TYPE_CHECKING:
     from mems_sketch.core.compiler import Compiler
 
-__all__ = ["Instance", "Layer", "Library", "Process", "Project"]
+__all__ = ["Instance", "Layer", "Library", "Process", "Project", "new_project"]
 
 DEFAULT_TOP = "top"
+
+
+def new_project(name: str = "untitled", library: bool = False) -> Project:
+    """An empty design (with a ``top`` component) or library (one component, no top)."""
+    if library:
+        return Project(
+            name=name,
+            process=default_process(),
+            top=None,
+            components={"component1": ComponentDef(name="component1")},
+        )
+    return Project(name=name, process=default_process())
 
 
 def Instance(
@@ -56,11 +69,11 @@ class Project:
     name: str = "untitled"
     process: Process = field(default_factory=Process)
     components: dict[str, ComponentDef] = field(default_factory=dict)
-    top: str = DEFAULT_TOP
+    top: str | None = DEFAULT_TOP  # None: a library, with no design of its own
     libraries: dict[str, Library] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.top not in self.components:
+        if self.top is not None and self.top not in self.components:
             self.components[self.top] = ComponentDef(name=self.top)
 
     # -- process -----------------------------------------------------------
@@ -81,7 +94,26 @@ class Project:
 
     @property
     def top_component(self) -> ComponentDef:
-        return self.components[self.top]
+        return self.components[self._target(None)]
+
+    @property
+    def is_library(self) -> bool:
+        """A project without a top component: only components to be placed elsewhere."""
+        return self.top is None
+
+    def _target(self, component: str | None) -> str:
+        """``component``, or the top component when none is named."""
+        if component is not None:
+            return component
+        if self.top is None:
+            raise ValueError("this project has no top component: name the component")
+        return self.top
+
+    def default_component(self) -> str | None:
+        """The component to show first: the top one, else the first local one."""
+        if self.top is not None:
+            return self.top
+        return next(iter(self.components), None)
 
     def qualify(self, name: str, namespace: str | None = None) -> str:
         """The unique name of the component that ``name`` refers to from ``namespace``.
@@ -134,12 +166,13 @@ class Project:
         return definition
 
     def remove_component(self, name: str) -> None:
-        if name == self.top:
-            raise ValueError("the top component cannot be removed")
+        """Remove a local component that nothing uses (removing the top one leaves none)."""
         users = [d.name for d in self.components.values() if name in d.references()]
         if users:
             raise ValueError(f"component '{name}' is still used by: {', '.join(users)}")
         del self.components[name]
+        if self.top == name:
+            self.top = None
 
     def rename_component(self, old: str, new: str) -> None:
         """Rename a local component and update every reference to it."""
@@ -189,9 +222,10 @@ class Project:
                 visit(f"{library.name}.{name}", [])
 
     # -- parameters (the top component's parameters act as the design's variables)
+    # Methods taking ``component=None`` use the top component; a library must name one.
 
     def parameters(self, component: str | None = None) -> list[ParamDef]:
-        return self.components[component or self.top].parameters
+        return self.components[self._target(component)].parameters
 
     @property
     def variables(self) -> dict[str, Value]:
@@ -202,7 +236,7 @@ class Project:
         self, name: str, default: Value, component: str | None = None, **limits: Any
     ) -> ParamDef:
         """Create or update a parameter's default (and optionally min/max/integer/description)."""
-        definition = self.components[component or self.top]
+        definition = self.components[self._target(component)]
         for index, existing in enumerate(definition.parameters):
             if existing.name == name:
                 updated = ParamDef.model_validate(
@@ -219,7 +253,7 @@ class Project:
         self.set_parameter(name, value)
 
     def remove_parameter(self, name: str, component: str | None = None) -> None:
-        definition = self.components[component or self.top]
+        definition = self.components[self._target(component)]
         definition.parameters = [p for p in definition.parameters if p.name != name]
 
     def resolved_parameters(
@@ -228,14 +262,14 @@ class Project:
         """Parameter values of a local component (defaults unless given) plus ``process.*``."""
         from mems_sketch.core.compiler import Compiler
 
-        return Compiler().session(self).variables(component or self.top, params)
+        return Compiler().session(self).variables(self._target(component), params)
 
     resolved_variables = resolved_parameters
 
     # -- shape editing (on the top component unless another is named) ------
 
     def shapes_of(self, component: str | None = None) -> list[Shape]:
-        return self.components[component or self.top].shapes
+        return self.components[self._target(component)].shapes
 
     @property
     def shapes(self) -> list[Shape]:
@@ -289,7 +323,7 @@ class Project:
         """Merged geometry of a component (default: top) with the given or default parameters."""
         from mems_sketch.core.compiler import Compiler
 
-        return (compiler or Compiler()).session(self).render(component or self.top, params)
+        return (compiler or Compiler()).session(self).render(self._target(component), params)
 
     def render_shape(
         self,
@@ -302,7 +336,7 @@ class Project:
         from mems_sketch.core.compiler import Compiler
 
         session = (compiler or Compiler()).session(self)
-        name = component or self.top
+        name = self._target(component)
         variables = session.variables(name) if variables is None else variables
         return session.render_shapes([shape], variables)
 

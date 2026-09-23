@@ -42,9 +42,12 @@ class NodeEdits(Commands):
     def add_primitive(self, kind: str, layer: str = "device") -> NodePath:
         return self.add(default_shape(kind, layer))
 
-    def add_component(self, component: str) -> NodePath:
+    def add_component(self, component: str, x: float = 0.0, y: float = 0.0) -> NodePath:
+        """Place a component (its origin at ``x, y``) in the active component."""
         stem = component.rsplit(".", 1)[-1].split("_")[0]
-        return self.add(RefShape(name=self.session.unique_name(stem), component=component))
+        return self.add(
+            RefShape(name=self.session.unique_name(stem), component=component, x=x, y=y)
+        )
 
     def replace(self, path: NodePath, new: Shape) -> None:
         """Replace a node. A new name is also used by alignments and point expressions."""

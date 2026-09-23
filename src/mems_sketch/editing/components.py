@@ -1,7 +1,10 @@
-"""Creating, renaming, deleting, making and unpacking components."""
+"""Components: creating, renaming, deleting, copying, making and unpacking them,
+the top component, libraries, and which components place which."""
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 from mems_sketch.core.component import is_builtin
@@ -22,10 +25,49 @@ from mems_sketch.core.shapes import (
 from mems_sketch.core.user_component import ComponentDef
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
+from mems_sketch.storage.project_files import load_library
 
 
 class ComponentEdits(Commands):
-    """Creating, renaming, deleting, making and unpacking components."""
+    """Components of the project, its top component and its libraries."""
+
+    # -- what places what --------------------------------------------------
+
+    def placed(self, component: str) -> list[tuple[str, int]]:
+        """The components that ``component`` places, as ``(name, count)`` in order of first use.
+
+        Names are written as the project would write them (``lib.name`` for a
+        library component), so they can be opened, placed or explored further.
+        Built-ins place nothing. Repeated references count every copy.
+        """
+        project = self.session.project
+        found = project.definition(project.qualify(component))
+        if found is None:
+            return []
+        definition, namespace = found
+        counts: dict[str, int] = {}
+        for shape in walk(definition.shapes):
+            if isinstance(shape, RefShape):
+                try:
+                    target = project.qualify(shape.component, namespace)
+                except KeyError:
+                    continue  # the messages panel reports it
+                copies = 1
+                if shape.repeat is not None:
+                    try:
+                        copies = int(float(shape.repeat.columns) * float(shape.repeat.rows))
+                    except (TypeError, ValueError):  # expressions: counted once
+                        copies = 1
+                counts[target] = counts.get(target, 0) + copies
+        return list(counts.items())
+
+    def users(self, component: str) -> list[str]:
+        """The local components that place ``component`` directly."""
+        return [
+            name
+            for name in self.session.project.components
+            if any(target == component for target, _ in self.placed(name))
+        ]
 
     def new(self, name: str) -> str:
         self._check_name(name)
@@ -37,7 +79,69 @@ class ComponentEdits(Commands):
         return name
 
     def delete(self, name: str) -> None:
+        if name not in self.session.project.components:
+            raise ValueError(f"'{name}' is not a component of this project")
+        if len(self.session.project.components) == 1:
+            raise ValueError("a project needs at least one component")
         self.session.edit(f"Delete component {name}", lambda p: p.remove_component(name))
+
+    def copy(self, component: str, name: str | None = None) -> str:
+        """Copy a library (or local) component into the project, to edit it there.
+
+        The copy keeps using what the original used: references inside it are
+        written as seen from the project (``lib.plate``). Built-ins have no
+        shapes to copy; place them instead.
+        """
+        project = self.session.project
+        found = project.definition(project.qualify(component))
+        if found is None:
+            raise ValueError(f"'{component}' is built in: it has no shapes to copy; place it")
+        definition, namespace = found
+        taken = set(project.components)
+        stem = component.rpartition(".")[2]
+        name = name or (stem if stem not in taken and not is_builtin(stem) else None)
+        name = name or fresh_name(f"{stem}_copy", taken)
+        self._check_name(name)
+        copied = definition.model_copy(deep=True, update={"name": name})
+        if namespace is not None:
+            for shape in walk(copied.shapes):
+                if isinstance(shape, RefShape):
+                    shape.component = project.qualify(shape.component, namespace)
+        self.session.edit(
+            f"Copy {component} into the project",
+            lambda p: p.components.__setitem__(name, copied),
+        )
+        self.session.set_active(name)
+        return name
+
+    # -- libraries ---------------------------------------------------------
+
+    def add_library(self, folder: str | Path, name: str | None = None) -> str:
+        """Load the components in ``folder`` (a project or library folder) as ``name.*``."""
+        folder = Path(folder)
+        name = name or re.sub(r"\W+", "_", folder.name).strip("_").lower() or "lib"
+        if not name.isidentifier():
+            name = f"lib_{name}"
+        if name in self.session.project.libraries:
+            raise ValueError(f"a library named '{name}' is already loaded")
+        library = load_library(name, folder)
+        if not library.components:
+            raise ValueError(f"{folder} has no components")
+        self.session.edit(f"Add library {name}", lambda p: p.libraries.__setitem__(name, library))
+        return name
+
+    def remove_library(self, name: str) -> None:
+        project = self.session.project
+        if name not in project.libraries:
+            raise ValueError(f"no library named '{name}'")
+        users = [
+            component
+            for component, definition in project.components.items()
+            if any(ref.startswith(f"{name}.") for ref in definition.references())
+        ]
+        if users:
+            raise ValueError(f"library '{name}' is still used by: {', '.join(users)}")
+        self.session.edit(f"Remove library {name}", lambda p: p.libraries.pop(name))
 
     def rename(self, old: str, new: str) -> None:
         self._check_name(new)
@@ -51,13 +155,16 @@ class ComponentEdits(Commands):
             f"Rename component {old}", change, lambda: self.session.component_renamed.emit(old, new)
         )
 
-    def set_top(self, name: str) -> None:
+    def set_top(self, name: str | None) -> None:
+        """Make a local component the top one; ``None`` makes the project a library."""
+
         def change(project: Project) -> None:
-            if name not in project.components:
+            if name is not None and name not in project.components:
                 raise ValueError(f"'{name}' is not a local component")
             project.top = name
 
-        self.session.edit(f"Make {name} the top component", change)
+        description = f"Make {name} the top component" if name else "Make the project a library"
+        self.session.edit(description, change)
 
     def _check_name(self, name: str) -> None:
         if not name.isidentifier():

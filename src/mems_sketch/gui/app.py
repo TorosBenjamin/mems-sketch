@@ -146,6 +146,7 @@ class MainWindow(QMainWindow):
         self.tree.itemDoubleClicked.connect(self._tree_double_clicked)
         self.components.place_requested.connect(self.add_component)
         self.components.open_requested.connect(self.open_component)
+        self.components.open_aside_requested.connect(self.open_aside)
         self.layers.visibility_changed.connect(self._set_layer_visible)
         self.tree.collapse_changed.connect(self.state_changed)
         self.components.collapse_changed.connect(self.state_changed)
@@ -217,6 +218,9 @@ class MainWindow(QMainWindow):
             canvas.key_pressed.connect(lambda key: self.tool.key(key))
             canvas.view_changed.connect(self.state_changed)
             canvas.view_changed.connect(self._show_zoom)
+            canvas.component_dropped.connect(
+                lambda name, x, y, v=view: self._component_dropped(v, name, x, y)
+            )
             canvas.set_theme(self.canvas_theme)
             canvas.configure(**self._canvas_options())
             self._caption(view)
@@ -330,6 +334,22 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.search.setFocus()
 
+    def open_aside(self, name: str) -> None:
+        """Open a component in the other pane (splitting the editor if needed)."""
+        if not self.document.exists(name):
+            self.report_error(f"unknown component '{name}'")
+            return
+        self._render(self.area.open(name, self.area.other_pane()))
+
+    def _component_dropped(self, view: ComponentView, name: str, x: float, y: float) -> None:
+        """A component dragged from the explorer onto a canvas: place it there."""
+        if view is not self.area.current:
+            self.area.set_current(view)
+        if name == view.component:
+            self.report_error("a component cannot be placed inside itself")
+            return
+        self._select_result(lambda: self.document.nodes.add_component(name, x, y))
+
     def split_view(self) -> None:
         view = self.area.split_view()
         if view is not None:
@@ -372,6 +392,7 @@ class MainWindow(QMainWindow):
             "hidden_layers": sorted(n for n, shown in self.layers.visible.items() if not shown),
             "collapsed": {
                 "components": sorted(self.components.collapsed),
+                "explorer": sorted(self.components.expanded),
                 "shapes": {
                     c: [[list(step) for step in p] for p in sorted(paths)]
                     for c, paths in self.tree.collapsed.items()
@@ -423,6 +444,7 @@ class MainWindow(QMainWindow):
         }
         collapsed = state.get("collapsed", {})
         self.components.collapsed = set(collapsed.get("components", []))
+        self.components.expanded = set(collapsed.get("explorer", []))
         self.tree.collapsed = {
             c: {_path(p) for p in paths} for c, paths in collapsed.get("shapes", {}).items()
         }
@@ -619,7 +641,10 @@ class MainWindow(QMainWindow):
     def _build_actions(self) -> None:
         bar = self.menuBar()
         file = bar.addMenu("&File")
-        self._action("New project", self.new_project, QKeySequence.StandardKey.New, file, "new")
+        self._action(
+            "New project", lambda: self.new_project(), QKeySequence.StandardKey.New, file, "new"
+        )
+        self._action("New library", self.new_library, None, file, "library")
         self._action(
             "Open project…", self.open_project, QKeySequence.StandardKey.Open, file, "open"
         )
@@ -1239,6 +1264,9 @@ class MainWindow(QMainWindow):
         self._update_overlay()
 
     def _edit_top(self) -> None:
+        if self.document.project.top is None:
+            self.report_error("this project is a library: it has no top component")
+            return
         self.open_component(self.document.project.top)
 
     # -- commands ----------------------------------------------------------
@@ -1361,12 +1389,16 @@ class MainWindow(QMainWindow):
             return self.save_project()
         return answer == QMessageBox.StandardButton.Discard
 
-    def new_project(self) -> None:
+    def new_project(self, library: bool = False) -> None:
         if self._confirm_discard():
             self.save_editor_state()
             self.area.close_all()
             self.rulers = {}
-            self.document.new()
+            self.document.new(library=library)
+
+    def new_library(self) -> None:
+        """A new project without a top component: a set of components to place elsewhere."""
+        self.new_project(library=True)
 
     def open_project(self, path: str | None = None) -> None:
         if not self._confirm_discard():
@@ -1393,6 +1425,7 @@ class MainWindow(QMainWindow):
             self.rulers = {}
             self.layers.visible = {}
             self.components.collapsed = set()
+            self.components.expanded = set()
             self.tree.collapsed = {}
             self.refresh()
             self.restore_editor_state()

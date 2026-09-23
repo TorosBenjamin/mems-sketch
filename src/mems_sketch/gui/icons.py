@@ -161,7 +161,14 @@ ICONS = {
     'height="5" rx=".5"/><rect x="2" y="9" width="5" height="5" rx=".5"/><rect x="9" y="9" '
     'width="5" height="5" rx=".5"/>',
     # -- components -------------------------------------------------------
-    "component": _CHIP,
+    "component": _CHIP,  # a project component: purple
+    "component_library": _CHIP.replace("{purple}", "{blue}")  # a library component: blue
+    + '<path d="M6.5 6.5h3v3h-3z" fill="{blue}" fill-opacity=".35" stroke="none"/>',
+    "component_builtin": _CHIP.replace("{purple}", "{orange}")  # a built-in: orange
+    + '<path d="M6.5 6.5h3v3h-3z" fill="{orange}" fill-opacity=".35" stroke="none"/>',
+    "link": '<path d="M6.6 9.4l2.8-2.8"/><path d="M7.4 4.6l1.3-1.3a2.6 2.6 0 0 1 3.7 3.7'
+    'l-1.3 1.3M8.6 11.4l-1.3 1.3a2.6 2.6 0 0 1-3.7-3.7l1.3-1.3" stroke="{blue}"/>',
+    "collapse": '<path d="M4.5 3.5 8 6.5l3.5-3M4.5 12.5 8 9.5l3.5 3"/>',
     "make_component": _CHIP.replace(
         'stroke="{purple}"', 'stroke="{purple}" stroke-dasharray="1.6 1.2"'
     )
@@ -171,9 +178,9 @@ ICONS = {
     "place": _CHIP.replace('rx="1"', 'rx="1" fill="{purple}" fill-opacity=".2"')
     + '<path d="M8 5.8v4.2M6.3 8.4 8 10.1l1.7-1.7" stroke="{purple}"/>',
     "library": '<path d="M2.5 2.5h4v11h-4zM6.5 2.5h3.2v11H6.5z"/>'
-    '<path d="M10 3.2l3-.8 2.2 10.8-3 .8z" stroke="{purple}"/>',
+    '<path d="M10 3.2l3-.8 2.2 10.8-3 .8z" stroke="{blue}"/>',
     "builtin": '<path d="M8 1.8 13.6 5v6L8 14.2 2.4 11V5z"/><path d="M2.4 5 8 8.2 13.6 5M8 8.2v6" '
-    'stroke="{purple}"/>',
+    'stroke="{orange}"/>',
     "top": '<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" '
     'fill="{yellow}" fill-opacity=".35" stroke="{yellow}"/>',
     "lock": '<rect x="3.2" y="7" width="9.6" height="7" rx="1"/><path d="M5.2 7V5a2.8 2.8 0 0 1 '

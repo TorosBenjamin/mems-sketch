@@ -30,26 +30,34 @@ from mems_sketch.core.expressions import ExpressionError, names_in
 from mems_sketch.core.process import Layer, default_process
 from mems_sketch.core.project import Project, check_shape_names
 from mems_sketch.core.shapes import (
+    Align,
     ArcShape,
     BooleanShape,
     CircleShape,
     FilletShape,
-    GroupShape,
     LayerMapShape,
     NodePath,
+    NodeRecord,
     OffsetShape,
     PathShape,
     PolygonShape,
     RectShape,
     RefShape,
     Shape,
+    TransformShape,
+    Value,
     child_lists,
     container_of,
+    frame_of,
+    map_expressions,
     node_at,
-    placement_of,
+    rename_node_references,
+    rewrite,
+    to_ictrans,
+    visible_from,
     walk,
 )
-from mems_sketch.core.user_component import ComponentDef, ParamDef
+from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef
 from mems_sketch.export.base import export
 from mems_sketch.process import etch, rules
 from mems_sketch.storage import load, save
@@ -78,6 +86,11 @@ class ProjectDocument(QObject):
         self.compiler = Compiler()
         self._undo: list[tuple[str, Project, str]] = []
         self._redo: list[tuple[str, Project, str]] = []
+        self._inspection: dict[NodePath, NodeRecord] | None = None
+        self.changed.connect(self._forget_inspection)
+
+    def _forget_inspection(self) -> None:
+        self._inspection = None
 
     # -- transactions ------------------------------------------------------
 
@@ -206,9 +219,31 @@ class ProjectDocument(QObject):
     def active_definition(self) -> ComponentDef:
         return self.project.components[self.active]
 
-    def scope(self) -> dict[str, float]:
-        """Resolved parameters of the active component plus ``process.*`` constants."""
-        return self.session().variables(self.active)
+    def scope(self, path: NodePath | None = None) -> dict[str, float]:
+        """Resolved parameters of the active component plus ``process.*`` constants.
+
+        With a ``path``, also the point coordinates (``node.point.x``) the node
+        there can use, in its own frame, e.g. to preview expressions.
+        """
+        variables = self.session().variables(self.active)
+        if path is None:
+            return variables
+        record = self.inspection()
+        if path[:-1] and path[:-1] not in record:
+            return variables
+        into = frame_of(record, path).inverted() if path[:-1] else None
+        for name, _, x, y in self.align_targets(path):
+            if into is not None:
+                p = into * kdb.DPoint(x, y)
+                x, y = p.x, p.y
+            variables[f"{name}.x"], variables[f"{name}.y"] = x, y
+        return variables
+
+    def inspection(self) -> dict[NodePath, NodeRecord]:
+        """Every node of the active component as evaluated (cached until the next change)."""
+        if self._inspection is None:
+            self._inspection = self.session().inspect(self.active)
+        return self._inspection
 
     def geometry(self, mode: str = "drawn") -> Geometry:
         drawn = self.session().render(self.active)
@@ -243,39 +278,61 @@ class ProjectDocument(QObject):
 
     def node_regions(self, visible: dict[str, bool]) -> list[tuple[NodePath, kdb.Region]]:
         """Merged geometry of each top-level node of the active component, for click selection."""
-        session = self.session()
-        try:
-            variables = session.variables(self.active)
-        except Exception:  # noqa: BLE001 - nothing selectable while broken
-            return []
         result = []
-        for index, shape in enumerate(self.shapes):
-            if not shape.enabled:
-                continue
-            try:
-                geometry = session.render_shapes([shape], variables)
-            except Exception:  # noqa: BLE001
+        for path, record in sorted(self.inspection().items()):
+            if len(path) != 1:
                 continue
             region = kdb.Region()
-            for layer, r in geometry.layers.items():
+            for layer, r in record.geometry.layers.items():
                 if visible.get(layer, True):
                     region.insert(r)
-            result.append((((0, index),), region))
+            result.append((path, region))
         return result
 
     def highlight(self, paths: list[NodePath]) -> Geometry | None:
         """Outline geometry of the given nodes, placed as they appear in the component."""
-        session = self.session()
+        record = self.inspection()
         result = Geometry()
-        try:
-            variables = session.variables(self.active)
-            for path in paths:
-                node = self.node(path)
-                geometry = session.render_shapes([node], {**variables, "i": 0.0, "j": 0.0})
-                result.merge(geometry, placement_of(self.shapes, path, variables))
-        except Exception:  # noqa: BLE001 - nothing to highlight
-            return None
-        return result.merged()
+        for path in paths:
+            if path not in record:
+                continue
+            result.merge(record[path].geometry, to_ictrans(frame_of(record, path)))
+        return result.merged() if result.layers else None
+
+    def node_points(self, path: NodePath) -> list[tuple[str, float, float]]:
+        """The alignment points of a node, in the active component's frame."""
+        record = self.inspection()
+        if path not in record:
+            return []
+        frame = frame_of(record, path)
+        result = []
+        for name in record[path].points.names():
+            try:
+                x, y = record[path].points.point(name)
+            except ValueError:  # e.g. no geometry, so no bounding box
+                continue
+            p = frame * kdb.DPoint(x, y)
+            result.append((name, p.x, p.y))
+        return result
+
+    def align_targets(self, path: NodePath) -> list[tuple[str, NodePath, float, float]]:
+        """Points the node at ``path`` can align to: ``(node.point, node path, x, y)``.
+
+        Coordinates are in the active component's frame.
+        """
+        result = []
+        for other in sorted(self.inspection()):
+            if not visible_from(path, other):
+                continue
+            name = node_at(self.shapes, other).name
+            if name is None:
+                continue
+            result += [(f"{name}.{p}", other, x, y) for p, x, y in self.node_points(other)]
+        return result
+
+    def declared_points(self) -> dict[str, tuple[float, float]]:
+        """Positions of the active component's declared points (with default parameters)."""
+        return self.session().points(self.active)
 
     # -- components --------------------------------------------------------
 
@@ -324,12 +381,30 @@ class ProjectDocument(QObject):
     def make_component(self, paths: list[NodePath], name: str) -> NodePath:
         """Move sibling nodes into a new component and put a reference in their place.
 
-        Parameters of the active component that the nodes use become parameters
+        A single transform becomes a component of its children, placed where
+        the transform was (with its alignment, repeat and name). Parameters of the active component that the nodes use become parameters
         of the new component (with the same defaults and limits) and are passed
         through by the reference, so the geometry is unchanged.
         """
         self._check_component_name(name)
         ordered, first, nodes = self._siblings(paths)
+        placement: dict[str, Any] = {"name": self.unique_name(name)}
+        if len(nodes) == 1 and isinstance(nodes[0], TransformShape):
+            # A transform becomes a component placed where the transform was.
+            transform = nodes[0]
+            if transform.scale != 1:
+                raise ValueError("a scaled transform cannot become a component; set scale to 1")
+            nodes = transform.children
+            placement = {
+                "name": transform.name or placement["name"],
+                "x": transform.x,
+                "y": transform.y,
+                "rotation": transform.rotation,
+                "mirror_x": transform.mirror_x,
+                "align": transform.align,
+                "enabled": transform.enabled,
+                "repeat": transform.repeat,
+            }
         definition_params = {p.name: p for p in self.active_definition.parameters}
         used = _names_used(nodes) & definition_params.keys()
         pending = list(used)
@@ -344,9 +419,7 @@ class ProjectDocument(QObject):
         definition = ComponentDef(
             name=name, parameters=parameters, shapes=[n.model_copy(deep=True) for n in nodes]
         )
-        reference = RefShape(
-            name=self.unique_name(name), component=name, params={p: p for p in sorted(used)}
-        )
+        reference = RefShape(component=name, params={p: p for p in sorted(used)}, **placement)
         indices = {p[-1][1] for p in ordered}
         active = self.active
 
@@ -358,6 +431,91 @@ class ProjectDocument(QObject):
 
         self.edit(f"Make component {name}", change)
         return (*ordered[0][:-1], (ordered[0][-1][0], first))
+
+    def unpack(self, path: NodePath) -> NodePath:
+        """Replace a component reference by a transform holding a copy of its shapes.
+
+        The component's parameters are replaced by the values the reference
+        passed (or the defaults), so the geometry is unchanged. Shapes whose
+        names are taken are renamed. The component's own declared points are
+        not kept: a transform only has bounding-box points.
+        """
+        node = self.node(path)
+        if not isinstance(node, RefShape):
+            raise ValueError("select a component reference to unpack")
+        found = self.project.definition(self.project.qualify(node.component))
+        if found is None:
+            raise ValueError(f"'{node.component}' is a built-in component: it has no shapes")
+        definition, namespace = found
+        values = _parameter_values(definition, node.params)
+        shapes = map_expressions(
+            definition.shapes, lambda n: _as_expression(values[n]) if n in values else None
+        )
+        for shape in walk(shapes):
+            if isinstance(shape, RefShape) and namespace is not None:
+                shape.component = self.project.qualify(shape.component, namespace)
+        taken = {s.name for s in walk(self.shapes) if s.name}
+        for old in [s.name for s in walk(shapes) if s.name in taken]:
+            new = _fresh(old, taken | {s.name for s in walk(shapes) if s.name})
+            shapes = rename_node_references(shapes, old, new)
+            next(s for s in walk(shapes) if s.name == old).name = new
+            taken.add(new)
+        unpacked = TransformShape(
+            name=node.name,
+            children=shapes,
+            x=node.x,
+            y=node.y,
+            rotation=node.rotation,
+            mirror_x=node.mirror_x,
+            align=node.align,
+            enabled=node.enabled,
+            repeat=node.repeat,
+        )
+
+        def change(project: Project) -> None:
+            container, index = container_of(self._shapes_in(project), path)
+            container[index] = unpacked
+
+        self.edit(f"Unpack {node.name or node.component}", change)
+        return path
+
+    def set_align(self, path: NodePath, align: Align | None) -> None:
+        """Align a node (``None`` removes its alignment)."""
+        node = self.node(path)
+        self.replace_node(path, node.model_copy(update={"align": align}))
+
+    # -- declared points of the active component ---------------------------
+
+    def add_point(self) -> str:
+        name = _fresh("point", {p.name for p in self.active_definition.points})
+        self.edit(
+            f"Add point {name}",
+            lambda p: p.components[self.active].points.append(PointDef(name=name)),
+        )
+        return name
+
+    def update_point(self, name: str, /, **fields: Any) -> None:
+        """Change any field of a declared point (name, at, x, y, description)."""
+
+        def change(project: Project) -> None:
+            points = project.components[self.active].points
+            for index, existing in enumerate(points):
+                if existing.name == name:
+                    updated = PointDef.model_validate({**existing.model_dump(), **fields})
+                    if updated.name != name and any(p.name == updated.name for p in points):
+                        raise ValueError(f"point '{updated.name}' already exists")
+                    points[index] = updated
+                    return
+            raise KeyError(name)
+
+        self.edit(f"Edit point {name}", change)
+
+    def remove_point(self, name: str) -> None:
+        def change(project: Project) -> None:
+            definition = project.components[self.active]
+            definition.points = [p for p in definition.points if p.name != name]
+
+        self.edit(f"Delete point {name}", change)
 
     # -- shape edits (on the active component) -----------------------------
 
@@ -378,7 +536,12 @@ class ProjectDocument(QObject):
         return self.add_shape(RefShape(name=self.unique_name(stem), component=component))
 
     def replace_node(self, path: NodePath, new: Shape) -> None:
+        """Replace a node. A new name is also used by alignments and point expressions."""
+        old_name = self.node(path).name
+
         def change(project: Project) -> None:
+            if old_name and new.name and new.name != old_name:
+                project.components[self.active].rename_shape(old_name, new.name)
             container, index = container_of(self._shapes_in(project), path)
             container[index] = new
             check_shape_names(self._shapes_in(project))
@@ -422,18 +585,18 @@ class ProjectDocument(QObject):
     def wrap(self, paths: list[NodePath], operation: str) -> NodePath:
         """Replace sibling nodes with a new operation node that contains them.
 
-        ``operation`` is ``group``, ``offset``, ``fillet``, ``layer_map`` or one of
+        ``operation`` is ``transform``, ``offset``, ``fillet``, ``layer_map`` or one of
         the boolean ops; for booleans the first node becomes ``a`` and the rest ``b``.
         """
         ordered, first, nodes = self._siblings(paths)
-        name = self.unique_name(operation)
+        name = self.unique_name("transform" if operation == "group" else operation)
         match operation:
             case "union" | "subtract" | "intersect" | "xor":
                 if len(nodes) < 2:
                     raise ValueError(f"{operation} needs at least two selected shapes")
                 wrapper: Shape = BooleanShape(name=name, op=operation, a=nodes[:1], b=nodes[1:])
-            case "group":
-                wrapper = GroupShape(name=name, children=nodes)
+            case "transform" | "group":
+                wrapper = TransformShape(name=name, children=nodes)
             case "offset":
                 wrapper = OffsetShape(name=name, distance=1.0, children=nodes)
             case "fillet":
@@ -475,7 +638,7 @@ class ProjectDocument(QObject):
     def set_parameter(self, name: str, default: float | str, **limits: Any) -> None:
         self.edit(f"Set {name}", lambda p: p.set_parameter(name, default, self.active, **limits))
 
-    def update_parameter(self, name: str, **fields: Any) -> None:
+    def update_parameter(self, name: str, /, **fields: Any) -> None:
         """Change any field of a parameter (name, default, min, max, integer, description)."""
 
         def change(project: Project) -> None:
@@ -551,6 +714,34 @@ class ProjectDocument(QObject):
 
     def remove_layer(self, name: str) -> None:
         self.edit(f"Delete layer {name}", lambda p: p.layers.pop(name))
+
+
+def _parameter_values(definition: ComponentDef, given: dict[str, Value]) -> dict[str, Value]:
+    """Each parameter as a value in the caller's scope: the given one, else the default.
+
+    Defaults may use other parameters; those are replaced by their values too.
+    """
+    names = {p.name for p in definition.parameters}
+    values: dict[str, Value] = {}
+
+    def value(name: str) -> Value:
+        if name not in values:
+            if name in given:
+                values[name] = given[name]
+            else:
+                default = definition.parameter(name).default
+                values[name] = rewrite(
+                    default, lambda n: _as_expression(value(n)) if n in names else None
+                )
+        return values[name]
+
+    for name in names:
+        value(name)
+    return values
+
+
+def _as_expression(value: Value) -> str:
+    return repr(float(value)) if isinstance(value, int | float) else str(value)
 
 
 def _names_used(nodes: list[Shape]) -> set[str]:

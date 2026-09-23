@@ -55,7 +55,8 @@ class Anchor(Component):
 class CombDrive(Component):
     """Interdigitated comb: a fixed comb (bottom spine) and a moving comb (top spine).
 
-    Origin is at the centre of the finger overlap region.
+    Origin is at the centre of the finger overlap region. Alignment points:
+    ``moving`` and ``fixed`` are the middle of each spine's outer edge.
     """
 
     type_name = "comb_drive"
@@ -98,10 +99,19 @@ class CombDrive(Component):
         geo.add_rect("device", x_start, moving_base, x_start + total, moving_base + p.spine_width)
         return geo
 
+    def points(self, p: Params) -> dict[str, tuple[float, float]]:
+        moving_edge = -p.overlap / 2 + p.finger_length + p.spine_width
+        fixed_edge = p.overlap / 2 - p.finger_length - p.spine_width
+        return {"moving": (0.0, moving_edge), "fixed": (0.0, fixed_edge)}
+
 
 @register_component
 class SerpentineSpring(Component):
-    """Meandering beam spring running along +y from the origin."""
+    """Meandering beam spring running along +y from the origin.
+
+    Alignment points: ``start`` and ``end`` are the middle of the outer edge of
+    the first and the last beam.
+    """
 
     type_name = "serpentine_spring"
 
@@ -128,3 +138,6 @@ class SerpentineSpring(Component):
                 x = h - w if i % 2 == 0 else -h
                 geo.add_rect("device", x, y, x + w, y + p.pitch + w)  # connector
         return geo
+
+    def points(self, p: Params) -> dict[str, tuple[float, float]]:
+        return {"start": (0.0, 0.0), "end": (0.0, 2 * p.turns * p.pitch + p.beam_width)}

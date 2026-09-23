@@ -245,8 +245,12 @@ class Project:
         """Append a shape to a component (default: top); fails early on bad input."""
         shapes = self.shapes_of(component)
         check_shape_names([*shapes, shape])
-        self.render_shape(shape, component)
         shapes.append(shape)
+        try:
+            self.render(component)  # in context: it may align to its siblings
+        except Exception:
+            shapes.pop()
+            raise
         return shape
 
     def find(self, name: str, component: str | None = None) -> Shape:

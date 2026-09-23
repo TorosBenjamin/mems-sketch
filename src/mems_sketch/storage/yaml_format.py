@@ -1,8 +1,8 @@
 """Canonical YAML for models: stable, minimal and diff-friendly.
 
 * Fields equal to their default are left out (except a node's ``kind``).
-* Keys keep a fixed order: ``kind`` and ``name`` first, ``enabled`` and
-  ``repeat`` last, everything else in declaration order.
+* Keys keep a fixed order: ``kind`` and ``name`` first,
+  ``align``, ``enabled`` and ``repeat`` last, everything else in declaration order.
 * Whole numbers are written without ``.0``; lists of plain values (points,
   GDS numbers) are written on one line.
 
@@ -18,7 +18,7 @@ import yaml
 from pydantic import BaseModel
 
 _FIRST = ("kind", "name")
-_LAST = ("enabled", "repeat")
+_LAST = ("align", "enabled", "repeat")
 
 
 def to_data(value: Any) -> Any:

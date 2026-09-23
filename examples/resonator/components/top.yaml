@@ -21,8 +21,11 @@ shapes:
     fingers: 16
     finger_width: w_finger
     gap: w_finger
-  y: plate/2 + 39
   rotation: 180
+  align:
+    point: moving
+    to: mass.top
+    dy: -1
 - kind: ref
   name: comb_bottom
   component: comb_drive
@@ -30,14 +33,21 @@ shapes:
     fingers: 16
     finger_width: w_finger
     gap: w_finger
-  y: -plate/2 - 39
+  align:
+    point: moving
+    to: mass.bottom
+    dy: 1
 - kind: ref
   name: suspension_left
   component: suspension
-  x: -1 * (plate/2 + 38.5)
-  y: -54
+  align:
+    point: right
+    to: mass.left
+    dx: 1.5
 - kind: ref
   name: suspension_right
   component: suspension
-  x: 1 * (plate/2 + 38.5)
-  y: -54
+  align:
+    point: left
+    to: mass.right
+    dx: -1.5

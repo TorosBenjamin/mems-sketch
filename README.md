@@ -67,6 +67,35 @@ changes one line. See `examples/resonator` and the library it uses,
 - **Process constants** from `process.yaml` are available in every expression
   as `process.<name>`, so process values do not have to be passed down.
 
+### Alignment points
+
+Instead of calculating positions by hand, place shapes relative to each other:
+
+```yaml
+- kind: ref
+  name: anchor
+  component: anchor
+  align: {point: bottom, to: spring.end, dy: -1}   # sit on the spring, 1 µm overlap
+```
+
+- **Every shape** has bounding-box points: `center`, `left`, `right`, `top`,
+  `bottom`, `top_left`, `top_right`, `bottom_left`, `bottom_right`.
+- **Components can declare points** (the Points panel, or `points:` in the
+  component file), e.g. where a spring ends. A point's position may be
+  measured from one of the component's own shapes (`at: spring.end`), which is
+  how a component passes on a point of a part inside it. Built-ins have some:
+  `serpentine_spring` has `start` and `end`, `comb_drive` has `moving` and
+  `fixed` (the outer edge of each spine).
+- **`align`** moves a shape so that its `point` lands on `to` (plus `dx`,
+  `dy`). It is a rule, not a one-off move: it is re-evaluated after every
+  change, so the parts stay attached when parameters change.
+- **In expressions**, point coordinates are available as `<shape>.<point>.x`
+  and `.y`, e.g. `x1: base.right.x - 5`.
+- A shape can use the points of the named shapes in its own list, in the other
+  operand of a boolean, and in every enclosing list. Inside a transform they
+  are seen in the transform's own coordinates. Shapes are evaluated in the
+  order their alignments need; an alignment loop is reported as an error.
+
 ### Libraries
 
 A library is a folder of components (any project folder works), listed in
@@ -103,10 +132,11 @@ MATLAB with `system(...)`.
   **Place** to insert). New, Rename (updates every reference), Delete, Set top.
 - **Shapes**: the shape tree of the component being edited. Checkboxes enable
   or disable a node; Ctrl/Shift-click selects several. Boolean operands appear
-  under A and B.
+  under A and B, and each alignment is shown (e.g. `bottom at spring.end`).
 - **Canvas**: wheel to zoom, middle or right drag to pan, F to fit, click to
-  select. The selection is outlined in yellow and rule violations are boxed in
-  red. The View box switches between drawn, as-etched and etch-compensated
+  select. The selection is outlined in yellow with its alignment points, rule
+  violations are boxed in red and the component's own points are marked in
+  green. The View box switches between drawn, as-etched and etch-compensated
   geometry.
 - **Properties**: generated from the selected node's schema. Any numeric field
   takes a number or an expression, with its value shown beside it. For a
@@ -114,16 +144,25 @@ MATLAB with `system(...)`.
   defaults as placeholders.
 - **Parameters**: the edited component's parameters: default (number or
   expression), min, max and the resolved value.
+- **Points** (tabbed with Parameters): the points the edited component
+  declares for whoever places it.
+- **Align** (Ctrl+L): select a shape, click one of its points, then click the
+  point to put it on. Fine-tune the offset in Properties; **Edit → Remove
+  alignment** undoes it. Esc cancels.
 - **Layers**: visibility, colour, GDS numbers, undercut, minimum width and
   spacing.
 - **Process constants** (tabbed with Parameters): values available in every
   expression as `process.<name>`.
 - **View → Panels** reopens any panel that was closed.
-- **Operations** (Group, Union, Subtract, Intersect, XOR, Offset, Fillet, Layer
-  map) wrap the selected sibling shapes in a new operation node; **Edit →
+- **Operations** (Union, Subtract, Intersect, XOR, Offset, Fillet, Layer map,
+  Transform) wrap the selected sibling shapes in a new operation node; **Edit →
   Unwrap** reverses it. **Make component** (Ctrl+K) moves the selection into a
   new component. The parameters it uses become the new component's parameters,
-  so the geometry does not change.
+  so the geometry does not change; a single transform becomes a component
+  placed where the transform was. **Unpack component** (Ctrl+Shift+K) does the
+  opposite: it replaces a reference by a transform holding a copy of the
+  component's shapes, with the parameter values filled in.
+- Renaming a shape updates the alignments and expressions that use it.
 - Every edit is a transaction: if it would stop the project from compiling
   (including components that use the edited one), it is rolled back with a
   message. Full undo/redo.
@@ -140,7 +179,7 @@ subtraction stays editable and parametric.
 |---|---|---|
 | Primitive | `rect`, `polygon`, `circle`, `arc`, `path` | `arc` is an annular sector (a ring at 360°); `path` is a centreline with a width and flush/square/round ends |
 | Reference | `ref` (or `Instance(...)`) | A component with parameters and placement |
-| Operation | `group` | Union of children, then mirror, scale, rotate, move |
+| Operation | `transform` | Mirror, scale, rotate and move the children as one piece (formerly `group`, still read) |
 | | `boolean` | `a` union / subtract / intersect / xor `b` |
 | | `offset` | Grow (+) or shrink (−) outlines |
 | | `fillet` | Round convex (`radius`) and concave (`inner_radius`) corners |
@@ -152,6 +191,11 @@ subtraction stays editable and parametric.
 - **Any node can repeat on a grid** (`repeat=Repeat(columns, rows, dx, dy)`),
   with `i` and `j` as the column and row index.
 - **`enabled=False`** skips a node without deleting it.
+- **Any node can be aligned** (`align=Align(point, to, dx, dy)`), see
+  [Alignment points](#alignment-points).
+- **Transform or component?** Make a component when something is reused or
+  deserves its own parameters. Use a transform to move, rotate or mirror a few
+  shapes together once.
 - **Etch loss and rule checks run on the final result**, after all operations.
 - Units are micrometres. Coordinates snap to the 1 nm grid, and curves stay
   within 5 nm of the true arc.
@@ -159,7 +203,7 @@ subtraction stays editable and parametric.
 ## Code-first use
 
 ```python
-from mems_sketch import ComponentDef, Instance, ParamDef, RectShape, Repeat, load, save, export
+from mems_sketch import Align, ComponentDef, Instance, ParamDef, RectShape, Repeat, load, save, export
 from mems_sketch.process import etch, rules
 
 project = load("examples/resonator")
@@ -171,7 +215,8 @@ project.define_component(ComponentDef(
     shapes=[RectShape(layer="device", x0=0, y0=0, x1="w", y1=30,
                       repeat=Repeat(columns="n", dx="3 * w"))],
 ))
-project.add(Instance("fingers", "finger_array", {"n": 12}, x=200))
+project.add(Instance("fingers", "finger_array", {"n": 12},
+                     align=Align(point="bottom_left", to="mass.top_right", dx=10)))
 
 print(rules.check(project))
 save(project, "my_resonator")                         # a project folder
@@ -188,7 +233,7 @@ code. MATLAB can use the same API through its Python interface
 |---|---|
 | `core/project.py` | `Project`, `Library`, `Instance`: components, name resolution, parameters |
 | `core/compiler.py` | `Compiler` and `Session`: fingerprints, cache, rendering |
-| `core/shapes.py` | The shape tree: primitives, references, operations, evaluation |
+| `core/shapes.py` | The shape tree: primitives, references, operations, alignment, evaluation |
 | `core/user_component.py` | `ComponentDef`, `ParamDef` and their adapter to `Component` |
 | `core/component.py` | `Component` base class, `Geometry`, built-in component registry |
 | `core/process.py` | `Process`, `Layer`, process constants |
@@ -204,6 +249,7 @@ code. MATLAB can use the same API through its Python interface
 
 **New built-in component:** subclass `Component`, define a nested `Params`
 model and `build()`, and decorate the class with `@register_component`.
+Override `points()` to offer alignment points.
 
 **New export format:** write a class with `format_name`, `file_extension` and
 `export(project, geometry, path)`. Register it either with `@register_exporter`

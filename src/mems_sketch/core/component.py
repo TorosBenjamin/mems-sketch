@@ -66,6 +66,19 @@ class Component:
     def build(self, params: Params) -> Geometry:
         raise NotImplementedError
 
+    def points(self, params: Params) -> dict[str, tuple[float, float]]:
+        """Named alignment points in the component's own coordinates (µm).
+
+        Override to offer points besides the bounding-box ones every shape
+        has, e.g. where a spring attaches. Names must not be bounding-box
+        point names (``center``, ``top``, ``bottom_left``, ...).
+        """
+        return {}
+
+    def compile(self, params: Params) -> tuple[Geometry, dict[str, tuple[float, float]]]:
+        """Geometry and alignment points together (one evaluation for user components)."""
+        return self.build(params), self.points(params)
+
 
 def resolve_params(
     component: Component, raw: Mapping[str, Any], variables: Mapping[str, float]

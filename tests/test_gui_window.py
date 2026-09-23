@@ -115,3 +115,45 @@ def test_layers_panel_is_shown_on_its_own_and_every_panel_can_be_reopened(window
     reopen = next(a for a in panels.actions() if a.text() == "Layers")
     reopen.trigger()
     assert layers.isVisible()
+
+
+def test_align_tool_picks_two_points_on_the_canvas(window):
+    from mems_sketch.core.shapes import RectShape
+
+    window.add_primitive("rect")  # rect1: 100 x 50 at the origin
+    window._select_result(
+        lambda: window.document.add_shape(
+            RectShape(name="post", layer="device", x0=300, y0=300, x1=310, y1=320)
+        )
+    )
+    assert window.selection == [((0, 1),)]
+    window.start_align()
+    assert window.align_step == "own"
+    window._canvas_clicked(305, 300, False)  # post.bottom
+    assert window.align_step == "target"
+    window._canvas_clicked(50, 50, False)  # rect1.top
+    assert window.align_step is None
+    align = window.document.node(((0, 1),)).align
+    assert (align.point, align.to) == ("bottom", "rect1.top")
+    assert "bottom at rect1.top" in window.tree.topLevelItem(1).text(1)
+
+
+def test_align_tool_cancels_and_needs_a_selection(window):
+    window.start_align()
+    assert window.align_step is None
+    window.add_primitive("rect")
+    window.start_align()
+    assert window.align_step == "own"
+    window.cancel_align()
+    assert window.align_step is None
+
+
+def test_property_editor_edits_the_alignment(window):
+    window.add_primitive("rect")
+    window.add_primitive("circle")
+    editor = window.properties
+    assert editor.path == ((0, 1),)
+    editor._editors["align"] = lambda: {"point": "left", "to": "rect1.right", "dx": 5, "dy": 0}
+    editor.apply()
+    assert window.document.node(((0, 1),)).align.to == "rect1.right"
+    assert window.points.table.rowCount() == 0

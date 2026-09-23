@@ -25,20 +25,21 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from mems_sketch.core.component import Component, Geometry, Params, get_component, resolve_params
-from mems_sketch.core.shapes import Evaluator, Shape
+from mems_sketch.core.shapes import Evaluator, NodePath, NodeRecord, Point, Shape
 from mems_sketch.core.user_component import UserComponent
 
 if TYPE_CHECKING:
     from mems_sketch.core.project import Project
 
 DEFAULT_CACHE_ENTRIES = 4096
+Compiled = tuple[Geometry, dict[str, Point]]  # geometry and declared alignment points
 _builtin_fingerprints: dict[type, str] = {}
 
 
 class Compiler:
     def __init__(self, max_entries: int = DEFAULT_CACHE_ENTRIES) -> None:
         self.max_entries = max_entries
-        self._cache: OrderedDict[str, Geometry] = OrderedDict()
+        self._cache: OrderedDict[str, Compiled] = OrderedDict()
         self.hits = 0
         self.misses = 0
 
@@ -48,7 +49,7 @@ class Compiler:
     def clear(self) -> None:
         self._cache.clear()
 
-    def _get(self, key: str) -> Geometry | None:
+    def _get(self, key: str) -> Compiled | None:
         geometry = self._cache.get(key)
         if geometry is None:
             self.misses += 1
@@ -57,8 +58,8 @@ class Compiler:
         self._cache.move_to_end(key)
         return geometry
 
-    def _put(self, key: str, geometry: Geometry) -> None:
-        self._cache[key] = geometry
+    def _put(self, key: str, compiled: Compiled) -> None:
+        self._cache[key] = compiled
         while len(self._cache) > self.max_entries:
             self._cache.popitem(last=False)
 
@@ -112,13 +113,16 @@ class Session:
 
     # -- building ----------------------------------------------------------
 
-    def build(self, qualified: str, inner: Component, params: Params) -> Geometry:
+    def compile(self, qualified: str, inner: Component, params: Params) -> Compiled:
         key = _hash(self.fingerprint(qualified), params.model_dump_json(), self._scope_key)
         cached = self.compiler._get(key)
         if cached is None:
-            cached = inner.build(params)
+            cached = inner.compile(params)
             self.compiler._put(key, cached)
         return cached
+
+    def build(self, qualified: str, inner: Component, params: Params) -> Geometry:
+        return self.compile(qualified, inner, params)[0]
 
     def variables(self, component: str, params: dict[str, Any] | None = None) -> dict[str, float]:
         """Resolved parameters of a component (defaults unless given) plus ``process.*``."""
@@ -126,11 +130,32 @@ class Session:
         resolved = resolve_params(built, params or {}, self.scope)
         return {**self.scope, **{k: float(v) for k, v in resolved.model_dump().items()}}
 
+    def points(self, component: str, params: dict[str, Any] | None = None) -> dict[str, Point]:
+        """Declared alignment points of a component (defaults unless given)."""
+        built = self.component(component)
+        return built.points(resolve_params(built, params or {}, self.scope))
+
     def render(self, component: str, params: dict[str, Any] | None = None) -> Geometry:
         """Merged geometry of a component. The result is a fresh copy the caller may modify."""
         built = self.component(component)
         geometry = built.build(resolve_params(built, params or {}, self.scope))
         return geometry.merged()
+
+    def inspect(self, component: str) -> dict[NodePath, NodeRecord]:
+        """Evaluate a local component's shape tree and record every node (for the GUI).
+
+        Records are placed in the frame of the list holding each node; see
+        :func:`frame_of` to bring them into the component's frame. If the
+        evaluation fails, what was evaluated so far is returned.
+        """
+        definition, namespace = self.project.definition(component)
+        record: dict[NodePath, NodeRecord] = {}
+        evaluator = Evaluator(lambda n: self.component(n, namespace), record)
+        try:
+            evaluator.render(definition.shapes, self.variables(component))
+        except Exception:  # noqa: BLE001 - partial results are still useful to show
+            pass
+        return record
 
     def render_shapes(
         self, shapes: list[Shape], variables: dict[str, float], namespace: str | None = None
@@ -152,7 +177,13 @@ class _CachedComponent(Component):
         self._session = session
 
     def build(self, params: Params) -> Geometry:
-        return self._session.build(self.type_name, self.inner, params)
+        return self.compile(params)[0]
+
+    def points(self, params: Params) -> dict[str, Point]:
+        return self.compile(params)[1]
+
+    def compile(self, params: Params) -> Compiled:
+        return self._session.compile(self.type_name, self.inner, params)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.inner, name)

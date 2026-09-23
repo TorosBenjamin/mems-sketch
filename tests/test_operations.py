@@ -11,7 +11,7 @@ from mems_sketch import (
     ComponentDef,
     Project,
     FilletShape,
-    GroupShape,
+    TransformShape,
     Instance,
     Layer,
     LayerMapShape,
@@ -142,8 +142,8 @@ def test_path_widths_and_ends(design):
     assert area(design) == pytest.approx(12 * 2)
 
 
-def test_group_transform_and_scale(design):
-    design.add(GroupShape(children=[rect(0, 0, 10, 2)], x=100, rotation=90, scale=2, name="g"))
+def test_transform_move_rotate_and_scale(design):
+    design.add(TransformShape(children=[rect(0, 0, 10, 2)], x=100, rotation=90, scale=2, name="g"))
     box = design.render().layers["device"].bbox()
     assert (box.left, box.bottom, box.right, box.top) == tuple(to_dbu(v) for v in (96, 0, 100, 20))
 
@@ -151,7 +151,7 @@ def test_group_transform_and_scale(design):
 def test_repeat_on_an_operation_and_disabled_nodes(design):
     hole = rect(1, 1, 3, 3)
     cell = BooleanShape(op="subtract", a=[rect(0, 0, 4, 4)], b=[hole])
-    design.add(GroupShape(children=[cell], repeat=Repeat(columns=3, rows=2, dx=4, dy=4)))
+    design.add(TransformShape(children=[cell], repeat=Repeat(columns=3, rows=2, dx=4, dy=4)))
     assert area(design) == pytest.approx(6 * (16 - 4))
     design.add(rect(0, 0, 100, 100, name="big", enabled=False))
     assert area(design) == pytest.approx(6 * 12)
@@ -228,7 +228,7 @@ def test_invalid_operations_do_not_change_the_design(design):
     with pytest.raises(ValueError, match="already exists"):
         design.add(rect(0, 0, 1, 1, name="r"))
     with pytest.raises(ValueError):
-        design.add(GroupShape(children=[rect(0, 0, 1, 1)], scale=0))
+        design.add(TransformShape(children=[rect(0, 0, 1, 1)], scale=0))
     assert len(design.shapes) == 1 and design.find("r").kind == "rect"
 
 

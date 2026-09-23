@@ -16,4 +16,7 @@ shapes:
   component: anchor
   params:
     size: 40
-  y: (2 * turns + 1) * 15 + 20 - 1
+  align:
+    point: bottom
+    to: spring.end
+    dy: -1

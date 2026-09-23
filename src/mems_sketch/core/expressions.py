@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 import math
 import operator
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 _BINARY_OPS = {
     ast.Add: operator.add,
@@ -102,6 +102,41 @@ def resolve_variables(
     for name in expressions:
         visit(name)
     return resolved
+
+
+def substitute(expression: str, change: Callable[[str], str | None]) -> str:
+    """``expression`` with each (dotted) name replaced by ``change(name)``, if not None.
+
+    Replacements are inserted as sub-expressions, so ``w`` -> ``a + b`` turns
+    ``2 * w`` into ``2 * (a + b)``. An expression without replacements is
+    returned unchanged, keeping its formatting.
+    """
+    tree = _parse(expression)
+    changed = False
+
+    class Replace(ast.NodeTransformer):
+        def _name(self, node: ast.AST) -> ast.AST:
+            nonlocal changed
+            dotted = _dotted_name(node)
+            if dotted is None:
+                return self.generic_visit(node)
+            if dotted in _FUNCTIONS or dotted in _CONSTANTS:
+                return node
+            replacement = change(dotted)
+            if replacement is None:
+                return node
+            changed = True
+            return _parse(str(replacement)).body
+
+        visit_Name = _name  # noqa: N815 - ast.NodeTransformer naming
+        visit_Attribute = _name  # noqa: N815
+
+        def visit_Call(self, node: ast.Call) -> ast.AST:  # noqa: N802
+            node.args = [self.visit(arg) for arg in node.args]
+            return node
+
+    result = Replace().visit(tree)
+    return ast.unparse(result) if changed else expression
 
 
 def _parse(expression: str) -> ast.Expression:

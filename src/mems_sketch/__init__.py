@@ -13,6 +13,7 @@ from mems_sketch.core.compiler import Compiler
 from mems_sketch.core.process import Layer, Process
 from mems_sketch.core.project import Instance, Library, Project
 from mems_sketch.core.shapes import (
+    Align,
     ArcShape,
     BooleanShape,
     CircleShape,
@@ -26,12 +27,14 @@ from mems_sketch.core.shapes import (
     RefShape,
     Repeat,
     Shape,
+    TransformShape,
 )
-from mems_sketch.core.user_component import ComponentDef, ParamDef
+from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef
 from mems_sketch.export.base import export, register_exporter
 from mems_sketch.storage import load, load_library, save
 
 __all__ = [
+    "Align",
     "ArcShape",
     "BooleanShape",
     "CircleShape",
@@ -48,6 +51,7 @@ __all__ = [
     "OffsetShape",
     "ParamDef",
     "Params",
+    "PointDef",
     "PathShape",
     "PolygonShape",
     "Process",
@@ -56,6 +60,7 @@ __all__ = [
     "RefShape",
     "Repeat",
     "Shape",
+    "TransformShape",
     "export",
     "load",
     "load_library",

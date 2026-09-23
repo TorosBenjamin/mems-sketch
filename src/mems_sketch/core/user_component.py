@@ -36,8 +36,21 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 
 from mems_sketch.core.component import Component, Geometry, Params
-from mems_sketch.core.expressions import RESERVED_NAMES, resolve_variables
-from mems_sketch.core.shapes import INDEX_NAMES, Evaluator, Shape, references
+from mems_sketch.core.expressions import RESERVED_NAMES, evaluate, resolve_variables
+from mems_sketch.core.shapes import (
+    BBOX_POINTS,
+    INDEX_NAMES,
+    Evaluator,
+    NodePoints,
+    Point,
+    Shape,
+    check_point_reference,
+    point_values,
+    references,
+    rename_node_references,
+    rewrite,
+    walk,
+)
 
 Value = float | str
 RESERVED_PARAM_NAMES = frozenset({*INDEX_NAMES, *RESERVED_NAMES, "process"})
@@ -85,10 +98,40 @@ class ParamDef(_Model):
         return self
 
 
+class PointDef(_Model):
+    """A named alignment point of a component, e.g. where a spring attaches.
+
+    The position is ``(x, y)``, measured from the point ``at`` (``node.point``,
+    a point of one of the component's own shapes) when given, else from the
+    origin. Both may be expressions over the component's parameters.
+    """
+
+    name: str
+    at: str | None = None
+    x: Value = 0.0
+    y: Value = 0.0
+    description: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, name: str) -> str:
+        if not name.isidentifier() or keyword.iskeyword(name):
+            raise ValueError(f"'{name}' is not a valid point name")
+        if name in BBOX_POINTS:
+            raise ValueError(f"'{name}' is a bounding-box point every shape already has")
+        return name
+
+    @field_validator("at")
+    @classmethod
+    def _reference(cls, at: str | None) -> str | None:
+        return None if at is None else check_point_reference(at)
+
+
 class ComponentDef(_Model):
     name: str
     description: str = ""
     parameters: list[ParamDef] = Field(default_factory=list)
+    points: list[PointDef] = Field(default_factory=list)
     shapes: list[Shape] = Field(default_factory=list)
 
     @field_validator("name")
@@ -103,6 +146,9 @@ class ComponentDef(_Model):
         names = [p.name for p in self.parameters]
         if len(names) != len(set(names)):
             raise ValueError("parameter names must be unique")
+        points = [p.name for p in self.points]
+        if len(points) != len(set(points)):
+            raise ValueError("point names must be unique")
         return self
 
     def references(self) -> set[str]:
@@ -113,6 +159,31 @@ class ComponentDef(_Model):
             if p.name == name:
                 return p
         raise KeyError(f"component '{self.name}' has no parameter '{name}'")
+
+    def rename_shape(self, old: str, new: str) -> None:
+        """Rename a shape and update the alignments and expressions that use its points."""
+        if any(s.name == new for s in walk(self.shapes)):
+            raise ValueError(f"a shape named '{new}' already exists")
+        shapes = rename_node_references(self.shapes, old, new)
+        for node in walk(shapes):
+            if node.name == old:
+                node.name = new
+        self.shapes = shapes
+
+        def change(name: str) -> str | None:
+            head, dot, rest = name.partition(".")
+            return f"{new}.{rest}" if head == old and dot else None
+
+        self.points = [
+            p.model_copy(
+                update={
+                    "at": p.at and (change(p.at) or p.at),
+                    "x": rewrite(p.x, change),
+                    "y": rewrite(p.y, change),
+                }
+            )
+            for p in self.points
+        ]
 
 
 class UserComponent(Component):
@@ -135,8 +206,35 @@ class UserComponent(Component):
         self._lookup = lookup
 
     def build(self, params: Params) -> Geometry:
+        return self.compile(params)[0]
+
+    def points(self, params: Params) -> dict[str, Point]:
+        return self.compile(params)[1]
+
+    def compile(self, params: Params) -> tuple[Geometry, dict[str, Point]]:
         variables = {**self.scope, **{k: float(v) for k, v in params.model_dump().items()}}
-        return Evaluator(self._lookup).render(self.definition.shapes, variables)
+        geometry, local = Evaluator(self._lookup).render_scoped(self.definition.shapes, variables)
+        return geometry, declared_points(self.definition, variables, local)
+
+
+def declared_points(
+    definition: ComponentDef, variables: dict[str, float], shapes: dict[str, NodePoints]
+) -> dict[str, Point]:
+    """Positions of a component's declared points, given its evaluated top-level shapes."""
+    result = {}
+    for point in definition.points:
+        v = {**variables, "i": 0.0, "j": 0.0}
+        v.update(point_values([e for e in (point.x, point.y) if isinstance(e, str)], shapes))
+        base = (0.0, 0.0)
+        if point.at is not None:
+            node, _, name = point.at.partition(".")
+            if node not in shapes:
+                raise ValueError(
+                    f"point '{point.name}' is at '{point.at}', but there is no shape '{node}'"
+                )
+            base = shapes[node].point(name)
+        result[point.name] = (base[0] + evaluate(point.x, v), base[1] + evaluate(point.y, v))
+    return result
 
 
 def _params_model(definition: ComponentDef, scope: Mapping[str, float]) -> type[Params]:

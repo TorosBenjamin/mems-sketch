@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.core.component import Geometry, to_dbu
-from mems_sketch.core.shapes import NodePath
+from mems_sketch.core.shapes import Align, NodePath
 from mems_sketch.export.base import available_exporters
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.document import VIEW_MODES, ProjectDocument
@@ -36,6 +36,7 @@ from mems_sketch.gui.panels import (
     LayersPanel,
     MessagesPanel,
     ParametersPanel,
+    PointsPanel,
     ShapeTree,
 )
 from mems_sketch.gui.properties import PropertyEditor
@@ -49,7 +50,7 @@ PRIMITIVES = [
     ("path", "Path"),
 ]
 OPERATIONS = [
-    ("group", "Group"),
+    ("transform", "Transform"),
     ("union", "Union"),
     ("subtract", "Subtract"),
     ("intersect", "Intersect"),
@@ -68,6 +69,11 @@ class MainWindow(QMainWindow):
         self.selection: list[NodePath] = []
         self._node_regions: list[tuple[NodePath, kdb.Region]] = []
         self._violations = []
+        # The Align tool: None, or the step ("own" / "target") with its path and candidates.
+        self.align_step: str | None = None
+        self._align_path: NodePath | None = None
+        self._align_point: str | None = None
+        self._candidates: list[tuple[str, float, float]] = []
         self._errors: list[str] = []
         self._shown_component: str | None = None
 
@@ -79,6 +85,7 @@ class MainWindow(QMainWindow):
         self.parameters = ParametersPanel(self.document)
         self.layers = LayersPanel(self.document)
         self.constants = ConstantsPanel(self.document)
+        self.points = PointsPanel(self.document)
         self.messages = MessagesPanel()
         self._build_docks()
 
@@ -94,9 +101,7 @@ class MainWindow(QMainWindow):
         )
         self.components.place_requested.connect(self.add_component)
         self.canvas.clicked.connect(self._canvas_clicked)
-        self.canvas.cursor_moved.connect(
-            lambda x, y: self.coordinates.setText(f"x {x:.3f} µm   y {y:.3f} µm")
-        )
+        self.canvas.cursor_moved.connect(self._cursor_moved)
         self.layers.visibility_changed.connect(self.canvas.set_layer_visible)
         self.messages.zoom_requested.connect(self._zoom_to_bbox)
         for panel in (
@@ -104,6 +109,7 @@ class MainWindow(QMainWindow):
             self.parameters,
             self.layers,
             self.constants,
+            self.points,
             self.components,
         ):
             panel.error.connect(self.report_error)
@@ -128,7 +134,9 @@ class MainWindow(QMainWindow):
         layers = self._dock("Layers", self.layers, left)
         properties = self._dock("Properties", self.properties, right)
         parameters = self._dock("Parameters", self.parameters, right)
+        points = self._dock("Points", self.points, right)
         constants = self._dock("Process constants", self.constants, right)
+        self.tabifyDockWidget(parameters, points)
         self.tabifyDockWidget(parameters, constants)
         parameters.raise_()
         messages = self._dock("Messages", self.messages, Qt.DockWidgetArea.BottomDockWidgetArea)
@@ -175,6 +183,11 @@ class MainWindow(QMainWindow):
         self._action("Delete", self.delete, QKeySequence.StandardKey.Delete, edit)
         self._action("Unwrap operation", self.unwrap, "Ctrl+Shift+U", edit)
         self._action("Make component from selection…", self.make_component, "Ctrl+K", edit)
+        self._action("Unpack component", self.unpack, "Ctrl+Shift+K", edit)
+        edit.addSeparator()
+        self._action("Align…", self.start_align, "Ctrl+L", edit)
+        self._action("Remove alignment", self.remove_alignment, None, edit)
+        self._action("Cancel", self.cancel_align, "Esc", edit)
 
         insert = bar.addMenu("&Insert")
         self.primitive_menu = insert.addMenu("Primitive")
@@ -216,8 +229,9 @@ class MainWindow(QMainWindow):
             button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             tools.addWidget(button)
         tools.addSeparator()
-        for op in ("group", "union", "subtract", "intersect", "offset", "fillet"):
+        for op in ("union", "subtract", "intersect", "offset", "fillet", "transform"):
             tools.addAction(dict(OPERATIONS)[op], lambda o=op: self.wrap(o))
+        tools.addAction("Align", self.start_align)
         tools.addAction("Make component", self.make_component)
         tools.addSeparator()
         tools.addWidget(QLabel(" View: "))
@@ -240,6 +254,7 @@ class MainWindow(QMainWindow):
 
     def refresh(self) -> None:
         """Recompile the active component and update every view."""
+        self.cancel_align(quiet=True)
         if self._shown_component != self.document.active:
             self.selection = []  # paths belong to the previously shown component
         self._errors = []
@@ -257,6 +272,7 @@ class MainWindow(QMainWindow):
         self.layers.refresh()
         self.constants.refresh()
         self.parameters.refresh()
+        self.points.refresh()
         self.components.refresh()
         self._node_regions = self.document.node_regions(self.layers.visible)
         self.canvas.show_geometry(geometry, self.layers.colors, self.layers.visible)
@@ -274,6 +290,14 @@ class MainWindow(QMainWindow):
     def _update_overlay(self) -> None:
         markers = [v.bbox_um for v in self._violations if v.bbox_um]
         self.canvas.show_overlay(self.document.highlight(self.selection), markers)
+        try:
+            declared = [(n, x, y) for n, (x, y) in self.document.declared_points().items()]
+        except Exception:  # noqa: BLE001 - the messages panel shows why
+            declared = []
+        self.canvas.show_points("declared", declared, labels=True)
+        selected = self.document.node_points(self.selection[0]) if len(self.selection) == 1 else []
+        self.canvas.show_points("selected", [] if self.align_step else selected)
+        self.canvas.show_points("pick", self._candidates if self.align_step else [])
 
     def _exists(self, path: NodePath) -> bool:
         try:
@@ -297,7 +321,18 @@ class MainWindow(QMainWindow):
         self.properties.show_node(paths[0] if len(paths) == 1 else None)
         self._update_overlay()
 
+    def _cursor_moved(self, x: float, y: float) -> None:
+        text = f"x {x:.3f} µm   y {y:.3f} µm"
+        if self.align_step:
+            nearest = self._nearest_candidate(x, y)
+            if nearest is not None:
+                text = f"{nearest}   {text}"
+        self.coordinates.setText(text)
+
     def _canvas_clicked(self, x: float, y: float, additive: bool) -> None:
+        if self.align_step:
+            self._pick(x, y)
+            return
         point = kdb.Point(to_dbu(x), to_dbu(y))
         probe = kdb.Region(kdb.Box(point.x - 1, point.y - 1, point.x + 1, point.y + 1))
         hit = next(
@@ -364,6 +399,78 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "Make component", "Name of the new component:")
         if ok and name.strip():
             self._select_result(lambda: self.document.make_component(self.selection, name.strip()))
+
+    # -- the Align tool ----------------------------------------------------
+
+    def start_align(self) -> None:
+        """Pick a point of the selected shape, then the point to align it to."""
+        if len(self.selection) != 1:
+            self.report_error("select the one shape to align first")
+            return
+        path = self.selection[0]
+        candidates = self.document.node_points(path)
+        if not candidates:
+            self.report_error("this shape has no points to align (does it have geometry?)")
+            return
+        self.align_step, self._align_path, self._candidates = "own", path, candidates
+        name = self.document.node(path).name or "the shape"
+        self._prompt(f"Align {name}: click the point of {name} to align (Esc cancels)")
+        self._update_overlay()
+
+    def _pick(self, x: float, y: float) -> None:
+        picked = self._nearest_candidate(x, y)
+        if picked is None:
+            self.statusBar().showMessage("Click on one of the marked points (Esc cancels)", 5000)
+            return
+        if self.align_step == "own":
+            targets = [
+                (name, tx, ty) for name, _, tx, ty in self.document.align_targets(self._align_path)
+            ]
+            if not targets:
+                self.cancel_align(quiet=True)
+                self.report_error("there is no other named shape here to align to")
+                return
+            self.align_step, self._align_point, self._candidates = "target", picked, targets
+            self._prompt(f"Now click the point to put {picked} on (Esc cancels)")
+            self._update_overlay()
+            return
+        path, point = self._align_path, self._align_point
+        self.cancel_align(quiet=True)
+        ok, _ = self._run(lambda: self.document.set_align(path, Align(point=point, to=picked)))
+        if ok:
+            self.statusBar().showMessage(f"Aligned {point} to {picked}", 5000)
+
+    def _nearest_candidate(self, x: float, y: float, pixels: float = 12) -> str | None:
+        reach = pixels / self.canvas.pixels_per_um()
+        best, best_distance = None, reach
+        for name, px, py in self._candidates:
+            distance = ((px - x) ** 2 + (py - y) ** 2) ** 0.5
+            if distance <= best_distance:
+                best, best_distance = name, distance
+        return best
+
+    def cancel_align(self, quiet: bool = False) -> None:
+        if self.align_step is None:
+            return
+        self.align_step, self._align_path, self._align_point = None, None, None
+        self._candidates = []
+        self.canvas.unsetCursor()
+        if not quiet:
+            self.statusBar().showMessage("Align cancelled", 3000)
+        self._update_overlay()
+
+    def _prompt(self, text: str) -> None:
+        self.canvas.setCursor(Qt.CursorShape.CrossCursor)
+        self.statusBar().showMessage(text)
+
+    def remove_alignment(self) -> None:
+        if len(self.selection) == 1:
+            path = self.selection[0]
+            self._run(lambda: self.document.set_align(path, None))
+
+    def unpack(self) -> None:
+        if len(self.selection) == 1:
+            self._select_result(lambda: self.document.unpack(self.selection[0]))
 
     def unwrap(self) -> None:
         if len(self.selection) == 1:

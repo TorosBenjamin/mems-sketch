@@ -38,6 +38,7 @@ _SPECIAL = {
     "name",
     "enabled",
     "repeat",
+    "align",
     "params",
     "points",
     "mapping",
@@ -71,6 +72,7 @@ class PropertyEditor(QScrollArea):
         self.setWidgetResizable(True)
         self.path: NodePath | None = None
         self._editors: dict[str, typing.Callable[[], object]] = {}
+        self._scope: dict[str, float] = {}
         self._show_placeholder("Select a shape to edit its properties.")
 
     # -- building ----------------------------------------------------------
@@ -86,6 +88,10 @@ class PropertyEditor(QScrollArea):
             self._show_placeholder("Select a shape to edit its properties.")
             return
         self._editors = {}
+        try:
+            self._scope = {**self.document.scope(path), "i": 0.0, "j": 0.0}
+        except Exception:  # noqa: BLE001 - previews then show "?"
+            self._scope = {}
         body = QWidget()
         layout = QVBoxLayout(body)
         form = QFormLayout()
@@ -113,6 +119,7 @@ class PropertyEditor(QScrollArea):
             form.addRow("Mapping (from → to)", self._mapping_editor(node.mapping))
         if node.kind == "ref":
             layout.addWidget(self._params_editor(node))
+        layout.addWidget(self._align_editor(node, path))
         layout.addWidget(self._repeat_editor(node))
 
         apply = QPushButton("Apply")
@@ -168,8 +175,7 @@ class PropertyEditor(QScrollArea):
                 result.setText("default" if optional else "")
                 return
             try:
-                variables = {**self.document.scope(), "i": 0.0, "j": 0.0}
-                result.setText(f"= {evaluate(parse_value(text), variables):g}")
+                result.setText(f"= {evaluate(parse_value(text), self._scope):g}")
             except Exception:  # noqa: BLE001 - only a preview
                 result.setText("?")
 
@@ -250,6 +256,48 @@ class PropertyEditor(QScrollArea):
             return {field: value for field, value in values.items() if value is not None}
 
         self._editors["params"] = read
+        return box
+
+    def _align_editor(self, node: Shape, path: NodePath) -> QWidget:
+        box = QGroupBox("Align a point of this shape to another shape's point")
+        box.setCheckable(True)
+        box.setChecked(node.align is not None)
+        form = QFormLayout(box)
+        align = node.align
+        own = QComboBox()
+        own.setEditable(True)
+        own.addItems([name for name, _, _ in self.document.node_points(path)] or ["center"])
+        own.setCurrentText(align.point if align else "center")
+        target = QComboBox()
+        target.setEditable(True)
+        target.addItems([name for name, *_ in self.document.align_targets(path)])
+        target.setCurrentText(align.to if align else "")
+        form.addRow("Point", own)
+        form.addRow("To", target)
+        offsets = {}
+        for field in ("dx", "dy"):
+            value = getattr(align, field) if align else 0.0
+            form.addRow(f"Offset {field[1]}", self._value_editor(f"align:{field}", value))
+            offsets[field] = self._editors.pop(f"align:{field}")
+        if node.kind in ("ref", "transform"):
+            note = QLabel("While aligned, x and y do not move it; rotation and mirroring do.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: gray")
+            form.addRow(note)
+
+        def read():
+            if not box.isChecked():
+                return None
+            to = target.currentText().strip()
+            if not to:
+                raise ValueError("choose the point to align to")
+            return {
+                "point": own.currentText().strip() or "center",
+                "to": to,
+                **{field: reader() for field, reader in offsets.items()},
+            }
+
+        self._editors["align"] = read
         return box
 
     def _repeat_editor(self, node: Shape) -> QWidget:

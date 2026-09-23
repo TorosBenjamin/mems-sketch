@@ -63,7 +63,7 @@ def test_wrap_subtract_and_unwrap(doc):
 def test_wrap_requires_siblings_and_enough_operands(doc):
     a = doc.add_primitive("rect")
     b = doc.add_primitive("rect")
-    grouped = doc.wrap([a], "group")
+    grouped = doc.wrap([a], "transform")
     inner = (*grouped, (0, 0))
     with pytest.raises(ValueError, match="siblings"):
         doc.wrap([inner, ((0, 1),)], "union")
@@ -75,9 +75,9 @@ def test_delete_several_nodes_including_nested(doc):
     a = doc.add_primitive("rect")
     doc.add_primitive("circle")
     doc.add_primitive("polygon")
-    group = doc.wrap([a], "group")
+    group = doc.wrap([a], "transform")
     doc.remove_nodes([(*group, (0, 0)), ((0, 2),)])
-    assert [s.name for s in doc.shapes] == ["group1", "circle1"]
+    assert [s.name for s in doc.shapes] == ["transform1", "circle1"]
     assert doc.shapes[0].children == []
 
 
@@ -179,3 +179,117 @@ def test_save_open_export(doc, tmp_path):
     assert other.project == doc.project and other.path == tmp_path / "proj"
     assert other.export(tmp_path / "a.gds", "compensated").exists()
     assert load(tmp_path / "proj") == doc.project
+
+
+# -- alignment, transforms and unpacking -------------------------------------
+
+from mems_sketch.core.shapes import Align, TransformShape  # noqa: E402
+from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef  # noqa: E402
+
+
+def bbox_of(doc: ProjectDocument, path, layer="device"):
+    region = doc.highlight([path]).layers[layer]
+    box = region.bbox()
+    return tuple(v / 1000 for v in (box.left, box.bottom, box.right, box.top))
+
+
+def test_align_and_remove_alignment(doc):
+    base = doc.add_primitive("rect")  # 100 x 50 at the origin
+    post = doc.add_shape(RectShape(name="post", layer="device", x0=0, y0=0, x1=10, y1=10))
+    doc.set_align(post, Align(point="bottom_left", to="rect1.top_right"))
+    assert bbox_of(doc, post) == (100, 50, 110, 60)
+    targets = [name for name, *_ in doc.align_targets(post)]
+    assert "rect1.top_right" in targets and not any(t.startswith("post.") for t in targets)
+    assert doc.scope(post)["rect1.top.y"] == 50
+    doc.set_align(post, None)
+    assert bbox_of(doc, post) == (0, 0, 10, 10)
+    assert base == ((0, 0),)
+
+
+def test_renaming_a_shape_keeps_alignments(doc):
+    doc.add_primitive("rect")
+    post = doc.add_shape(
+        RectShape(
+            name="post",
+            layer="device",
+            x0=0,
+            y0="rect1.top.y",
+            x1=10,
+            y1=70,
+            align=Align(point="bottom", to="rect1.top"),
+        )
+    )
+    doc.replace_node(((0, 0),), doc.node(((0, 0),)).model_copy(update={"name": "base"}))
+    node = doc.node(post)
+    assert node.align.to == "base.top"
+    assert node.y0 == "base.top.y"
+
+
+def test_invalid_alignment_is_rolled_back(doc):
+    a = doc.add_primitive("rect")
+    b = doc.add_primitive("rect")
+    doc.set_align(b, Align(to="rect1.top"))
+    with pytest.raises(ValueError, match="circular"):
+        doc.set_align(a, Align(to="rect2.top"))
+    assert doc.node(a).align is None
+
+
+def test_points_of_the_active_component(doc):
+    doc.add_primitive("rect")
+    name = doc.add_point()
+    doc.update_point(name, name="tip", at="rect1.right", x=5)
+    assert doc.declared_points() == {"tip": (105, 25)}
+    with pytest.raises(ValueError):
+        doc.update_point("tip", at="nothing.here")
+    doc.remove_point("tip")
+    assert doc.declared_points() == {}
+
+
+def test_transform_becomes_a_component_in_place(doc):
+    doc.add_primitive("rect")
+    doc.add_primitive("circle")
+    transform = doc.wrap([((0, 0),), ((0, 1),)], "transform")
+    moved = doc.node(transform).model_copy(update={"x": 500, "rotation": 90})
+    doc.replace_node(transform, moved)
+    before = area(doc)
+    box_before = doc.geometry().layers["device"].bbox()
+    path = doc.make_component([transform], "pair")
+    ref = doc.node(path)
+    assert isinstance(ref, RefShape) and ref.name == "transform1"
+    assert (ref.x, ref.rotation) == (500, 90)
+    assert area(doc) == pytest.approx(before)
+    assert doc.geometry().layers["device"].bbox() == box_before
+
+
+def test_unpack_restores_the_shapes_with_values_filled_in(doc):
+    doc.edit(
+        "define",
+        lambda p: p.components.__setitem__(
+            "bar",
+            ComponentDef(
+                name="bar",
+                parameters=[ParamDef(name="w", default=2), ParamDef(name="l", default="10 * w")],
+                points=[PointDef(name="tip", x="l")],
+                shapes=[RectShape(name="rect1", layer="device", x0=0, y0=0, x1="l", y1="w")],
+            ),
+        ),
+    )
+    doc.set_parameter("width", 3)
+    doc.add_primitive("rect")  # takes the name rect1 in the top component
+    ref = doc.add_shape(RefShape(name="b", component="bar", params={"w": "width"}, x=7))
+    before = area(doc)
+    doc.unpack(ref)
+    node = doc.node(ref)
+    assert isinstance(node, TransformShape) and node.name == "b" and node.x == 7
+    (inner,) = node.children
+    assert inner.name == "rect2"  # renamed: rect1 is taken
+    assert inner.x1 == "10 * width" and inner.y1 == "width"
+    assert area(doc) == pytest.approx(before)
+    with pytest.raises(ValueError, match="built-in"):
+        doc.unpack(doc.add_component("anchor"))
+
+
+def test_parameters_can_be_renamed(doc):
+    doc.set_parameter("w", 2)
+    doc.update_parameter("w", name="width")
+    assert [p.name for p in doc.active_definition.parameters] == ["width"]

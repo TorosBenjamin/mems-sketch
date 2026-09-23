@@ -1,4 +1,4 @@
-"""Dockable panels: components, shape tree, parameters, process and messages."""
+"""Dockable panels: components, shape tree, parameters, points, process and messages."""
 
 from __future__ import annotations
 
@@ -32,7 +32,14 @@ SLOT_LABELS = {"boolean": ("A", "B")}
 
 
 def describe(shape: Shape) -> str:
-    """Short summary shown next to a node's name."""
+    """Short summary shown next to a node's name, with its alignment if it has one."""
+    summary = _summary(shape)
+    if shape.align is not None:
+        summary += f" · {shape.align.point} at {shape.align.to}"
+    return summary
+
+
+def _summary(shape: Shape) -> str:
     match shape.kind:
         case "ref":
             return shape.component
@@ -353,6 +360,83 @@ class ParametersPanel(_Panel):
         rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
         for row in rows:
             self._guard(lambda n=self._names[row]: self.document.remove_parameter(n))
+
+
+# -- points ------------------------------------------------------------------
+
+
+class PointsPanel(_Panel):
+    """Alignment points the edited component declares, for whoever places it.
+
+    ``At`` is an optional ``shape.point`` the position is measured from; ``X``
+    and ``Y`` may be expressions over the component's parameters.
+    """
+
+    COLUMNS = ["Name", "At", "X", "Y", "Position"]
+    FIELDS = ["name", "at", "x", "y"]
+
+    def __init__(self, document: ProjectDocument) -> None:
+        super().__init__()
+        self.document = document
+        self.title = QLabel()
+        self.table = _table(self.COLUMNS)
+        self.table.itemChanged.connect(self._changed)
+        add, remove = QPushButton("Add"), QPushButton("Remove")
+        add.clicked.connect(lambda: self._guard(self.document.add_point))
+        remove.clicked.connect(self._remove)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.title)
+        layout.addWidget(self.table)
+        layout.addLayout(_button_row(add, remove))
+        self._names: list[str] = []
+
+    def refresh(self) -> None:
+        points = self.document.active_definition.points
+        self.title.setText(f" Points of <b>{self.document.active}</b> (besides center, top, …)")
+        try:
+            positions = self.document.declared_points()
+        except Exception:  # noqa: BLE001 - shown as "error" per row
+            positions = {}
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(points))
+        self._names = [p.name for p in points]
+        for row, point in enumerate(points):
+            position = positions.get(point.name)
+            cells = [
+                QTableWidgetItem(point.name),
+                QTableWidgetItem(point.at or ""),
+                QTableWidgetItem(_format(point.x)),
+                QTableWidgetItem(_format(point.y)),
+                _readonly("error" if position is None else "{:g}, {:g}".format(*position)),
+            ]
+            cells[0].setToolTip(point.description)
+            for column, cell in enumerate(cells):
+                self.table.setItem(row, column, cell)
+        self.table.blockSignals(False)
+
+    def _changed(self, item: QTableWidgetItem) -> None:
+        name = self._names[item.row()]
+        text = item.text().strip()
+        field = self.FIELDS[item.column()] if item.column() < len(self.FIELDS) else None
+
+        def apply() -> None:
+            match field:
+                case "name":
+                    if text != name:
+                        self.document.update_point(name, name=text)
+                case "at":
+                    self.document.update_point(name, at=text or None)
+                case "x" | "y":
+                    self.document.update_point(name, **{field: parse_value(text or "0")})
+
+        if field is not None and not self._guard(apply):
+            self.refresh()
+
+    def _remove(self) -> None:
+        rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
+        for row in rows:
+            self._guard(lambda n=self._names[row]: self.document.remove_point(n))
 
 
 # -- process -------------------------------------------------------------------

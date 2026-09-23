@@ -10,6 +10,7 @@ script shows how the same files can be produced code-first.
 from pathlib import Path
 
 from mems_sketch import (
+    Align,
     BooleanShape,
     CircleShape,
     ComponentDef,
@@ -86,7 +87,13 @@ project.define_component(
         parameters=[ParamDef(name="turns", default=3, min=1, integer=True)],
         shapes=[
             Instance("spring", "serpentine_spring", {"turns": "turns"}),
-            Instance("anchor", "anchor", {"size": 40}, y="(2 * turns + 1) * 15 + 20 - 1"),
+            # The pad sits on the spring's last beam, overlapping it by 1 µm.
+            Instance(
+                "anchor",
+                "anchor",
+                {"size": 40},
+                align=Align(point="bottom", to="spring.end", dy=-1),
+            ),
         ],
     )
 )
@@ -96,10 +103,30 @@ for name, value in {"plate": 160, "pitch": 20, "w_finger": "process.min_gap"}.it
     project.set_variable(name, value)
 comb = {"fingers": 16, "finger_width": "w_finger", "gap": "w_finger"}
 project.add(Instance("mass", "std.perforated_plate", {"size": "plate", "pitch": "pitch"}))
-project.add(Instance("comb_top", "comb_drive", comb, y="plate/2 + 39", rotation=180))
-project.add(Instance("comb_bottom", "comb_drive", comb, y="-plate/2 - 39"))
-for side, sign in (("left", -1), ("right", 1)):
-    project.add(Instance(f"suspension_{side}", "suspension", x=f"{sign} * (plate/2 + 38.5)", y=-54))
+# Positions come from alignments, so they follow any change of plate, comb or spring.
+project.add(
+    Instance(
+        "comb_top",
+        "comb_drive",
+        comb,
+        rotation=180,
+        align=Align(point="moving", to="mass.top", dy=-1),
+    )
+)
+project.add(
+    Instance("comb_bottom", "comb_drive", comb, align=Align(point="moving", to="mass.bottom", dy=1))
+)
+for side, point, edge, overlap in (
+    ("left", "right", "left", 1.5),
+    ("right", "left", "right", -1.5),
+):
+    project.add(
+        Instance(
+            f"suspension_{side}",
+            "suspension",
+            align=Align(point=point, to=f"mass.{edge}", dx=overlap),
+        )
+    )
 
 save(project, HERE / "resonator")
 print("wrote examples/libraries/mems_std and examples/resonator")

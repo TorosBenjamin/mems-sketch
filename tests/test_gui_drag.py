@@ -128,8 +128,16 @@ def test_read_only_tabs_cannot_be_dragged(window, tmp_path):
     from pathlib import Path
 
     examples = Path(__file__).parent.parent / "examples"
-    shutil.copytree(examples / "resonator", tmp_path / "resonator")
-    shutil.copytree(examples / "libraries", tmp_path / "libraries")
+    shutil.copytree(
+        examples / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    shutil.copytree(
+        examples / "libraries",
+        tmp_path / "libraries",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
     window.open_project(str(tmp_path / "resonator"))
     window.open_component("std.perforated_plate")
     window.canvas.fit()

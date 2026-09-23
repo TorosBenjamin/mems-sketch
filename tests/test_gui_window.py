@@ -81,8 +81,16 @@ def test_make_component_and_switch_components(window, monkeypatch):
 
 
 def test_open_example_project_with_library(window, tmp_path):
-    shutil.copytree(EXAMPLES / "resonator", tmp_path / "resonator")
-    shutil.copytree(EXAMPLES / "libraries", tmp_path / "libraries")
+    shutil.copytree(
+        EXAMPLES / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    shutil.copytree(
+        EXAMPLES / "libraries",
+        tmp_path / "libraries",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
     window.open_project(str(tmp_path / "resonator" / "project.yaml"))
     assert window.document.project.name == "resonator"
     labels = [

@@ -12,8 +12,16 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture
 def resonator(tmp_path) -> Path:
-    shutil.copytree(EXAMPLES / "resonator", tmp_path / "resonator")
-    shutil.copytree(EXAMPLES / "libraries", tmp_path / "libraries")
+    shutil.copytree(
+        EXAMPLES / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    shutil.copytree(
+        EXAMPLES / "libraries",
+        tmp_path / "libraries",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
     return tmp_path / "resonator"
 
 

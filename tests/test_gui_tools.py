@@ -187,8 +187,16 @@ def test_measure_works_on_read_only_tabs(window):
 
 @pytest.fixture
 def example(window, tmp_path):
-    shutil.copytree(EXAMPLES / "resonator", tmp_path / "resonator")
-    shutil.copytree(EXAMPLES / "libraries", tmp_path / "libraries")
+    shutil.copytree(
+        EXAMPLES / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    shutil.copytree(
+        EXAMPLES / "libraries",
+        tmp_path / "libraries",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
     window.open_project(str(tmp_path / "resonator"))
     return tmp_path / "resonator"
 

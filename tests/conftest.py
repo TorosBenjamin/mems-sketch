@@ -1,7 +1,7 @@
 import os
 
-# GUI tests run without a display.
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# GUI tests never open windows, even when the shell sets a platform (e.g. wayland).
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 import pytest
 

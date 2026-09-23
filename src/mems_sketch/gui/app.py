@@ -6,6 +6,7 @@ an :class:`~mems_sketch.editing.EditSession`, the backend's way to edit a projec
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -15,7 +16,6 @@ from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
-    QDockWidget,
     QDoubleSpinBox,
     QFileDialog,
     QInputDialog,
@@ -33,7 +33,7 @@ from mems_sketch.core.shapes import NodePath
 from mems_sketch.editing import EditSession
 from mems_sketch.export.base import available_exporters
 from mems_sketch.gui import icons, theme
-from mems_sketch.gui.actions import Actions
+from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.find_action import FindActionDialog, menu_actions
@@ -50,12 +50,15 @@ from mems_sketch.gui.panels import (
 from mems_sketch.gui.properties import PropertyEditor
 from mems_sketch.gui.settings import PreferencesDialog, Settings
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
+from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import VIEW_MODES, ComponentView, EditorArea
 
 STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
 TOOLS_DRAWING_FIRST = next(t.name for t in TOOLS if t.draws)  # the palette separates them
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
+TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
+DEFAULT_TOOL_WINDOWS = ("components", "shapes", "properties", "messages")
 # Canvas options and the settings they come from (see gui/settings.py).
 CANVAS_OPTIONS = {
     "fill_opacity": "canvas/fill_opacity",
@@ -91,7 +94,6 @@ class MainWindow(QMainWindow):
         self._state_timer.timeout.connect(self.save_editor_state)
 
         self.area = EditorArea(self.document)
-        self.setCentralWidget(self.area)
         self.components = ComponentsPanel(self.document)
         self.tree = ShapeTree(self.document)
         self.properties = PropertyEditor(self.document)
@@ -101,7 +103,7 @@ class MainWindow(QMainWindow):
         self.constants = ConstantsPanel(self.document)
         self.points = PointsPanel(self.document)
         self.messages = MessagesPanel()
-        self._build_docks()
+        self._build_tool_windows()
 
         self._build_actions()
         self._build_status_bar()
@@ -526,38 +528,51 @@ class MainWindow(QMainWindow):
                 rulers.append(extra)
             view.canvas.show_rulers(rulers)
 
-    def _dock(self, title: str, widget, area) -> QDockWidget:
-        dock = QDockWidget(title, self)
-        dock.setObjectName(title)
-        dock.setWidget(widget)
-        self.addDockWidget(area, dock)
-        return dock
+    def _build_tool_windows(self) -> None:
+        """The panels around the editor, opened from the stripes on the window edges."""
+        self.tool_windows = ToolWindows(self.area)
+        self.setCentralWidget(self.tool_windows)
+        for name, title, icon, widget, anchor in (
+            ("components", "Components", "component", self.components, "left-top"),
+            ("shapes", "Shapes", "shapes", self.tree, "left-bottom"),
+            ("layers", "Layers", "layers", self.layers, "left-bottom"),
+            ("messages", "Messages", "messages", self.messages, "bottom"),
+            ("properties", "Properties", "properties", self.properties, "right"),
+            ("parameters", "Parameters", "parameters", self.parameters, "right"),
+            ("points", "Points", "point", self.points, "right"),
+            ("constants", "Process constants", "edit", self.constants, "right"),
+        ):
+            self.tool_windows.add(name, title, icon, widget, anchor)
+        self._restore_tool_windows()
+        self.tool_windows.changed.connect(self._save_tool_windows)
 
-    def _build_docks(self) -> None:
-        left, right = Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea
-        components = self._dock("Components", self.components, left)
-        shapes = self._dock("Shapes", self.tree, left)
-        layers = self._dock("Layers", self.layers, left)
-        properties = self._dock("Properties", self.properties, right)
-        parameters = self._dock("Parameters", self.parameters, right)
-        points = self._dock("Points", self.points, right)
-        constants = self._dock("Process constants", self.constants, right)
-        self.tabifyDockWidget(parameters, points)
-        self.tabifyDockWidget(parameters, constants)
-        parameters.raise_()
-        messages = self._dock("Messages", self.messages, Qt.DockWidgetArea.BottomDockWidgetArea)
-        vertical, horizontal = Qt.Orientation.Vertical, Qt.Orientation.Horizontal
-        self.resizeDocks([components, shapes, layers], [240, 330, 200], vertical)
-        self.resizeDocks([properties, parameters], [560, 220], vertical)
-        self.resizeDocks([shapes, properties], [320, 360], horizontal)
-        self.resizeDocks([messages], [110], vertical)
+    def _restore_tool_windows(self) -> None:
+        """The tool windows as they were left, or the ones a first start opens."""
+        try:
+            state = json.loads(self.settings.value(TOOL_WINDOWS_KEY, "") or "{}")
+        except (TypeError, ValueError):
+            state = {}
+        if not isinstance(state, dict) or not state.get("open"):
+            state = {"open": list(DEFAULT_TOOL_WINDOWS)}
+        self.tool_windows.restore(state)
+
+    def _save_tool_windows(self) -> None:
+        self.settings.set_value(TOOL_WINDOWS_KEY, json.dumps(self.tool_windows.state()))
 
     def _build_actions(self) -> None:
         self.actions_ = actions = Actions(self)
         for menu in actions.root_menus:
             self.menuBar().addMenu(menu)
-        for dock in self.findChildren(QDockWidget):
-            actions.panels.addAction(dock.toggleViewAction())
+        for name in self.tool_windows.names():
+            action = make_action(
+                self,
+                self.tool_windows.title(name),
+                lambda _=False, n=name: self.tool_windows.toggle(n),
+            )
+            action.setCheckable(True)
+            action.setChecked(self.tool_windows.is_open(name))
+            self.tool_windows.button(name).toggled.connect(action.setChecked)
+            actions.panels.addAction(action)
         # The names the rest of the window (and its tests) use.
         self.save_action, self.undo_action, self.redo_action = (
             actions.save,
@@ -768,9 +783,7 @@ class MainWindow(QMainWindow):
         self.problems_button.setText(text)
 
     def _show_messages_panel(self) -> None:
-        dock = next(d for d in self.findChildren(QDockWidget) if d.windowTitle() == "Messages")
-        dock.show()
-        dock.raise_()
+        self.tool_windows.open("messages")
 
     def _tab_menu(self, view: ComponentView, position: QPoint) -> None:
         self.actions_.tab_menu(view).exec(position)
@@ -1250,6 +1263,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._confirm_discard():
             self.save_editor_state()
+            self._save_tool_windows()
             event.accept()
         else:
             event.ignore()

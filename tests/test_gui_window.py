@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QDockWidget, QInputDialog, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
 from mems_sketch.gui.app import MainWindow
 
@@ -111,18 +111,15 @@ def test_undo_restores_tree_and_view_mode_switch(window):
 
 
 def test_layers_panel_is_shown_on_its_own_and_every_panel_can_be_reopened(window):
-    docks = {d.windowTitle(): d for d in window.findChildren(QDockWidget)}
-    layers = docks["Layers"]
-    assert not layers.visibleRegion().isEmpty()  # not hidden behind another tab
-    assert window.tabifiedDockWidgets(layers) == []
+    windows = window.tool_windows
+    windows.open("layers")
+    assert window.layers.isVisible()  # in place of Shapes, not behind it
     assert window.layers.layers.rowCount() == len(window.document.project.layers)
 
-    layers.close()
-    panels = next(a.menu() for a in window.menuBar().actions() if a.text() == "&View")
-    panels = next(a.menu() for a in panels.actions() if a.text() == "Panels")
-    reopen = next(a for a in panels.actions() if a.text() == "Layers")
+    windows.close("layers")
+    reopen = next(a for a in window.actions_.panels.actions() if a.text() == "Layers")
     reopen.trigger()
-    assert layers.isVisible()
+    assert window.layers.isVisible() and reopen.isChecked()
 
 
 def test_align_tool_picks_two_points_on_the_canvas(window):

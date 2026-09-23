@@ -141,18 +141,23 @@ class Session:
         geometry = built.build(resolve_params(built, params or {}, self.scope))
         return geometry.merged()
 
-    def inspect(self, component: str) -> dict[NodePath, NodeRecord]:
+    def inspect(
+        self, component: str, params: dict[str, Any] | None = None
+    ) -> dict[NodePath, NodeRecord]:
         """Evaluate a local component's shape tree and record every node (for the GUI).
 
         Records are placed in the frame of the list holding each node; see
         :func:`frame_of` to bring them into the component's frame. If the
         evaluation fails, what was evaluated so far is returned.
         """
-        definition, namespace = self.project.definition(component)
+        found = self.project.definition(component)
         record: dict[NodePath, NodeRecord] = {}
+        if found is None:  # a built-in has no shape tree
+            return record
+        definition, namespace = found
         evaluator = Evaluator(lambda n: self.component(n, namespace), record)
         try:
-            evaluator.render(definition.shapes, self.variables(component))
+            evaluator.render(definition.shapes, self.variables(component, params))
         except Exception:  # noqa: BLE001 - partial results are still useful to show
             pass
         return record

@@ -3,12 +3,17 @@
 The GUI never builds geometry or touches files itself; it asks the document,
 which uses the backend (project model, compiler, storage, rules, export).
 
-* One component is **active**: the one being edited and displayed. Shape
-  edits, parameters and the canvas all refer to it.
+* One component is **active**: the one in the current tab. Shape edits,
+  parameters and points refer to it. Any component can be active; library
+  and built-in components are read-only.
+* **Trial values** per component override parameter defaults for viewing
+  only: they are not part of the project, not saved and not undone.
 * Every edit runs as a transaction: the change is applied, the project is
   recompiled, and if a project that compiled before no longer does, the change
   is rolled back exactly.
-* Undo/redo keep whole-project snapshots (libraries are read-only and shared).
+* Undo/redo keep whole-project snapshots (libraries are read-only and shared)
+  and remember which component each change was made in, so the GUI can go
+  back to it, like a code editor.
 * A long-lived :class:`Compiler` caches built components by fingerprint, so
   recompiling after an edit only rebuilds what changed.
 """
@@ -74,8 +79,10 @@ def new_project(name: str = "untitled") -> Project:
 
 
 class ProjectDocument(QObject):
-    changed = Signal()  # the model or the active component changed; views must refresh
+    changed = Signal()  # the model changed (or trial values); views must refresh
+    active_changed = Signal()  # another component became active; nothing else changed
     file_changed = Signal()  # path or dirty flag changed
+    component_renamed = Signal(str, str)  # old, new
 
     def __init__(self, project: Project | None = None) -> None:
         super().__init__()
@@ -84,19 +91,27 @@ class ProjectDocument(QObject):
         self.path: Path | None = None
         self.dirty = False
         self.compiler = Compiler()
-        self._undo: list[tuple[str, Project, str]] = []
-        self._redo: list[tuple[str, Project, str]] = []
-        self._inspection: dict[NodePath, NodeRecord] | None = None
-        self.changed.connect(self._forget_inspection)
-
-    def _forget_inspection(self) -> None:
-        self._inspection = None
+        # (description, other project state, active before the change, active after it)
+        self._undo: list[tuple[str, Project, str, str]] = []
+        self._redo: list[tuple[str, Project, str, str]] = []
+        self.trials: dict[str, dict[str, Value]] = {}
+        self._saved: dict[str, str] = self._fingerprints()
+        self._inspection: dict[str, dict[NodePath, NodeRecord]] = {}
+        self.changed.connect(self._inspection.clear)
 
     # -- transactions ------------------------------------------------------
 
-    def edit(self, description: str, change: Callable[[Project], object]) -> object:
-        """Apply ``change``; roll back and re-raise if a valid project would become invalid."""
-        before = self._snapshot()
+    def edit(
+        self,
+        description: str,
+        change: Callable[[Project], object],
+        done: Callable[[], None] | None = None,
+    ) -> object:
+        """Apply ``change``; roll back and re-raise if a valid project would become invalid.
+
+        ``done`` runs after a successful change, before views are told.
+        """
+        before, active = self._snapshot(), self.active
         was_valid = not self.problems(before)
         try:
             result = change(self.project)
@@ -105,13 +120,15 @@ class ProjectDocument(QObject):
                 if problems:
                     raise ValueError(problems[0])
         except Exception:
-            self.project = before
+            self.project, self.active = before, active
             raise
-        if self.active not in self.project.components:
+        if not self.exists(self.active):
             self.active = self.project.top
-        self._undo.append((description, before, self.active))
+        self._undo.append((description, before, active, self.active))
         del self._undo[:-UNDO_LIMIT]
         self._redo.clear()
+        if done is not None:
+            done()
         self._set_dirty(True)
         self.changed.emit()
         return result
@@ -149,21 +166,22 @@ class ProjectDocument(QObject):
         return self._redo[-1][0] if self._redo else ""
 
     def undo(self) -> None:
+        """Undo the last change and make the component it was made in active."""
         if self._undo:
-            description, state, active = self._undo.pop()
-            self._redo.append((description, self.project, self.active))
-            self._restore(state, active)
+            description, state, before, after = self._undo.pop()
+            self._redo.append((description, self.project, before, after))
+            self._restore(state, before)
 
     def redo(self) -> None:
         if self._redo:
-            description, state, active = self._redo.pop()
-            self._undo.append((description, self.project, self.active))
-            self._restore(state, active)
+            description, state, before, after = self._redo.pop()
+            self._undo.append((description, self.project, before, after))
+            self._restore(state, after)
 
     def _restore(self, project: Project, active: str) -> None:
         self.project = project
-        self.active = active if active in project.components else project.top
-        self._set_dirty(True)
+        self.active = active if self.exists(active) else project.top
+        self._set_dirty(self._fingerprints() != self._saved)
         self.changed.emit()
 
     # -- files -------------------------------------------------------------
@@ -187,7 +205,9 @@ class ProjectDocument(QObject):
             raise ValueError("choose a folder to save the project in")
         save(self.project, target)
         self.path = target
+        self._saved = self._fingerprints()
         self._set_dirty(False)
+        self.changed.emit()  # tabs drop their "modified" marks
         return target
 
     def export(self, path: str | Path, mode: str = "drawn") -> Path:
@@ -199,8 +219,19 @@ class ProjectDocument(QObject):
         self.path = path
         self._undo.clear()
         self._redo.clear()
+        self.trials.clear()
+        self._saved = self._fingerprints()
         self._set_dirty(False)
         self.changed.emit()
+
+    def _fingerprints(self) -> dict[str, str]:
+        return {n: d.model_dump_json() for n, d in self.project.components.items()}
+
+    def modified(self, component: str) -> bool:
+        """Whether a local component differs from the saved (or opened) project."""
+        if component not in self.project.components:
+            return False
+        return self._saved.get(component) != self.project.components[component].model_dump_json()
 
     def _set_dirty(self, dirty: bool) -> None:
         self.dirty = dirty
@@ -211,50 +242,127 @@ class ProjectDocument(QObject):
     def session(self) -> Session:
         return self.compiler.session(self.project)
 
+    def exists(self, component: str) -> bool:
+        """Whether ``component`` (as written at project level) can be opened."""
+        try:
+            self.project.qualify(component)
+            return True
+        except KeyError:
+            return False
+
+    @property
+    def read_only(self) -> bool:
+        """Library and built-in components can be viewed but not edited."""
+        return self.active not in self.project.components
+
+    def definition_of(self, component: str) -> ComponentDef:
+        """A component's definition; for a built-in, one listing its numeric parameters."""
+        found = self.project.definition(self.project.qualify(component))
+        if found is not None:
+            return found[0]
+        schema = self.session().component(component).Params.model_fields
+        return ComponentDef(
+            name=component,
+            parameters=[
+                ParamDef(name=name, default=info.default, description=info.description or "")
+                for name, info in schema.items()
+                if info.annotation in (int, float)
+            ],
+        )
+
     @property
     def shapes(self) -> list[Shape]:
-        return self.project.components[self.active].shapes
+        return self.active_definition.shapes
 
     @property
     def active_definition(self) -> ComponentDef:
-        return self.project.components[self.active]
+        return self.definition_of(self.active)
 
-    def scope(self, path: NodePath | None = None) -> dict[str, float]:
-        """Resolved parameters of the active component plus ``process.*`` constants.
+    def _local(self, project: Project) -> ComponentDef:
+        """The active component inside ``project``, for an edit; refuses read-only ones."""
+        if self.active not in project.components:
+            raise ValueError(
+                f"'{self.active}' is read-only: library and built-in components cannot be "
+                "edited here"
+            )
+        return project.components[self.active]
+
+    # -- trial values ------------------------------------------------------
+
+    def set_trial(self, name: str, value: Value | None, component: str | None = None) -> None:
+        """Try a parameter value for viewing only (None goes back to the default)."""
+        component = component or self.active
+        trials = self.trials.setdefault(component, {})
+        if value is None:
+            trials.pop(name, None)
+        else:
+            previous = trials.get(name)
+            trials[name] = value
+            try:
+                self.session().variables(component, self._trials(component))
+            except Exception:
+                if previous is None:
+                    trials.pop(name)
+                else:
+                    trials[name] = previous
+                raise
+        self.changed.emit()
+
+    def _trials(self, component: str) -> dict[str, Value]:
+        """Trial values that still apply (parameters may have been renamed or removed)."""
+        trials = self.trials.get(component)
+        if not trials:
+            return {}
+        try:
+            schema = self.session().component(component).Params.model_fields
+        except KeyError:
+            return {}
+        return {k: v for k, v in trials.items() if k in schema}
+
+    # -- evaluated results (of the active component unless another is named) --
+
+    def scope(self, path: NodePath | None = None, component: str | None = None) -> dict[str, float]:
+        """Resolved parameters (trial values included) plus ``process.*`` constants.
 
         With a ``path``, also the point coordinates (``node.point.x``) the node
         there can use, in its own frame, e.g. to preview expressions.
         """
-        variables = self.session().variables(self.active)
+        component = component or self.active
+        variables = self.session().variables(component, self._trials(component))
         if path is None:
             return variables
-        record = self.inspection()
+        record = self.inspection(component)
         if path[:-1] and path[:-1] not in record:
             return variables
         into = frame_of(record, path).inverted() if path[:-1] else None
-        for name, _, x, y in self.align_targets(path):
+        for name, _, x, y in self.align_targets(path, component):
             if into is not None:
                 p = into * kdb.DPoint(x, y)
                 x, y = p.x, p.y
             variables[f"{name}.x"], variables[f"{name}.y"] = x, y
         return variables
 
-    def inspection(self) -> dict[NodePath, NodeRecord]:
-        """Every node of the active component as evaluated (cached until the next change)."""
-        if self._inspection is None:
-            self._inspection = self.session().inspect(self.active)
-        return self._inspection
+    def inspection(self, component: str | None = None) -> dict[NodePath, NodeRecord]:
+        """Every node of a component as evaluated (cached until the next change)."""
+        component = component or self.active
+        if component not in self._inspection:
+            self._inspection[component] = self.session().inspect(component, self._trials(component))
+        return self._inspection[component]
 
-    def geometry(self, mode: str = "drawn") -> Geometry:
-        drawn = self.session().render(self.active)
+    def geometry(self, mode: str = "drawn", component: str | None = None) -> Geometry:
+        component = component or self.active
+        drawn = self.session().render(component, self._trials(component))
         if mode == "etched":
             return etch.etched(self.project, drawn)
         if mode == "compensated":
             return etch.compensated(self.project, drawn)
         return drawn
 
-    def check(self, drawn: Geometry | None = None) -> list[rules.Violation]:
-        return rules.check(self.project, self.geometry() if drawn is None else drawn)
+    def check(
+        self, drawn: Geometry | None = None, component: str | None = None
+    ) -> list[rules.Violation]:
+        geometry = self.geometry(component=component) if drawn is None else drawn
+        return rules.check(self.project, geometry)
 
     def component_names(self) -> list[str]:
         return self.project.component_names()
@@ -276,10 +384,12 @@ class ProjectDocument(QObject):
     def unique_name(self, stem: str) -> str:
         return _fresh(stem, {s.name for s in walk(self.shapes) if s.name})
 
-    def node_regions(self, visible: dict[str, bool]) -> list[tuple[NodePath, kdb.Region]]:
-        """Merged geometry of each top-level node of the active component, for click selection."""
+    def node_regions(
+        self, visible: dict[str, bool], component: str | None = None
+    ) -> list[tuple[NodePath, kdb.Region]]:
+        """Merged geometry of each top-level node of a component, for click selection."""
         result = []
-        for path, record in sorted(self.inspection().items()):
+        for path, record in sorted(self.inspection(component).items()):
             if len(path) != 1:
                 continue
             region = kdb.Region()
@@ -289,9 +399,9 @@ class ProjectDocument(QObject):
             result.append((path, region))
         return result
 
-    def highlight(self, paths: list[NodePath]) -> Geometry | None:
+    def highlight(self, paths: list[NodePath], component: str | None = None) -> Geometry | None:
         """Outline geometry of the given nodes, placed as they appear in the component."""
-        record = self.inspection()
+        record = self.inspection(component)
         result = Geometry()
         for path in paths:
             if path not in record:
@@ -299,9 +409,11 @@ class ProjectDocument(QObject):
             result.merge(record[path].geometry, to_ictrans(frame_of(record, path)))
         return result.merged() if result.layers else None
 
-    def node_points(self, path: NodePath) -> list[tuple[str, float, float]]:
-        """The alignment points of a node, in the active component's frame."""
-        record = self.inspection()
+    def node_points(
+        self, path: NodePath, component: str | None = None
+    ) -> list[tuple[str, float, float]]:
+        """The alignment points of a node, in its component's frame."""
+        record = self.inspection(component)
         if path not in record:
             return []
         frame = frame_of(record, path)
@@ -315,35 +427,50 @@ class ProjectDocument(QObject):
             result.append((name, p.x, p.y))
         return result
 
-    def align_targets(self, path: NodePath) -> list[tuple[str, NodePath, float, float]]:
+    def align_targets(
+        self, path: NodePath, component: str | None = None
+    ) -> list[tuple[str, NodePath, float, float]]:
         """Points the node at ``path`` can align to: ``(node.point, node path, x, y)``.
 
-        Coordinates are in the active component's frame.
+        Coordinates are in the component's frame.
         """
+        component = component or self.active
+        shapes = self.definition_of(component).shapes
         result = []
-        for other in sorted(self.inspection()):
+        for other in sorted(self.inspection(component)):
             if not visible_from(path, other):
                 continue
-            name = node_at(self.shapes, other).name
+            name = node_at(shapes, other).name
             if name is None:
                 continue
-            result += [(f"{name}.{p}", other, x, y) for p, x, y in self.node_points(other)]
+            result += [
+                (f"{name}.{p}", other, x, y) for p, x, y in self.node_points(other, component)
+            ]
         return result
 
-    def declared_points(self) -> dict[str, tuple[float, float]]:
-        """Positions of the active component's declared points (with default parameters)."""
-        return self.session().points(self.active)
+    def declared_points(self, component: str | None = None) -> dict[str, tuple[float, float]]:
+        """Positions of a component's declared points (trial values included)."""
+        component = component or self.active
+        return self.session().points(component, self._trials(component))
+
+    def reference_target(self, path: NodePath, component: str | None = None) -> str | None:
+        """The component a ``ref`` node places, named as the project sees it, else None."""
+        component = component or self.active
+        node = node_at(self.definition_of(component).shapes, path)
+        if not isinstance(node, RefShape):
+            return None
+        namespace = component.partition(".")[0] if "." in component else None
+        return self.project.qualify(node.component, namespace)
 
     # -- components --------------------------------------------------------
 
     def set_active(self, name: str) -> None:
-        if name not in self.project.components:
-            raise ValueError(
-                f"'{name}' is not a component of this project (library components are read-only)"
-            )
+        """Make a component active: a local one to edit, or a library/built-in one to view."""
+        if not self.exists(name):
+            raise ValueError(f"unknown component '{name}'")
         if name != self.active:
             self.active = name
-            self.changed.emit()
+            self.active_changed.emit()
 
     def new_component(self, name: str) -> str:
         self._check_component_name(name)
@@ -359,10 +486,13 @@ class ProjectDocument(QObject):
 
     def rename_component(self, old: str, new: str) -> None:
         self._check_component_name(new)
-        self.edit(f"Rename component {old}", lambda p: p.rename_component(old, new))
-        if self.active == old:
-            self.active = new
-            self.changed.emit()
+
+        def change(project: Project) -> None:
+            project.rename_component(old, new)
+            if self.active == old:
+                self.active = new
+
+        self.edit(f"Rename component {old}", change, lambda: self.component_renamed.emit(old, new))
 
     def set_top(self, name: str) -> None:
         def change(project: Project) -> None:
@@ -421,11 +551,11 @@ class ProjectDocument(QObject):
         )
         reference = RefShape(component=name, params={p: p for p in sorted(used)}, **placement)
         indices = {p[-1][1] for p in ordered}
-        active = self.active
 
         def change(project: Project) -> None:
+            shapes = self._local(project).shapes
             project.components[name] = definition
-            target, _ = container_of(project.components[active].shapes, ordered[0])
+            target, _ = container_of(shapes, ordered[0])
             kept = [s for i, s in enumerate(target) if i not in indices]
             target[:] = kept[:first] + [reference] + kept[first:]
 
@@ -490,7 +620,7 @@ class ProjectDocument(QObject):
         name = _fresh("point", {p.name for p in self.active_definition.points})
         self.edit(
             f"Add point {name}",
-            lambda p: p.components[self.active].points.append(PointDef(name=name)),
+            lambda p: self._local(p).points.append(PointDef(name=name)),
         )
         return name
 
@@ -498,7 +628,7 @@ class ProjectDocument(QObject):
         """Change any field of a declared point (name, at, x, y, description)."""
 
         def change(project: Project) -> None:
-            points = project.components[self.active].points
+            points = self._local(project).points
             for index, existing in enumerate(points):
                 if existing.name == name:
                     updated = PointDef.model_validate({**existing.model_dump(), **fields})
@@ -512,7 +642,7 @@ class ProjectDocument(QObject):
 
     def remove_point(self, name: str) -> None:
         def change(project: Project) -> None:
-            definition = project.components[self.active]
+            definition = self._local(project)
             definition.points = [p for p in definition.points if p.name != name]
 
         self.edit(f"Delete point {name}", change)
@@ -520,7 +650,7 @@ class ProjectDocument(QObject):
     # -- shape edits (on the active component) -----------------------------
 
     def _shapes_in(self, project: Project) -> list[Shape]:
-        return project.components[self.active].shapes
+        return self._local(project).shapes
 
     def add_shape(self, shape: Shape) -> NodePath:
         if shape.name is None:
@@ -541,7 +671,7 @@ class ProjectDocument(QObject):
 
         def change(project: Project) -> None:
             if old_name and new.name and new.name != old_name:
-                project.components[self.active].rename_shape(old_name, new.name)
+                self._local(project).rename_shape(old_name, new.name)
             container, index = container_of(self._shapes_in(project), path)
             container[index] = new
             check_shape_names(self._shapes_in(project))
@@ -636,13 +766,17 @@ class ProjectDocument(QObject):
     # -- parameters of the active component --------------------------------
 
     def set_parameter(self, name: str, default: float | str, **limits: Any) -> None:
-        self.edit(f"Set {name}", lambda p: p.set_parameter(name, default, self.active, **limits))
+        def change(project: Project) -> None:
+            self._local(project)
+            project.set_parameter(name, default, self.active, **limits)
+
+        self.edit(f"Set {name}", change)
 
     def update_parameter(self, name: str, /, **fields: Any) -> None:
         """Change any field of a parameter (name, default, min, max, integer, description)."""
 
         def change(project: Project) -> None:
-            parameters = project.components[self.active].parameters
+            parameters = self._local(project).parameters
             for index, existing in enumerate(parameters):
                 if existing.name == name:
                     updated = ParamDef.model_validate({**existing.model_dump(), **fields})
@@ -661,7 +795,11 @@ class ProjectDocument(QObject):
         return name
 
     def remove_parameter(self, name: str) -> None:
-        self.edit(f"Delete {name}", lambda p: p.remove_parameter(name, self.active))
+        def change(project: Project) -> None:
+            self._local(project)
+            project.remove_parameter(name, self.active)
+
+        self.edit(f"Delete {name}", change)
 
     # -- process -----------------------------------------------------------
 

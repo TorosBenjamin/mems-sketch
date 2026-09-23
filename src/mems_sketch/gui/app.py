@@ -6,6 +6,7 @@ The window is a frontend only: it shows and edits the project through
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
-from mems_sketch.core.component import Geometry, to_dbu
+from mems_sketch.core.component import to_dbu
 from mems_sketch.core.shapes import Align, NodePath
 from mems_sketch.export.base import available_exporters
 from mems_sketch.gui.canvas import LayoutCanvas
@@ -40,6 +41,7 @@ from mems_sketch.gui.panels import (
     ShapeTree,
 )
 from mems_sketch.gui.properties import PropertyEditor
+from mems_sketch.gui.views import ComponentView, EditorArea
 
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 PRIMITIVES = [
@@ -65,20 +67,16 @@ class MainWindow(QMainWindow):
     def __init__(self, document: ProjectDocument | None = None) -> None:
         super().__init__()
         self.document = document or ProjectDocument()
-        self.view_mode = "drawn"
-        self.selection: list[NodePath] = []
-        self._node_regions: list[tuple[NodePath, kdb.Region]] = []
-        self._violations = []
         # The Align tool: None, or the step ("own" / "target") with its path and candidates.
         self.align_step: str | None = None
         self._align_path: NodePath | None = None
         self._align_point: str | None = None
         self._candidates: list[tuple[str, float, float]] = []
-        self._errors: list[str] = []
-        self._shown_component: str | None = None
+        self._problems: list[str] = []
+        self._restoring = False  # while opening a project, the tab layout is not saved
 
-        self.canvas = LayoutCanvas()
-        self.setCentralWidget(self.canvas)
+        self.area = EditorArea(self.document)
+        self.setCentralWidget(self.area)
         self.components = ComponentsPanel(self.document)
         self.tree = ShapeTree(self.document)
         self.properties = PropertyEditor(self.document)
@@ -94,15 +92,19 @@ class MainWindow(QMainWindow):
         self._build_actions()
 
         self.document.changed.connect(self.refresh)
+        self.document.active_changed.connect(self._active_changed)
         self.document.file_changed.connect(self._update_title)
+        self.document.component_renamed.connect(self.area.rename)
+        self.area.current_changed.connect(self._view_activated)
+        self.area.tabs_changed.connect(self._save_tabs)
         self.tree.selection_changed_paths.connect(self._tree_selected)
         self.tree.enabled_toggled.connect(
             lambda p, e: self._run(lambda: self.document.set_enabled(p, e))
         )
+        self.tree.itemDoubleClicked.connect(self._tree_double_clicked)
         self.components.place_requested.connect(self.add_component)
-        self.canvas.clicked.connect(self._canvas_clicked)
-        self.canvas.cursor_moved.connect(self._cursor_moved)
-        self.layers.visibility_changed.connect(self.canvas.set_layer_visible)
+        self.components.open_requested.connect(self.open_component)
+        self.layers.visibility_changed.connect(self._set_layer_visible)
         self.messages.zoom_requested.connect(self._zoom_to_bbox)
         for panel in (
             self.properties,
@@ -119,6 +121,115 @@ class MainWindow(QMainWindow):
         self._update_title()
 
     # -- construction ------------------------------------------------------
+
+    # -- the current tab ---------------------------------------------------
+
+    @property
+    def view(self) -> ComponentView:
+        if self.area.current is None:
+            self._render(self.area.open(self.document.active, anywhere=True))
+        return self.area.current
+
+    @property
+    def canvas(self) -> LayoutCanvas:
+        return self.view.canvas
+
+    @property
+    def selection(self) -> list[NodePath]:
+        return self.view.selection
+
+    @selection.setter
+    def selection(self, paths: list[NodePath]) -> None:
+        self.view.selection = paths
+
+    @property
+    def view_mode(self) -> str:
+        return self.view.view_mode
+
+    def open_component(self, name: str) -> None:
+        """Open a component in a tab (or go to its tab), like opening a file."""
+        if not self.document.exists(name):
+            self.report_error(f"unknown component '{name}'")
+            return
+        self._render(self.area.open(name))
+
+    def _render(self, view: ComponentView) -> ComponentView:
+        if not getattr(view, "rendered", False):
+            view.rendered = True
+            view.refresh(self.layers.colors, self.layers.visible)
+            view.canvas.clicked.connect(
+                lambda x, y, additive, v=view: self._view_clicked(v, x, y, additive)
+            )
+            view.canvas.double_clicked.connect(
+                lambda x, y, v=view: self._view_double_clicked(v, x, y)
+            )
+            view.canvas.cursor_moved.connect(self._cursor_moved)
+        return view
+
+    def _view_activated(self, view: ComponentView) -> None:
+        """The user switched tabs (or panes): the panels follow the new current tab."""
+        self.cancel_align(quiet=True)
+        self._render(view)
+        if self.document.active != view.component:
+            self.document.set_active(view.component)  # emits active_changed
+        else:
+            self._refresh_panels()
+
+    def _active_changed(self) -> None:
+        """Another component became active (e.g. from the components panel)."""
+        self._render(self.area.open(self.document.active, anywhere=True))
+        self._refresh_panels()
+
+    def _set_layer_visible(self, layer: str, visible: bool) -> None:
+        for view in self.area.views():
+            view.canvas.set_layer_visible(layer, visible)
+
+    def split_view(self) -> None:
+        view = self.area.split_view()
+        if view is not None:
+            self._render(view)
+
+    def close_tab(self) -> None:
+        if self.area.current is not None:
+            self.area.close_view(self.area.current)
+
+    def _save_tabs(self) -> None:
+        if self.document.path is not None and not self._restoring:
+            QSettings("mems-sketch", "mems-sketch").setValue(
+                self._tabs_key(), json.dumps(self.area.layout_state())
+            )
+
+    def _restore_tabs(self) -> None:
+        """Reopen the tabs that were open the last time this project was open."""
+        if self.document.path is None:
+            return
+        try:
+            state = json.loads(
+                str(QSettings("mems-sketch", "mems-sketch").value(self._tabs_key(), ""))
+            )
+        except (json.JSONDecodeError, TypeError):
+            return
+        panes = [[n for n in names if self.document.exists(n)] for names in state["panes"]]
+        panes = [names for names in panes if names]
+        if not panes:
+            return
+        self.area.close_all()
+        for index, names in enumerate(panes[:2]):
+            if index:
+                self.area.split_view()
+                pane = self.area.panes[1]
+                while pane.count():  # split_view copied the current tab; use the saved ones
+                    pane.removeTab(0)
+            for name in names:
+                self._render(self.area.open(name, self.area.panes[index]))
+        current = state.get("current")
+        pane = self.area.panes[min(state.get("current_pane", 0), len(self.area.panes) - 1)]
+        view = self.area.find(current, pane) if current else None
+        if view is not None:
+            self.area.set_current(view)
+
+    def _tabs_key(self) -> str:
+        return "tabs/" + str(Path(self.document.path).resolve())
 
     def _dock(self, title: str, widget, area) -> QDockWidget:
         dock = QDockWidget(title, self)
@@ -203,9 +314,13 @@ class MainWindow(QMainWindow):
             self._action(label, lambda _=False, o=op: self.wrap(o), menu=operations)
 
         view = bar.addMenu("&View")
-        self._action("Fit", self.canvas.fit, "F", view)
+        self._action("Fit", lambda: self.canvas.fit(), "F", view)
         self._action("Recompile and check", self.refresh, "F5", view)
-        self._action("Edit top component", self._edit_top, "Ctrl+T", view)
+        view.addSeparator()
+        self._action("Open top component", self._edit_top, "Ctrl+T", view)
+        self._action("Split view", self.split_view, "Ctrl+\\", view)
+        self._action("Merge split view", self.area.unsplit, None, view)
+        self._action("Close tab", self.close_tab, QKeySequence.StandardKey.Close, view)
         panels = view.addMenu("Panels")
         for dock in self.findChildren(QDockWidget):
             panels.addAction(dock.toggleViewAction())
@@ -240,7 +355,8 @@ class MainWindow(QMainWindow):
             self.mode_box.addItem(label, mode)
         self.mode_box.currentIndexChanged.connect(self._mode_changed)
         tools.addWidget(self.mode_box)
-        tools.addAction("Fit", self.canvas.fit)
+        tools.addAction("Fit", lambda: self.canvas.fit())
+        tools.addAction("Split", self.split_view)
 
     def _fill_component_menu(self) -> None:
         self.component_menu.clear()
@@ -253,49 +369,55 @@ class MainWindow(QMainWindow):
     # -- refresh -----------------------------------------------------------
 
     def refresh(self) -> None:
-        """Recompile the active component and update every view."""
+        """Recompile every open tab and update the panels (after any change)."""
         self.cancel_align(quiet=True)
-        if self._shown_component != self.document.active:
-            self.selection = []  # paths belong to the previously shown component
-        self._errors = []
-        try:
-            drawn = self.document.geometry()
-            geometry = (
-                drawn if self.view_mode == "drawn" else self.document.geometry(self.view_mode)
-            )
-            self._violations = self.document.check(drawn)
-        except Exception as exc:  # noqa: BLE001 - shown in the messages panel
-            geometry = Geometry()
-            self._violations = []
-            self._errors.append(str(exc))
-        self._errors += [p for p in self.document.problems() if p not in self._errors]
+        for view in self.area.views():
+            if not self.document.exists(view.component):
+                self.area.close_view(view)  # its component was deleted (or undone)
+        if self.area.current is None or self.area.current.component != self.document.active:
+            # e.g. undo went back to another component: go to its tab, wherever it is
+            self._render(self.area.open(self.document.active, anywhere=True))
         self.layers.refresh()
         self.constants.refresh()
+        for view in self.area.views():
+            view.rendered = True
+            view.refresh(self.layers.colors, self.layers.visible)
+        self.area.update_titles()
+        self._problems = self.document.problems()
+        self._refresh_panels()
+
+    def _refresh_panels(self) -> None:
+        """Show the current tab in the panels, toolbar and title."""
+        view = self.view
         self.parameters.refresh()
         self.points.refresh()
         self.components.refresh()
-        self._node_regions = self.document.node_regions(self.layers.visible)
-        self.canvas.show_geometry(geometry, self.layers.colors, self.layers.visible)
-        if self._shown_component != self.document.active:
-            self._shown_component = self.document.active
-            self.canvas.fit()
-        self.tree.rebuild([p for p in self.selection if self._exists(p)])
-        self.messages.show_messages(self._errors, self._violations)
+        self.mode_box.blockSignals(True)
+        self.mode_box.setCurrentIndex(self.mode_box.findData(view.view_mode))
+        self.mode_box.blockSignals(False)
+        self.tree.rebuild([p for p in view.selection if self._exists(p)])
+        self._show_messages()
         self.undo_action.setEnabled(self.document.can_undo())
         self.redo_action.setEnabled(self.document.can_redo())
         self.undo_action.setText(f"Undo {self.document.undo_text()}".strip())
         self.redo_action.setText(f"Redo {self.document.redo_text()}".strip())
         self._update_title()
 
+    def _show_messages(self, *extra: str) -> None:
+        view = self.view
+        errors = [*extra, *view.errors, *(p for p in self._problems if p not in view.errors)]
+        self.messages.show_messages(errors, view.violations)
+
     def _update_overlay(self) -> None:
-        markers = [v.bbox_um for v in self._violations if v.bbox_um]
-        self.canvas.show_overlay(self.document.highlight(self.selection), markers)
+        view = self.view
+        markers = [v.bbox_um for v in view.violations if v.bbox_um]
+        self.canvas.show_overlay(self.document.highlight(view.selection), markers)
         try:
             declared = [(n, x, y) for n, (x, y) in self.document.declared_points().items()]
         except Exception:  # noqa: BLE001 - the messages panel shows why
             declared = []
         self.canvas.show_points("declared", declared, labels=True)
-        selected = self.document.node_points(self.selection[0]) if len(self.selection) == 1 else []
+        selected = self.document.node_points(view.selection[0]) if len(view.selection) == 1 else []
         self.canvas.show_points("selected", [] if self.align_step else selected)
         self.canvas.show_points("pick", self._candidates if self.align_step else [])
 
@@ -310,8 +432,9 @@ class MainWindow(QMainWindow):
         project = self.document.project
         where = str(self.document.path) if self.document.path else "not saved"
         star = "*" if self.document.dirty else ""
+        doing = "viewing" if self.document.read_only else "editing"
         self.setWindowTitle(
-            f"{star}{project.name} — editing {self.document.active} — {where} — MEMS Sketch"
+            f"{star}{project.name} — {doing} {self.document.active} — {where} — MEMS Sketch"
         )
 
     # -- selection ---------------------------------------------------------
@@ -329,16 +452,40 @@ class MainWindow(QMainWindow):
                 text = f"{nearest}   {text}"
         self.coordinates.setText(text)
 
+    def _view_clicked(self, view: ComponentView, x: float, y: float, additive: bool) -> None:
+        if view is not self.area.current:
+            self.area.set_current(view)  # clicking in the other pane switches to it
+        self._canvas_clicked(x, y, additive)
+
+    def _view_double_clicked(self, view: ComponentView, x: float, y: float) -> None:
+        """Double-clicking a placed component opens it in a tab."""
+        hit = self._hit(view, x, y)
+        if hit is not None:
+            self._open_reference(hit, view.component)
+
+    def _tree_double_clicked(self, item, _column: int) -> None:
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        if path is not None:
+            self._open_reference(path, self.document.active)
+
+    def _open_reference(self, path: NodePath, component: str) -> None:
+        target = self.document.reference_target(path, component)
+        if target is not None:
+            self.open_component(target)
+
+    def _hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
+        point = kdb.Point(to_dbu(x), to_dbu(y))
+        probe = kdb.Region(kdb.Box(point.x - 1, point.y - 1, point.x + 1, point.y + 1))
+        return next(
+            (p for p, region in reversed(view.node_regions) if not (region & probe).is_empty()),
+            None,
+        )
+
     def _canvas_clicked(self, x: float, y: float, additive: bool) -> None:
         if self.align_step:
             self._pick(x, y)
             return
-        point = kdb.Point(to_dbu(x), to_dbu(y))
-        probe = kdb.Region(kdb.Box(point.x - 1, point.y - 1, point.x + 1, point.y + 1))
-        hit = next(
-            (p for p, region in reversed(self._node_regions) if not (region & probe).is_empty()),
-            None,
-        )
+        hit = self._hit(self.view, x, y)
         if hit is None:
             paths = self.selection if additive else []
         elif additive:
@@ -358,17 +505,20 @@ class MainWindow(QMainWindow):
         self.canvas.zoom_to(QRectF(cx - size * 2, cy - size * 2, size * 4, size * 4))
 
     def _mode_changed(self) -> None:
-        self.view_mode = self.mode_box.currentData()
-        self.refresh()
+        view = self.view
+        view.view_mode = self.mode_box.currentData()
+        view.refresh(self.layers.colors, self.layers.visible)
+        self._show_messages()
+        self._update_overlay()
 
     def _edit_top(self) -> None:
-        self._run(lambda: self.document.set_active(self.document.project.top))
+        self.open_component(self.document.project.top)
 
     # -- commands ----------------------------------------------------------
 
     def report_error(self, message: str) -> None:
         self.statusBar().showMessage(message, 8000)
-        self.messages.show_messages([message, *self._errors], self._violations)
+        self._show_messages(message)
 
     def _run(self, action) -> tuple[bool, object]:
         """Run a command; report failures to the user. Returns (succeeded, result)."""
@@ -504,6 +654,8 @@ class MainWindow(QMainWindow):
 
     def new_project(self) -> None:
         if self._confirm_discard():
+            self._save_tabs()
+            self.area.close_all()
             self.document.new()
 
     def open_project(self, path: str | None = None) -> None:
@@ -513,12 +665,26 @@ class MainWindow(QMainWindow):
             path, _ = QFileDialog.getOpenFileName(
                 self, "Open project", self._last_dir(), OPEN_FILTER
             )
-        if path and self._run(lambda: self.document.open(path))[0]:
+        if not path:
+            return
+        self._save_tabs()
+        if self._run(lambda: self._open(path))[0]:
             self._remember_dir(path)
             if self.document.path is None:
                 self.statusBar().showMessage(
                     "Imported a legacy design: use Save as… to store it as a project folder", 10000
                 )
+
+    def _open(self, path: str) -> None:
+        self._restoring = True
+        try:
+            self.document.open(path)  # raises before anything changes if the file is bad
+            self.area.close_all()
+            self.refresh()
+            self._restore_tabs()
+        finally:
+            self._restoring = False
+        self._save_tabs()
 
     def save_project(self) -> bool:
         if self.document.path is None:
@@ -566,6 +732,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if self._confirm_discard():
+            self._save_tabs()
             event.accept()
         else:
             event.ignore()

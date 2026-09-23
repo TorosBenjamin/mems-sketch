@@ -63,6 +63,7 @@ def _add_loop(path: QPainterPath, points) -> None:
 
 class LayoutCanvas(QGraphicsView):
     clicked = Signal(float, float, bool)  # x, y in µm; True when Ctrl/Shift is held
+    double_clicked = Signal(float, float)
     cursor_moved = Signal(float, float)
 
     def __init__(self, parent=None) -> None:
@@ -212,6 +213,13 @@ class LayoutCanvas(QGraphicsView):
             )
             self.clicked.emit(p.x(), p.y(), additive)
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            p = self.mapToScene(event.position().toPoint())
+            self.double_clicked.emit(p.x(), p.y())
+            return
+        super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._pan_from is not None:

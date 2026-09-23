@@ -127,9 +127,19 @@ MATLAB with `system(...)`.
 
 ## GUI
 
-- **Components**: the project's components (double-click to edit; ✎ marks the
-  one being edited), library components and built-ins (double-click or
-  **Place** to insert). New, Rename (updates every reference), Delete, Set top.
+- **Tabs**: every component opens in its own tab, with its own zoom, selection
+  and view mode; the panels show the current tab. Double-click a component in
+  the Components panel, or a placed component in the canvas or the Shapes
+  tree, to open it. Library and built-in components open read-only. **View →
+  Split view** (Ctrl+\\) shows two tabs side by side: edit a spring on one side
+  and watch the resonator that uses it on the other. A `*` on a tab marks a
+  component changed since the last save. Open tabs are remembered per project
+  (in the app's settings, not in the project folder).
+- **Undo/redo** is one history for the whole project and goes back to the tab
+  where the change was made, reopening it if it was closed.
+- **Components**: the project's components (✎ marks the one in the current
+  tab), library components and built-ins. **Place** inserts the selected one.
+  New, Rename (updates every reference and tab), Delete, Set top.
 - **Shapes**: the shape tree of the component being edited. Checkboxes enable
   or disable a node; Ctrl/Shift-click selects several. Boolean operands appear
   under A and B, and each alignment is shown (e.g. `bottom at spring.end`).
@@ -142,8 +152,12 @@ MATLAB with `system(...)`.
   takes a number or an expression, with its value shown beside it. For a
   component the component's own parameters are listed, with their declared
   defaults as placeholders.
-- **Parameters**: the edited component's parameters: default (number or
-  expression), min, max and the resolved value.
+- **Parameters**: the current tab's parameters: default (number or
+  expression), min, max, trial and the resolved value. A **trial** value shows
+  the component with another value without changing the design: it is not
+  saved or undone, and only affects that component's own tab (the components
+  that place it still pass their own values). It also works on library and
+  built-in components.
 - **Points** (tabbed with Parameters): the points the edited component
   declares for whoever places it.
 - **Align** (Ctrl+L): select a shape, click one of its points, then click the

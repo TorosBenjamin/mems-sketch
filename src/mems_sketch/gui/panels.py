@@ -113,13 +113,14 @@ class _Panel(QWidget):
 
 
 class ComponentsPanel(_Panel):
-    """The project's components (editable) and library/built-in components (placeable).
+    """The project's components, library components and built-ins.
 
-    Double-click a project component to edit it, or a library/built-in
-    component to place it in the component being edited.
+    Double-click to open one in a tab (library and built-in components open
+    read-only); Place inserts the selected one into the component being edited.
     """
 
     place_requested = Signal(str)
+    open_requested = Signal(str)
     NAME_ROLE = Qt.ItemDataRole.UserRole
 
     def __init__(self, document: ProjectDocument) -> None:
@@ -153,20 +154,26 @@ class ComponentsPanel(_Panel):
             item = QTreeWidgetItem(local, [label])
             item.setData(0, self.NAME_ROLE, name)
             item.setToolTip(0, definition.description or name)
-            if name == self.document.active:
-                font = QFont()
-                font.setBold(True)
-                item.setFont(0, font)
-                item.setText(0, f"✎ {label}")
+            self._mark_active(item, name, label)
         for library in project.libraries.values():
             group = QTreeWidgetItem(self.tree, [f"Library: {library.name}"])
             for name in library.components:
                 item = QTreeWidgetItem(group, [name])
                 item.setData(0, self.NAME_ROLE, f"{library.name}.{name}")
+                self._mark_active(item, f"{library.name}.{name}", name)
         builtins = QTreeWidgetItem(self.tree, ["Built-in"])
         for name in component_types():
-            QTreeWidgetItem(builtins, [name]).setData(0, self.NAME_ROLE, name)
+            item = QTreeWidgetItem(builtins, [name])
+            item.setData(0, self.NAME_ROLE, name)
+            self._mark_active(item, name, name)
         self.tree.expandAll()
+
+    def _mark_active(self, item: QTreeWidgetItem, name: str, label: str) -> None:
+        if name == self.document.active:
+            font = QFont()
+            font.setBold(True)
+            item.setFont(0, font)
+            item.setText(0, f"✎ {label}" if not self.document.read_only else f"👁 {label}")
 
     def selected(self) -> str | None:
         items = self.tree.selectedItems()
@@ -177,12 +184,8 @@ class ComponentsPanel(_Panel):
 
     def _activated(self, item: QTreeWidgetItem) -> None:
         name = item.data(0, self.NAME_ROLE)
-        if name is None:
-            return
-        if self._is_local(name):
-            self._guard(lambda: self.document.set_active(name))
-        else:
-            self.place_requested.emit(name)
+        if name is not None:
+            self.open_requested.emit(name)
 
     def _new(self) -> None:
         name, ok = QInputDialog.getText(self, "New component", "Component name:")
@@ -293,9 +296,14 @@ class ShapeTree(QTreeWidget):
 
 
 class ParametersPanel(_Panel):
-    """Parameters of the component being edited: default, limits and resolved value."""
+    """Parameters of the component in the current tab: default, limits, trial and value.
 
-    COLUMNS = ["Name", "Default", "Min", "Max", "Value"]
+    A trial value overrides the default for viewing only; it is not saved.
+    Library and built-in components are read-only, but trial values work.
+    """
+
+    COLUMNS = ["Name", "Default", "Min", "Max", "Trial", "Value"]
+    TRIAL = 4
 
     def __init__(self, document: ProjectDocument) -> None:
         super().__init__()
@@ -306,33 +314,47 @@ class ParametersPanel(_Panel):
         add, remove = QPushButton("Add"), QPushButton("Remove")
         add.clicked.connect(lambda: self._guard(self.document.add_parameter))
         remove.clicked.connect(self._remove)
+        clear = QPushButton("Clear trials")
+        clear.clicked.connect(self._clear_trials)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.title)
         layout.addWidget(self.table)
-        layout.addLayout(_button_row(add, remove))
+        layout.addLayout(_button_row(add, remove, clear))
         self._names: list[str] = []
+
+    def _clear_trials(self) -> None:
+        for name in list(self.document.trials.get(self.document.active, {})):
+            self._guard(lambda n=name: self.document.set_trial(n, None))
 
     def refresh(self) -> None:
         parameters = self.document.active_definition.parameters
-        self.title.setText(f" Parameters of <b>{self.document.active}</b>")
+        read_only = self.document.read_only
+        suffix = " (read-only; trial values work)" if read_only else ""
+        self.title.setText(f" Parameters of <b>{self.document.active}</b>{suffix}")
         try:
             values = self.document.scope()
         except Exception:  # noqa: BLE001 - shown as "error" per row
             values = {}
+        trials = self.document.trials.get(self.document.active, {})
         self.table.blockSignals(True)
         self.table.setRowCount(len(parameters))
         self._names = [p.name for p in parameters]
         for row, p in enumerate(parameters):
             value = values.get(p.name)
+            make = _readonly if read_only else QTableWidgetItem
             cells = [
-                QTableWidgetItem(p.name),
-                QTableWidgetItem(_format(p.default)),
-                QTableWidgetItem(_format(p.min)),
-                QTableWidgetItem(_format(p.max)),
+                make(p.name),
+                make(_format(p.default)),
+                make(_format(p.min)),
+                make(_format(p.max)),
+                QTableWidgetItem(_format(trials.get(p.name))),
                 _readonly("error" if value is None else f"{value:g}"),
             ]
             cells[0].setToolTip(p.description)
+            cells[self.TRIAL].setToolTip("Try a value without changing the design (not saved)")
+            if p.name in trials:
+                cells[-1].setForeground(QBrush(QColor("#e0a000")))
             for column, cell in enumerate(cells):
                 self.table.setItem(row, column, cell)
         self.table.blockSignals(False)
@@ -352,6 +374,8 @@ class ParametersPanel(_Panel):
                     self.document.update_parameter(name, min=float(text) if text else None)
                 case 3:
                     self.document.update_parameter(name, max=float(text) if text else None)
+                case self.TRIAL:
+                    self.document.set_trial(name, parse_value(text) if text else None)
 
         if not self._guard(apply):
             self.refresh()
@@ -403,11 +427,12 @@ class PointsPanel(_Panel):
         self._names = [p.name for p in points]
         for row, point in enumerate(points):
             position = positions.get(point.name)
+            make = _readonly if self.document.read_only else QTableWidgetItem
             cells = [
-                QTableWidgetItem(point.name),
-                QTableWidgetItem(point.at or ""),
-                QTableWidgetItem(_format(point.x)),
-                QTableWidgetItem(_format(point.y)),
+                make(point.name),
+                make(point.at or ""),
+                make(_format(point.x)),
+                make(_format(point.y)),
                 _readonly("error" if position is None else "{:g}, {:g}".format(*position)),
             ]
             cells[0].setToolTip(point.description)

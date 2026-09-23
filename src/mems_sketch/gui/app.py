@@ -15,7 +15,6 @@ from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
     QFileDialog,
     QInputDialog,
     QLabel,
@@ -54,10 +53,10 @@ from mems_sketch.gui.views import VIEW_MODES, ComponentView, EditorArea
 
 STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
-TOOLS_DRAWING_FIRST = next(t.name for t in TOOLS if t.draws)  # the palette separates them
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
 DEFAULT_TOOL_WINDOWS = ("components", "shapes", "properties", "messages")
+CANVAS_MODES = ("select", "hand", "move", "rotate", "align", "measure")  # on the canvas
 # Canvas options and the settings they come from (see gui/settings.py).
 CANVAS_OPTIONS = {
     "fill_opacity": "canvas/fill_opacity",
@@ -192,6 +191,11 @@ class MainWindow(QMainWindow):
             canvas.key_pressed.connect(lambda key: self.tool.key(key))
             canvas.view_changed.connect(self.state_changed)
             canvas.view_changed.connect(self._show_zoom)
+            canvas.mode_chosen.connect(lambda mode, v=view: self.set_view_mode(mode, v))
+            canvas.context_requested.connect(
+                lambda x, y, at, v=view: self._context_menu(v, x, y, at)
+            )
+            canvas.set_mode_actions([self.tool_actions[name] for name in CANVAS_MODES])
             canvas.set_theme(self.canvas_theme)
             canvas.configure(**self._canvas_options())
             self._caption(view)
@@ -264,8 +268,6 @@ class MainWindow(QMainWindow):
             for view in self.area.views():
                 view.canvas.configure(**options)
             self._show_zoom()
-        if key == "appearance/palette_labels":
-            self._palette_style()
         if key in ("canvas/show_gizmos", "canvas/hover_highlight"):
             self.canvas.show_hover(None)
             self._hovered = None
@@ -587,9 +589,7 @@ class MainWindow(QMainWindow):
         self.tool_actions, self.operation_actions = actions.tools, actions.operations
         self.setting_actions = actions.settings_toggles
         self.primitive_menu, self.component_menu = actions.add, actions.place
-        self._build_mode_box()
         self.addToolBar(build_toolbar(self))
-        self._build_palette()
 
     def _toolbar(self, title: str, name: str) -> QToolBar:
         toolbar = self.addToolBar(title)
@@ -606,43 +606,6 @@ class MainWindow(QMainWindow):
         button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         toolbar.addWidget(button)
         return button
-
-    def _build_mode_box(self) -> None:
-        self.mode_box = QComboBox()
-        self.mode_box.setToolTip("What the canvas shows: the drawn layout or a process view")
-        for mode, label in VIEW_MODES.items():
-            self.mode_box.addItem(label, mode)
-        self.mode_box.currentIndexChanged.connect(self._mode_changed)
-        self.mode_box.setMaximumWidth(160)
-
-    def _build_palette(self) -> None:
-        palette = QToolBar("Tools")
-        palette.setObjectName("tools-toolbar")
-        palette.setMovable(False)
-        palette.setIconSize(QSize(20, 20))
-        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, palette)  # a vertical tool palette
-        for name, action in self.tool_actions.items():
-            if name == TOOLS_DRAWING_FIRST:
-                palette.addSeparator()
-            palette.addAction(action)
-        palette.addSeparator()
-        for action in (
-            self.rotate_left_action,
-            self.rotate_right_action,
-            self.mirror_h_action,
-            self.mirror_v_action,
-        ):
-            palette.addAction(action)
-        self.palette = palette
-        self._palette_style()
-
-    def _palette_style(self) -> None:
-        labels = self.settings.get("appearance/palette_labels")
-        self.palette.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextUnderIcon
-            if labels
-            else Qt.ToolButtonStyle.ToolButtonIconOnly
-        )
 
     def _show_tool_options(self) -> None:
         self.tool_status.show_for(self.tool)
@@ -712,7 +675,7 @@ class MainWindow(QMainWindow):
         self.tool_windows.open("messages")
 
     def _tab_menu(self, view: ComponentView, position: QPoint) -> None:
-        self.actions_.tab_menu(view).exec(position)
+        self.show_menu(self.actions_.tab_menu(view), position)
 
     def _close_all_tabs(self) -> None:
         for view in self.area.views():
@@ -789,9 +752,6 @@ class MainWindow(QMainWindow):
         self.points.refresh()
         self._refresh_layer_box()
         self.components.refresh()
-        self.mode_box.blockSignals(True)
-        self.mode_box.setCurrentIndex(self.mode_box.findData(view.view_mode))
-        self.mode_box.blockSignals(False)
         self.tree.rebuild([p for p in view.selection if self._exists(p)])
         self._show_messages()
         self.undo_action.setEnabled(self.document.can_undo())
@@ -802,7 +762,8 @@ class MainWindow(QMainWindow):
 
     def _caption(self, view: ComponentView) -> None:
         """The canvas caption: component, view mode and whether it can be edited."""
-        details = [VIEW_MODES.get(view.view_mode, view.view_mode)]
+        view.canvas.set_view_modes(VIEW_MODES, view.view_mode)
+        details = []
         if view.read_only:
             details.append("read-only")
         if view.component == self.document.project.top:
@@ -975,13 +936,37 @@ class MainWindow(QMainWindow):
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         self.canvas.zoom_to(QRectF(cx - size * 2, cy - size * 2, size * 4, size * 4))
 
-    def _mode_changed(self) -> None:
-        view = self.view
-        view.view_mode = self.mode_box.currentData()
+    def set_view_mode(self, mode: str, view: ComponentView | None = None) -> None:
+        """Show a tab as drawn, as etched or etch compensated (see ``VIEW_MODES``)."""
+        view = view or self.view
+        if mode not in VIEW_MODES or mode == view.view_mode:
+            return
+        view.view_mode = mode
         view.refresh(self.layers.colors, self.layers.visible)
         self._caption(view)
-        self._show_messages()
-        self._update_overlay()
+        if view is self.area.current:
+            self._show_messages()
+            self._update_overlay()
+        self.state_changed()
+
+    def _context_menu(self, view: ComponentView, x: float, y: float, at: QPoint) -> None:
+        """The editor's right-click menu; a shape under the cursor is selected first."""
+        if view is not self.area.current:
+            self.area.set_current(view)
+        hit = self._hit(view, x, y)
+        if hit is not None and hit not in self.selection:
+            self.tree.select_paths([hit])
+        self.show_menu(self.actions_.context_menu(x, y), at)
+
+    def show_menu(self, menu: QMenu, at: QPoint) -> None:
+        """Pop up a menu at a global position; it deletes itself when closed."""
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        menu.popup(at)
+
+    def start_drawing(self, kind: str, x: float, y: float) -> None:
+        """Start a drawing tool with its first point at ``(x, y)``."""
+        self.set_tool(kind)
+        self.tool.start_at(x, y)
 
     def _edit_top(self) -> None:
         self.open_component(self.document.project.top)

@@ -51,6 +51,9 @@ class ToolStatus(QWidget):
         snapping.setObjectName("muted")
         row.addWidget(snapping)
         self._toggles = row
+        # As tall as the tallest option, shown or not: the status bar (and so the
+        # canvas above it) keeps its height when the tool changes.
+        self.setFixedHeight(max(w.sizeHint().height() for w in (self.layer_box, self.width_box)))
 
     def add_toggle(self, action: QAction) -> None:
         """A small button for a checkable setting (snapping, gizmos)."""

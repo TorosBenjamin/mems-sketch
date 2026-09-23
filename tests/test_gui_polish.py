@@ -246,12 +246,11 @@ def test_tabs_have_icons_a_close_button_and_a_menu(window):
     assert [v.component for v in window.area.views()] == ["top"]
 
 
-def test_canvas_caption_and_palette_labels(window):
-    assert window.canvas._caption == ("top", "Drawn · top component")
+def test_canvas_caption_shows_the_component_and_view_mode(window):
+    assert window.canvas._caption == ("top", "top component")
+    assert window.canvas.mode_button.text() == "Drawn ▾"
     window.open_component("comb_drive")
     assert "read-only" in window.canvas._caption[1]
-    window.settings.set("appearance/palette_labels", True)
-    assert window.palette.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
 
 
 def test_every_shape_kind_has_an_icon():

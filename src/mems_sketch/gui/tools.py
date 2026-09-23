@@ -72,7 +72,7 @@ class Tool:
     label: ClassVar[str]
     shortcut: ClassVar[str]
     edits: ClassVar[bool] = True  # changes the design, so refused on read-only tabs
-    draws: ClassVar[bool] = False  # a drawing tool (grouped separately in the palette)
+    draws: ClassVar[bool] = False  # a drawing tool (started from Add, not a canvas mode)
     gizmo: ClassVar[str | None] = None  # the gizmo shown on the selection, if any
     hovers: ClassVar[bool] = False  # outline the shape under the cursor
     icon: ClassVar[str] = "select"
@@ -820,6 +820,10 @@ class DrawTool(Tool):
     def hover_label(self, x, y) -> str | None:
         return self.snap(x, y, self._points(), NONE, grid=False)[2]
 
+    def start_at(self, x: float, y: float) -> None:
+        """Place the first point at ``(x, y)``, as a click there would (right-click › Add)."""
+        self.press(x, y, NONE)
+
     def markers(self) -> dict[str, list[Candidate]]:
         return {"anchor": [(f"point {i + 1}", x, y) for i, (x, y) in enumerate(self.placed)]}
 
@@ -865,6 +869,10 @@ class _TwoPointTool(DrawTool):
         self.preview(shape, [], False)
         if shape is not None:
             self.window.prompt(f"{self.describe(shape)}   (click to finish, Esc cancels)")
+
+    def start_at(self, x: float, y: float) -> None:
+        super().start_at(x, y)
+        self._pressed_at = None  # no press to release: the next click finishes
 
     def release(self, x, y, modifiers) -> None:
         pressed, self._pressed_at = self._pressed_at, None

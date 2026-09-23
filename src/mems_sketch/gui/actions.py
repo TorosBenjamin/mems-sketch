@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QMenu
 
@@ -45,6 +46,14 @@ OPERATIONS = [
     ("layer_map", "Layer map"),
 ]
 BOOLEANS = ("union", "subtract", "intersect", "xor")  # under Operations › Combine
+
+
+def _label(window, path) -> str:
+    try:
+        node = window.document.node(path)
+    except KeyError:
+        return "?"
+    return node.name or node.kind
 
 
 def make_action(
@@ -222,6 +231,60 @@ class Actions:
         for name in w.document.component_names():
             if name != w.document.active:
                 make_action(w, name, lambda _=False, n=name: w.add_component(n), menu=self.place)
+
+    def context_menu(self, x: float, y: float) -> QMenu:
+        """The editor's right-click menu at ``(x, y)`` µm, for the current selection.
+
+        Its entries are copies of the commands (their shortcuts shown but not
+        active), enabled only when they apply, so the menu keeps its shape.
+        """
+        w = self.window
+        selection = list(w.selection)
+        editable = not w.document.read_only
+        menu = QMenu(w)
+
+        def item(target: QMenu, source: QAction, slot=None, enabled: bool = True) -> QAction:
+            action = make_action(menu, source.text(), slot or source.trigger, menu=target)
+            action.setIcon(source.icon())
+            action.setShortcut(source.shortcut())
+            action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)  # shown, not active
+            action.setEnabled(enabled and editable)
+            return action
+
+        menu.addSection("At the cursor")
+        add = menu.addMenu(self.add.menuAction().icon(), "Add")
+        for source in self.add.actions():
+            kind = next(k for k, label in PRIMITIVES if label == source.text())
+            slot = (lambda _=False, k=kind: w.start_drawing(k, x, y)) if kind in w.tools else None
+            item(add, source, slot)
+        place = menu.addMenu(self.place.menuAction().icon(), "Place component")
+        for name in w.document.component_names():
+            if name != w.document.active:
+                action = make_action(menu, name, lambda _=False, n=name: w.add_component(n))
+                place.addAction(action)
+                action.setEnabled(editable)
+        add.setEnabled(editable)
+        place.setEnabled(editable)
+
+        menu.addSection(", ".join(_label(w, p) for p in selection[:3]) or "No selection")
+        one, some, several = len(selection) == 1, bool(selection), len(selection) > 1
+        reference = one and w.document.reference_target(selection[0]) is not None
+        combine = menu.addMenu(self.combine.menuAction().icon(), "Combine")
+        for op in BOOLEANS:
+            item(combine, self.operations[op], enabled=several)
+        combine.setEnabled(several and editable)
+        for op in ("offset", "fillet", "transform", "layer_map"):
+            item(menu, self.operations[op], enabled=some)
+        item(menu, self.make, enabled=some)
+        item(menu, self.unpack, enabled=reference)
+        orient = menu.addMenu(self.rotate_left.icon(), "Rotate && mirror")
+        for source in (self.rotate_left, self.rotate_right, self.mirror_h, self.mirror_v):
+            item(orient, source, enabled=some)
+        orient.setEnabled(some and editable)
+        menu.addSeparator()
+        item(menu, self.duplicate, enabled=one)
+        item(menu, self.delete, enabled=some)
+        return menu
 
     def tab_menu(self, view) -> QMenu:
         """The right-click menu of an editor tab."""

@@ -15,6 +15,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QLabel, QMenu, QSizePolicy, QToolBar, QToolButton, QWidget
 
 from mems_sketch.gui import icons
+from mems_sketch.gui.canvas import MENU_CARET
 
 if TYPE_CHECKING:
     from mems_sketch.gui.app import MainWindow
@@ -60,7 +61,7 @@ def build_toolbar(window: MainWindow) -> QToolBar:
 
 def _right_side(window: MainWindow) -> list:
     actions = window.actions_
-    return [window.mode_box, actions.split, None, actions.find, actions.settings]
+    return [actions.split, None, actions.find, actions.settings]
 
 
 def _menu_button(
@@ -72,7 +73,7 @@ def _menu_button(
     button.setToolTip(tip)
     button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
     if text:
-        button.setText(text)
+        button.setText(f"{text} {MENU_CARET}")
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     bar.addWidget(button)
     return button

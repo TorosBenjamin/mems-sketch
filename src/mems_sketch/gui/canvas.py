@@ -1,14 +1,15 @@
 """The layout canvas: layers as filled outlines, selection highlight, rule markers,
 alignment points, rulers and the viewport overlays (axis indicator, scale bar,
-caption, zoom buttons and the move/rotate gizmos).
+the caption with the view mode, the canvas modes, zoom buttons and the
+move/rotate gizmos).
 
-The canvas itself only zooms (wheel) and pans (middle or right drag, left drag
-while Space is held or in hand mode). Left-button presses, moves and releases
-are passed on as signals; the active tool (see :mod:`mems_sketch.gui.tools`)
-decides what they do.
+The canvas itself only zooms (wheel) and pans (middle drag, right drag, left
+drag while Space is held or in hand mode). A right click without dragging asks
+for the context menu. Left-button presses, moves and releases are passed on as
+signals; the active tool (see :mod:`mems_sketch.gui.tools`) decides what they do.
 
 Scene units are micrometres with y pointing up (the view flips Qt's y axis).
-Wheel zooms around the cursor, middle or right drag pans, F fits the view.
+Wheel zooms around the cursor, F fits the view.
 """
 
 from __future__ import annotations
@@ -16,8 +17,9 @@ from __future__ import annotations
 import math
 
 import klayout.db as kdb
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
+    QAction,
     QBrush,
     QColor,
     QFont,
@@ -36,7 +38,10 @@ from PySide6.QtWidgets import (
     QGraphicsSimpleTextItem,
     QGraphicsView,
     QHBoxLayout,
+    QLabel,
+    QMenu,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -109,6 +114,8 @@ DEFAULT_OPTIONS = {
     "zoom_step": 1.25,
 }
 GIZMO_GRAB_PX = 7  # how close to a gizmo handle counts as on it
+RIGHT_CLICK_SLOP_PX = 4  # a right press that moves further is a pan, not a click
+MENU_CARET = "▾"  # after the text of a button that opens a menu
 # The world the user can pan over, in µm: ±1 m, inside the ±2.1 m that 32-bit
 # database units (nm) can hold. Cursor positions are kept inside it.
 WORLD = QRectF(-1e6, -1e6, 2e6, 2e6)
@@ -151,6 +158,8 @@ class LayoutCanvas(QGraphicsView):
     key_pressed = Signal(object)  # Enter or Backspace, for the active tool
     cursor_moved = Signal(float, float)
     view_changed = Signal()  # zoomed or panned
+    context_requested = Signal(float, float, QPoint)  # right click: µm, global position
+    mode_chosen = Signal(str)  # a view mode picked in the caption
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -172,6 +181,7 @@ class LayoutCanvas(QGraphicsView):
         self._overlay: list = []
         self._points: dict[str, list] = {}
         self._pan_from: QPointF | None = None
+        self._right_from: QPointF | None = None  # right press: a click, until it drags
         self.left_pans = False  # hand mode: the left button pans
         self._space = False  # Space held: the left button pans
         self._left_down = False
@@ -191,6 +201,8 @@ class LayoutCanvas(QGraphicsView):
         self._gizmo_offset = (0.0, 0.0)
         self._gizmo_sweep: tuple[float, float] | None = None  # start angle, angle
         self._overlay_buttons = self._build_overlay_buttons()
+        self.mode_palette = self._overlay_box(Qt.Orientation.Vertical)
+        self._build_caption()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._has_content = False
         self._wheel_anchor: QPointF | None = None  # scene point held under the cursor
@@ -213,19 +225,75 @@ class LayoutCanvas(QGraphicsView):
         self.viewport().update()
 
     def set_caption(self, title: str, subtitle: str = "") -> None:
-        """The text in the top-left corner: what is shown (component, mode)."""
+        """The caption in the top-left corner: the component and details about it."""
         if (title, subtitle) != self._caption:
             self._caption = (title, subtitle)
-            self.viewport().update()
+            self.caption_title.setText(title)
+            self.caption_details.setText(subtitle)
+            self.caption_details.setVisible(bool(subtitle))
+            self.caption.adjustSize()
 
-    def _build_overlay_buttons(self) -> QWidget:
-        """Zoom in, zoom out and fit, floating in the top-right corner."""
+    def set_view_modes(self, modes: dict[str, str], current: str) -> None:
+        """The view modes offered by the caption's button (mode: label), and the current one."""
+        self.mode_button.setText(f"{modes.get(current, current)} {MENU_CARET}")
+        menu = self.mode_button.menu()
+        menu.clear()
+        for mode, label in modes.items():
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(mode == current)
+            action.triggered.connect(lambda _=False, m=mode: self.mode_chosen.emit(m))
+        self.caption.adjustSize()
+
+    def set_mode_actions(self, actions: list[QAction]) -> None:
+        """The canvas modes (select, move, ...) in the top-right corner, one button each."""
+        layout = self.mode_palette.layout()
+        while layout.count():
+            layout.takeAt(0).widget().deleteLater()
+        for action in actions:
+            button = QToolButton(self.mode_palette)
+            button.setDefaultAction(action)
+            button.setIconSize(QSize(18, 18))
+            button.setAutoRaise(True)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            layout.addWidget(button)
+            button.show()  # the canvas may be visible already: count it in the size now
+        self.mode_palette.adjustSize()
+        self._place_overlays()
+
+    def _overlay_box(self, orientation: Qt.Orientation) -> QWidget:
+        """A floating group of buttons on the canvas."""
         box = QWidget(self)
         box.setObjectName("canvas-buttons")
         box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        layout = QHBoxLayout(box)
+        layout = QHBoxLayout(box) if orientation == Qt.Orientation.Horizontal else QVBoxLayout(box)
         layout.setContentsMargins(3, 3, 3, 3)
         layout.setSpacing(1)
+        return box
+
+    def _build_caption(self) -> None:
+        """Top left: the component, the view mode (a menu) and details."""
+        box = self.caption = self._overlay_box(Qt.Orientation.Horizontal)
+        box.layout().setContentsMargins(8, 2, 8, 2)
+        box.layout().setSpacing(6)
+        self.caption_title = QLabel(box)
+        self.caption_title.setObjectName("heading")
+        self.mode_button = QToolButton(box)
+        self.mode_button.setToolTip("What the canvas shows: the drawn layout or a process view")
+        self.mode_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.mode_button.setAutoRaise(True)
+        self.mode_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.mode_button.setMenu(QMenu(self.mode_button))
+        self.caption_details = QLabel(box)
+        self.caption_details.setObjectName("muted")
+        for widget in (self.caption_title, self.mode_button, self.caption_details):
+            box.layout().addWidget(widget)
+        box.move(8, 8)
+
+    def _build_overlay_buttons(self) -> QWidget:
+        """Zoom in, zoom out and fit, floating in the bottom-right corner."""
+        box = self._overlay_box(Qt.Orientation.Horizontal)
+        layout = box.layout()
         for name, tip, slot in (
             ("zoom_in", "Zoom in", lambda: self.zoom_by(self.options["zoom_step"])),
             ("zoom_out", "Zoom out", lambda: self.zoom_by(1 / self.options["zoom_step"])),
@@ -244,8 +312,13 @@ class LayoutCanvas(QGraphicsView):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        box = self._overlay_buttons
-        box.move(self.viewport().width() - box.width() - 8, 8)
+        self._place_overlays()
+
+    def _place_overlays(self) -> None:
+        width, height = self.viewport().width(), self.viewport().height()
+        zoom, modes = self._overlay_buttons, self.mode_palette
+        zoom.move(width - zoom.width() - 8, height - zoom.height() - 8)
+        modes.move(width - modes.width() - 8, 8)
 
     def zoom_by(self, factor: float) -> None:
         """Zoom about the centre of the view."""
@@ -587,12 +660,15 @@ class LayoutCanvas(QGraphicsView):
 
     def _pans(self, event) -> bool:
         button = event.button()
-        if button in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+        if button == Qt.MouseButton.MiddleButton:
             return True
         return button == Qt.MouseButton.LeftButton and (self.left_pans or self._space)
 
     def mousePressEvent(self, event) -> None:
         self.setFocus()
+        if event.button() == Qt.MouseButton.RightButton:
+            self._right_from = event.position()  # a click opens the menu; a drag pans
+            return
         if self._pans(event):
             self._pan_from = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -612,6 +688,11 @@ class LayoutCanvas(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        if self._right_from is not None:
+            if (event.position() - self._right_from).manhattanLength() <= RIGHT_CLICK_SLOP_PX:
+                return
+            self._pan_from, self._right_from = self._right_from, None  # it is a drag: pan
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
         if self._pan_from is not None:
             delta = event.position() - self._pan_from
             self._pan_from = event.position()
@@ -630,6 +711,11 @@ class LayoutCanvas(QGraphicsView):
         self.moved.emit(p.x(), p.y(), event.modifiers(), left)
 
     def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.RightButton and self._right_from is not None:
+            self._right_from = None
+            p = self._scene(event)
+            self.context_requested.emit(p.x(), p.y(), event.globalPosition().toPoint())
+            return
         if self._pan_from is not None:
             self._pan_from = None
             self._update_cursor()
@@ -641,6 +727,15 @@ class LayoutCanvas(QGraphicsView):
             self.released.emit(p.x(), p.y(), event.modifiers())
             return
         super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event) -> None:
+        """The menu opens on releasing the right button (see mouseReleaseEvent); the
+        keyboard's menu key opens it at the centre of the view."""
+        if event.reason() == event.Reason.Keyboard:
+            center = self.viewport().rect().center()
+            p = self.mapToScene(center)
+            self.context_requested.emit(p.x(), p.y(), self.viewport().mapToGlobal(center))
+        event.accept()
 
     def keyReleaseEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
@@ -725,8 +820,6 @@ class LayoutCanvas(QGraphicsView):
         painter.resetTransform()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         height = self.viewport().height()
-        if self._caption[0]:
-            self._draw_caption(painter)
         if self.options["show_axis_gizmo"]:
             self._draw_axes(painter, 30, height - 30)
         if self.options["show_scale_bar"]:
@@ -734,19 +827,6 @@ class LayoutCanvas(QGraphicsView):
         if self._gizmo is not None:
             self._draw_gizmo(painter)
         painter.restore()
-
-    def _draw_caption(self, painter: QPainter) -> None:
-        title, subtitle = self._caption
-        font = QFont(self.font())
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(QColor(self.theme["overlay"]))
-        painter.drawText(QPointF(12, 22), title)
-        if subtitle:
-            width = painter.fontMetrics().horizontalAdvance(title)
-            painter.setFont(self.font())
-            painter.setPen(QColor(self.theme["overlay_muted"]))
-            painter.drawText(QPointF(12 + width + 8, 22), subtitle)
 
     def _draw_axes(self, painter: QPainter, x: float, y: float) -> None:
         """The axis indicator: x to the right in red, y up in green."""

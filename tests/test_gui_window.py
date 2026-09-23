@@ -106,7 +106,7 @@ def test_undo_restores_tree_and_view_mode_switch(window):
     window.add_primitive("circle")
     window.document.undo()
     assert window.tree.topLevelItemCount() == 1
-    window.mode_box.setCurrentIndex(1)
+    window.set_view_mode("etched")
     assert window.view_mode == "etched"
 
 

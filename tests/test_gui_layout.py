@@ -4,9 +4,11 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox, QToolBar, QToolButton
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtGui import QContextMenuEvent, QMouseEvent
+from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QToolButton
 
+from mems_sketch.core.shapes import RectShape
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.find_action import menu_actions
 
@@ -90,7 +92,7 @@ def test_one_toolbar_row_and_no_menu_bar(window):
     assert len(toolbars) == 1
     assert window.menuBar().actions() == []
     texts = [b.text() for b in toolbars[0].findChildren(QToolButton)]
-    assert {"Add", "Place", "Operations"} <= set(texts)
+    assert {"Add ▾", "Place ▾", "Operations ▾"} <= set(texts)
     assert window.project_label.text() == window.document.project.name
 
 
@@ -136,3 +138,108 @@ def test_the_status_bar_shows_the_tool_options_and_snapping(window):
     assert window.tool_name.text().strip() == "Path"
     window.set_tool("select")
     assert not window.width_box.isVisible() and not window.layer_box.isVisible()
+
+
+# -- the canvas: modes, view mode and the right-click menu ------------------------
+
+
+def right_click(canvas, pos: QPointF, drag: QPointF | None = None) -> None:
+    """Press the right button at ``pos`` (viewport pixels), maybe drag, and release."""
+    viewport = canvas.viewport()
+    end = pos + (drag or QPointF(0, 0))
+    right, none = Qt.MouseButton.RightButton, Qt.MouseButton.NoButton
+    for kind, at, buttons in (
+        (QEvent.Type.MouseButtonPress, pos, right),
+        (QEvent.Type.MouseMove, end, right),
+        (QEvent.Type.MouseButtonRelease, end, none),
+    ):
+        button = none if kind == QEvent.Type.MouseMove else right
+        event = QMouseEvent(
+            kind, at, viewport.mapToGlobal(at), button, buttons, Qt.KeyboardModifier.NoModifier
+        )
+        QApplication.sendEvent(viewport, event)
+
+
+@pytest.fixture
+def menus(window, monkeypatch):
+    """The menus the window pops up: each as {text: action}, with its submenus' actions too."""
+    opened = []
+
+    def record(menu, at):
+        entries = {}
+        for action in menu.actions():
+            entries[action.text()] = action
+            if action.menu() is not None:
+                entries.update({a.text(): a for a in action.menu().actions()})
+        opened.append(entries)
+
+    monkeypatch.setattr(window, "show_menu", record)
+    return opened
+
+
+def test_right_click_opens_the_menu_and_right_drag_pans(window, menus):
+    canvas = window.canvas
+    centre = QPointF(canvas.viewport().rect().center())
+    right_click(canvas, centre)
+    assert len(menus) == 1 and {"Add", "Place component", "Rectangle"} <= set(menus[0])
+    before = canvas.mapToScene(centre.toPoint())
+    right_click(canvas, centre, QPointF(40, 0))
+    assert len(menus) == 1  # a drag pans instead
+    assert canvas.mapToScene(centre.toPoint()) != before
+
+
+def test_right_click_selects_the_shape_under_the_cursor_and_offers_what_applies(window, menus):
+    window.document.nodes.add(RectShape(name="plate", layer="device", x0=0, y0=0, x1=100, y1=50))
+    window.document.nodes.add(RectShape(name="post", layer="device", x0=200, y0=0, x1=210, y1=50))
+    canvas = window.canvas
+    canvas.zoom_to(QRectF(-50, -100, 300, 250))
+    right_click(canvas, QPointF(canvas.mapFromScene(QPointF(50, 25))))
+    assert window.selection == [((0, 0),)]
+    entries = menus[0]
+    assert entries["Offset"].isEnabled() and entries["Duplicate"].isEnabled()
+    assert not entries["Union"].isEnabled()  # combining needs two shapes
+    assert not entries["Unpack component"].isEnabled()  # not a component reference
+
+
+def test_right_click_add_rectangle_starts_at_the_click(window, menus):
+    window.settings.set("snapping/points", False)
+    window.settings.set("snapping/grid", False)
+    canvas = window.canvas
+    at = QPointF(canvas.viewport().rect().center()) + QPointF(30, -20)
+    right_click(canvas, at)
+    expected = canvas.mapToScene(at.toPoint())
+    menus[0]["Rectangle"].trigger()
+    assert window.tool.name == "rect"
+    (x, y) = window.tool.placed[0]
+    assert x == pytest.approx(expected.x(), abs=1e-3) and y == pytest.approx(expected.y(), abs=1e-3)
+    assert canvas.mapToScene(at.toPoint()) == expected  # the view did not jump
+
+
+def test_the_mode_palette_switches_tools(window):
+    buttons = {
+        b.defaultAction().text(): b for b in window.canvas.mode_palette.findChildren(QToolButton)
+    }
+    assert list(buttons) == ["Select", "Hand", "Move", "Rotate", "Align", "Measure"]
+    assert all(b.isVisible() for b in buttons.values())
+    palette = window.canvas.mode_palette
+    assert palette.height() >= 6 * 24  # sized to hold its buttons
+    buttons["Measure"].click()
+    assert window.tool.name == "measure" and buttons["Measure"].isChecked()
+
+
+def test_the_caption_changes_the_tabs_view_mode(window):
+    menu = window.canvas.mode_button.menu()
+    etched = next(a for a in menu.actions() if a.text() == "As etched")
+    etched.trigger()
+    assert window.view.view_mode == "etched"
+    assert window.canvas.mode_button.text() == "As etched ▾"
+
+
+def test_the_menu_key_opens_the_menu_at_the_centre(window, menus):
+    canvas = window.canvas
+    centre = canvas.viewport().rect().center()
+    event = QContextMenuEvent(
+        QContextMenuEvent.Reason.Keyboard, centre, canvas.viewport().mapToGlobal(centre)
+    )
+    QApplication.sendEvent(canvas, event)
+    assert len(menus) == 1

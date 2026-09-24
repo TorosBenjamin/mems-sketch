@@ -202,15 +202,10 @@ class PropertyEditor(QScrollArea):
         if "params" in fields:
             layout.addWidget(self._params_editor(node))
         layout.addWidget(self._align_editor(node, path))
-        layout.addWidget(self._modifiers_editor(node, path))
-
-        apply = QPushButton("Apply")
-        apply.setDefault(True)
-        apply.clicked.connect(self.apply)
-        row = QHBoxLayout()
-        row.addStretch()
-        row.addWidget(apply)
-        layout.addLayout(row)
+        # Fields apply on Enter, lists and boxes when changed; only text boxes of
+        # several lines and modifier stacks keep an Apply button.
+        needs_apply = bool(node.modifiers) or "points" in fields or "mapping" in fields
+        layout.addWidget(self._modifiers_editor(node, path, needs_apply))
         layout.addStretch()
         self._show(body)
 
@@ -244,10 +239,11 @@ class PropertyEditor(QScrollArea):
             combo.addItems([str(a) for a in args])
             combo.setCurrentText(str(value))
             self._editors[field] = combo.currentText
-            return combo
+            return self._applies(combo)
         if annotation is bool:
             box = QCheckBox()
             box.setChecked(bool(value))
+            box.clicked.connect(self.apply)
             self._editors[field] = box.isChecked
             return box
         if field == "layer":
@@ -256,15 +252,21 @@ class PropertyEditor(QScrollArea):
             combo.addItems(list(self.document.project.layers))
             combo.setCurrentText(value)
             self._editors[field] = lambda: combo.currentText().strip()
-            return combo
+            return self._applies(combo)
         if field == "component":
             combo = _combo()
             combo.addItems(self.document.component_names())
             combo.setCurrentText(value)
             self._editors[field] = combo.currentText
-            return combo
+            return self._applies(combo)
         optional = type(None) in args
         return self._value_editor(field, value, optional)
+
+    def _applies(self, combo: QComboBox) -> QComboBox:
+        """Apply when an item is chosen (or, when typed in, on Enter)."""
+        combo.activated.connect(lambda _index: self.apply())
+        combo.setEnabled(not self.document.read_only)
+        return combo
 
     def _value_editor(
         self, field: str, value, optional: bool = False, prefix: str = ""
@@ -395,6 +397,7 @@ class PropertyEditor(QScrollArea):
             if info.annotation is str:
                 edit = QLineEdit("" if current is None else str(current))
                 edit.setPlaceholderText(str(default))
+                edit.returnPressed.connect(self.apply)
                 readers[field] = lambda e=edit: e.text().strip() or None
                 widget = edit
             else:
@@ -437,8 +440,10 @@ class PropertyEditor(QScrollArea):
         target.setEditable(True)
         target.addItems([name for name, *_ in self.document.results.align_targets(path)])
         target.setCurrentText(align.to if align else "")
-        form.addRow("Point", own)
-        form.addRow("To", target)
+        form.addRow("Point", self._applies(own))
+        form.addRow("To", self._applies(target))
+        # Switching alignment off applies at once; switching it on waits for a point.
+        box.clicked.connect(lambda on: self.apply() if not on or target.currentText() else None)
         offsets = {}
         row = QWidget()
         line = QHBoxLayout(row)
@@ -470,8 +475,8 @@ class PropertyEditor(QScrollArea):
         self._editors["align"] = read
         return box
 
-    def _modifiers_editor(self, node: Shape, path: NodePath) -> QWidget:
-        """The modifier stack: one card each, and "Add modifier"."""
+    def _modifiers_editor(self, node: Shape, path: NodePath, with_apply: bool) -> QWidget:
+        """The modifier stack: one card each, then "Add modifier" (and Apply, for the form)."""
         box = _section("Modifiers")
         column = QVBoxLayout(box)
         column.setContentsMargins(0, 6, 0, 4)
@@ -501,6 +506,15 @@ class PropertyEditor(QScrollArea):
         row = QHBoxLayout()
         row.addWidget(add)
         row.addStretch()
+        self.apply_button = None
+        if with_apply:
+            apply = QPushButton("Apply")
+            apply.setDefault(True)
+            apply.setToolTip("Apply the changed fields (Enter in a field does too)")
+            apply.clicked.connect(self.apply)
+            apply.setEnabled(not read_only)
+            row.addWidget(apply)
+            self.apply_button = apply
         column.addLayout(row)
         self._editors["modifiers"] = lambda: [read() for read in readers]
         return box
@@ -612,6 +626,7 @@ class PropertyEditor(QScrollArea):
         points = [name for name, *_ in self.document.results.align_targets(path)]
         combo.addItems([*SELF_POINTS, *points])
         combo.setCurrentText(value or "")
+        self._applies(combo)
         combo.lineEdit().setPlaceholderText("the axis below")
         combo.setToolTip("A guide's name (mirror across it), or a point (mirror through it)")
         self._editors[key] = lambda: combo.currentText().strip() or None
@@ -708,11 +723,16 @@ class PropertyEditor(QScrollArea):
         self.setWidget(content)
 
     def _show_placeholder(self, text: str) -> None:
+        body = QWidget()
+        body.setObjectName("properties-body")  # the island's colour, as with a shape shown
         label = QLabel(text)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setWordWrap(True)
         label.setObjectName("muted")
-        self._show(label)
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(label)
+        self._show(body)
 
     # -- applying ----------------------------------------------------------
 

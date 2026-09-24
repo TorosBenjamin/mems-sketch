@@ -251,6 +251,18 @@ def test_tabs_have_icons_a_close_button_and_a_menu(window):
     assert [v.component for v in window.area.views()] == ["top"]
 
 
+def test_tabs_snap_into_place_instead_of_sliding(window):
+    from PySide6.QtWidgets import QStyle
+
+    bar = window.area.panes[0].tabBar()
+    assert bar.style().styleHint(QStyle.StyleHint.SH_Widget_Animation_Duration, None, bar) == 0
+
+
+def test_the_main_menu_button_is_square(window):
+    button = window.findChild(QToolButton, "main-menu")
+    assert button.width() == button.height()
+
+
 def test_canvas_caption_shows_the_component_and_view_mode(window):
     assert window.canvas._caption == ("top", "top component")
     assert window.canvas.mode_button.text() == "Drawn ▾"
@@ -396,6 +408,15 @@ def menu_texts(menu) -> dict:
         if action.menu() is not None:
             found |= {f"{action.text()}/{k}": v for k, v in menu_texts(action.menu()).items()}
     return found
+
+
+def test_the_explorer_header_makes_a_new_component(window, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("widget", True))
+    menu_texts(window.components.add_menu())["New component…"].trigger()
+    assert "widget" in window.document.project.components
+    assert window.document.active == "widget"
 
 
 def test_private_components_from_the_explorer_menu(resonator, monkeypatch):

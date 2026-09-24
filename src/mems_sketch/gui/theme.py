@@ -41,6 +41,7 @@ TOKENS = {
         "accent": "#3574f0",
         "accent_text": "#ffffff",
         "input_border": "#c9ccd6",
+        "control": "#f2f3f5",  # drop-down lists: set apart from the fields and the island
         "tooltip": "#ffffff",
         "scroll": "#c9ccd6",
         "expression": "#f1ecfd",  # a field holding an expression (a parameter's purple, light)
@@ -62,6 +63,7 @@ TOKENS = {
         "accent": "#3574f0",
         "accent_text": "#ffffff",
         "input_border": "#4e5157",
+        "control": "#2b2d30",
         "tooltip": "#393b40",
         "scroll": "#4e5157",
         "expression": "#2f2940",
@@ -89,6 +91,7 @@ QToolButton:hover {{ background: {hover}; }}
 QToolButton:pressed {{ background: {pressed}; }}
 QToolButton:checked {{ background: {selected}; }}
 QToolButton[popupMode="2"] {{ padding-right: 12px; }}
+QToolButton#main-menu {{ padding: 5px; }}
 QToolButton::menu-indicator {{ image: none; }}
 QToolBar#tools-toolbar QToolButton {{ padding: 5px; margin: 1px 2px; }}
 
@@ -147,7 +150,13 @@ QDoubleSpinBox:focus, QComboBox:focus {{ border: 1px solid {accent}; }}
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
     color: {muted}; background: {window};
 }}
-QComboBox::drop-down {{ border: none; width: 18px; }}
+QComboBox {{ background: {control}; border: 1px solid {input_border}; padding-right: 22px; }}
+QComboBox:hover {{ background: {hover}; }}
+QComboBox:editable {{ background: {editor}; }}
+QComboBox QLineEdit {{ background: transparent; border: none; padding: 0; }}
+QComboBox::drop-down {{ border: none; width: 20px; }}
+QComboBox::down-arrow {{ image: url({arrow}); width: 10px; height: 10px; }}
+QComboBox::down-arrow:disabled {{ image: url({arrow_disabled}); }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: none; }}
 QComboBox QAbstractItemView {{
     background: {editor}; border: 1px solid {border_strong}; selection-background-color: {selected};
@@ -288,17 +297,29 @@ def apply(app: QApplication, name: str) -> str:
     app.setProperty("mems_sketch_theme", theme)
     app.setStyle("Fusion")
     app.setPalette(palette(theme))
-    app.setStyleSheet(STYLE.format(**TOKENS[theme], check=_check_mark(), radius=ISLAND_RADIUS))
+    t = TOKENS[theme]
+    app.setStyleSheet(
+        STYLE.format(
+            **t,
+            check=_svg_file("check", CHECK_MARK, "#ffffff"),
+            arrow=_svg_file(f"arrow-{theme}", CHEVRON, t["text"]),
+            arrow_disabled=_svg_file(f"arrow-{theme}-disabled", CHEVRON, t["muted"]),
+            radius=ISLAND_RADIUS,
+        )
+    )
     return theme
 
 
-def _check_mark() -> str:
-    """A white check mark as an SVG file, for the style sheet's check boxes."""
-    path = Path(tempfile.gettempdir()) / "mems-sketch-check.svg"
+CHECK_MARK = '<path d="M3.5 8.4l3 3 6-6.4" stroke-width="2"/>'  # check boxes
+CHEVRON = '<path d="M4 6l4 4 4-4" stroke-width="1.5"/>'  # drop-down lists
+
+
+def _svg_file(name: str, shape: str, color: str) -> str:
+    """``shape`` drawn in ``color`` as an SVG file, for the style sheet (which needs a file)."""
+    path = Path(tempfile.gettempdir()) / f"mems-sketch-{name}.svg"
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 8.4l3 3 '
-        '6-6.4" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" '
-        'stroke-linejoin="round"/></svg>'
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" '
+        f'stroke="{color}" stroke-linecap="round" stroke-linejoin="round">{shape}</svg>'
     )
     try:
         if not path.exists() or path.read_text() != svg:

@@ -1,4 +1,8 @@
-"""The look of the application: a light and a dark theme after JetBrains' New UI.
+"""The look of the application: a light and a dark theme after JetBrains' Islands.
+
+The window is a *frame* (toolbar, tool window stripes, the gaps between
+panels, status bar) holding *islands*: every tool window and the editor, with
+rounded corners and no border lines between them.
 
 ``apply(app, name)`` sets the Qt palette, a style sheet and the icon colours
 for ``light``, ``dark`` or ``system`` (follow the desktop). The canvas has its
@@ -21,7 +25,9 @@ UI_THEMES = {"system": "Same as the system", "light": "Light", "dark": "Dark"}
 
 TOKENS = {
     "light": {
-        "window": "#f7f8fa",  # tool windows, toolbars
+        "frame": "#ebecf0",  # toolbar, stripes, the gaps between islands, status bar
+        "island": "#ffffff",  # tool windows and the editor
+        "window": "#f7f8fa",  # dialogs
         "editor": "#ffffff",  # the editor area and inputs
         "border": "#ebecf0",
         "border_strong": "#dfe1e5",
@@ -40,6 +46,8 @@ TOKENS = {
         "error": "#db3b4b",
     },
     "dark": {
+        "frame": "#26282c",  # measured from IntelliJ's dark Islands theme
+        "island": "#191a1c",
         "window": "#2b2d30",
         "editor": "#1e1f22",
         "border": "#1e1f22",
@@ -61,11 +69,17 @@ TOKENS = {
 }
 
 STYLE = """
-QMainWindow, QDialog {{ background: {window}; }}
+QMainWindow {{ background: {frame}; }}
+QDialog {{ background: {window}; }}
 QWidget {{ color: {text}; }}
-QMainWindow::separator {{ background: {border}; width: 1px; height: 1px; }}
+QMainWindow::separator {{ background: {frame}; width: 5px; height: 5px; }}
 
-QToolBar {{ background: {window}; border: none; spacing: 2px; padding: 3px 6px; }}
+QWidget#tool-windows, QWidget#tool-window-stripe-left, QWidget#tool-window-stripe-right {{
+    background: {frame};
+}}
+QWidget#island {{ background: {island}; border-radius: 10px; }}
+
+QToolBar {{ background: {frame}; border: none; spacing: 2px; padding: 3px 6px; }}
 QToolBar::separator {{ background: {border_strong}; width: 1px; height: 1px; margin: 4px 5px; }}
 QToolButton {{
     background: transparent; border: none; border-radius: 5px; padding: 4px;
@@ -92,22 +106,22 @@ QMenu::icon {{ padding-left: 6px; }}
 
 QDockWidget {{ titlebar-close-icon: none; titlebar-normal-icon: none; }}
 QDockWidget::title {{ background: {window}; padding: 0 10px; text-align: left; }}
-QWidget#dock-title {{ background: {window}; }}
+QWidget#dock-title {{ background: transparent; }}
 QLabel#dock-title-label {{ font-weight: 600; }}
 QDockWidget > QWidget {{ background: {window}; }}
 
 QTabWidget::pane {{ border: none; }}
-QTabBar {{ background: {window}; qproperty-drawBase: 0; }}
+QTabBar {{ background: {island}; qproperty-drawBase: 0; }}
 QTabBar::tab {{
-    background: transparent; color: {text}; height: 22px; padding: 4px 10px; margin: 0;
-    border: none; border-bottom: 2px solid transparent;
+    background: transparent; color: {text}; height: 22px; padding: 2px 10px; margin: 3px 2px;
+    border: 1px solid transparent; border-radius: 6px;
 }}
-QTabBar::tab:selected {{ border-bottom: 2px solid {accent}; }}
+QTabBar::tab:selected {{ background: {selected_inactive}; border: 1px solid {border_strong}; }}
 QTabBar::tab:hover:!selected {{ background: {hover}; }}
 QToolButton#tab-close {{ padding: 1px; border-radius: 3px; }}
 
 QTreeView, QTableView, QListView, QTableWidget, QTreeWidget, QListWidget {{
-    background: {window}; alternate-background-color: {window}; border: none;
+    background: {island}; alternate-background-color: {island}; border: none;
     selection-background-color: {selected}; selection-color: {text};
     gridline-color: {border};
 }}
@@ -117,10 +131,10 @@ QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {{
     background: {selected}; color: {text};
 }}
 QHeaderView::section {{
-    background: {window}; color: {muted}; border: none; padding: 4px 6px;
+    background: {island}; color: {muted}; border: none; padding: 4px 6px;
 }}
 QTableView::item {{ padding: 0 4px; }}
-QTableCornerButton::section {{ background: {window}; border: none; }}
+QTableCornerButton::section {{ background: {island}; border: none; }}
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     background: {editor}; border: 1px solid {border_strong}; border-radius: 4px;
@@ -147,8 +161,8 @@ QPushButton:default {{ background: {accent}; color: {accent_text}; border-color:
 QPushButton:disabled {{ color: {muted}; }}
 
 QCheckBox, QRadioButton {{ spacing: 6px; }}
-QScrollArea {{ background: {window}; border: none; }}
-QWidget#properties-body {{ background: {window}; }}
+QScrollArea {{ background: {island}; border: none; }}
+QWidget#properties-body {{ background: {island}; }}
 QGroupBox#section {{
     border: none; border-top: 1px solid {border_strong}; margin-top: 18px; padding-top: 8px;
     font-weight: 600;
@@ -170,11 +184,12 @@ QCheckBox::indicator:checked, QTreeView::indicator:checked, QTableView::indicato
 }}
 QCheckBox::indicator:disabled {{ background: {window}; }}
 
-QStatusBar {{ background: {window}; border-top: 1px solid {border}; color: {muted};
-    min-height: 26px; }}
+QStatusBar {{ background: {frame}; border: none; color: {muted}; min-height: 26px; }}
 QStatusBar::item {{ border: none; }}
 QStatusBar QLabel {{ color: {muted}; padding: 0 6px; }}
 QStatusBar QToolButton {{ padding: 2px 5px; }}
+QStatusBar QComboBox, QStatusBar QDoubleSpinBox {{ padding: 0 6px; }}
+QGraphicsView {{ border: none; }}
 
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
 QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
@@ -183,7 +198,7 @@ QScrollBar::handle {{ background: {scroll}; border-radius: 4px; min-height: 24px
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
-QSplitter::handle {{ background: {border}; }}
+QSplitter::handle {{ background: {frame}; }}
 QToolTip {{
     background: {tooltip}; color: {text}; border: 1px solid {border_strong}; padding: 4px 6px;
     border-radius: 4px;

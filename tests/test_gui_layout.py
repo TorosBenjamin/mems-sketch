@@ -7,9 +7,9 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QContextMenuEvent, QMouseEvent
-from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QToolButton
+from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QToolButton, QWidget
 
 from mems_sketch.core.shapes import RectShape
 from mems_sketch.gui.app import MainWindow
@@ -332,3 +332,35 @@ def test_the_process_item_has_its_own_right_click_entry(window):
     assert [a.text() for a in menu.actions()] == ["Open the process"]
     menu.actions()[0].trigger()
     assert window.area.process_view is not None
+
+
+# -- the Islands look ---------------------------------------------------------------
+
+
+def global_x_range(widget):
+    left = widget.mapToGlobal(widget.rect().topLeft()).x()
+    return left, left + widget.width()
+
+
+def test_the_bottom_panel_spans_the_full_width(window):
+    windows = window.tool_windows
+    for name in ("components", "properties", "messages"):
+        windows.open(name)
+    messages = global_x_range(window.messages)
+    assert messages[0] <= global_x_range(window.components)[0]
+    assert messages[1] >= global_x_range(window.properties)[1]
+
+
+@pytest.mark.parametrize("name", ["light", "dark"])
+def test_frame_and_islands_have_their_own_colours(window, name, qtbot):
+    from mems_sketch.gui.theme import TOKENS
+
+    window.settings.set("appearance/ui_theme", name)
+    qtbot.wait(20)
+    image = window.grab().toImage()
+    stripe = window.tool_windows.findChild(QWidget, "tool-window-stripe-left")
+    in_stripe = stripe.mapTo(window, QPoint(stripe.width() // 2, stripe.height() // 2))
+    viewport = window.components.tree.viewport()
+    in_island = viewport.mapTo(window, QPoint(viewport.width() // 2, viewport.height() - 6))
+    assert image.pixelColor(in_stripe).name() == TOKENS[name]["frame"]
+    assert image.pixelColor(in_island).name() == TOKENS[name]["island"]

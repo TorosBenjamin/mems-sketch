@@ -190,9 +190,10 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   Layers, and Messages (the bottom panel) at the bottom; on the right stripe
   Properties, Parameters and Points. Each place shows one window at a time;
   the left side splits when Components and Shapes (or Layers) are both open.
-  The side panels run the full height, with Messages under the editor; a
-  panel's header lines up with the editor tabs and carries the panel's own
-  buttons. Which windows are open and their sizes are remembered. **View →
+  Every panel and the editor is an *island*, a rounded panel on the window's
+  frame (as in JetBrains' Islands theme); Messages runs the full width at the
+  bottom. A panel's header lines up with the editor tabs and carries the
+  panel's own buttons. Which windows are open and their sizes are remembered. **View →
   Panels** lists them too.
 - **Status bar**: the current hint, the active tool and its options (the
   drawing layer and path width while drawing, the angle step for Rotate), the

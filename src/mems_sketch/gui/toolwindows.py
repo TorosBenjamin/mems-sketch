@@ -1,8 +1,10 @@
 """Tool windows opened and closed from stripes on the window edges, as in IntelliJ.
 
 Every window has an anchor. ``left-top`` and ``left-bottom`` share the left
-side, split in two when both have a window open; ``bottom`` sits under the
-editor and ``right`` beside it. An anchor shows one window at a time:
+side, split in two when both have a window open; ``bottom`` runs the full
+width under them, the editor and ``right``. Each anchor's panel, and the
+editor, is an *island*: a rounded panel on the window's frame, 5 px from the
+next one (see :mod:`mems_sketch.gui.theme`). An anchor shows one window at a time:
 opening another one there replaces it. Each window has a button on a stripe:
 the left stripe holds the two left anchors at the top (with a gap between
 them) and ``bottom`` at the bottom; the right stripe holds ``right``.
@@ -30,9 +32,25 @@ from mems_sketch.gui.theme import HEADER_HEIGHT
 ANCHORS = ("left-top", "left-bottom", "bottom", "right")
 STRIPE_WIDTH = 38
 GROUP_GAP = 14  # px between the two left groups on the stripe
+GAP = 5  # px of frame between islands
+ISLAND_INSET = 4  # px between an island's edge and its content: the corners stay round
 # Splitter sizes until the user changes them: [left, editor, right], [left top,
-# left bottom] and [editor, bottom].
-DEFAULT_SIZES = {"main": [270, 900, 320], "left": [300, 380], "center": [700, 120]}
+# left bottom] and [the row above, bottom].
+DEFAULT_SIZES = {"main": [270, 900, 320], "left": [300, 380], "center": [700, 140]}
+
+
+def island(content: QWidget | None = None) -> QFrame:
+    """A rounded panel on the frame, holding ``content`` (if given) inset from its edges."""
+    frame = QFrame()
+    frame.setObjectName("island")
+    frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(ISLAND_INSET, 0, ISLAND_INSET, ISLAND_INSET)
+    layout.setSpacing(0)
+    if content is not None:
+        layout.setContentsMargins(ISLAND_INSET, ISLAND_INSET, ISLAND_INSET, ISLAND_INSET)
+        layout.addWidget(content)
+    return frame
 
 
 @dataclass
@@ -46,21 +64,22 @@ class _Window:
 
 
 class _Host(QFrame):
-    """The panel of one anchor: a header with the open window's title and its own
+    """The island of one anchor: a header with the open window's title and its own
     buttons (a panel's ``header_buttons``), and the window."""
 
     def __init__(self, hide) -> None:
         super().__init__()
-        self.setObjectName("tool-window")
+        self.setObjectName("island")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(ISLAND_INSET, 0, ISLAND_INSET, ISLAND_INSET)
         layout.setSpacing(0)
         header = QWidget()
         header.setObjectName("dock-title")
         header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         header.setFixedHeight(HEADER_HEIGHT)  # as tall as the editor tabs: edges line up
         row = self.row = QHBoxLayout(header)
-        row.setContentsMargins(10, 0, 4, 0)
+        row.setContentsMargins(10 - ISLAND_INSET, 0, 2, 0)
         row.setSpacing(1)
         self.title = QLabel()
         self.title.setObjectName("dock-title-label")
@@ -87,21 +106,25 @@ class ToolWindows(QWidget):
         self._windows: dict[str, _Window] = {}
         self._hosts = {anchor: _Host(lambda a=anchor: self._hide(a)) for anchor in ANCHORS}
 
+        self.setObjectName("tool-windows")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.left_side = QSplitter(Qt.Orientation.Vertical)
         self.left_side.addWidget(self._hosts["left-top"])
         self.left_side.addWidget(self._hosts["left-bottom"])
-        self.center = QSplitter(Qt.Orientation.Vertical)
-        self.center.addWidget(editor)
-        self.center.addWidget(self._hosts["bottom"])
-        self.center.setStretchFactor(0, 1)
-        self.main = QSplitter(Qt.Orientation.Horizontal)
+        self.editor_island = island(editor)
+        self.main = QSplitter(Qt.Orientation.Horizontal)  # the row: left, editor, right
         self.main.addWidget(self.left_side)
-        self.main.addWidget(self.center)
+        self.main.addWidget(self.editor_island)
         self.main.addWidget(self._hosts["right"])
         self.main.setStretchFactor(1, 1)
+        self.center = QSplitter(Qt.Orientation.Vertical)  # the row over the bottom panel
+        self.center.addWidget(self.main)
+        self.center.addWidget(self._hosts["bottom"])
+        self.center.setStretchFactor(0, 1)
         self._splitters = {"main": self.main, "left": self.left_side, "center": self.center}
         for name, splitter in self._splitters.items():
             splitter.setChildrenCollapsible(False)
+            splitter.setHandleWidth(GAP)
             splitter.setSizes(DEFAULT_SIZES[name])
             splitter.splitterMoved.connect(self.changed)
 
@@ -117,10 +140,10 @@ class ToolWindows(QWidget):
         right.layout().addStretch()
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 0, 0, GAP)
         layout.setSpacing(0)
         layout.addWidget(left)
-        layout.addWidget(self.main, 1)
+        layout.addWidget(self.center, 1)
         layout.addWidget(right)
         self._update()
 

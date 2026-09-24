@@ -13,6 +13,8 @@ from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QT
 
 from mems_sketch.gui import icons
 
+STATUS_HEIGHT = 22  # px: the status bar's items and the tool options in it
+
 
 class ToolStatus(QWidget):
     """Tool name, tool options and snapping toggles, for the status bar."""
@@ -51,9 +53,11 @@ class ToolStatus(QWidget):
         snapping.setObjectName("muted")
         row.addWidget(snapping)
         self._toggles = row
-        # As tall as the tallest option, shown or not: the status bar (and so the
-        # canvas above it) keeps its height when the tool changes.
-        self.setFixedHeight(max(w.sizeHint().height() for w in (self.layer_box, self.width_box)))
+        # Compact inputs, as tall as the status bar's other items; one fixed height
+        # keeps the status bar (and so the canvas above it) still when the tool changes.
+        for box in (self.layer_box, self.width_box, self.angle_box):
+            box.setFixedHeight(STATUS_HEIGHT)
+        self.setFixedHeight(STATUS_HEIGHT)
 
     def add_toggle(self, action: QAction) -> None:
         """A small button for a checkable setting (snapping, gizmos)."""

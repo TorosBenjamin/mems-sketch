@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -848,7 +848,9 @@ class ShapeTree(QTreeWidget):
             return
         enabled = item.checkState(0) == Qt.CheckState.Checked
         if enabled != self.document.node(path).enabled:
-            self.enabled_toggled.emit(path, enabled)
+            # Later: the change rebuilds this tree, which would delete the item Qt is
+            # still setting the check state of (a crash).
+            QTimer.singleShot(0, lambda: self.enabled_toggled.emit(path, enabled))
 
 
 # -- parameters ----------------------------------------------------------------

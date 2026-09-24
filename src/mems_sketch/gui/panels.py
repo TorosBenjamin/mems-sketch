@@ -41,6 +41,11 @@ from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 SLOT_LABELS = {"boolean": ("A", "B")}
+IMPORT_FILTER = (
+    "Layouts (*.gds *.gds2 *.gdsii *.oas *.json *.xml *.mat);;"
+    "GDS and OASIS (*.gds *.gds2 *.gdsii *.oas);;"
+    "Geometry documents (*.json *.xml *.mat);;All files (*)"
+)
 
 
 def describe(shape: Shape) -> str:
@@ -418,7 +423,7 @@ class ComponentsPanel(_Panel):
             if group == "project":
                 self._project_actions(menu)
             elif group == "imported":
-                _menu_action(menu, "Import GDS…", self.import_gds, "import")
+                _menu_action(menu, "Import…", self.import_gds, "import")
             elif group.startswith("library:"):
                 library = group.partition(":")[2]
                 _menu_action(
@@ -435,7 +440,7 @@ class ComponentsPanel(_Panel):
     def _project_actions(self, menu) -> None:
         _menu_action(menu, "New component…", self._new, "add")
         _menu_action(menu, "Add library…", self.add_library, "library")
-        _menu_action(menu, "Import GDS…", self.import_gds, "import")
+        _menu_action(menu, "Import…", self.import_gds, "import")
         if self.document.project.top is not None:
             menu.addSeparator()
             _menu_action(menu, "Make the project a library (no top component)", self._no_top)
@@ -533,13 +538,12 @@ class ComponentsPanel(_Panel):
             self._guard(lambda: self.document.components.add_library(folder))
 
     def import_gds(self, path: str | None = None) -> str | None:
-        """Choose a GDS file and how to import it; returns the new component's name."""
+        """Choose a layout (GDS, OASIS or a geometry document) and how to import it;
+        returns the new component's name."""
         from mems_sketch.gui.import_dialog import ImportDialog
 
         if path is None:
-            path, _ = QFileDialog.getOpenFileName(
-                self, "Import GDS", "", "GDS files (*.gds *.gds2 *.gdsii);;All files (*)"
-            )
+            path, _ = QFileDialog.getOpenFileName(self, "Import", "", IMPORT_FILTER)
         if not path:
             return None
         try:
@@ -557,9 +561,7 @@ class ComponentsPanel(_Panel):
     def reimport(self, name: str, path: str | None = None) -> None:
         """Take a newer version of an imported file."""
         if path is None:
-            path, _ = QFileDialog.getOpenFileName(
-                self, f"Re-import {name}", "", "GDS files (*.gds *.gds2 *.gdsii);;All files (*)"
-            )
+            path, _ = QFileDialog.getOpenFileName(self, f"Re-import {name}", "", IMPORT_FILTER)
         if path:
             self._guard(lambda: self.document.imports.reimport(name, path))
 

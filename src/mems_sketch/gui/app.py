@@ -109,7 +109,18 @@ STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the la
 GUIDE_REACH_PX = 6  # a click this close to a guide line selects it
 HIT_REACH_PX = 4  # a click this close to a shape still selects it (thin fingers, small parts)
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
-OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
+OPEN_FILTER = (
+    "MEMS projects (project.yaml);;One-file projects (*.json *.xml *.mat *.yaml *.yml);;"
+    "Legacy designs (*.mems)"
+)
+EXPORT_NAMES = {  # in File › Export…; others show their format name
+    "gds": "GDSII",
+    "oasis": "OASIS",
+    "dxf": "DXF",
+    "json": "Geometry as JSON",
+    "xml": "Geometry as XML",
+    "mat": "Geometry for MATLAB",
+}
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
 DEFAULT_TOOL_WINDOWS = ("components", "shapes", "properties", "messages")
 CANVAS_MODES = (  # on the canvas
@@ -1415,7 +1426,9 @@ class MainWindow(QMainWindow):
             self._remember_dir(path)
             if self.document.path is None:
                 self.statusBar().showMessage(
-                    "Imported a legacy design: use Save as… to store it as a project folder", 10000
+                    f"Opened {Path(path).name} as a copy: use Save as… to store it as a "
+                    "project folder",
+                    10000,
                 )
 
     def _open(self, path: str) -> None:
@@ -1457,7 +1470,8 @@ class MainWindow(QMainWindow):
     def export_file(self) -> None:
         exporters = available_exporters()
         filters = ";;".join(
-            f"{name.upper()} (*{cls.file_extension})" for name, cls in exporters.items()
+            f"{EXPORT_NAMES.get(name, name.upper())} (*{cls.file_extension})"
+            for name, cls in exporters.items()
         )
         path, chosen = QFileDialog.getSaveFileName(self, "Export", self._last_dir(), filters)
         if not path:

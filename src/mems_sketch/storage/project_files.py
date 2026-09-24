@@ -63,22 +63,14 @@ def save_project(project: Project, folder: str | Path) -> Path:
     if libraries:
         header["libraries"] = libraries
     if project.imports:
-        header["imports"] = {
-            name: {
-                "file": imported.file,
-                "cell": imported.cell,
-                "layers": dict(sorted(imported.layers.items())),
-                **({"description": imported.description} if imported.description else {}),
-            }
-            for name, imported in sorted(project.imports.items())
-        }
+        header["imports"] = imports_data(project)
     _write(folder / PROJECT_FILE, yaml_format.dump(header))
     _save_imports(project, folder / IMPORTS_DIR)
-    _write(folder / PROCESS_FILE, yaml_format.dump(_process_data(project.process)))
+    _write(folder / PROCESS_FILE, yaml_format.dump(process_data(project.process)))
     for name, definition in project.components.items():
         path = components_dir / f"{name}.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = yaml_format.to_data(definition)
+        data = component_data(definition)
         data["name"] = definition.short_name  # the folder gives the owner
         _write(path, yaml_format.dump(data))
     for stale in components_dir.rglob("*.yaml"):
@@ -95,7 +87,43 @@ def _component_path(file: Path, components_dir: Path) -> str:
     return file.relative_to(components_dir).with_suffix("").as_posix()
 
 
-def _process_data(process: Process) -> dict[str, Any]:
+# -- the pieces, as plain data (also for one-file documents: storage/document.py)
+
+
+def component_data(definition: ComponentDef) -> dict[str, Any]:
+    return yaml_format.to_data(definition)
+
+
+def component_from_data(name: str, data: dict[str, Any]) -> ComponentDef:
+    """A component named ``name`` (its path: ``comb/finger``) from its data."""
+    return ComponentDef.model_validate({**data, "name": name})
+
+
+def imports_data(project: Project) -> dict[str, Any]:
+    """The imported cells, without the files' content."""
+    return {
+        name: {
+            "file": imported.file,
+            "cell": imported.cell,
+            "layers": dict(sorted(imported.layers.items())),
+            **({"description": imported.description} if imported.description else {}),
+        }
+        for name, imported in sorted(project.imports.items())
+    }
+
+
+def imported_from_data(name: str, entry: dict[str, Any], data: bytes) -> ImportedCell:
+    return ImportedCell(
+        name=name,
+        file=str(entry["file"]),
+        cell=str(entry["cell"]),
+        layers={str(k): str(v) for k, v in (entry.get("layers") or {}).items()},
+        description=str(entry.get("description", "")),
+        data=data,
+    )
+
+
+def process_data(process: Process) -> dict[str, Any]:
     layers = {}
     for layer in process.layers.values():
         entry: dict[str, Any] = {"gds": [layer.gds_layer, layer.gds_datatype]}
@@ -190,14 +218,7 @@ def _load_imports(entries: dict, imports_dir: Path) -> dict[str, ImportedCell]:
         path = imports_dir / str(entry["file"])
         if not path.is_file():
             raise ProjectFormatError(f"imported file {path} is missing")
-        imports[name] = ImportedCell(
-            name=name,
-            file=str(entry["file"]),
-            cell=str(entry["cell"]),
-            layers={str(k): str(v) for k, v in (entry.get("layers") or {}).items()},
-            description=str(entry.get("description", "")),
-            data=path.read_bytes(),
-        )
+        imports[name] = imported_from_data(name, entry, path.read_bytes())
     return imports
 
 
@@ -212,7 +233,10 @@ def load_library(name: str, folder: str | Path) -> Library:
 def _load_process(path: Path) -> Process:
     if not path.is_file():
         return Process()
-    data = _read(path) or {}
+    return process_from_data(_read(path) or {})
+
+
+def process_from_data(data: dict[str, Any]) -> Process:
     layers = {}
     for name, entry in (data.get("layers") or {}).items():
         gds = entry.get("gds", [0, 0])

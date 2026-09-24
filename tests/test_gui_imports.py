@@ -1,4 +1,4 @@
-"""File › Import GDS…: the dialog, the Imported group, placing and re-importing."""
+"""File › Import…: the dialog, the Imported group, placing and re-importing."""
 
 import pytest
 
@@ -93,3 +93,24 @@ def test_a_file_that_is_not_gds_is_reported(window, tmp_path):
     window.components.error.connect(errors.append)
     assert window.components.import_gds(str(bad)) is None
     assert errors and "GDS" in errors[0]
+
+
+def test_a_geometry_document_imports_like_a_layout(window, tmp_path, monkeypatch):
+    from mems_sketch.storage import formats
+    from mems_sketch.storage.formats import Matrix
+
+    square = Matrix.of([(0, 0), (20, 0), (20, 20), (0, 20)])
+    path = formats.write(
+        tmp_path / "from_script.json",
+        {
+            "format": "mems-sketch-geometry/1",
+            "layers": {"device": {"polygons": [square]}, "trench": {"polygons": [square]}},
+        },
+    )
+    dialog = ImportDialog(window.document, path)
+    assert dialog.cell.currentText() == "TOP"
+    targets = sorted(dialog.choices()["layers"].values())
+    assert targets == ["device", "trench"]  # a new layer keeps the document's name
+    accept(monkeypatch)
+    assert window.components.import_gds(str(path)) == "from_script"
+    assert window.document.project.imports["from_script"].file == "from_script.oas"

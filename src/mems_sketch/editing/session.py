@@ -53,7 +53,7 @@ from mems_sketch.editing.points import PointEdits
 from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
 from mems_sketch.export.base import export
-from mems_sketch.storage import load, save
+from mems_sketch.storage import is_copy, load, save
 from mems_sketch.storage.project_files import PROJECT_FILE, load_library, project_folder
 
 UNDO_LIMIT = 200
@@ -220,7 +220,7 @@ class EditSession:
         """Open a project folder, its project.yaml, or a legacy .mems file."""
         path = Path(path)
         project = load(path)
-        if path.suffix == ".mems":  # legacy import: must be saved as a project folder
+        if is_copy(path):  # a legacy design or a one-file document: saved as a folder
             self._reset(project, None)
             self._set_dirty(True)
         else:
@@ -238,7 +238,14 @@ class EditSession:
         return target
 
     def export(self, path: str | Path) -> Path:
-        return export(self.project, path, geometry=self.results.geometry())
+        component = self.active
+        return export(
+            self.project,
+            path,
+            geometry=self.results.geometry(),
+            component=component,
+            params=self.trials_for(component),
+        )
 
     def _reset(self, project: Project, path: Path | None) -> None:
         self.project = project

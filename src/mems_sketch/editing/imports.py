@@ -1,5 +1,10 @@
-"""Importing GDS files: one cell each, as a read-only component (see
-:mod:`mems_sketch.core.imports`)."""
+"""Importing layouts: one cell of a GDS or OASIS file, or the geometry in a
+geometry document (.json, .xml, .mat: see :mod:`mems_sketch.storage.document`),
+as a read-only component (see :mod:`mems_sketch.core.imports`).
+
+A geometry document is kept as an OASIS file with one cell, ``TOP``, and its
+layers' names and GDS numbers; a newer version of the document re-imports
+like a newer GDS file."""
 
 from __future__ import annotations
 
@@ -7,12 +12,15 @@ import re
 from pathlib import Path
 from typing import Any
 
-from mems_sketch.core.component import is_builtin
+import klayout.db as kdb
+
+from mems_sketch.core.component import DBU_UM, Geometry, is_builtin
 from mems_sketch.core.imports import (
     ImportedCell,
     cells,
     gds_layers,
     layer_key,
+    layer_names,
     parse_layer_key,
     read_layout,
 )
@@ -20,6 +28,9 @@ from mems_sketch.core.process import Layer
 from mems_sketch.core.project import Project
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
+from mems_sketch.storage.document import is_document, read_geometry
+
+DOCUMENT_CELL = "TOP"  # the one cell a geometry document becomes
 
 
 class ImportEdits(Commands):
@@ -41,13 +52,12 @@ class ImportEdits(Commands):
         left out.
         """
         path = Path(path)
-        data = path.read_bytes()
-        read_layout(data)  # a readable file, or a clear error
+        data, file_name = self.read(path)
         cell = cell or cells(data)[0]
         name = name or self.suggested_name(path)
         self._check_name(name)
         mapping = self.default_layers(data, cell) if layers is None else dict(layers)
-        file = self._file_name(path.name, data)
+        file = self._file_name(file_name, data)
 
         def change(project: Project) -> None:
             for gds, layer in mapping.items():
@@ -83,8 +93,7 @@ class ImportEdits(Commands):
     def reimport(self, name: str, path: str | Path) -> None:
         """Take a new version of the file: every placement of ``name`` follows. The
         cell and layer mapping stay; new GDS layers are mapped by their numbers."""
-        data = Path(path).read_bytes()
-        read_layout(data)
+        data, _ = self.read(path)
         imported = self.session.project.imports[name]
         if imported.cell not in cells(data):
             raise ValueError(f"the new file has no cell '{imported.cell}'")
@@ -109,6 +118,39 @@ class ImportEdits(Commands):
 
     # -- helpers -----------------------------------------------------------------
 
+    def read(self, path: str | Path) -> tuple[bytes, str]:
+        """The layout to import from ``path`` (GDS or OASIS bytes) and the name to
+        keep it under: the file itself, or a geometry document as OASIS."""
+        path = Path(path)
+        if is_document(path):
+            geometry, numbers, _ = read_geometry(path)
+            return self._as_oasis(geometry, numbers), f"{path.stem}.oas"
+        data = path.read_bytes()
+        read_layout(data)  # a readable file, or a clear error
+        return data, path.name
+
+    def _as_oasis(self, geometry: Geometry, numbers: dict[str, tuple[int, int] | None]) -> bytes:
+        """The geometry as an OASIS file: layers keep their names, and get their GDS
+        numbers from the document, else from the project layer of that name, else
+        numbers nothing else uses."""
+        taken = {n for n in numbers.values() if n is not None}
+        taken |= {(ly.gds_layer, ly.gds_datatype) for ly in self.project.layers.values()}
+        free = max((number for number, _ in taken), default=0) + 1
+        layout = kdb.Layout()
+        layout.dbu = DBU_UM
+        top = layout.create_cell(DOCUMENT_CELL)
+        for name, region in geometry.layers.items():
+            gds = numbers.get(name)
+            if gds is None and name in self.project.layers:
+                layer = self.project.layers[name]
+                gds = (layer.gds_layer, layer.gds_datatype)
+            if gds is None:
+                gds, free = (free, 0), free + 1
+            top.shapes(layout.layer(kdb.LayerInfo(gds[0], gds[1], name))).insert(region)
+        options = kdb.SaveLayoutOptions()
+        options.format = "OASIS"
+        return bytes(layout.write_bytes(options))
+
     def suggested_name(self, path: str | Path) -> str:
         """A free component name made from the file's name (``Pad frame`` -> ``pad_frame``)."""
         return self._free_name(_identifier(Path(path).stem))
@@ -117,10 +159,13 @@ class ImportEdits(Commands):
         """Each GDS layer of ``cell`` to the project layer with its GDS numbers, or a
         new layer's name (``gds5_0``) when there is none."""
         by_numbers = {(ly.gds_layer, ly.gds_datatype): n for n, ly in self.project.layers.items()}
-        return {
-            layer_key(gds): by_numbers.get(gds, f"gds{gds[0]}_{gds[1]}")
-            for gds in gds_layers(data, cell)
-        }
+        names = layer_names(data)
+        result = {}
+        for gds in gds_layers(data, cell):
+            named = names.get(gds, "")
+            new = named if named.isidentifier() and named not in self.project.layers else ""
+            result[layer_key(gds)] = by_numbers.get(gds) or new or f"gds{gds[0]}_{gds[1]}"
+        return result
 
     @property
     def project(self) -> Project:

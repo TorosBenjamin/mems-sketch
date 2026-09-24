@@ -72,6 +72,43 @@ in a fixed order, and unchanged files are not rewritten. Changing one value
 changes one line. See `examples/resonator` and the library it uses,
 `examples/libraries/mems_std`.
 
+### One-file projects: JSON, XML, MATLAB, YAML
+
+The folder is the project; for other tools, the same content fits in one file
+(`mems-sketch-cli convert my_project design.json`, and back:
+`mems-sketch-cli convert design.json my_project`). A folder converted to a
+file and back gives the same files. The file holds what the folder does:
+`name`, `top`, `libraries`, `process`, `imports` (with the imported files'
+content) and `components`, each as in its YAML file.
+
+| Format | Suffix | Notes |
+|---|---|---|
+| YAML | `.yaml` | The project files' own format, in one file |
+| JSON | `.json` | Bytes (imported files) as `{"base64": ...}` |
+| XML | `.xml` | One element per key (`<entry key="comb/finger">` where a key is not an XML name); values other than text say their `type` |
+| MATLAB | `.mat` | Structs, cell arrays, doubles and `char`; needs `pip install 'mems-sketch[matlab]'` (scipy). Written as version 7 (`load` reads it); `-v7.3` files cannot be read |
+
+**Geometry** goes out in the same formats: **File → Export…** or
+`mems-sketch-cli export my_project comb.mat --set pitch=15` writes what a
+component evaluates to, with its parameter values and points:
+
+```matlab
+s = load('comb.mat');
+s.layers.device.polygons{1}.hull    % N×2 double, µm; holes in .holes
+s.points.tip                        % .x, .y
+s.parameters.pitch
+```
+
+and **File → Import…** takes such a file back (from any script: only
+`format: mems-sketch-geometry/1` and `layers.<name>.polygons` are needed, a
+polygon being an N×2 matrix or `{hull, holes}`) as a read-only component,
+like a GDS file. Layers keep their names; `gds: [1, 0]` sets their numbers.
+
+Every format is a small codec from plain data to bytes and back
+(`storage/formats/`); the documents are built once from the same pieces as
+the folder (`storage/document.py`). A new field in the model therefore
+reaches every format without touching them, and a new format is one codec.
+
 ### Everything is a component
 
 - A component has **parameters** (with defaults, limits and optional integer
@@ -158,8 +195,9 @@ components.
 mems-sketch-cli new     my_project [--library]
 mems-sketch-cli info    my_project
 mems-sketch-cli check   my_project [--component NAME] [--set pitch=15] [--json]
-mems-sketch-cli export  my_project out.gds [--set pitch=15]
-mems-sketch-cli convert old_design.mems my_project     # import the earlier SQLite format
+mems-sketch-cli export  my_project out.gds [--set pitch=15]   # also .oas .dxf .json .xml .mat
+mems-sketch-cli convert my_project design.json               # and back; .xml .mat .yaml
+mems-sketch-cli convert old_design.mems my_project           # the earlier SQLite format
 ```
 
 `check` exits with status 1 when there are rule violations, so it can gate CI.
@@ -399,11 +437,13 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
 - Every edit is a transaction: if it would stop the project from compiling
   (including components that use the edited one), it is rolled back with a
   message. Full undo/redo.
-- **File**: open a project (or a legacy `.mems` file), save to a folder,
-  **Export…** (Ctrl+E) the drawn geometry (GDS, OASIS, DXF), and **Import
-  GDS…** (Ctrl+I), see below.
-- **Importing GDS**: one cell of a GDS file (a foundry pad frame, alignment
-  marks, an earlier design) becomes a read-only component, listed under
+- **File**: open a project (a folder, a one-file project, or a legacy `.mems`
+  file: the last two open as a copy to save as a folder), save to a folder,
+  **Export…** (Ctrl+E) the drawn geometry (GDS, OASIS, DXF, or with its points
+  and parameters as JSON, XML or MATLAB), and **Import…** (Ctrl+I), see below.
+- **Importing**: one cell of a GDS or OASIS file (a foundry pad frame,
+  alignment marks, an earlier design), or a geometry file from a script
+  (JSON, XML, MATLAB: see *One-file projects*), becomes a read-only component, listed under
   **Imported** in Components, with no parameters. It is placed, arrayed,
   aligned (to its `center`, `top_left`, …) and rounded like any component.
   The import dialog picks the cell (its sub-cells are flattened), the
@@ -558,8 +598,8 @@ code. MATLAB can use the same API through its Python interface
 | `core/expressions.py` | Safe arithmetic expressions with dependency resolution |
 | `components/library.py` | Built-ins: `rectangle`, `anchor`, `comb_drive`, `serpentine_spring` |
 | `process/rules.py` | Design-rule checks (minimum width and spacing) |
-| `storage/` | Project folders (canonical YAML) and the legacy SQLite importer |
-| `export/` | Exporter plugins: GDSII, OASIS, DXF |
+| `storage/` | Project folders (canonical YAML), one-file documents (`document.py`) in every format (`formats/`: YAML, JSON, XML, .mat), and the legacy SQLite importer |
+| `export/` | Exporter plugins: GDSII, OASIS, DXF, and geometry as JSON, XML, .mat |
 | `cli.py` | `mems-sketch-cli` |
 | `editing/` | `EditSession`: transactions, undo, files, and the edit commands (components, shapes, moves, points, parameters, process) |
 | `gui/` | PySide6 frontend: the window (actions and menus, toolbar, tool windows, status bar), tabs, canvas and tools, panels, the Process tab, property editor, editor state, settings, theme and icons |

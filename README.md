@@ -356,7 +356,7 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   expression as `process.<name>`, and the layer definitions: GDS layer and
   datatype, undercut, minimum width and spacing. Edits are undoable like any
   other.
-- **Operations** (Operations ▾ or the right-click menu: Union, Subtract,
+- **Operations** (Operations ▾ or the right-click menu: Subtract,
   Intersect, XOR, Offset, Fillet, Layer map, Transform) wrap the selected
   sibling shapes in a new operation node; **Edit →
   Unwrap** reverses it. **Make component** (Ctrl+K) moves the selection into a
@@ -377,6 +377,13 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
 A component's body is a **shape tree** that is re-evaluated whenever a value
 changes. Operations are nodes in the tree, not destructive edits, so a
 subtraction stays editable and parametric.
+
+A shape's result is whatever geometry its recipe gives, on each layer, not one
+polygon: a slot cut right through a beam leaves one shape in two pieces, and a
+plate with release holes is one shape. The shape list says when a cut splits a
+shape ("2 pieces · subtract"; copies made by modifiers are not counted). A
+shape's points (`center`, `left`, …) come from the box around all of its pieces,
+which the canvas shows dashed while the shape is selected.
 
 | Kind | Node | Notes |
 |---|---|---|

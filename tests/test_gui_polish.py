@@ -9,9 +9,9 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QPointF, QSettings, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication, QMessageBox, QToolButton
+from PySide6.QtWidgets import QApplication, QGraphicsPolygonItem, QMessageBox, QToolButton
 
-from mems_sketch.core.shapes import KINDS, RectShape, RefShape, wrap_shapes
+from mems_sketch.core.shapes import KINDS, BooleanShape, RectShape, RefShape, wrap_shapes
 from mems_sketch.gui import icons, theme
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.panels import DETAIL_ROLE
@@ -455,3 +455,26 @@ def test_placed_library_components_do_not_open_up_in_the_shape_list(resonator):
         if resonator.tree.topLevelItem(i).text(0) == "mass"
     )
     assert mass.childCount() == 1  # expands into its shapes when opened
+
+
+def test_a_shape_cut_in_two_says_so_and_shows_its_box(window):
+    # A slot right through a bar: one shape, two pieces. The list says so, and the
+    # dashed box shows where its points (the centre in the gap) come from.
+    bar = RectShape(layer="device", x0=0, y0=0, x1=100, y1=20)
+    slot = RectShape(layer="device", x0=45, y0=-5, x1=55, y1=25)
+    window.document.nodes.add(BooleanShape(name="cut", op="subtract", a=[bar], b=[slot]))
+    item = window.tree.topLevelItem(0)
+    assert item.data(0, DETAIL_ROLE) == "2 pieces · subtract"
+    assert "2 separate pieces" in item.toolTip(0)
+
+    window.tree.select_paths([((0, 0),)])
+    boxes = [i for i in window.canvas._overlay if isinstance(i, QGraphicsPolygonItem)]
+    assert len(boxes) == 1
+    corners = boxes[0].polygon()
+    assert (corners.boundingRect().left(), corners.boundingRect().right()) == (0, 100)
+
+    notch = slot.model_copy(update={"y1": 10})
+    window.document.nodes.replace(
+        ((0, 0),), BooleanShape(name="cut", op="subtract", a=[bar], b=[notch])
+    )
+    assert "pieces" not in window.tree.topLevelItem(0).data(0, DETAIL_ROLE)  # a notch: one piece

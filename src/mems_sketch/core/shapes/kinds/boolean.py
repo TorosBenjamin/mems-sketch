@@ -20,6 +20,7 @@ class BooleanShape(Operation):
     icon: ClassVar[str] = "subtract"
     child_fields: ClassVar[tuple[str, ...]] = ("a", "b")
     wraps: ClassVar[tuple[str, ...]] = ("subtract", "intersect", "xor")
+    cuts: ClassVar[bool] = True
 
     kind: Literal["boolean"] = "boolean"
     op: Literal["subtract", "intersect", "xor"]

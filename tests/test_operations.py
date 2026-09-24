@@ -26,7 +26,6 @@ from mems_sketch import (
 )
 from mems_sketch.core.component import to_dbu
 from mems_sketch.core.shapes import ARC_TOLERANCE_UM
-from mems_sketch.process import etch
 
 
 def area(design: Project, layer: str = "device") -> float:
@@ -41,7 +40,7 @@ def rect(x0, y0, x1, y1, layer="device", **kw) -> RectShape:
 @pytest.fixture
 def design() -> Project:
     d = Project()
-    d.add_layer(Layer("device", 1, undercut=0.5))
+    d.add_layer(Layer("device", 1))
     d.add_layer(Layer("anchor", 2))
     d.add_layer(Layer("metal", 3))
     return d
@@ -212,13 +211,6 @@ def test_boolean_between_placed_instances(design):
     )
     assert area(design) == pytest.approx(40 * 40 - 10 * 40)  # slot spans x 10..20
     assert design.find("slot").x == 15
-
-
-def test_etch_applies_after_booleans(design):
-    design.add(BooleanShape(op="subtract", a=[rect(0, 0, 20, 20)], b=[rect(5, 5, 15, 15)]))
-    etched = etch.etched(design).layers["device"].area() / to_dbu(1) ** 2
-    # Undercut 0.5 on every edge: outer shrinks to 19, the hole grows to 11.
-    assert etched == pytest.approx(19 * 19 - 11 * 11)
 
 
 def test_invalid_operations_do_not_change_the_design(design):

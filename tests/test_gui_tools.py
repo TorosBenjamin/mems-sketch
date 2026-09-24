@@ -240,7 +240,6 @@ def test_editor_state_is_saved_in_the_project_and_restored(window, example, qtbo
     w.open_component("suspension")
     w.tree.select_paths([((0, 1),)])
     w.canvas.set_view_state(7.5, 12, 34)
-    w.set_view_mode("etched")
     w.split_view()
     w.open_component("std.perforated_plate")
     w.document.set_trial("pitch", 30)
@@ -267,7 +266,7 @@ def test_editor_state_is_saved_in_the_project_and_restored(window, example, qtbo
     assert tabs == [["top", "suspension"], ["suspension", "std.perforated_plate"]]
     assert other.area.current.component == "std.perforated_plate"
     left = other.area.find("suspension", other.area.panes[0])
-    assert left.view_mode == "etched" and left.selection == [((0, 1),)]
+    assert left.selection == [((0, 1),)]
     zoom, x, y = left.canvas.view_state()
     assert zoom == pytest.approx(7.5) and (x, y) == pytest.approx((12, 34), abs=1)
     assert other.document.trials == {"std.perforated_plate": {"pitch": 30}}

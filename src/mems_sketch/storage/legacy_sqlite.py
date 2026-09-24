@@ -33,8 +33,11 @@ def load_legacy(path: str | Path) -> Project:
         if version not in READABLE_VERSIONS:
             raise ValueError(f"unsupported design file version {version}")
         project = Project(name=meta.get("name", path.stem))
-        for row in conn.execute("SELECT * FROM layers"):
-            project.add_layer(Layer(*row))
+        rows = conn.execute("SELECT * FROM layers")
+        columns = [c[0] for c in rows.description]
+        known = set(Layer.__dataclass_fields__)
+        for row in rows:  # columns Layer no longer has (e.g. undercut) are left out
+            project.add_layer(Layer(**{k: v for k, v in zip(columns, row) if k in known}))
         if version >= 2:
             for (definition,) in conn.execute(
                 "SELECT definition FROM components ORDER BY position"

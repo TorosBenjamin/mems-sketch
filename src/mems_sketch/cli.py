@@ -3,7 +3,7 @@
     mems-sketch-cli new     my_project
     mems-sketch-cli info    my_project
     mems-sketch-cli check   my_project [--component plate] [--set pitch=15] [--json]
-    mems-sketch-cli export  my_project out.gds [--etch compensated] [--set pitch=15]
+    mems-sketch-cli export  my_project out.gds [--set pitch=15]
     mems-sketch-cli convert old_design.mems my_project
 
 ``check`` exits with status 1 when there are rule violations, so it can gate
@@ -21,10 +21,8 @@ from pathlib import Path
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.project import Project, new_project
 from mems_sketch.export.base import available_exporters, export
-from mems_sketch.process import etch, rules
+from mems_sketch.process import rules
 from mems_sketch.storage import load, save
-
-ETCH_MODES = ("drawn", "etched", "compensated")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -81,7 +79,6 @@ def _geometry_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="NAME=VALUE",
         help="override a parameter (number or expression); may be repeated",
     )
-    parser.add_argument("--etch", choices=ETCH_MODES, default="drawn", help="geometry to use")
 
 
 def _parameters(assignments: list[str]) -> dict[str, float | str]:
@@ -98,12 +95,7 @@ def _parameters(assignments: list[str]) -> dict[str, float | str]:
 
 
 def _geometry(project: Project, args: argparse.Namespace) -> Geometry:
-    drawn = project.render(args.component, _parameters(args.set))
-    if args.etch == "etched":
-        return etch.etched(project, drawn)
-    if args.etch == "compensated":
-        return etch.compensated(project, drawn)
-    return drawn
+    return project.render(args.component, _parameters(args.set))
 
 
 def _new(args: argparse.Namespace) -> int:
@@ -124,7 +116,6 @@ def _info(args: argparse.Namespace) -> int:
         rules_text = ", ".join(
             f"{k} {v:g}"
             for k, v in (
-                ("undercut", layer.undercut),
                 ("min width", layer.min_width),
                 ("min space", layer.min_space),
             )

@@ -239,14 +239,6 @@ def test_the_mode_palette_switches_tools(window):
     assert window.tool.name == "measure" and buttons["Measure"].isChecked()
 
 
-def test_the_caption_changes_the_tabs_view_mode(window):
-    menu = window.canvas.mode_button.menu()
-    etched = next(a for a in menu.actions() if a.text() == "As etched")
-    etched.trigger()
-    assert window.view.view_mode == "etched"
-    assert window.canvas.mode_button.text() == "As etched ▾"
-
-
 def test_the_menu_key_opens_the_menu_at_the_centre(window, menus):
     canvas = window.canvas
     centre = canvas.viewport().rect().center()
@@ -317,11 +309,11 @@ def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window)
     assert headers(window.layers.layers) == ["Layer", "GDS"]
     window.open_process()
     definitions = window.area.process_view.layers.layers
-    assert "Undercut µm" in headers(definitions)
-    column = headers(definitions).index("Undercut µm")
+    assert "Undercut µm" not in headers(definitions)
+    column = headers(definitions).index("Min width µm")
     definitions.item(0, column).setText("0.5")
     first = next(iter(window.document.project.layers.values()))
-    assert first.undercut == 0.5
+    assert first.min_width == 0.5
 
 
 def test_a_tool_window_header_carries_the_panels_own_buttons(window):
@@ -389,3 +381,18 @@ def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, q
     assert image.pixelColor(bottom_left).name() == TOKENS[name]["frame"]  # rounded off
     inside = canvas.mapTo(window, QPoint(12, canvas.height() - 12))
     assert image.pixelColor(inside).name() == canvas.theme["background"]
+
+
+@pytest.mark.parametrize("name", ["light", "dark"])
+def test_the_editor_island_has_all_four_corners_rounded(window, name, qtbot):
+    # The tab row spans the island's top: it must not paint a square over the top corners.
+    from mems_sketch.gui.theme import TOKENS
+
+    window.settings.set("appearance/ui_theme", name)
+    qtbot.wait(20)
+    island = window.tool_windows.editor_island
+    image = window.grab().toImage()
+    right, bottom = island.width() - 1, island.height() - 1
+    for x, y in ((0, 0), (right, 0), (0, bottom), (right, bottom)):
+        pixel = island.mapTo(window, QPoint(x, y))
+        assert image.pixelColor(pixel).name() == TOKENS[name]["frame"], (x, y)

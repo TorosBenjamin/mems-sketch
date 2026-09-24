@@ -20,7 +20,7 @@ from mems_sketch.core.shapes import (
     to_ictrans,
     visible_from,
 )
-from mems_sketch.process import etch, rules
+from mems_sketch.process import rules
 
 if TYPE_CHECKING:
     from mems_sketch.editing.session import EditSession
@@ -65,27 +65,17 @@ class Results:
             )
         return self._inspection[component]
 
-    def geometry(self, mode: str = "drawn", component: str | None = None) -> Geometry:
+    def geometry(self, component: str | None = None) -> Geometry:
         component = component or self.session.active
-        drawn = self.session.compiled().render(component, self.session.trials_for(component))
-        if mode == "etched":
-            return etch.etched(self.session.project, drawn)
-        if mode == "compensated":
-            return etch.compensated(self.session.project, drawn)
-        return drawn
+        return self.session.compiled().render(component, self.session.trials_for(component))
 
-    def preview(self, path: NodePath, node: Shape, mode: str = "drawn") -> Geometry:
+    def preview(self, path: NodePath, node: Shape) -> Geometry:
         """The active component as it would be with ``node`` at ``path``, without
         changing anything (e.g. while a value is dragged). Raises if it does not build."""
-        trial, component = self._trial(path, node), self.session.active
-        drawn = self.session.compiler.session(trial).render(
+        component = self.session.active
+        return self.session.compiler.session(self._trial(path, node)).render(
             component, self.session.trials_for(component)
         )
-        if mode == "etched":
-            return etch.etched(trial, drawn)
-        if mode == "compensated":
-            return etch.compensated(trial, drawn)
-        return drawn
 
     def inspect_with(self, path: NodePath, node: Shape) -> dict[NodePath, NodeRecord]:
         """Every node of the active component as it would be with ``node`` at ``path``."""

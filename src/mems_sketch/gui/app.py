@@ -63,7 +63,7 @@ from mems_sketch.gui.statusbar import ToolStatus
 from mems_sketch.gui.toolbar import build_toolbar
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
 from mems_sketch.gui.toolwindows import ToolWindows
-from mems_sketch.gui.views import VIEW_MODES, ComponentView, EditorArea
+from mems_sketch.gui.views import ComponentView, EditorArea
 
 PANEL_HELP = {  # the "?" in each tool window's header
     "components": "Every component, each listed once: the project's, each library's and "
@@ -78,7 +78,7 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "Tick a shape to switch it off; a placed component opens to show what it is made "
     "of (read-only).",
     "layers": "Tick a layer to show it; click a layer to draw on it. What a layer is "
-    "(its GDS number, undercut and rules) is part of the process: View › Process.",
+    "(its GDS number and rules) is part of the process: View › Process.",
     "messages": "Why the component does not build, and the rule checks: shapes "
     "narrower or closer together than their layer allows. Click a message to see "
     "where it is.",
@@ -234,10 +234,6 @@ class MainWindow(QMainWindow):
     def selection(self, paths: list[NodePath]) -> None:
         self.view.selection = paths
 
-    @property
-    def view_mode(self) -> str:
-        return self.view.view_mode
-
     def open_component(self, name: str) -> None:
         """Open a component in a tab (or go to its tab), like opening a file."""
         if not self.document.exists(name):
@@ -269,7 +265,6 @@ class MainWindow(QMainWindow):
             canvas.key_pressed.connect(lambda key: self.tool.key(key))
             canvas.view_changed.connect(self.state_changed)
             canvas.view_changed.connect(self._show_zoom)
-            canvas.mode_chosen.connect(lambda mode, v=view: self.set_view_mode(mode, v))
             canvas.context_requested.connect(
                 lambda x, y, at, v=view: self._context_menu(v, x, y, at)
             )
@@ -505,7 +500,6 @@ class MainWindow(QMainWindow):
                 tabs.append(
                     {
                         "component": view.component,
-                        "mode": view.view_mode,
                         "zoom": zoom,
                         "center": [x, y],
                         "selection": [[list(step) for step in path] for path in view.selection],
@@ -598,9 +592,6 @@ class MainWindow(QMainWindow):
                         self.area.open_process(target)
                         continue
                     view = self.area.open(tab["component"], target)
-                    view.view_mode = tab.get("mode", "drawn")
-                    if view.view_mode not in VIEW_MODES:
-                        view.view_mode = "drawn"
                     view.selection = [_path(p) for p in tab.get("selection", [])]
                     view._fitted = True
                     self._render(view)
@@ -938,8 +929,7 @@ class MainWindow(QMainWindow):
         self._update_title()
 
     def _caption(self, view: ComponentView) -> None:
-        """The canvas caption: component, view mode and whether it can be edited."""
-        view.canvas.set_view_modes(VIEW_MODES, view.view_mode)
+        """The canvas caption: the component and whether it can be edited."""
         details = []
         if view.read_only:
             details.append("read-only")
@@ -1100,7 +1090,7 @@ class MainWindow(QMainWindow):
         if path is None:
             return
         try:
-            geometry = self.document.results.preview(path, node, view.view_mode)
+            geometry = self.document.results.preview(path, node)
         except Exception:  # noqa: BLE001 - not valid: keep the last picture
             return
         view.canvas.show_geometry(geometry, self.layers.colors, self.layers.visible)
@@ -1196,19 +1186,6 @@ class MainWindow(QMainWindow):
         size = max(x1 - x0, y1 - y0, 5.0)
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         self.canvas.zoom_to(QRectF(cx - size * 2, cy - size * 2, size * 4, size * 4))
-
-    def set_view_mode(self, mode: str, view: ComponentView | None = None) -> None:
-        """Show a tab as drawn, as etched or etch compensated (see ``VIEW_MODES``)."""
-        view = view or self.view
-        if mode not in VIEW_MODES or mode == view.view_mode:
-            return
-        view.view_mode = mode
-        view.refresh(self.layers.colors, self.layers.visible)
-        self._caption(view)
-        if view is self.area.current:
-            self._show_messages()
-            self._update_overlay()
-        self.state_changed()
 
     def _context_menu(self, view: ComponentView, x: float, y: float, at: QPoint) -> None:
         """The editor's right-click menu; a shape under the cursor is selected first."""
@@ -1442,20 +1419,18 @@ class MainWindow(QMainWindow):
         self._remember_dir(str(target / "project.yaml"))
         return self._run(lambda: self.document.save(target))[0]
 
-    def export_file(self, mode: str) -> None:
+    def export_file(self) -> None:
         exporters = available_exporters()
         filters = ";;".join(
             f"{name.upper()} (*{cls.file_extension})" for name, cls in exporters.items()
         )
-        path, chosen = QFileDialog.getSaveFileName(
-            self, f"Export {VIEW_MODES[mode].lower()} geometry", self._last_dir(), filters
-        )
+        path, chosen = QFileDialog.getSaveFileName(self, "Export", self._last_dir(), filters)
         if not path:
             return
         extension = chosen[chosen.find("*") + 1 : chosen.find(")")]
         if not Path(path).suffix:
             path += extension
-        if self._run(lambda: self.document.export(path, mode))[0]:
+        if self._run(lambda: self.document.export(path))[0]:
             self._remember_dir(path)
             self.statusBar().showMessage(f"Exported {path}", 5000)
 

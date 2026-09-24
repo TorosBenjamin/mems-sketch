@@ -9,7 +9,7 @@ from mems_sketch.storage.yaml_format import to_data
 
 
 def area(doc: EditSession) -> float:
-    region = doc.results.geometry("drawn").layers.get("device")
+    region = doc.results.geometry().layers.get("device")
     return 0.0 if region is None else region.area() / 1e6
 
 

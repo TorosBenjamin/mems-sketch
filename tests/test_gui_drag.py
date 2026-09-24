@@ -141,6 +141,9 @@ def test_read_only_tabs_cannot_be_dragged(window, tmp_path):
     window.open_project(str(tmp_path / "resonator"))
     window.open_component("std.perforated_plate")
     window.canvas.fit()
+    drag(window, (5, 5), (30, 5))  # its shapes are hidden: nothing to take hold of
+    assert window.selection == [] and not window.document.can_undo()
+    window.settings.set("editor/show_implementation", True)
     drag(window, (5, 5), (30, 5))
     assert "read-only" in window.statusBar().currentMessage()
     assert not window.document.can_undo()

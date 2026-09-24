@@ -138,8 +138,6 @@ ICONS = {
     "settings": _gear(),
     "search": '<circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4l3.8 3.8"/>',
     # -- operations -------------------------------------------------------
-    "union": f'<path d="M{_TOP} A4 4 0 1 0 {_BOT} A4 4 0 1 0 {_TOP}z" fill="{{blue}}" '
-    'fill-opacity=".3" stroke="{blue}"/>',
     "subtract": f'<path d="M{_TOP} A4 4 0 1 0 {_BOT} A4 4 0 0 1 {_TOP}z" fill="{{blue}}" '
     'fill-opacity=".3" stroke="{blue}"/>' + _B.replace("/>", ' stroke-dasharray="1.5 1.2"/>'),
     "intersect": f'<path d="M{_TOP} A4 4 0 0 1 {_BOT} A4 4 0 0 1 {_TOP}z" fill="{{blue}}" '

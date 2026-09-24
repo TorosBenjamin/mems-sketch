@@ -37,8 +37,6 @@ def boolean_op(op: str, a: Geometry, b: Geometry) -> Geometry:
         ra = a.layers.get(layer, kdb.Region())
         rb = b.layers.get(layer, kdb.Region())
         match op:
-            case "union":
-                out = ra | rb
             case "subtract":
                 out = ra - rb
             case "intersect":

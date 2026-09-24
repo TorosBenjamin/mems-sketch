@@ -43,7 +43,11 @@ def build_toolbar(window: MainWindow) -> QToolBar:
     _menu_button(bar, actions.add, "rect", "Add a primitive", "Add")
     _menu_button(bar, actions.place, "place", "Place a component", "Place")
     _menu_button(
-        bar, actions.operations_menu, "union", "Apply an operation to the selection", "Operations"
+        bar,
+        actions.operations_menu,
+        "subtract",
+        "Apply an operation to the selection",
+        "Operations",
     )
 
     spacer = QWidget()

@@ -131,7 +131,7 @@ def test_add_starts_the_drawing_tool_and_adds_an_arc(window):
 def test_booleans_are_under_combine(window):
     operations = window.actions_.operations_menu
     combine = next(a.menu() for a in operations.actions() if a.text() == "Combine")
-    assert [a.text() for a in combine.actions()] == ["Union", "Subtract", "Intersect", "XOR"]
+    assert [a.text() for a in combine.actions()] == ["Subtract", "Intersect", "XOR"]
     assert window.make_action in operations.actions()
 
 
@@ -200,7 +200,7 @@ def test_right_click_selects_the_shape_under_the_cursor_and_offers_what_applies(
     assert window.selection == [((0, 0),)]
     entries = menus[0]
     assert entries["Offset"].isEnabled() and entries["Duplicate"].isEnabled()
-    assert not entries["Union"].isEnabled()  # combining needs two shapes
+    assert not entries["Subtract"].isEnabled()  # combining needs two shapes
     assert not entries["Unpack component"].isEnabled()  # not a component reference
 
 

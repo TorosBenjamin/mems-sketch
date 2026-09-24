@@ -262,6 +262,20 @@ class Project:
         if self.top in doomed:
             self.top = None
 
+    def rename_point(self, component: str, old: str, new: str) -> None:
+        """Rename a declared point of a local component, and update the components
+        that place it: alignments to it (and the placing node's own ``point``),
+        expressions using its coordinates and their points measured from it."""
+        self.components[component].rename_point(old, new)
+        for user in self.users(component):
+            placing = [shape for shape, target in self.references_of(user) if target == component]
+            self.components[user].follow_point_rename(
+                {shape.name for shape in placing if shape.name}, old, new
+            )
+            for shape, target in self.references_of(user):  # the rewritten copies
+                if target == component and shape.align and shape.align.point == old:
+                    shape.align.point = new
+
     def rename_component(self, old: str, new: str) -> None:
         """Rename a local component (``new`` is its new short name) and update
         every reference to it."""

@@ -9,7 +9,9 @@ import klayout.db as kdb
 
 from mems_sketch.core.component import DBU_UM, Geometry
 from mems_sketch.core.shapes import (
+    BBOX_POINTS,
     NodePath,
+    NodePoints,
     NodeRecord,
     Shape,
     container_of,
@@ -187,6 +189,30 @@ class Results:
             result += [
                 (f"{name}.{p}", other, x, y) for p, x, y in self.node_points(other, component)
             ]
+        return result
+
+    def default_points(self, component: str | None = None) -> dict[str, tuple[float, float]]:
+        """The points every component has (``center``, ``left``, …): of its whole
+        drawn geometry. Empty when it draws nothing."""
+        geometry = self.geometry(component=component)
+        points = NodePoints(component or self.session.active, geometry, {})
+        try:
+            return {name: points.point(name) for name in BBOX_POINTS}
+        except ValueError:  # nothing drawn
+            return {}
+
+    def shape_points(
+        self, component: str | None = None
+    ) -> dict[str, dict[str, tuple[float, float]]]:
+        """The points of each named top-level shape (what a declared point can be
+        measured from), by shape name, in the component's frame."""
+        component = component or self.session.active
+        shapes = self.session.definition_of(component).shapes
+        result = {}
+        for path in sorted(self.inspection(component)):
+            name = node_at(shapes, path).name
+            if len(path) == 1 and name:
+                result[name] = {p: (x, y) for p, x, y in self.node_points(path, component)}
         return result
 
     def declared_points(self, component: str | None = None) -> dict[str, tuple[float, float]]:

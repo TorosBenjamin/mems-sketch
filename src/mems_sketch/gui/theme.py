@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QApplication
 from mems_sketch.gui import icons
 
 HEADER_HEIGHT = 32  # tool window headers and tab bars share this height, so edges line up
+ISLAND_RADIUS = 10  # px: the corners of the islands (and of the canvas in the editor's)
 UI_THEMES = {"system": "Same as the system", "light": "Light", "dark": "Dark"}
 
 TOKENS = {
@@ -77,7 +78,7 @@ QMainWindow::separator {{ background: {frame}; width: 5px; height: 5px; }}
 QWidget#tool-windows, QWidget#tool-window-stripe-left, QWidget#tool-window-stripe-right {{
     background: {frame};
 }}
-QWidget#island {{ background: {island}; border-radius: 10px; }}
+QWidget#island {{ background: {island}; border-radius: {radius}px; }}
 
 QToolBar {{ background: {frame}; border: none; spacing: 2px; padding: 3px 6px; }}
 QToolBar::separator {{ background: {border_strong}; width: 1px; height: 1px; margin: 4px 5px; }}
@@ -111,6 +112,7 @@ QLabel#dock-title-label {{ font-weight: 600; }}
 QDockWidget > QWidget {{ background: {window}; }}
 
 QTabWidget::pane {{ border: none; }}
+QTabWidget::tab-bar {{ left: 6px; }}
 QTabBar {{ background: {island}; qproperty-drawBase: 0; }}
 QTabBar::tab {{
     background: transparent; color: {text}; height: 22px; padding: 2px 10px; margin: 3px 2px;
@@ -286,7 +288,7 @@ def apply(app: QApplication, name: str) -> str:
     app.setProperty("mems_sketch_theme", theme)
     app.setStyle("Fusion")
     app.setPalette(palette(theme))
-    app.setStyleSheet(STYLE.format(**TOKENS[theme], check=_check_mark()))
+    app.setStyleSheet(STYLE.format(**TOKENS[theme], check=_check_mark(), radius=ISLAND_RADIUS))
     return theme
 
 

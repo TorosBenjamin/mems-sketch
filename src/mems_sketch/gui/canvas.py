@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 
 import klayout.db as kdb
-from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, QSizeF, Qt, Signal
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.component import DBU_UM, Geometry
 from mems_sketch.gui import icons
+from mems_sketch.gui.theme import ISLAND_RADIUS
 
 PALETTE = ["#4c78a8", "#f58518", "#54a24b", "#e45756", "#72b7b2", "#b279a2", "#eeca3b", "#9d755d"]
 POINT_SIZES = {  # marker size in pixels
@@ -211,6 +212,7 @@ class LayoutCanvas(QGraphicsView):
         self.setAcceptDrops(True)
         self._has_content = False
         self._wheel_anchor: QPointF | None = None  # scene point held under the cursor
+        self.corner_color: QColor | None = None  # what lies around the editor island
         # A large scene rect lets the user pan freely beyond the geometry.
         self.scene().setSceneRect(WORLD)
 
@@ -885,7 +887,27 @@ class LayoutCanvas(QGraphicsView):
             self._draw_scale_bar(painter, 70 if self.options["show_axis_gizmo"] else 16, height)
         if self._gizmo is not None:
             self._draw_gizmo(painter)
+        self._round_corners(painter)
         painter.restore()
+
+    def _round_corners(self, painter: QPainter) -> None:
+        """Paint over the parts of the view outside its island's rounded outline, in
+        the colour around the island, so the canvas has the island's round corners."""
+        island = self.parentWidget()
+        while island is not None and island.objectName() != "island":
+            island = island.parentWidget()
+        if island is None or self.corner_color is None:
+            return
+        viewport = self.viewport()
+        outline = QPainterPath()
+        outline.addRoundedRect(
+            QRectF(viewport.mapFrom(island, QPoint(0, 0)), QSizeF(island.size())),
+            ISLAND_RADIUS,
+            ISLAND_RADIUS,
+        )
+        view = QPainterPath()
+        view.addRect(QRectF(viewport.rect()))
+        painter.fillPath(view.subtracted(outline), self.corner_color)
 
     def _draw_axes(self, painter: QPainter, x: float, y: float) -> None:
         """The axis indicator: x to the right in red, y up in green."""

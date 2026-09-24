@@ -39,17 +39,19 @@ ISLAND_INSET = 4  # px between an island's edge and its content: the corners sta
 DEFAULT_SIZES = {"main": [270, 900, 320], "left": [300, 380], "center": [700, 140]}
 
 
-def island(content: QWidget | None = None) -> QFrame:
-    """A rounded panel on the frame, holding ``content`` (if given) inset from its edges."""
+def island(content: QWidget, inset: int = ISLAND_INSET) -> QFrame:
+    """A rounded panel on the frame, holding ``content`` ``inset`` px from its edges.
+
+    Content that fills the island to its edges (``inset=0``, the editor) must
+    round its own corners off, as the canvas does.
+    """
     frame = QFrame()
     frame.setObjectName("island")
     frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     layout = QVBoxLayout(frame)
-    layout.setContentsMargins(ISLAND_INSET, 0, ISLAND_INSET, ISLAND_INSET)
+    layout.setContentsMargins(inset, inset, inset, inset)
     layout.setSpacing(0)
-    if content is not None:
-        layout.setContentsMargins(ISLAND_INSET, ISLAND_INSET, ISLAND_INSET, ISLAND_INSET)
-        layout.addWidget(content)
+    layout.addWidget(content)
     return frame
 
 
@@ -111,7 +113,7 @@ class ToolWindows(QWidget):
         self.left_side = QSplitter(Qt.Orientation.Vertical)
         self.left_side.addWidget(self._hosts["left-top"])
         self.left_side.addWidget(self._hosts["left-bottom"])
-        self.editor_island = island(editor)
+        self.editor_island = island(editor, inset=0)  # the canvas reaches its edges
         self.main = QSplitter(Qt.Orientation.Horizontal)  # the row: left, editor, right
         self.main.addWidget(self.left_side)
         self.main.addWidget(self.editor_island)

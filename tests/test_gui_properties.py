@@ -197,7 +197,7 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
 
 # -- dragging values ------------------------------------------------------------------
 
-from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
@@ -293,3 +293,35 @@ def test_dragging_a_default_in_the_parameters_panel(window):
     at(QEvent.Type.MouseButtonRelease, 30, Qt.MouseButton.NoButton)
     assert window.document.active_definition.parameter("pitch").default != 13
     assert "pitch" not in window.document.trials.get("top", {})
+
+
+def test_dragging_with_a_real_mouse(window, qtbot):
+    # Through the window, as a user's mouse: Qt focuses the field on the press,
+    # before the field sees it, which must not turn the drag into a click.
+    edit = fields(window)["From x"]
+    y = edit.height() // 2
+    qtbot.mousePress(edit, Qt.MouseButton.LeftButton, pos=QPoint(20, y))
+    for x in range(24, 80, 6):
+        qtbot.mouseMove(edit, QPoint(x, y))
+    qtbot.mouseRelease(edit, Qt.MouseButton.LeftButton, pos=QPoint(80, y))
+    assert window.document.shapes[0].x0 > 0
+    assert not edit.hasFocus()
+
+
+def test_a_real_click_edits_the_text(window, qtbot):
+    edit = fields(window)["From x"]
+    qtbot.mouseClick(edit, Qt.MouseButton.LeftButton, pos=QPoint(20, edit.height() // 2))
+    assert edit.hasFocus() and edit.selectedText() == "0"
+
+
+def test_dragging_a_default_with_a_real_mouse(window, qtbot):
+    panel = window.parameters
+    panel.refresh()
+    table = panel.table
+    rect = table.visualItemRect(table.item(0, 1))  # pitch's default: 13
+    viewport, y = table.viewport(), rect.center().y()
+    qtbot.mousePress(viewport, Qt.MouseButton.LeftButton, pos=QPoint(rect.left() + 5, y))
+    for x in range(10, 40, 5):
+        qtbot.mouseMove(viewport, QPoint(rect.left() + x, y))
+    qtbot.mouseRelease(viewport, Qt.MouseButton.LeftButton, pos=QPoint(rect.left() + 40, y))
+    assert window.document.active_definition.parameter("pitch").default != 13

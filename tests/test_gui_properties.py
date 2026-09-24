@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QInputDialog, QLabel, QMessageBox
+from PySide6.QtWidgets import QComboBox, QInputDialog, QLabel, QMessageBox, QToolButton
 
 from mems_sketch import ArrayModifier, RectShape
 from mems_sketch.gui.app import MainWindow
@@ -293,3 +293,31 @@ def test_dragging_a_default_in_the_parameters_panel(window):
     at(QEvent.Type.MouseButtonRelease, 30, Qt.MouseButton.NoButton)
     assert window.document.active_definition.parameter("pitch").default != 13
     assert "pitch" not in window.document.trials.get("top", {})
+
+
+def test_apply_sits_beside_add_modifier_and_only_when_needed(window):
+    assert window.properties.apply_button is None  # a rectangle without modifiers
+    bar = window.document.shapes[0]
+    window.document.nodes.replace(
+        ((0, 0),), bar.model_copy(update={"modifiers": [ArrayModifier()]})
+    )
+    window.tree.select_paths([((0, 0),)])
+    apply = window.properties.apply_button
+    add = next(b for b in window.properties.findChildren(QToolButton) if b.text() == "Add modifier")
+    assert apply is not None and apply.parentWidget() is add.parentWidget()
+    assert abs(apply.geometry().center().y() - add.geometry().center().y()) <= 2
+
+
+def test_choosing_from_a_list_applies_at_once(window):
+    layer = next(
+        c for c in window.properties.findChildren(QComboBox) if c.currentText() == "device"
+    )
+    layer.addItem("oxide")
+    layer.setCurrentText("oxide")
+    layer.activated.emit(layer.currentIndex())
+    assert window.document.shapes[0].layer == "oxide"
+
+
+def test_the_empty_panel_has_the_islands_colour(window):
+    window.tree.select_paths([])
+    assert window.properties.widget().objectName() == "properties-body"

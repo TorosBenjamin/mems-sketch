@@ -113,6 +113,7 @@ ICONS = {
         '<path d="M1.9 10.6 10.6 1.9l3.5 3.5-8.7 8.7z"/>'
         '<path d="M4.4 8.1l1.4 1.4M6.4 6.1l1 1M8.4 4.1l1.4 1.4"/>'
     ),
+    "angle": '<path d="M13.8 13.2H2.2l8.6-10.4"/><path d="M7.6 13.2a5.4 5.4 0 0 0-1.9-4.1"/>',
     "rect": '<rect x="2.4" y="3.6" width="11.2" height="8.8" rx=".6" fill="{blue}" '
     'fill-opacity=".25" stroke="{blue}"/>',
     "circle": '<circle cx="8" cy="8" r="5.6" fill="{blue}" fill-opacity=".25" stroke="{blue}"/>',

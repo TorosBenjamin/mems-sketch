@@ -1,5 +1,5 @@
 """The layout canvas: layers as filled outlines, selection highlight, rule markers,
-alignment points, rulers and the viewport overlays (axis indicator, scale bar,
+alignment points, rulers and the viewport overlays (scale bar,
 the caption with the view mode, the canvas modes, zoom buttons and the
 move/rotate gizmos).
 
@@ -117,7 +117,6 @@ DEFAULT_OPTIONS = {
     "show_grid": True,
     "grid_spacing_px": 12,
     "show_axes": True,
-    "show_axis_gizmo": True,
     "show_scale_bar": True,
     "gizmo_size_px": 70,
     "zoom_step": 1.25,
@@ -212,6 +211,7 @@ class LayoutCanvas(QGraphicsView):
         self._left_down = False
         self._drag_items: list = []
         self._ruler_items: list = []
+        self._rulers: list[tuple[float, float, float, float]] = []  # distances, for ticks
         self._box_item: QGraphicsRectItem | None = None
         self._sketch_item: QGraphicsPathItem | None = None
         self._hover_item: QGraphicsPathItem | None = None
@@ -673,25 +673,59 @@ class LayoutCanvas(QGraphicsView):
             self.scene().addItem(label)
             self._guide_items += [line, label]
 
-    def show_rulers(self, rulers: list[tuple[float, float, float, float]]) -> None:
-        """Measurement lines with their length, dx and dy."""
+    def show_rulers(self, rulers: list[tuple[float, ...]]) -> None:
+        """Measurements: a distance ``(x0, y0, x1, y1)`` is a line with its length, dx
+        and dy, and a tick every grid step; an angle ``(vx, vy, ax, ay, bx, by)`` is
+        two arms from the vertex with an arc and the angle between them."""
         for item in self._ruler_items:
             self.scene().removeItem(item)
         self._ruler_items.clear()
+        self._rulers = [r for r in rulers if len(r) == 4]  # ticked in drawForeground
         color = QColor(self.theme["ruler"])
-        for x0, y0, x1, y1 in rulers:
-            pen = QPen(color, 1.5)
-            pen.setCosmetic(True)
+        pen = QPen(color, 1.5)
+        pen.setCosmetic(True)
+        for ruler in rulers:
+            if len(ruler) == 6:
+                self._show_angle(ruler, pen)
+                continue
+            x0, y0, x1, y1 = ruler
             line = self.scene().addLine(x0, y0, x1, y1, pen)
             line.setZValue(1150)
             length = math.hypot(x1 - x0, y1 - y0)
-            text = QGraphicsSimpleTextItem(f"{length:.3f} µm  (dx {x1 - x0:.3f}, dy {y1 - y0:.3f})")
-            text.setBrush(color)
-            text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-            text.setPos((x0 + x1) / 2, (y0 + y1) / 2)
-            text.setZValue(1150)
-            self.scene().addItem(text)
-            self._ruler_items += [line, text]
+            text = f"{length:.3f} µm  (dx {x1 - x0:.3f}, dy {y1 - y0:.3f})"
+            self._ruler_items += [line, self._ruler_text(text, (x0 + x1) / 2, (y0 + y1) / 2)]
+        self.viewport().update()
+
+    def _show_angle(self, ruler: tuple[float, ...], pen: QPen) -> None:
+        vx, vy, ax, ay, bx, by = ruler
+        path = QPainterPath(QPointF(ax, ay))
+        path.lineTo(vx, vy)
+        path.lineTo(bx, by)
+        start, sweep = angle_between((vx, vy), (ax, ay), (bx, by))
+        radius = 0.35 * min(math.hypot(ax - vx, ay - vy), math.hypot(bx - vx, by - vy))
+        if radius > 0:
+            # Qt's angles run clockwise on screen; the view flips y, so they run
+            # counter-clockwise in µm like ours.
+            box = QRectF(vx - radius, vy - radius, 2 * radius, 2 * radius)
+            path.arcMoveTo(box, -start)
+            path.arcTo(box, -start, -sweep)
+        item = self.scene().addPath(path, pen)
+        item.setZValue(1150)
+        middle = math.radians(start + sweep / 2)
+        at = radius * 1.15 if radius > 0 else 0
+        text = self._ruler_text(
+            f"{sweep:.2f}°", vx + at * math.cos(middle), vy + at * math.sin(middle)
+        )
+        self._ruler_items += [item, text]
+
+    def _ruler_text(self, text: str, x: float, y: float) -> QGraphicsSimpleTextItem:
+        label = QGraphicsSimpleTextItem(text)
+        label.setBrush(QColor(self.theme["ruler"]))
+        label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        label.setPos(x, y)
+        label.setZValue(1150)
+        self.scene().addItem(label)
+        return label
 
     def view_state(self) -> tuple[float, float, float]:
         """Zoom (pixels per µm) and the centre of the view, to restore it later."""
@@ -977,10 +1011,9 @@ class LayoutCanvas(QGraphicsView):
         painter.resetTransform()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         height = self.viewport().height()
-        if self.options["show_axis_gizmo"]:
-            self._draw_axes(painter, 30, height - 30)
+        self._draw_ruler_ticks(painter)
         if self.options["show_scale_bar"]:
-            self._draw_scale_bar(painter, 70 if self.options["show_axis_gizmo"] else 16, height)
+            self._draw_scale_bar(painter, 16, height)
         if self._gizmo is not None:
             self._draw_gizmo(painter)
         self._round_corners(painter)
@@ -1005,34 +1038,40 @@ class LayoutCanvas(QGraphicsView):
         view.addRect(QRectF(viewport.rect()))
         painter.fillPath(view.subtracted(outline), self.corner_color)
 
-    def _draw_axes(self, painter: QPainter, x: float, y: float) -> None:
-        """The axis indicator: x to the right in red, y up in green."""
-        length = 22
-        font = QFont(self.font())
-        font.setBold(True)
-        font.setPixelSize(10)
-        painter.setFont(font)
-        for key, (dx, dy), label in (("axis_x", (1, 0), "x"), ("axis_y", (0, -1), "y")):
-            color = QColor(self.theme[key])
-            painter.setPen(_round_pen(color, 2))
-            tip = QPointF(x + dx * length, y + dy * length)
-            painter.drawLine(QPointF(x, y), tip)
-            painter.setBrush(color)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(tip + QPointF(dx * 6, dy * 6), 6.5, 6.5)
-            painter.setPen(QColor("#ffffff"))
-            painter.drawText(
-                QRectF(tip.x() + dx * 6 - 6.5, tip.y() + dy * 6 - 6.5, 13, 13),
-                Qt.AlignmentFlag.AlignCenter,
-                label,
-            )
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(self.theme["overlay_muted"]))
-        painter.drawEllipse(QPointF(x, y), 2.5, 2.5)
+    def _draw_ruler_ticks(self, painter: QPainter) -> None:
+        """A tick across each distance ruler every grid step (longer every fifth)."""
+        step = self.grid_step()
+        pen = QPen(QColor(self.theme["ruler"]), 1)
+        painter.setPen(pen)
+        for x0, y0, x1, y1 in self._rulers:
+            length = math.hypot(x1 - x0, y1 - y0)
+            if length == 0 or length / step > 2000:
+                continue
+            start = QPointF(self.mapFromScene(QPointF(x0, y0)))
+            end = QPointF(self.mapFromScene(QPointF(x1, y1)))
+            along = end - start
+            pixels = math.hypot(along.x(), along.y())
+            if pixels == 0:
+                continue
+            across = QPointF(-along.y() / pixels, along.x() / pixels)
+            ticks = []
+            for k in range(int(length / step + 1e-9) + 1):
+                at = start + along * (k * step / length)
+                size = 6 if k % 5 == 0 else 3.5
+                ticks.append(QLineF(at - across * size, at + across * size))
+            painter.drawLines(ticks)
+
+    def scale_bar_length(self) -> float:
+        """The scale bar's length in µm: a whole number of grid steps (1, 2, 5 or 10 of
+        them), about 100 pixels long, so it can be read against the grid."""
+        step = self.grid_step()
+        cell = step * self.pixels_per_um()
+        cells = max((n for n in (1, 2, 5, 10) if n * cell <= 120), default=1)
+        return cells * step
 
     def _draw_scale_bar(self, painter: QPainter, x: float, height: float) -> None:
         pixels = self.pixels_per_um()
-        length = _nice(90 / pixels)
+        length = self.scale_bar_length()
         width = length * pixels
         y = height - 18
         color = QColor(self.theme["overlay"])
@@ -1040,6 +1079,11 @@ class LayoutCanvas(QGraphicsView):
         painter.drawLine(QPointF(x, y), QPointF(x + width, y))
         painter.drawLine(QPointF(x, y - 4), QPointF(x, y + 4))
         painter.drawLine(QPointF(x + width, y - 4), QPointF(x + width, y + 4))
+        cell = self.grid_step() * pixels  # a tick at every grid line it spans
+        painter.setPen(QPen(color, 1))
+        painter.drawLines(
+            [QLineF(x + k * cell, y - 2.5, x + k * cell, y) for k in range(1, round(width / cell))]
+        )
         font = QFont(self.font())
         font.setPixelSize(11)
         painter.setFont(font)
@@ -1157,12 +1201,6 @@ def _round_pen(color: QColor, width: float) -> QPen:
     return pen
 
 
-def _nice(value: float) -> float:
-    """The largest 1-2-5 number not above ``value``."""
-    exponent = math.floor(math.log10(value))
-    return max(m * 10**exponent for m in (1, 2, 5) if m * 10**exponent <= value)
-
-
 def _length_text(um: float) -> str:
     if um >= 1000:
         return f"{um / 1000:g} mm"
@@ -1187,3 +1225,16 @@ class _PointMarker(QGraphicsEllipseItem):
         half = self._size / 2
         painter.drawLine(QPointF(-half, 0), QPointF(half, 0))
         painter.drawLine(QPointF(0, -half), QPointF(0, half))
+
+
+def angle_between(
+    vertex: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
+) -> tuple[float, float]:
+    """The angle at ``vertex`` from arm ``a`` to arm ``b``, the short way round:
+    ``(direction of the first arm, sweep)`` in degrees, counter-clockwise, sweep 0..180."""
+    first = math.degrees(math.atan2(a[1] - vertex[1], a[0] - vertex[0]))
+    second = math.degrees(math.atan2(b[1] - vertex[1], b[0] - vertex[0]))
+    sweep = (second - first) % 360
+    if sweep > 180:
+        return second, 360 - sweep
+    return first, sweep

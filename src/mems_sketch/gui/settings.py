@@ -146,14 +146,6 @@ SETTINGS: tuple[Setting, ...] = (
         "Red x and green y through the origin, as in Blender and Unity.",
     ),
     Setting(
-        "canvas/show_axis_gizmo",
-        True,
-        "Show the axis indicator",
-        "Canvas",
-        "Overlays",
-        keywords=("gizmo", "orientation"),
-    ),
-    Setting(
         "canvas/show_scale_bar",
         True,
         "Show the scale bar",

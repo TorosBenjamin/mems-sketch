@@ -11,6 +11,7 @@ goes to the active tool:
 * **Rotate** (R): click a pivot, then the angle (snaps to 15°)
 * **Align** (A): click a shape, one of its points, then the point to align to
 * **Measure** (D): click two points; rulers stay until cleared
+* **Measure angle** (N): click the vertex, then a point on each arm
 * **Rectangle** (B) and **Circle** (C): drag, or click twice (corner and
   corner, centre and radius)
 * **Polygon** (P) and **Path** (W): click the points; double-click, Enter or
@@ -51,6 +52,7 @@ from mems_sketch.core.shapes import (
     RectShape,
     Shape,
 )
+from mems_sketch.gui.canvas import angle_between
 
 if TYPE_CHECKING:
     from mems_sketch.editing import DragPlan
@@ -878,6 +880,86 @@ class MeasureTool(Tool):
         return busy
 
 
+class AngleTool(Tool):
+    """Click the vertex, then a point on each arm; the angle stays like a ruler."""
+
+    name, label, shortcut = "angle", "Measure angle", "N"
+    edits = False
+    cursor = Qt.CursorShape.CrossCursor
+    icon = "angle"
+
+    def reset(self) -> None:
+        self._placed: list[tuple[float, float]] = []  # the vertex, then the first arm
+        self._candidates: list[Candidate] | None = None
+
+    @property
+    def busy(self) -> bool:
+        return bool(self._placed)
+
+    def hint(self) -> str:
+        if not self._placed:
+            return "Angle: click the vertex (snaps to shape points; Ctrl: no snapping)"
+        if len(self._placed) == 1:
+            return "Angle: click a point on the first arm (Esc cancels)"
+        return "Angle: click a point on the second arm (Shift: 15° steps, Esc cancels)"
+
+    def _points(self) -> list[Candidate]:
+        if self._candidates is None:
+            self._candidates = self.document.results.all_points()
+        return self._candidates
+
+    def _locate(self, x, y, modifiers) -> tuple[float, float, str | None]:
+        px, py, label = self.snap(x, y, self._points(), modifiers)
+        if len(self._placed) == 2 and modifiers & SHIFT:  # the second arm in 15° steps
+            (vx, vy), (ax, ay) = self._placed
+            first = math.atan2(ay - vy, ax - vx)
+            turn = math.atan2(py - vy, px - vx) - first
+            turn = math.radians(round(math.degrees(turn) / 15) * 15)
+            reach = math.hypot(px - vx, py - vy)
+            px, py = vx + reach * math.cos(first + turn), vy + reach * math.sin(first + turn)
+            label = None
+        return px, py, label
+
+    def press(self, x, y, modifiers) -> None:
+        px, py, _ = self._locate(x, y, modifiers)
+        if len(self._placed) < 2:
+            if self._placed and (px, py) == self._placed[0]:
+                return  # an arm needs a point other than the vertex
+            self._placed.append((px, py))
+            self.window.prompt(self.hint())
+            return
+        if (px, py) == self._placed[0]:
+            return
+        ruler = (*self._placed[0], *self._placed[1], px, py)
+        self.reset()
+        self.window.add_ruler(ruler)
+        self.window.prompt(self.hint())
+
+    def move(self, x, y, modifiers, left) -> None:
+        px, py, label = self._locate(x, y, modifiers)
+        self.canvas.show_points("snap", [(label, px, py)] if label else [])
+        if len(self._placed) == 1:
+            self.window.draw_rulers(extra=(*self._placed[0], px, py))
+        elif len(self._placed) == 2:
+            vertex, first = self._placed
+            self.window.draw_rulers(extra=(*vertex, *first, px, py))
+            sweep = angle_between(vertex, first, (px, py))[1]
+            self.window.prompt(f"Angle {sweep:.2f}°")
+
+    def hover_label(self, x, y) -> str | None:
+        return self.snap(x, y, self._points(), NONE, grid=False)[2]
+
+    def markers(self) -> dict[str, list[Candidate]]:
+        names = ("vertex", "arm")
+        return {"anchor": [(n, *p) for n, p in zip(names, self._placed, strict=False)]}
+
+    def cancel(self) -> bool:
+        busy = super().cancel()
+        self.canvas.show_points("snap", [])
+        self.window.draw_rulers()
+        return busy
+
+
 class DrawTool(Tool):
     """Base of the drawing tools: points snap to shape points, else to the grid."""
 
@@ -1217,6 +1299,7 @@ TOOLS: tuple[type[Tool], ...] = (
     AlignTool,
     CornersTool,
     MeasureTool,
+    AngleTool,
     RectTool,
     CircleTool,
     PolygonTool,
@@ -1234,7 +1317,8 @@ def _no_components(name: str):
     raise KeyError(name)  # drawn primitives never refer to components
 
 
-def probe(x: float, y: float) -> kdb.Region:
-    """A tiny region at a point, to test what lies under it."""
+def probe(x: float, y: float, reach: float = 0.0) -> kdb.Region:
+    """A small square around a point, to test what lies under it (``reach`` in µm)."""
     point = kdb.Point(to_dbu(x), to_dbu(y))
-    return kdb.Region(kdb.Box(point.x - 1, point.y - 1, point.x + 1, point.y + 1))
+    r = max(1, to_dbu(reach))
+    return kdb.Region(kdb.Box(point.x - r, point.y - r, point.x + r, point.y + r))

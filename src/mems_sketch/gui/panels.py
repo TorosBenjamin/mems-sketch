@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -375,12 +375,16 @@ class ComponentsPanel(_Panel):
         if name is not None:
             self.open_requested.emit(name)
 
-    def _add_menu(self) -> None:
+    def add_menu(self) -> QMenu:
+        """The header's + menu."""
         menu = QMenu(self)
         _menu_action(menu, "New component…", self._new, "add")
         _menu_action(menu, "Add library…", self.add_library, "library")
+        return menu
+
+    def _add_menu(self) -> None:
         button = self.actions.buttons["New component or library"]
-        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+        self.add_menu().exec(button.mapToGlobal(button.rect().bottomLeft()))
 
     def _context_menu(self, position) -> None:
         menu = self.menu_for(self.tree.itemAt(position))
@@ -562,8 +566,10 @@ def component_icon(project, name: str) -> str:
 
 
 def _menu_action(menu, text: str, slot, icon: str | None = None):
+    """A menu entry running ``slot()``, with no arguments: ``triggered`` would pass
+    its ``checked`` flag into the slot's first optional argument (an owner, a folder)."""
     action = menu.addAction(text)
-    action.triggered.connect(slot)
+    action.triggered.connect(lambda _checked=False: slot())
     if icon is not None:
         action.setIcon(icons.icon(icon))
     return action
@@ -848,7 +854,9 @@ class ShapeTree(QTreeWidget):
             return
         enabled = item.checkState(0) == Qt.CheckState.Checked
         if enabled != self.document.node(path).enabled:
-            self.enabled_toggled.emit(path, enabled)
+            # Later: the change rebuilds this tree, which would delete the item Qt is
+            # still setting the check state of (a crash).
+            QTimer.singleShot(0, lambda: self.enabled_toggled.emit(path, enabled))
 
 
 # -- parameters ----------------------------------------------------------------

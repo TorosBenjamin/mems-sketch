@@ -222,10 +222,19 @@ def test_the_mode_palette_switches_tools(window):
     buttons = {
         b.defaultAction().text(): b for b in window.canvas.mode_palette.findChildren(QToolButton)
     }
-    assert list(buttons) == ["Select", "Hand", "Move", "Rotate", "Align", "Corners", "Measure"]
+    assert list(buttons) == [
+        "Select",
+        "Hand",
+        "Move",
+        "Rotate",
+        "Align",
+        "Corners",
+        "Measure",
+        "Measure angle",
+    ]
     assert all(b.isVisible() for b in buttons.values())
     palette = window.canvas.mode_palette
-    assert palette.height() >= 7 * 24  # sized to hold its buttons
+    assert palette.height() >= 8 * 24  # sized to hold its buttons
     buttons["Measure"].click()
     assert window.tool.name == "measure" and buttons["Measure"].isChecked()
 

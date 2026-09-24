@@ -10,7 +10,16 @@ from __future__ import annotations
 
 import klayout.db as kdb
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
-from PySide6.QtWidgets import QSplitter, QTabBar, QTabWidget, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QProxyStyle,
+    QSplitter,
+    QStyle,
+    QTabBar,
+    QTabWidget,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.shapes import NodePath, node_at
@@ -21,6 +30,17 @@ from mems_sketch.gui.canvas import LayoutCanvas
 MAX_PANES = 2
 # How a tab can show its component (see EditSession.results.geometry).
 VIEW_MODES = {"drawn": "Drawn", "etched": "As etched", "compensated": "Etch compensated"}
+
+
+class _NoSlideStyle(QProxyStyle):
+    """Tabs snap into place when one is dragged past them. With a style sheet, Qt
+    slides a tab's icon and close button but draws its title at the end at once,
+    so the title jumps ahead of the rest of the tab."""
+
+    def styleHint(self, hint, option=None, widget=None, data=None) -> int:
+        if hint == QStyle.StyleHint.SH_Widget_Animation_Duration:
+            return 0
+        return super().styleHint(hint, option, widget, data)
 
 
 class ComponentView(QWidget):
@@ -143,6 +163,7 @@ class EditorArea(QSplitter):
         self.current: ComponentView | None = None
         self.process_view: QWidget | None = None  # the Process tab, when open
         self.process_factory = None  # makes it: set by the window
+        self._tab_style = _NoSlideStyle("Fusion")  # kept: widgets do not own their style
         self._add_pane()
 
     # -- panes ---------------------------------------------------------------
@@ -155,6 +176,7 @@ class EditorArea(QSplitter):
         pane.currentChanged.connect(lambda _index, p=pane: self._pane_changed(p))
         pane.tabBarClicked.connect(lambda index, p=pane: self._focus(p, index))
         bar = pane.tabBar()
+        bar.setStyle(self._tab_style)
         bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         bar.customContextMenuRequested.connect(lambda pos, p=pane: self._tab_menu(p, pos))
         self.addWidget(pane)

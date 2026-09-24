@@ -31,7 +31,6 @@ PRIMITIVES = [
 OVERLAYS = [  # View › Overlays: setting, label, icon
     ("canvas/show_grid", "Grid", "grid"),
     ("canvas/show_axes", "Coloured axes", "axes"),
-    ("canvas/show_axis_gizmo", "Axis indicator", "axes"),
     ("canvas/show_scale_bar", "Scale bar", "ruler"),
     ("canvas/show_gizmos", "Move and rotate gizmos", "move"),
     ("canvas/hover_highlight", "Highlight under cursor", "select"),

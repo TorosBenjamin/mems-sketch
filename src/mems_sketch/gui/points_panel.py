@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.shapes import BBOX_POINTS
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
+from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import _action_bar, _Panel
 from mems_sketch.gui.value_edit import ValueEdit
 
@@ -308,9 +310,8 @@ class PointsPanel(_Panel):
         layout = QFormLayout(form)
         layout.setContentsMargins(0, 0, 0, 0)
         if key is None:
-            hint = QLabel("Hover a point to find it on the canvas; click it to go there.")
+            hint = QLabel("No point selected")
             hint.setObjectName("muted")
-            hint.setWordWrap(True)
             layout.addRow(hint)
             return form
         title = QLabel(reference(key))
@@ -371,20 +372,24 @@ class PointsPanel(_Panel):
         self.at_edit, self.x_edit, self.y_edit = at, x, y
 
     def _readonly_form(self, layout: QFormLayout, key: Key) -> None:
-        layout.addRow("Position", QLabel(_position(self._positions.get(key))))
+        position = QLabel(_position(self._positions.get(key)))
         if key[0] == "declared":
+            layout.addRow("Position", position)
             point = next(p for p in self.document.active_definition.points if p.name == key[1])
             if point.description:
                 layout.addRow("Description", QLabel(point.description))
             return
-        note = QLabel(
-            "Every component has it, from the box around what it draws."
+        explain = (
+            "Every component has it, from the box around everything it draws."
             if key[0] == "default"
             else f"A point of shape {key[0]}."
         )
-        note.setObjectName("muted")
-        note.setWordWrap(True)
-        layout.addRow(note)
+        row = QWidget()
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.addWidget(position, 1)
+        line.addWidget(HelpButton(explain))
+        layout.addRow("Position", row)
         if not self.document.read_only:
             button = QPushButton(icons.icon("add"), "Re-export")
             button.setToolTip(

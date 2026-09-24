@@ -1,8 +1,11 @@
-"""A project folder's history in git: its commits, and the project as it was.
+"""A project folder's history in git: its commits, the project as it was, and
+committing it.
 
-Read-only: nothing here commits, checks out or changes the repository. The
-``git`` program does the work (no library needed); a folder outside a
-repository, or a machine without git, simply has no history.
+Only the project folder is ever committed: files staged elsewhere in the
+repository stay staged and out of the commit. Nothing here checks out,
+resets, branches or talks to a remote. The ``git`` program does the work (no
+library needed); a folder outside a repository, or a machine without git,
+simply has no history.
 """
 
 from __future__ import annotations
@@ -117,6 +120,65 @@ def load_at(folder: str | Path, rev: str) -> Project | None:
         if not (copy / PROJECT_FILE).is_file():
             return None
         return load_project(copy, libraries_from=folder)
+
+
+def branch(folder: str | Path) -> str | None:
+    """The current branch (also before its first commit), or None when detached."""
+    try:
+        return _git(folder, "symbolic-ref", "--quiet", "--short", "HEAD").strip() or None
+    except GitError:
+        return None
+
+
+def identity(folder: str | Path) -> tuple[str, str] | None:
+    """The name and email git commits with here, or None if either is not set."""
+    try:
+        name = _git(folder, "config", "user.name").strip()
+        email = _git(folder, "config", "user.email").strip()
+    except GitError:
+        return None
+    return (name, email) if name and email else None
+
+
+def pending(folder: str | Path) -> list[str]:
+    """Files in the project folder that differ from the last commit (new ones too)."""
+    out = _git(folder, "status", "--porcelain", "--untracked-files=all", "--", ".")
+    return [line[3:] for line in out.splitlines() if line.strip()]
+
+
+def staged_elsewhere(folder: str | Path) -> list[str]:
+    """Files staged outside the project folder (left out of its commits)."""
+    folder = Path(folder).resolve()
+    root = repository(folder)
+    if root is None:
+        return []
+    relative = folder.relative_to(root.resolve()).as_posix()
+    prefix = "" if relative == "." else relative + "/"
+    staged = _git(root, "diff", "--cached", "--name-only").splitlines()
+    return [f for f in staged if f and not f.startswith(prefix)]
+
+
+def commit(folder: str | Path, message: str) -> str:
+    """Commit everything in the project folder (and nothing else); returns the sha."""
+    if not message.strip():
+        raise GitError("a commit needs a message")
+    if identity(folder) is None:
+        raise GitError(
+            "git does not know who you are yet. Set your name and email once, e.g. "
+            'git config --global user.name "Your Name" and '
+            "git config --global user.email you@example.com"
+        )
+    if not pending(folder):
+        raise GitError("nothing to commit: the project is as in the last commit")
+    _git(folder, "add", "--all", "--", ".")
+    _git(folder, "commit", "--quiet", "--message", message, "--", ".")
+    return _git(folder, "rev-parse", "HEAD").strip()
+
+
+def init(folder: str | Path) -> Path:
+    """Make ``folder`` a new git repository; returns it."""
+    _git(folder, "init", "--quiet")
+    return Path(folder)
 
 
 def _git(folder: str | Path, *args: str, binary: bool = False):

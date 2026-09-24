@@ -88,7 +88,7 @@ def test_comparing_a_commit_with_the_design_now(window, commit):
     panel = window.history
     first = panel.versions.topLevelItem(2).data(0, KEY_ROLE)
     panel.choose(("since", first[1]))
-    assert panel.title.text() == f"From {first[1][:7]} to now"
+    assert panel.title.text().endswith(f"From {first[1][:7]} to now")
     assert change_rows(panel) == ["top", "  shape beam: x1 40 → 50; y1 4 → 8"]
 
 
@@ -99,3 +99,48 @@ def test_a_project_outside_git_says_how_to_get_history(qtbot, tmp_path):
     w.tool_windows.open("history")
     assert w.history.note.isVisible() and not w.history.split.isVisible()
     assert "git" in w.history.note.text()
+
+
+# -- committing, restoring, starting a repository -----------------------------------
+
+
+def test_committing_from_the_panel(window):
+    window.tool_windows.open("history")
+    panel = window.history
+    assert not panel.commit_box.isVisible()  # nothing to commit
+    resize(window, x1=50)
+    assert panel.commit_box.isVisible()
+    assert panel.message.placeholderText() == "Change beam"
+    panel.message.setText("Longer beam")
+    panel.commit_button.click()
+    assert versions(panel)[:2] == ["Uncommitted changes", "Longer beam"]
+    assert not window.document.dirty and not panel.commit_box.isVisible()
+    assert panel.title.text().endswith("Since the last commit")
+    assert " · " in panel.title.text()  # the branch comes first
+
+
+def test_restoring_a_commit_from_the_panel(window, commit):
+    resize(window, x1=50)
+    commit(window.document, "Longer beam")
+    window.tool_windows.open("history")
+    panel = window.history
+    first = panel.versions.topLevelItem(2).data(0, KEY_ROLE)[1]
+    panel.restore(first)
+    assert window.document.node(((0, 0),)).x1 == 40
+    assert panel.key == UNCOMMITTED
+    assert change_rows(panel) == ["top", "  shape beam: x1 50 → 40"]
+    window.document.undo()
+    assert window.document.node(((0, 0),)).x1 == 50
+
+
+def test_a_saved_project_outside_git_can_start_one(qtbot, tmp_path):
+    w = MainWindow()
+    qtbot.addWidget(w)
+    w.show()
+    w.tool_windows.open("history")
+    assert not w.history.init_button.isVisible()  # save it first
+    w.document.save(tmp_path / "plain")
+    assert w.history.init_button.isVisible()
+    w.history.init_button.click()
+    assert w.history.split.isVisible() and not w.history.init_button.isVisible()
+    assert w.history.message.placeholderText() == f"Start {w.document.project.name}"

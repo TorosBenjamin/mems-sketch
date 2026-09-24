@@ -193,3 +193,103 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
     qtbot.mouseClick(remove, Qt.MouseButton.LeftButton)
     qtbot.wait(1)
     assert window.document.shapes[0].modifiers == []
+
+
+# -- dragging values ------------------------------------------------------------------
+
+from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWidgets import QApplication
+
+from mems_sketch.gui.value_edit import dragged_value
+
+SHIFT, CTRL = Qt.KeyboardModifier.ShiftModifier, Qt.KeyboardModifier.ControlModifier
+
+
+def test_how_far_a_drag_moves_a_value():
+    assert dragged_value(10, 8, integer=True) == 11  # one whole step per 8 px
+    assert dragged_value(10, -800, integer=True, minimum=1) == 1
+    assert dragged_value(100, 10) == pytest.approx(120)  # 2 per px at this size
+    assert dragged_value(100, 10, SHIFT) == pytest.approx(102)  # ten times finer
+    assert dragged_value(100, 10, CTRL) == pytest.approx(100)  # round steps of 100
+    assert dragged_value(0.5, 10) == pytest.approx(0.52)
+
+
+def mouse(widget, kind, x, buttons=Qt.MouseButton.LeftButton):
+    pos = QPointF(x, 8)
+    event = QMouseEvent(
+        kind,
+        pos,
+        widget.mapToGlobal(pos),
+        Qt.MouseButton.LeftButton,
+        buttons,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    QApplication.sendEvent(widget, event)
+
+
+def drag(widget, xs):
+    mouse(widget, QEvent.Type.MouseButtonPress, xs[0])
+    for x in xs[1:]:
+        mouse(widget, QEvent.Type.MouseMove, x)
+    mouse(widget, QEvent.Type.MouseButtonRelease, xs[-1], Qt.MouseButton.NoButton)
+
+
+def test_dragging_a_count_previews_live_and_applies_once(window):
+    doc = window.document
+    path = doc.nodes.add_component("comb_drive")
+    window.tree.select_paths([path])
+    fingers = next(e for e in window.properties.findChildren(ValueEdit) if e.integer)
+    shown = []
+    window.properties.previewed.connect(lambda node: shown.append(node.params["fingers"]))
+    undo_steps = len(doc._undo)
+    mouse(fingers, QEvent.Type.MouseButtonPress, 20)
+    for x in range(22, 70, 8):
+        mouse(fingers, QEvent.Type.MouseMove, x)
+    assert shown and shown[-1] > 10  # previewed, from the default (10)
+    assert doc.node(path).params == {}  # nothing applied yet
+    mouse(fingers, QEvent.Type.MouseButtonRelease, 70, Qt.MouseButton.NoButton)
+    assert doc.node(path).params["fingers"] == shown[-1]
+    assert len(doc._undo) == undo_steps + 1
+
+
+def test_a_click_without_dragging_edits_the_text(window):
+    edit = fields(window)["From x"]
+    drag(edit, [20, 21])
+    assert edit.hasFocus() and edit.selectedText() == "0"
+    assert window.document.shapes[0].x0 == 0
+
+
+def test_an_expression_is_not_dragged(window):
+    edit = fields(window)["To x"]  # pitch * 2
+    drag(edit, [20, 60])
+    assert window.document.shapes[0].x1 == "pitch * 2"
+
+
+def test_dragging_a_default_in_the_parameters_panel(window):
+    panel = window.parameters
+    panel.refresh()
+    table = panel.table
+    rect = table.visualItemRect(table.item(0, 1))  # pitch's default: 13
+    viewport = table.viewport()
+    y = rect.center().y()
+
+    def at(kind, x, buttons=Qt.MouseButton.LeftButton):
+        pos = QPointF(rect.left() + x, y)
+        event = QMouseEvent(
+            kind,
+            pos,
+            viewport.mapToGlobal(pos),
+            Qt.MouseButton.LeftButton,
+            buttons,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        QApplication.sendEvent(viewport, event)
+
+    at(QEvent.Type.MouseButtonPress, 5)
+    at(QEvent.Type.MouseMove, 30)
+    assert window.document.trials.get("top", {}).get("pitch") not in (None, 13)  # live
+    assert window.document.active_definition.parameter("pitch").default == 13
+    at(QEvent.Type.MouseButtonRelease, 30, Qt.MouseButton.NoButton)
+    assert window.document.active_definition.parameter("pitch").default != 13
+    assert "pitch" not in window.document.trials.get("top", {})

@@ -142,6 +142,7 @@ class MainWindow(QMainWindow):
             self.components,
         ):
             panel.error.connect(self.report_error)
+        self.properties.previewed.connect(self._preview_node)
 
         self.setWindowIcon(icons.icon("component"))
         self.resize(1500, 950)
@@ -944,6 +945,19 @@ class MainWindow(QMainWindow):
         target = self.document.reference_target(path, component)
         if target is not None:
             self.open_component(target)
+
+    def _preview_node(self, node) -> None:
+        """Draw the current tab as it would be with the selected node changed (a value
+        being dragged in Properties); applying it redraws everything as usual."""
+        view, path = self.view, self.properties.path
+        if path is None:
+            return
+        try:
+            geometry = self.document.results.preview(path, node, view.view_mode)
+        except Exception:  # noqa: BLE001 - not valid: keep the last picture
+            return
+        view.canvas.show_geometry(geometry, self.layers.colors, self.layers.visible)
+        view.canvas.show_overlay(None, [])  # the outline would show the old shape
 
     def _hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
         if self.implementation_hidden(view):

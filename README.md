@@ -277,6 +277,12 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   parameters, process constants and points; the parameter button (on hover)
   picks a parameter, **makes a parameter from the value** (asks for a name,
   sets the default and uses it), or replaces an expression by its value.
+  **Drag a number** left or right to change it, as in Blender (Shift: finer,
+  Ctrl: round steps; counts such as fingers or rows go in whole numbers): the
+  canvas follows live, and the value is applied when the mouse is released,
+  as one step to undo. A click without dragging edits the text; an
+  expression is not dragged. The Parameters panel's Default and Trial
+  columns drag the same way.
   Long names and expressions never widen the panel: a field not being edited
   shows the start and cuts the rest with "…" (all of it in the tooltip and
   while editing). For

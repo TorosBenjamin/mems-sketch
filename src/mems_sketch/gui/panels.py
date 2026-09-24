@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QMimeData, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -36,6 +36,7 @@ from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import COMPONENT_MIME
+from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 SLOT_LABELS = {"boolean": ("A", "B")}
@@ -842,6 +843,10 @@ class ParametersPanel(_Panel):
     Library and built-in components are read-only, but trial values work.
     A lock marks an internal parameter: one only the component itself uses,
     not offered where it is placed.
+
+    A number in Default or Trial can be dragged left or right (as in Properties):
+    the design follows live, and a dragged default is applied when the mouse is
+    released, as one step to undo.
     """
 
     COLUMNS = ("Name", "Default", "Min", "Max", "Trial", "Value")
@@ -853,6 +858,9 @@ class ParametersPanel(_Panel):
         self.title = QLabel()
         self.table = _table(self.COLUMNS)
         self.table.itemChanged.connect(self._changed)
+        self.table.viewport().installEventFilter(self)
+        self.table.setMouseTracking(True)  # for the drag cursor
+        self._drag: dict | None = None  # the cell being dragged, see eventFilter
         self.hide_implementation = False  # a read-only component: public parameters only
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -933,6 +941,67 @@ class ParametersPanel(_Panel):
         if not self._guard(apply):
             self.refresh()
 
+    # -- dragging a value ------------------------------------------------------------
+
+    def _draggable(self, position) -> dict | None:
+        """The parameter and start value of a number cell that can be dragged."""
+        item = self.table.itemAt(position)
+        if (
+            item is None
+            or item.column() not in (1, self.TRIAL)
+            or self.table.state() == (QAbstractItemView.State.EditingState)
+        ):
+            return None
+        column, row = item.column(), item.row()
+        if column == 1 and self.document.read_only:
+            return None
+        definitions = {p.name: p for p in self.document.active_definition.parameters}
+        parameter = definitions.get(self._names[row] if row < len(self._names) else "")
+        if parameter is None:
+            return None
+        text = item.text().strip()
+        if column == self.TRIAL and not text:  # no trial yet: start from the value
+            text = self.table.item(row, len(self.COLUMNS) - 1).text()
+        if not is_number(text):
+            return None
+        return {"name": parameter.name, "column": column, "start": float(text), "p": parameter}
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is not self.table.viewport():
+            return super().eventFilter(watched, event)
+        kind = event.type()
+        if kind == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            self._drag = self._draggable(event.position().toPoint())
+            if self._drag is not None:
+                self._drag |= {"x": event.position().x(), "dragging": False}
+        elif kind == QEvent.Type.MouseMove:
+            if self._drag is None or not event.buttons() & Qt.MouseButton.LeftButton:
+                hover = self._draggable(event.position().toPoint())
+                shape = Qt.CursorShape.SizeHorCursor if hover else Qt.CursorShape.ArrowCursor
+                self.table.viewport().setCursor(shape)
+                return False
+            dx = event.position().x() - self._drag["x"]
+            if not self._drag["dragging"] and abs(dx) < DRAG_START_PX:
+                return True
+            self._drag["dragging"] = True
+            p = self._drag["p"]
+            value = dragged_value(
+                self._drag["start"], dx, event.modifiers(), p.integer, p.min, p.max
+            )
+            self._drag["value"] = value
+            self._guard(lambda: self.document.set_trial(p.name, value))  # shown live
+            return True
+        elif kind == QEvent.Type.MouseButtonRelease and self._drag is not None:
+            drag, self._drag = self._drag, None
+            if not drag["dragging"]:
+                return False
+            if drag["column"] == 1 and "value" in drag:  # the default: applied now
+                name, value = drag["name"], drag["value"]
+                self._guard(lambda: self.document.set_trial(name, None))
+                self._guard(lambda: self.document.parameters.update(name, default=value))
+            return True
+        return False
+
     def _toggle_internal(self) -> None:
         """Make the selected parameters internal, or public if they all are already."""
         rows = sorted({i.row() for i in self.table.selectedItems()})
@@ -969,7 +1038,6 @@ class PointsPanel(_Panel):
         self.title = QLabel()
         self.table = _table(self.COLUMNS)
         self.table.itemChanged.connect(self._changed)
-        self.hide_implementation = False  # a read-only component: public parameters only
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -1024,17 +1092,6 @@ class PointsPanel(_Panel):
 
         if field is not None and not self._guard(apply):
             self.refresh()
-
-    def _toggle_internal(self) -> None:
-        """Make the selected parameters internal, or public if they all are already."""
-        rows = sorted({i.row() for i in self.table.selectedItems()})
-        if not rows:
-            self.error.emit("select the parameters to make internal or public")
-            return
-        definitions = {p.name: p for p in self.document.active_definition.parameters}
-        names = [self._names[row] for row in rows]
-        internal = not all(definitions[n].internal for n in names)
-        self._guard(lambda: self.document.parameters.set_internal(names, internal))
 
     def _remove(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)

@@ -389,3 +389,18 @@ def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, q
     assert image.pixelColor(bottom_left).name() == TOKENS[name]["frame"]  # rounded off
     inside = canvas.mapTo(window, QPoint(12, canvas.height() - 12))
     assert image.pixelColor(inside).name() == canvas.theme["background"]
+
+
+@pytest.mark.parametrize("name", ["light", "dark"])
+def test_the_editor_island_has_all_four_corners_rounded(window, name, qtbot):
+    # The tab row spans the island's top: it must not paint a square over the top corners.
+    from mems_sketch.gui.theme import TOKENS
+
+    window.settings.set("appearance/ui_theme", name)
+    qtbot.wait(20)
+    island = window.tool_windows.editor_island
+    image = window.grab().toImage()
+    right, bottom = island.width() - 1, island.height() - 1
+    for x, y in ((0, 0), (right, 0), (0, bottom), (right, bottom)):
+        pixel = island.mapTo(window, QPoint(x, y))
+        assert image.pixelColor(pixel).name() == TOKENS[name]["frame"], (x, y)

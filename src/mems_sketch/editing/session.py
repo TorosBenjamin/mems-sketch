@@ -235,8 +235,8 @@ class EditSession:
         self.changed.emit()  # tabs drop their "modified" marks
         return target
 
-    def export(self, path: str | Path, mode: str = "drawn") -> Path:
-        return export(self.project, path, geometry=self.results.geometry(mode))
+    def export(self, path: str | Path) -> Path:
+        return export(self.project, path, geometry=self.results.geometry())
 
     def _reset(self, project: Project, path: Path | None) -> None:
         self.project = project

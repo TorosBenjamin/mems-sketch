@@ -5,7 +5,7 @@ Scripting entry point::
     from mems_sketch import Project, Layer, Instance, load, save, export
 
 A project is a folder of YAML files (the source of truth); the compiler turns
-it into geometry, which can be checked, etch-processed and exported.
+it into geometry, which can be checked and exported.
 """
 
 from mems_sketch.core.compiler import Compiler

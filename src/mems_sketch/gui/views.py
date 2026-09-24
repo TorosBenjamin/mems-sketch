@@ -28,8 +28,6 @@ from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import LayoutCanvas
 
 MAX_PANES = 2
-# How a tab can show its component (see EditSession.results.geometry).
-VIEW_MODES = {"drawn": "Drawn", "etched": "As etched", "compensated": "Etch compensated"}
 
 
 class _NoSlideStyle(QProxyStyle):
@@ -44,7 +42,7 @@ class _NoSlideStyle(QProxyStyle):
 
 
 class ComponentView(QWidget):
-    """One tab: a component, its canvas, selection and view mode."""
+    """One tab: a component, its canvas and selection."""
 
     show_implementation = False  # the window's setting: shapes of read-only components
 
@@ -54,7 +52,6 @@ class ComponentView(QWidget):
         self.component = component
         self.canvas = LayoutCanvas()
         self.selection: list[NodePath] = []
-        self.view_mode = "drawn"
         self.guides: list = []  # (path, name, start, end) of its guide lines
         self.node_regions: list[tuple[NodePath, kdb.Region]] = []
         self.violations: list = []
@@ -98,12 +95,7 @@ class ComponentView(QWidget):
         self.errors = []
         drawn = None
         try:
-            drawn = self.document.results.geometry(component=self.component)
-            geometry = (
-                drawn
-                if self.view_mode == "drawn"
-                else self.document.results.geometry(self.view_mode, self.component)
-            )
+            drawn = geometry = self.document.results.geometry(component=self.component)
         except Exception as exc:  # noqa: BLE001 - shown in the messages panel
             geometry = Geometry()
             self.errors.append(str(exc))

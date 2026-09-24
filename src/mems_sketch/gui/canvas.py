@@ -42,7 +42,6 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -182,7 +181,6 @@ class LayoutCanvas(QGraphicsView):
     cursor_moved = Signal(float, float)
     view_changed = Signal()  # zoomed or panned
     context_requested = Signal(float, float, QPoint)  # right click: µm, global position
-    mode_chosen = Signal(str)  # a view mode picked in the caption
     component_dropped = Signal(str, float, float)  # a component dragged in: name, x, y (µm)
 
     def __init__(self, parent=None) -> None:
@@ -275,18 +273,6 @@ class LayoutCanvas(QGraphicsView):
             self.caption_details.setVisible(bool(subtitle))
             self.caption.adjustSize()
 
-    def set_view_modes(self, modes: dict[str, str], current: str) -> None:
-        """The view modes offered by the caption's button (mode: label), and the current one."""
-        self.mode_button.setText(f"{modes.get(current, current)} {MENU_CARET}")
-        menu = self.mode_button.menu()
-        menu.clear()
-        for mode, label in modes.items():
-            action = menu.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(mode == current)
-            action.triggered.connect(lambda _=False, m=mode: self.mode_chosen.emit(m))
-        self.caption.adjustSize()
-
     def set_mode_actions(self, actions: list[QAction]) -> None:
         """The canvas modes (select, move, ...) in the top-right corner, one button each."""
         layout = self.mode_palette.layout()
@@ -314,21 +300,15 @@ class LayoutCanvas(QGraphicsView):
         return box
 
     def _build_caption(self) -> None:
-        """Top left: the component, the view mode (a menu) and details."""
+        """Top left: the component and details about it."""
         box = self.caption = self._overlay_box(Qt.Orientation.Horizontal)
         box.layout().setContentsMargins(8, 2, 8, 2)
         box.layout().setSpacing(6)
         self.caption_title = QLabel(box)
         self.caption_title.setObjectName("heading")
-        self.mode_button = QToolButton(box)
-        self.mode_button.setToolTip("What the canvas shows: the drawn layout or a process view")
-        self.mode_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.mode_button.setAutoRaise(True)
-        self.mode_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.mode_button.setMenu(QMenu(self.mode_button))
         self.caption_details = QLabel(box)
         self.caption_details.setObjectName("muted")
-        for widget in (self.caption_title, self.mode_button, self.caption_details):
+        for widget in (self.caption_title, self.caption_details):
             box.layout().addWidget(widget)
         box.move(8, 8)
 

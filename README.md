@@ -2,9 +2,10 @@
 
 Parametric MEMS layout design in Python. Everything is a component: a design
 is built from parametric components whose values can be expressions over
-parameters and process constants. The tool applies etch-loss compensation,
-checks design rules, and exports through pluggable format modules. Simulation
-is out of scope.
+parameters and process constants. The tool checks design rules and exports
+the drawn layout through pluggable format modules. It is for sketching a
+design; process steps after it (etch compensation, mask preparation) and
+simulation are out of scope.
 
 ![MEMS Sketch GUI](docs/screenshot.png)
 
@@ -27,8 +28,8 @@ mems-sketch-cli check examples/resonator       # the same compiler, from the com
 
 - **Source:** a project folder of YAML files (see below). It is small,
   readable, and gives meaningful git diffs.
-- **Backend:** reads a project, resolves parameters, builds geometry, applies
-  etch loss, checks rules and exports. It has no GUI dependency, which CI
+- **Backend:** reads a project, resolves parameters, builds geometry, checks
+  rules and exports. It has no GUI dependency, which CI
   enforces (`tests/test_architecture.py`).
 - **Compiler cache:** every component build is keyed by a fingerprint of
   everything it depends on (definition, referenced components, parameter
@@ -57,7 +58,7 @@ mems-sketch-cli check examples/resonator       # the same compiler, from the com
 ```
 my_project/
   project.yaml        format, name, top component (null for a library), libraries
-  process.yaml        layers (GDS numbers, undercut, rules) and process constants
+  process.yaml        layers (GDS numbers, rules) and process constants
   components/
     top.yaml          one file per component; the design itself is the top component
     suspension.yaml
@@ -153,8 +154,8 @@ components.
 ```bash
 mems-sketch-cli new     my_project [--library]
 mems-sketch-cli info    my_project
-mems-sketch-cli check   my_project [--component NAME] [--set pitch=15] [--etch etched] [--json]
-mems-sketch-cli export  my_project out.gds [--etch compensated] [--set pitch=15]
+mems-sketch-cli check   my_project [--component NAME] [--set pitch=15] [--json]
+mems-sketch-cli export  my_project out.gds [--set pitch=15]
 mems-sketch-cli convert old_design.mems my_project     # import the earlier SQLite format
 ```
 
@@ -205,7 +206,7 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   snapping toggles (shape points, grid) and the gizmo toggle, then problems
   (click to open Messages), grid step, zoom and cursor position.
 - **Tabs**: every component opens in its own tab, with its own zoom, selection
-  and view mode; the panels show the current tab. Double-click a component in
+  and view; the panels show the current tab. Double-click a component in
   the Components panel, or a placed component in the canvas or the Shapes
   tree, to open it. Library and built-in components open read-only and show
   their **interface**, as a library does in code: the geometry, and in
@@ -266,9 +267,7 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   come from; the Align tool marks what it can align to. **View → Overlays →
   Always show points** shows them all the time. The x axis is red and the y axis green; the corner shows an axis
   indicator and a scale bar, and the top left what is shown (component,
-  read-only) with the tab's **view mode**: click it to switch between drawn,
-  as-etched and etch-compensated geometry. **View → Overlays** switches each
-  of these on or off.
+  read-only). **View → Overlays** switches each of these on or off.
 - **Right-click** in the canvas (a click; a right drag pans): **Add** a
   primitive with its first point where you clicked, **Place component**, and
   for the selection (the shape under the cursor is selected first) Combine
@@ -382,7 +381,7 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
 - **Process** (the first item of the project in Components, or **View →
   Process**): a tab with the process constants, available in every
   expression as `process.<name>`, and the layer definitions: GDS layer and
-  datatype, undercut, minimum width and spacing. Edits are undoable like any
+  datatype, minimum width and spacing. Edits are undoable like any
   other.
 - **Operations** (Operations ▾ or the right-click menu: Subtract,
   Intersect, XOR, Offset, Fillet, Layer map, Transform) wrap the selected
@@ -398,7 +397,7 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   (including components that use the edited one), it is rolled back with a
   message. Full undo/redo.
 - **File**: open a project (or a legacy `.mems` file), save to a folder,
-  export drawn, as-etched or etch-compensated geometry.
+  **Export…** (Ctrl+E) the drawn geometry (GDS, OASIS, DXF).
 
 ## Shapes and operations
 
@@ -478,7 +477,7 @@ which the canvas shows dashed while the shape is selected.
 - **Transform or component?** Make a component when something is reused or
   deserves its own parameters. Use a transform to move, rotate or mirror a few
   shapes together once.
-- **Etch loss and rule checks run on the final result**, after all operations.
+- **Rule checks run on the final result**, after all operations.
 - Units are micrometres. Coordinates snap to the 1 nm grid, and curves stay
   within 5 nm of the true arc.
 
@@ -496,7 +495,7 @@ from mems_sketch import (
     save,
     export,
 )
-from mems_sketch.process import etch, rules
+from mems_sketch.process import rules
 
 project = load("examples/resonator")
 project.set_variable("pitch", 16)  # a top-level parameter
@@ -525,7 +524,7 @@ project.add(
 
 print(rules.check(project))
 save(project, "my_resonator")  # a project folder
-export(project, "my_resonator.gds", geometry=etch.compensated(project))
+export(project, "my_resonator.gds")
 ```
 
 `examples/build_examples.py` generates the example library and project from
@@ -544,7 +543,7 @@ code. MATLAB can use the same API through its Python interface
 | `core/process.py` | `Process`, `Layer`, process constants |
 | `core/expressions.py` | Safe arithmetic expressions with dependency resolution |
 | `components/library.py` | Built-ins: `rectangle`, `anchor`, `comb_drive`, `serpentine_spring` |
-| `process/etch.py`, `process/rules.py` | Etch loss (predict / compensate) and design-rule checks |
+| `process/rules.py` | Design-rule checks (minimum width and spacing) |
 | `storage/` | Project folders (canonical YAML) and the legacy SQLite importer |
 | `export/` | Exporter plugins: GDSII, OASIS, DXF |
 | `cli.py` | `mems-sketch-cli` |

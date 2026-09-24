@@ -44,17 +44,12 @@ def test_check_a_single_component(resonator):
     assert main(["check", str(resonator), "--component", "std.perforated_plate"]) == 0
 
 
-def test_export_with_etch_compensation(resonator, tmp_path):
-    drawn, compensated = tmp_path / "drawn.gds", tmp_path / "comp.gds"
-    assert main(["export", str(resonator), str(drawn)]) == 0
-    assert main(["export", str(resonator), str(compensated), "--etch", "compensated"]) == 0
-
-    def area(path):
-        layout = kdb.Layout()
-        layout.read(str(path))
-        return kdb.Region(layout.top_cell().begin_shapes_rec(layout.layer(1, 0))).area()
-
-    assert area(compensated) > area(drawn)
+def test_export_writes_the_drawn_geometry(resonator, tmp_path):
+    out = tmp_path / "out.gds"
+    assert main(["export", str(resonator), str(out)]) == 0
+    layout = kdb.Layout()
+    layout.read(str(out))
+    assert kdb.Region(layout.top_cell().begin_shapes_rec(layout.layer(1, 0))).area() > 0
 
 
 def test_errors_exit_with_status_2(resonator, capsys):

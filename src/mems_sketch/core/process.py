@@ -19,12 +19,11 @@ PROCESS_PREFIX = "process."
 
 @dataclass
 class Layer:
-    """A process layer. ``undercut`` is the lateral etch loss per edge, in µm."""
+    """A process layer: its GDS numbers and the design rules it is checked with."""
 
     name: str
     gds_layer: int
     gds_datatype: int = 0
-    undercut: float = 0.0
     min_width: float | None = None
     min_space: float | None = None
 

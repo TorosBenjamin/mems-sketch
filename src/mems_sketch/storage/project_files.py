@@ -78,7 +78,7 @@ def _process_data(process: Process) -> dict[str, Any]:
     layers = {}
     for layer in process.layers.values():
         entry: dict[str, Any] = {"gds": [layer.gds_layer, layer.gds_datatype]}
-        for key in ("undercut", "min_width", "min_space"):
+        for key in ("min_width", "min_space"):
             value = getattr(layer, key)
             if value:
                 entry[key] = yaml_format.to_data(value)
@@ -158,7 +158,6 @@ def _load_process(path: Path) -> Process:
             name=name,
             gds_layer=int(gds[0]),
             gds_datatype=int(gds[1]) if len(gds) > 1 else 0,
-            undercut=float(entry.get("undercut", 0.0)),
             min_width=_optional_float(entry.get("min_width")),
             min_space=_optional_float(entry.get("min_space")),
         )

@@ -101,13 +101,11 @@ def test_open_example_project_with_library(window, tmp_path):
     assert window.messages.item(0).text() == "No rule violations."
 
 
-def test_undo_restores_tree_and_view_mode_switch(window):
+def test_undo_restores_tree(window):
     window.add_primitive("rect")
     window.add_primitive("circle")
     window.document.undo()
     assert window.tree.topLevelItemCount() == 1
-    window.set_view_mode("etched")
-    assert window.view_mode == "etched"
 
 
 def test_layers_panel_is_shown_on_its_own_and_every_panel_can_be_reopened(window):

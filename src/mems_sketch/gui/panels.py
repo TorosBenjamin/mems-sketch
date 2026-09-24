@@ -171,12 +171,13 @@ class _Panel(QWidget):
 class ComponentsPanel(_Panel):
     """An explorer of the components: the project's, each library's and the built-ins.
 
-    These are definitions: every component expands to the components it
-    uses, and those expand in turn. The placements themselves (each with its
-    own name) are in the Shapes list. Double-click
-    opens a component in a tab (library and built-in ones read-only); drag one
-    onto the canvas, or use Place, to put it into the component being edited.
-    Right-click for everything else.
+    These are definitions, each listed once. A component expands to its
+    *private* components (``comb/finger``: made for comb, placed only inside
+    it); shared ones sit at the top of their group. What places what is in
+    the tooltips, and the placements themselves (each with its own name) are
+    in the Shapes list. Double-click opens a component in a tab (library and
+    built-in ones read-only); drag one onto the canvas, or use Place, to put it
+    into the component being edited. Right-click for everything else.
     """
 
     place_requested = Signal(str)
@@ -187,7 +188,6 @@ class ComponentsPanel(_Panel):
     NAME_ROLE = Qt.ItemDataRole.UserRole
     GROUP_ROLE = Qt.ItemDataRole.UserRole + 1  # "project", "library:<name>", "builtin"
     PROCESS_ROLE = Qt.ItemDataRole.UserRole + 2  # the Process item
-    PENDING = "…"  # placeholder child: filled in when the item is expanded
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -233,19 +233,20 @@ class ComponentsPanel(_Panel):
         process.setData(0, self.PROCESS_ROLE, True)
         process.setIcon(0, icons.icon("layers"))
         process.setToolTip(0, "The process's layers and constants (opens in a tab)")
-        names = sorted(project.components, key=lambda n: n != project.top)  # top first
-        for name in names:
-            self._component(local, name, name)
+        shared = [n for n in project.components if "/" not in n]
+        for name in sorted(shared, key=lambda n: n != project.top):  # top first
+            self._component(local, name)
         for library in project.libraries.values():
             where = f" — {library.path}" if library.path else ""
             group = self._group(
                 library.name, f"library:{library.name}", "library", f"Library{where}"
             )
             for name in library.components:
-                self._component(group, f"{library.name}.{name}", name)
+                if "/" not in name:
+                    self._component(group, f"{library.name}.{name}")
         builtins = self._group("Built-in", "builtin", "builtin", "Built-in components")
         for name in component_types():
-            self._component(builtins, name, name)
+            self._component(builtins, name)
         self.tree.verticalScrollBar().setValue(scroll)
 
     def _group(self, title: str, key: str, icon: str, tip: str) -> QTreeWidgetItem:
@@ -259,45 +260,63 @@ class ComponentsPanel(_Panel):
         item.setExpanded(self._state_key(item) not in self.collapsed)
         return item
 
-    def _component(self, parent: QTreeWidgetItem, name: str, label: str):
+    def _component(self, parent: QTreeWidgetItem, name: str):
+        """A component's row, with its private components below it."""
         project = self.document.project
+        label = name.rpartition(".")[2].rpartition("/")[2]
         item = QTreeWidgetItem(parent, [label])
         item.setData(0, self.NAME_ROLE, name)
         item.setIcon(0, icons.icon(component_icon(project, name)))
         if name == project.top and name != "top":  # the star shows it too
             item.setData(0, DETAIL_ROLE, "top")
         item.setToolTip(0, self._tooltip(name))
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
-        if parent.parent() is None and name == self.document.active:  # the tab being edited
+        drag = Qt.ItemFlag.ItemIsDragEnabled  # onto the canvas, where it may be placed
+        placeable = self._placeable(name)
+        item.setFlags(item.flags() | drag if placeable else item.flags() & ~drag)
+        if name == self.document.active:  # the tab being edited
             font = QFont()
             font.setBold(True)
             item.setFont(0, font)
             item.setIcon(0, icons.icon("eye" if self.document.read_only else "edit", "blue"))
-        if self.document.components.placed(name):
-            QTreeWidgetItem(item, [self.PENDING])  # filled in when expanded
-            if self._path_key(item) in self.expanded or (
-                parent.parent() is None and name == project.top and not self.expanded
-            ):
-                item.setExpanded(True)
+        for child in project.private_components(name):
+            self._component(item, child)
+        active = self.document.active
+        if item.childCount() and (
+            self._path_key(item) in self.expanded or active.startswith(f"{name}/")
+        ):
+            item.setExpanded(True)
         return item
+
+    def _placeable(self, name: str) -> bool:
+        """Whether ``name`` can be placed in the component being edited."""
+        project, active = self.document.project, self.document.active
+        if active not in project.components or name == active:
+            return False
+        try:
+            project.qualify(project.reference_name(name, active), active)
+            return True
+        except KeyError:
+            return False
 
     def _tooltip(self, name: str) -> str:
         project = self.document.project
+        owner = name.rpartition(".")[2].rpartition("/")[0]
         if "." in name:
             kind = "library component, read-only: copy it into the project to edit it"
         elif name in project.components:
             kind = "top component" if name == project.top else "project component"
         else:
             kind = "built-in component, read-only"
+        if owner:
+            kind += f"\nprivate to {owner}: placed only inside it"
+        lines = [f"{name} — {kind}"]
+        places = [target for target, _count in self.document.components.placed(name)]
+        if places:
+            lines.append(f"places {', '.join(places)}")
         users = self.document.components.users(name)
-        placed = f"\nplaced in {', '.join(users)}" if users else ""
-        return f"{name} — {kind}{placed}"
-
-    def _fill_children(self, item: QTreeWidgetItem) -> None:
-        if item.childCount() == 1 and item.child(0).text(0) == self.PENDING:
-            item.takeChild(0)
-            for child, _count in self.document.components.placed(item.data(0, self.NAME_ROLE)):
-                self._component(item, child, child)
+        if users:
+            lines.append(f"placed in {', '.join(users)}")
+        return "\n".join(lines)
 
     # -- expanded state --------------------------------------------------------
 
@@ -319,9 +338,7 @@ class ComponentsPanel(_Panel):
         return "/".join([group, *reversed(names)])
 
     def _set_expanded(self, item: QTreeWidgetItem, expanded: bool) -> None:
-        if expanded:
-            self._fill_children(item)
-        if self._refreshing:
+        if self._refreshing or item.data(0, self.PROCESS_ROLE):
             return
         if item.data(0, self.GROUP_ROLE) is not None:
             key = self._state_key(item)
@@ -408,9 +425,12 @@ class ComponentsPanel(_Panel):
         place = _menu_action(
             menu, f"Place in {active}", lambda: self.place_requested.emit(name), "place"
         )
-        place.setEnabled(active in project.components and name != active)
+        place.setEnabled(self._placeable(name))
         menu.addSeparator()
         if name in project.components:
+            _menu_action(menu, "New private component…", lambda: self._new(owner=name), "component")
+            self._ownership_actions(menu, name)
+            menu.addSeparator()
             _menu_action(menu, "Rename…", lambda: self._rename(name), "edit")
             _menu_action(
                 menu,
@@ -422,7 +442,7 @@ class ComponentsPanel(_Panel):
             menu.addSeparator()
             if name == project.top:
                 _menu_action(menu, "Make the project a library (no top component)", self._no_top)
-            else:
+            elif "/" not in name:
                 _menu_action(
                     menu,
                     "Set as top component",
@@ -437,10 +457,40 @@ class ComponentsPanel(_Panel):
                 "duplicate",
             )
 
-    def _new(self) -> None:
-        name, ok = QInputDialog.getText(self, "New component", "Component name:")
+    def _ownership_actions(self, menu: QMenu, name: str) -> None:
+        """Make a component shared, or private to another one."""
+        project = self.document.project
+        if "/" in name:
+            _menu_action(
+                menu,
+                "Make shared",
+                lambda: self._guard(lambda: self.document.components.move(name, None)),
+            )
+        owners = [
+            other
+            for other in project.components
+            if other != name
+            and not other.startswith(f"{name}/")
+            and other != name.rpartition("/")[0]
+            and name != project.top
+        ]
+        if owners:
+            sub = menu.addMenu("Make private to")
+            sub.setToolTip("It can then be placed only inside that component")
+            for owner in owners:
+                _menu_action(
+                    sub,
+                    owner,
+                    lambda _=False, o=owner: self._guard(
+                        lambda: self.document.components.move(name, o)
+                    ),
+                )
+
+    def _new(self, owner: str | None = None) -> None:
+        title = f"New component private to {owner}" if owner else "New component"
+        name, ok = QInputDialog.getText(self, title, "Component name:")
         if ok and name.strip():
-            self._guard(lambda: self.document.components.new(name.strip()))
+            self._guard(lambda: self.document.components.new(name.strip(), owner))
 
     def add_library(self, folder: str | None = None) -> None:
         """Load a folder of components (a library or another project) as a library."""
@@ -457,8 +507,9 @@ class ComponentsPanel(_Panel):
         if not self._is_local(old):
             self.error.emit("select a project component to rename")
             return
-        new, ok = QInputDialog.getText(self, "Rename component", "New name:", text=old)
-        if ok and new.strip() and new.strip() != old:
+        short = old.rpartition("/")[2]
+        new, ok = QInputDialog.getText(self, "Rename component", "New name:", text=short)
+        if ok and new.strip() and new.strip() != short:
             self._guard(lambda: self.document.components.rename(old, new.strip()))
 
     def _delete(self, name: str | None = None) -> None:
@@ -649,7 +700,7 @@ class ShapeTree(QTreeWidget):
         item.setCheckState(0, Qt.CheckState.Checked if shape.enabled else Qt.CheckState.Unchecked)
         if not shape.enabled:
             item.setForeground(0, QBrush(QColor("#8c8f99")))
-        self._placeholder(item, shape, None)
+        self._placeholder(item, shape, self.document.active)
         labels = SLOT_LABELS.get(shape.kind)
         for slot, children in enumerate(child_lists(shape)):
             holder = item
@@ -662,13 +713,14 @@ class ShapeTree(QTreeWidget):
 
     # -- what is inside placed components (read-only) -------------------------
 
-    def _placeholder(self, item: QTreeWidgetItem, shape: Shape, namespace: str | None) -> None:
-        """Let a placed component's row expand into its shapes (loaded when opened)."""
+    def _placeholder(self, item: QTreeWidgetItem, shape: Shape, context: str) -> None:
+        """Let a placed component's row expand into its shapes (loaded when opened);
+        ``context``: the component holding ``shape``, for the name it uses."""
         if not isinstance(shape, RefShape):
             return
         project = self.document.project
         try:
-            target = project.qualify(shape.component, namespace)
+            target = project.qualify(shape.component, context)
         except KeyError:
             return
         found = project.definition(target)
@@ -685,11 +737,11 @@ class ShapeTree(QTreeWidget):
         found = self.document.project.definition(target)
         if found is None:
             return
-        definition, namespace = found
+        definition, context = found
         for index, shape in enumerate(definition.shapes):
-            self._add_inside(item, shape, target, namespace, ((0, index),))
+            self._add_inside(item, shape, target, context, ((0, index),))
 
-    def _add_inside(self, parent, shape: Shape, owner: str, namespace, path: NodePath) -> None:
+    def _add_inside(self, parent, shape: Shape, owner: str, context: str, path: NodePath) -> None:
         item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})"])
         item.setData(0, INSIDE_ROLE, (owner, path))
         item.setData(0, DETAIL_ROLE, detail(shape))
@@ -712,7 +764,7 @@ class ShapeTree(QTreeWidget):
             glyph = type(first).icon if len(shape.modifiers) == 1 else "modifier"
             item.setIcon(self.MODIFIERS, icons.icon(glyph))
             item.setToolTip(self.MODIFIERS, f"Modifiers: {modifier_stack(shape)}")
-        self._placeholder(item, shape, namespace)
+        self._placeholder(item, shape, context)
         labels = SLOT_LABELS.get(shape.kind)
         for slot, children in enumerate(child_lists(shape)):
             holder = item
@@ -722,7 +774,7 @@ class ShapeTree(QTreeWidget):
                 holder.setData(0, INSIDE_ROLE, (owner, path))
                 holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
             for index, child in enumerate(children):
-                self._add_inside(holder, child, owner, namespace, (*path, (slot, index)))
+                self._add_inside(holder, child, owner, context, (*path, (slot, index)))
             holder.setExpanded(True)
 
     def selected_paths(self) -> list[NodePath]:

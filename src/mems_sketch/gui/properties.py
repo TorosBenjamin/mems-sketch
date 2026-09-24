@@ -363,8 +363,9 @@ class PropertyEditor(QScrollArea):
         box = _section(f"Parameters of {node.component}")
         form = _form(box)
         try:
-            component = self.document.component(node.component)
-            defaults = self.document.parameter_defaults(node.component)
+            target = self.document.resolve(node.component)  # as the edited component sees it
+            component = self.document.component(target)
+            defaults = self.document.parameter_defaults(target)
         except KeyError:
             form.addRow(QLabel("Unknown component."))
             self._editors["params"] = lambda: node.params

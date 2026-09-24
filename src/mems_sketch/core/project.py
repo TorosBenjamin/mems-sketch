@@ -6,12 +6,21 @@ inside another one. A project without a top component (``top=None``) is a
 library: a set of components meant to be placed elsewhere. Components contain shape trees (see
 :mod:`mems_sketch.core.shapes`) that may reference other components.
 
-Component names are resolved like this:
+Components are *shared* (``plate``) or *private* to another component
+(``comb/finger``: ``finger`` belongs to ``comb``), like nested classes: a
+private component can be placed only inside its owner (in the owner itself or
+in the owner's other private components). The components form one flat set;
+their paths give the hierarchy. A library exports its shared components.
 
-* ``name``: a local component or a built-in (local names may not shadow built-ins)
-* ``lib.name``: a component from the library loaded as ``lib``
-* inside a library, a bare ``name`` refers to that library's own component
-  first, then to a built-in; libraries never see the project's local components
+Component names are resolved like this, from the component holding the reference:
+
+* ``name``: looked up from the inside out: the component's own private
+  components, its owner's, and so on, then the shared ones, then the
+  built-ins (shared names may not shadow built-ins)
+* ``comb/finger``: a private component by its path (only from inside ``comb``)
+* ``lib.name``: a shared component of the library loaded as ``lib``
+* inside a library, names are looked up in that library; libraries never see
+  the project's local components
 
 The project is plain data. Turning it into geometry is the job of
 :mod:`mems_sketch.core.compiler`; the ``render`` helpers here are shortcuts.
@@ -19,6 +28,7 @@ The project is plain data. Turning it into geometry is the job of
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -115,46 +125,120 @@ class Project:
             return self.top
         return next(iter(self.components), None)
 
-    def qualify(self, name: str, namespace: str | None = None) -> str:
-        """The unique name of the component that ``name`` refers to from ``namespace``.
+    def _pool(self, library: str | None) -> dict[str, ComponentDef]:
+        return self.libraries[library].components if library else self.components
 
-        ``namespace`` is ``None`` for the project and a library name inside a library.
+    def qualify(self, name: str, context: str | None = None) -> str:
+        """The unique name of the component that ``name`` refers to, written in
+        the component ``context`` (a unique name; None: from outside any component,
+        e.g. to open one, where every component can be named by its unique name).
+
+        A bare name is looked up from the inside out: the context's own private
+        components, then its owner's, up to the shared ones, then the built-ins.
+        A private component can only be named from inside its owner.
         """
+        # None: from outside (anything may be named); "": at project level
+        library, where = (None, None) if context is None else _split(context)
         if "." in name:
-            library, _, local = name.partition(".")
-            if library not in self.libraries or local not in self.libraries[library].components:
+            target, path = _split(name)
+            if target not in self.libraries or path not in self._pool(target):
                 raise KeyError(f"unknown component '{name}'")
+            _check_visible(name, path, where if library == target or context is None else "")
             return name
-        if namespace is None and name in self.components:
-            return name
-        if namespace is not None and name in self.libraries[namespace].components:
-            return f"{namespace}.{name}"
+        pool = self._pool(library)
+        prefix = f"{library}." if library else ""
+        if "/" in name:
+            if name not in pool:
+                raise KeyError(f"unknown component '{name}'")
+            _check_visible(prefix + name, name, where)
+            return prefix + name
+        scope = where or ""
+        while True:
+            candidate = f"{scope}/{name}" if scope else name
+            if candidate in pool:
+                return prefix + candidate
+            if not scope:
+                break
+            scope = scope.rpartition("/")[0]
         if is_builtin(name):
             return name
         raise KeyError(f"unknown component '{name}'")
 
-    def definition(self, qualified: str) -> tuple[ComponentDef, str | None] | None:
-        """The definition and namespace of a user component, or None for a built-in."""
-        if "." in qualified:
-            library, _, local = qualified.partition(".")
-            return self.libraries[library].components[local], library
-        if qualified in self.components:
-            return self.components[qualified], None
+    def reference_name(self, qualified: str, context: str | None) -> str:
+        """How the component ``context`` writes a reference to ``qualified``: its
+        short name when that finds it, else its path (or ``lib.path``)."""
+        library, path = _split(qualified)
+        context_library = _split(context)[0] if context else None
+        if library is not None and library != context_library:
+            return qualified
+        short = path.rpartition("/")[2]
+        with contextlib.suppress(KeyError):
+            if self.qualify(short, context) == qualified:
+                return short
+        return path
+
+    def definition(self, qualified: str) -> tuple[ComponentDef, str] | None:
+        """The definition of a user component and the context its references are
+        written in (its unique name), or None for a built-in."""
+        library, path = _split(qualified)
+        pool = self._pool(library)
+        if library is not None and library not in self.libraries:
+            raise KeyError(f"unknown component '{qualified}'")
+        if path in pool:
+            return pool[path], qualified
         return None
 
-    def component_names(self) -> list[str]:
-        """Every component that can be placed from the project: local, library, built-in."""
+    def references_of(self, qualified: str) -> list[tuple[Shape, str]]:
+        """The ``ref`` shapes of a user component with what each places (unique
+        names); references that do not resolve are left out."""
+        found = self.definition(qualified)
+        if found is None:
+            return []
+        definition, context = found
+        result = []
+        for shape in walk(definition.shapes):
+            if isinstance(shape, RefShape):
+                with contextlib.suppress(KeyError):
+                    result.append((shape, self.qualify(shape.component, context)))
+        return result
+
+    def users(self, qualified: str) -> list[str]:
+        """The project's components that place ``qualified`` directly."""
+        return [
+            name
+            for name in self.components
+            if any(target == qualified for _, target in self.references_of(name))
+        ]
+
+    def private_components(self, owner: str) -> list[str]:
+        """The components private to ``owner`` (a unique name), directly."""
+        library, path = _split(owner)
+        prefix = f"{library}." if library else ""
+        return [prefix + name for name in self._pool(library) if name.rpartition("/")[0] == path]
+
+    def component_names(self, context: str | None = None) -> list[str]:
+        """Every component that can be placed in ``context``, written as it would
+        write them: its own and its owners' private components, the shared ones,
+        the libraries' shared ones and the built-ins."""
         from mems_sketch.core.component import component_types
 
-        library_names = [
-            f"{lib.name}.{c}" for lib in self.libraries.values() for c in lib.components
-        ]
-        return [*self.components, *library_names, *component_types()]
+        names = []
+        for name in self.components:
+            with contextlib.suppress(KeyError):
+                self.qualify(name, context or "")
+                names.append(self.reference_name(name, context))
+        for library in self.libraries.values():
+            for name in library.components:
+                qualified = f"{library.name}.{name}"
+                with contextlib.suppress(KeyError):
+                    self.qualify(qualified, context or "")
+                    names.append(self.reference_name(qualified, context))
+        return [*dict.fromkeys(names), *component_types()]
 
     def define_component(self, definition: ComponentDef) -> ComponentDef:
         """Add or replace a local component; the project is unchanged if it is invalid."""
-        if is_builtin(definition.name):
-            raise ValueError(f"'{definition.name}' is a built-in component name")
+        if is_builtin(definition.short_name):
+            raise ValueError(f"'{definition.short_name}' is a built-in component name")
         previous = self.components
         self.components = {**previous, definition.name: definition}
         try:
@@ -166,33 +250,72 @@ class Project:
         return definition
 
     def remove_component(self, name: str) -> None:
-        """Remove a local component that nothing uses (removing the top one leaves none)."""
-        users = [d.name for d in self.components.values() if name in d.references()]
+        """Remove a local component with its private ones, if nothing else uses them
+        (removing the top one leaves none)."""
+        doomed = {k for k in self.components if k == name or k.startswith(f"{name}/")}
+        users = sorted(
+            {user for target in doomed for user in self.users(target) if user not in doomed}
+        )
         if users:
             raise ValueError(f"component '{name}' is still used by: {', '.join(users)}")
-        del self.components[name]
-        if self.top == name:
+        self.components = {k: v for k, v in self.components.items() if k not in doomed}
+        if self.top in doomed:
             self.top = None
 
     def rename_component(self, old: str, new: str) -> None:
-        """Rename a local component and update every reference to it."""
-        if new in self.components or is_builtin(new):
+        """Rename a local component (``new`` is its new short name) and update
+        every reference to it."""
+        owner = old.rpartition("/")[0]
+        self.move_component(old, f"{owner}/{new}" if owner else new)
+
+    def move_component(self, old: str, new: str) -> None:
+        """Give a local component (with its private ones) a new path: rename it,
+        make it private to another component, or shared (``new`` without owner).
+
+        References to it are rewritten; a reference that could no longer see it
+        (placed outside its new owner) is an error.
+        """
+        if new == old:
+            return
+        if new in self.components or is_builtin(new.rpartition("/")[2]):
             raise ValueError(f"a component named '{new}' already exists")
-        definition = self.components[old].model_copy(update={"name": new})
-        definition = ComponentDef.model_validate(definition.model_dump())  # validates the name
-        self.components = {
-            (new if k == old else k): (definition if k == old else v)
-            for k, v in self.components.items()
+        if new.startswith(f"{old}/"):
+            raise ValueError(f"'{old}' cannot be private to itself")
+        owner = new.rpartition("/")[0]
+        if owner and owner not in self.components:
+            raise ValueError(f"unknown component '{owner}'")
+        if self.top == old and owner:
+            raise ValueError("the top component cannot be private to another one")
+        ComponentDef.model_validate({"name": new})  # a valid path
+        moved = {
+            k: new + k[len(old) :] for k in self.components if k == old or k.startswith(f"{old}/")
         }
-        for component in self.components.values():
-            for shape in walk(component.shapes):
-                if isinstance(shape, RefShape) and shape.component == old:
-                    shape.component = new
-        if self.top == old:
-            self.top = new
+        references = [
+            (name, shape, target)
+            for name in self.components
+            for shape, target in self.references_of(name)
+        ]
+        previous, top = self.components, self.top
+        written = [(shape, shape.component) for _, shape, _ in references]
+        try:
+            self.components = {
+                moved.get(k, k): (v.model_copy(update={"name": moved[k]}) if k in moved else v)
+                for k, v in self.components.items()
+            }
+            for name, shape, target in references:
+                context = moved.get(name, name)
+                shape.component = self.reference_name(moved.get(target, target), context)
+            self.top = moved.get(self.top, self.top)
+            self.check_references()
+        except Exception:
+            self.components, self.top = previous, top
+            for shape, component in written:
+                shape.component = component
+            raise
 
     def check_references(self) -> None:
-        """Every ``ref`` must resolve, and references must not form a cycle."""
+        """Every ``ref`` must resolve (and see what it places), private components
+        need their owner, and references must not form a cycle."""
         state: dict[str, str] = {}
 
         def visit(qualified: str, path: list[str]) -> None:
@@ -203,11 +326,13 @@ class Project:
             found = self.definition(qualified)
             if found is None:
                 return  # built-in
-            definition, namespace = found
+            definition, context = found
             state[qualified] = "visiting"
             for ref in definition.references():
                 try:
-                    target = self.qualify(ref, namespace)
+                    target = self.qualify(ref, context)
+                except PrivateComponentError as exc:
+                    raise ValueError(f"component '{qualified}': {exc}") from None
                 except KeyError:
                     raise ValueError(
                         f"component '{qualified}' references unknown component '{ref}'"
@@ -215,11 +340,15 @@ class Project:
                 visit(target, [*path, qualified])
             state[qualified] = "done"
 
-        for name in self.components:
-            visit(name, [])
-        for library in self.libraries.values():
-            for name in library.components:
-                visit(f"{library.name}.{name}", [])
+        for library in (None, *self.libraries):
+            prefix = f"{library}." if library else ""
+            for name in self._pool(library):
+                owner = name.rpartition("/")[0]
+                if owner and owner not in self._pool(library):
+                    raise ValueError(
+                        f"component '{prefix}{name}' is private to a missing '{owner}'"
+                    )
+                visit(prefix + name, [])
 
     # -- parameters (the top component's parameters act as the design's variables)
     # Methods taking ``component=None`` use the top component; a library must name one.
@@ -338,7 +467,7 @@ class Project:
         session = (compiler or Compiler()).session(self)
         name = self._target(component)
         variables = session.variables(name) if variables is None else variables
-        return session.render_shapes([shape], variables)
+        return session.render_shapes([shape], variables, name)
 
     def component(self, name: str) -> Component:
         """A buildable component, resolved from the project namespace."""
@@ -362,6 +491,30 @@ class Project:
             except Exception as exc:  # noqa: BLE001 - collected for the caller
                 problems.append(f"{name}: {exc}")
         return problems
+
+
+class PrivateComponentError(KeyError):
+    """A component named from outside the component it is private to."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
+def _split(qualified: str) -> tuple[str | None, str]:
+    """``lib.comb/finger`` -> ``("lib", "comb/finger")``; no library: ``(None, path)``."""
+    library, dot, path = qualified.partition(".")
+    return (library, path) if dot else (None, qualified)
+
+
+def _check_visible(qualified: str, path: str, where: str | None) -> None:
+    """A private component is seen only from inside its owner (``where`` None: from
+    outside every component, where anything may be named)."""
+    owner = path.rpartition("/")[0]
+    if not owner or where is None or where == owner or where.startswith(f"{owner}/"):
+        return
+    raise PrivateComponentError(
+        f"'{qualified}' is private to '{owner}': it can only be placed inside '{owner}'"
+    )
 
 
 def check_shape_names(shapes: list[Shape]) -> None:

@@ -78,17 +78,18 @@ class Session:
 
     # -- lookup ------------------------------------------------------------
 
-    def component(self, name: str, namespace: str | None = None) -> Component:
-        """A buildable (and cached) component for ``name`` as written in ``namespace``."""
-        qualified = self.project.qualify(name, namespace)
+    def component(self, name: str, context: str | None = None) -> Component:
+        """A buildable (and cached) component for ``name`` as written in the
+        component ``context`` (None: a unique name, from outside any component)."""
+        qualified = self.project.qualify(name, context)
         if qualified not in self._components:
             found = self.project.definition(qualified)
             if found is None:
                 inner = get_component(qualified)
             else:
-                definition, owner = found
+                definition, inside = found
                 inner = UserComponent(
-                    definition, lambda n, ns=owner: self.component(n, ns), self.scope
+                    definition, lambda n, c=inside: self.component(n, c), self.scope
                 )
             self._components[qualified] = _CachedComponent(inner, qualified, self)
         return self._components[qualified]
@@ -103,9 +104,9 @@ class Session:
         if found is None:
             digest = _builtin_fingerprint(type(get_component(qualified)))
         else:
-            definition, namespace = found
+            definition, context = found
             children = sorted(
-                self.fingerprint(self.project.qualify(ref, namespace), _visiting | {qualified})
+                self.fingerprint(self.project.qualify(ref, context), _visiting | {qualified})
                 for ref in definition.references()
             )
             digest = _hash("user", definition.model_dump_json(), *children)
@@ -155,18 +156,19 @@ class Session:
         record: dict[NodePath, NodeRecord] = {}
         if found is None:  # a built-in has no shape tree
             return record
-        definition, namespace = found
-        evaluator = Evaluator(lambda n: self.component(n, namespace), record)
+        definition, context = found
+        evaluator = Evaluator(lambda n: self.component(n, context), record)
         # On failure, what was evaluated so far is still useful to show.
         with contextlib.suppress(Exception):
             evaluator.render(definition.shapes, self.variables(component, params))
         return record
 
     def render_shapes(
-        self, shapes: list[Shape], variables: dict[str, float], namespace: str | None = None
+        self, shapes: list[Shape], variables: dict[str, float], context: str | None = None
     ) -> Geometry:
-        """Evaluate loose shapes in a scope, e.g. one node of a component being edited."""
-        return Evaluator(lambda n: self.component(n, namespace)).render(shapes, variables)
+        """Evaluate loose shapes in a scope, e.g. one node of a component being edited
+        (``context``: that component, for the names its references use)."""
+        return Evaluator(lambda n: self.component(n, context)).render(shapes, variables)
 
 
 class _CachedComponent(Component):

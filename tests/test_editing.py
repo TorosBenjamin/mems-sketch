@@ -145,7 +145,7 @@ def test_make_component_from_selection_keeps_geometry(doc):
     assert area(doc) == pytest.approx(before)
     ref = doc.node(path)
     assert ref.component == "cell" and ref.params == {"h": "h", "w": "w"}
-    cell = doc.project.components["cell"]
+    cell = doc.project.components["top/cell"]  # private to the component it came from
     assert [p.name for p in cell.parameters] == ["w", "h"]
     assert cell.parameters[0].min == 1
     assert len(doc.shapes) == 2  # the reference and the untouched third rectangle
@@ -466,7 +466,9 @@ def test_a_script_can_edit_and_save_a_project(tmp_path):
     session.save()
 
     again = EditSession.open_project(tmp_path / "resonator")
-    assert "spring_with_anchor" in again.project.components
+    assert "suspension/spring_with_anchor" in again.project.components  # private to suspension
+    saved = tmp_path / "resonator" / "components" / "suspension" / "spring_with_anchor.yaml"
+    assert saved.read_text().startswith("name: spring_with_anchor\n")
     after = again.results.geometry(component="suspension")
     assert before.layers.keys() == after.layers.keys()
     assert all((before.layers[k] ^ after.layers[k]).is_empty() for k in before.layers)

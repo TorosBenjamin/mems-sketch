@@ -293,14 +293,25 @@ def explorer_item(window, *names):
     return item
 
 
-def test_the_explorer_shows_what_each_component_places(resonator):
-    suspension = explorer_item(resonator, "top", "suspension")
+def children(item) -> list[str]:
+    return [item.child(i).text(0) for i in range(item.childCount())]
+
+
+def test_the_explorer_lists_each_component_once_with_its_private_ones(resonator):
+    resonator.document.components.new("clamp", owner="suspension")
+    project = resonator.components.tree.topLevelItem(0)
+    assert children(project) == ["Process", "top", "suspension"]  # not nested by use
+    suspension = explorer_item(resonator, "suspension")
     assert suspension.data(0, DETAIL_ROLE) is None  # definitions: no counts
     assert "placed in top" in suspension.toolTip(0)
-    suspension.setExpanded(True)
-    children = [suspension.child(i).text(0) for i in range(suspension.childCount())]
-    assert children == ["serpentine_spring", "anchor"]
-    assert "project/top/suspension" in resonator.components.expanded
+    assert "places serpentine_spring, anchor" in suspension.toolTip(0)
+    assert children(suspension) == ["clamp"]
+    clamp = explorer_item(resonator, "suspension", "suspension/clamp")
+    assert "private to suspension" in clamp.toolTip(0)
+    assert suspension.isExpanded()  # clamp is being edited
+    suspension.setExpanded(False)
+    suspension.setExpanded(True)  # opened by hand: remembered
+    assert "project/suspension" in resonator.components.expanded
     assert resonator.editor_state()["collapsed"]["explorer"]
 
 
@@ -375,3 +386,37 @@ def test_placed_components_open_read_only_in_the_shape_list(resonator):
     resonator._tree_double_clicked(inside[1], 0)  # edit the anchor where it lives
     assert resonator.document.active == "suspension"
     assert resonator.selection == [((0, 1),)]
+
+
+def menu_texts(menu) -> dict:
+    found = {}
+    for action in menu.actions():
+        found[action.text()] = action
+        if action.menu() is not None:
+            found |= {f"{action.text()}/{k}": v for k, v in menu_texts(action.menu()).items()}
+    return found
+
+
+def test_private_components_from_the_explorer_menu(resonator, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    doc = resonator.document
+    panel = resonator.components
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("clamp", True))
+    menu_texts(panel.menu_for(explorer_item(resonator, "suspension")))[
+        "New private component…"
+    ].trigger()
+    assert doc.active == "suspension/clamp"
+    resonator.open_component("top")
+    clamp = explorer_item(resonator, "suspension", "suspension/clamp")
+    actions = menu_texts(panel.menu_for(clamp))
+    assert not actions["Place in top"].isEnabled()  # private to suspension
+    assert not clamp.flags() & Qt.ItemFlag.ItemIsDragEnabled
+    assert "clamp" not in doc.component_names()
+    actions["Make shared"].trigger()
+    assert "clamp" in doc.project.components and "clamp" in doc.component_names()
+    menu_texts(panel.menu_for(explorer_item(resonator, "clamp")))[
+        "Make private to/suspension"
+    ].trigger()
+    assert "suspension/clamp" in doc.project.components
+    assert resonator.area.current.component == "top"

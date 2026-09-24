@@ -133,6 +133,13 @@ class PointDef(_Model):
 
 
 class ComponentDef(_Model):
+    """A user component.
+
+    ``name`` is its path: ``plate`` for a shared component, ``comb/finger`` for
+    ``finger``, a *private* component of ``comb`` (see
+    :mod:`mems_sketch.core.project` for what can place it).
+    """
+
     name: str
     description: str = ""
     parameters: list[ParamDef] = Field(default_factory=list)
@@ -142,9 +149,19 @@ class ComponentDef(_Model):
     @field_validator("name")
     @classmethod
     def _valid_name(cls, name: str) -> str:
-        if not name.isidentifier():
+        if not all(part.isidentifier() for part in name.split("/")):
             raise ValueError(f"'{name}' is not a valid component name")
         return name
+
+    @property
+    def short_name(self) -> str:
+        """The name without its owners: ``finger`` for ``comb/finger``."""
+        return self.name.rpartition("/")[2]
+
+    @property
+    def owner(self) -> str | None:
+        """The component this one is private to, or None for a shared one."""
+        return self.name.rpartition("/")[0] or None
 
     @model_validator(mode="after")
     def _unique_params(self):

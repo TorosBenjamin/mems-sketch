@@ -73,5 +73,5 @@ def test_make_component_passes_internal_values_in_as_public(doc):
     doc.nodes.add(RectShape(layer="device", x0=0, y0=0, x1="w", y1=1))
     path = doc.components.make([((0, 0),)], "cell")
     assert doc.node(path).params == {"w": "w"}
-    assert not doc.project.components["cell"].parameter("w").internal
+    assert not doc.project.components["top/cell"].parameter("w").internal
     assert area(doc) == pytest.approx(4)

@@ -196,7 +196,8 @@ class ComponentEdits(Commands):
         if owner is not None and owner not in self.session.project.components:
             raise ValueError(f"'{owner}' is not a component of this project")
         path = f"{owner}/{name}" if owner else name
-        if path in self.session.project.components or is_builtin(name):
+        project = self.session.project
+        if path in project.components or name in project.imports or is_builtin(name):
             where = f" in {owner}" if owner else ""
             raise ValueError(f"a component named '{name}' already exists{where}")
         return path

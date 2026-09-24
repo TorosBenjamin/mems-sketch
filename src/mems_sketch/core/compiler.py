@@ -26,6 +26,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from mems_sketch.core.component import Component, Geometry, Params, get_component, resolve_params
+from mems_sketch.core.imports import ImportedComponent
 from mems_sketch.core.shapes import Evaluator, NodePath, NodeRecord, Point, Shape
 from mems_sketch.core.user_component import UserComponent
 
@@ -84,7 +85,9 @@ class Session:
         qualified = self.project.qualify(name, context)
         if qualified not in self._components:
             found = self.project.definition(qualified)
-            if found is None:
+            if qualified in self.project.imports:
+                inner = ImportedComponent(self.project.imports[qualified])
+            elif found is None:
                 inner = get_component(qualified)
             else:
                 definition, inside = found
@@ -101,7 +104,11 @@ class Session:
         if qualified in _visiting:
             raise ValueError(f"circular component reference involving '{qualified}'")
         found = self.project.definition(qualified)
-        if found is None:
+        if qualified in self.project.imports:
+            imported = self.project.imports[qualified]
+            layers = sorted(imported.layers.items())
+            digest = _hash("import", imported.digest, imported.cell, repr(layers))
+        elif found is None:
             digest = _builtin_fingerprint(type(get_component(qualified)))
         else:
             definition, context = found

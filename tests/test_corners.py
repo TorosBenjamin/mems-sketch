@@ -138,6 +138,7 @@ def test_a_picked_corner_is_recorded_as_the_shapes_own_point():
     assert device_area(session) == pytest.approx(40 - CUT, abs=0.01)
     assert session.corners.rounded(path) == [(0, (10, 4))]
     assert session.corners.add(path, 10, 4) == 0  # not twice
+    assert len(session.node(path).modifiers[0].corners) == 1
     session.corners.update(path, 0, radius=2, style="chamfer")
     assert device_area(session) == pytest.approx(40 - 2, abs=0.01)
     session.corners.remove(path, 0)

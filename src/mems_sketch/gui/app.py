@@ -58,7 +58,7 @@ DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
 DEFAULT_TOOL_WINDOWS = ("components", "shapes", "properties", "messages")
-CANVAS_MODES = ("select", "hand", "move", "rotate", "align", "measure")  # on the canvas
+CANVAS_MODES = ("select", "hand", "move", "rotate", "align", "corners", "measure")  # on the canvas
 # Canvas options and the settings they come from (see gui/settings.py).
 CANVAS_OPTIONS = {
     "fill_opacity": "canvas/fill_opacity",
@@ -146,6 +146,7 @@ class MainWindow(QMainWindow):
         ):
             panel.error.connect(self.report_error)
         self.properties.previewed.connect(self._preview_node)
+        self.properties.pick_corners.connect(lambda: self.set_tool("corners"))
 
         self.setWindowIcon(icons.icon("component"))
         self.resize(1500, 950)
@@ -776,7 +777,7 @@ class MainWindow(QMainWindow):
 
     def refresh(self) -> None:
         """Recompile every open tab and update the panels (after any change)."""
-        self.tool.cancel()  # what it was doing was based on the previous state
+        self.tool.design_changed()  # what it was doing was based on the previous state
         for view in self.area.views():
             if not self.document.exists(view.component):
                 self.area.close_view(view)  # its component was deleted (or undone)
@@ -978,10 +979,11 @@ class MainWindow(QMainWindow):
         if target is not None:
             self.open_component(target)
 
-    def _preview_node(self, node) -> None:
-        """Draw the current tab as it would be with the selected node changed (a value
-        being dragged in Properties); applying it redraws everything as usual."""
-        view, path = self.view, self.properties.path
+    def _preview_node(self, node, path=None) -> None:
+        """Draw the current tab as it would be with a node changed (the selected one
+        by default: a value being dragged in Properties); applying it redraws
+        everything as usual."""
+        view, path = self.view, path or self.properties.path
         if path is None:
             return
         try:

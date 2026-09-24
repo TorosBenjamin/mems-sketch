@@ -14,6 +14,7 @@ modifier). It is recorded so that it follows the design, most stable first:
 from __future__ import annotations
 
 import contextlib
+import math
 from typing import Any
 
 import klayout.db as kdb
@@ -27,6 +28,7 @@ from mems_sketch.core.shapes.points import NodePoints
 from mems_sketch.editing.commands import Commands
 
 TOLERANCE_UM = 0.002  # positions this close are the same corner
+MIN_TURN_DEG = 15.0  # a vertex where the outline turns less is part of a curve
 
 Position = tuple[float, float]
 
@@ -37,8 +39,9 @@ class CornerEdits(Commands):
     # -- what can be picked ------------------------------------------------------
 
     def candidates(self, path: NodePath) -> list[Position]:
-        """The vertices of the node before its corners modifier, in the component's
-        frame: the corners that can be rounded."""
+        """The corners of the node before its corners modifier (vertices where the
+        outline turns, not the steps of a curve), in the component's frame: what
+        can be rounded."""
         geometry, _, to_component = self._before(path)
         result: list[Position] = []
         for region in geometry.layers.values():
@@ -46,7 +49,7 @@ class CornerEdits(Commands):
                 rings = [polygon.each_point_hull()]
                 rings += [polygon.each_point_hole(h) for h in range(polygon.holes())]
                 for ring in rings:
-                    for p in ring:
+                    for p in _turning(list(ring)):
                         q = to_component * kdb.DPoint(p.x * DBU_UM, p.y * DBU_UM)
                         if not any(_same((q.x, q.y), r) for r in result):
                             result.append((q.x, q.y))
@@ -81,24 +84,38 @@ class CornerEdits(Commands):
         """Round the corner at ``(x, y)`` (component frame; a vertex, see
         :meth:`candidates`). The node gets a corners modifier first in its stack
         if it has none (so an array copies the rounded shape). Returns the
-        corner's index; a corner already there is not added twice."""
-        existing = self.at(path, x, y)
-        if existing is not None:
-            return existing
-        fields = self.describe(path, x, y)
-        corner = Corner(**fields, radius=radius, style=style)
+        corner's index; a corner already there gets the new radius and style."""
+        node, index = self.with_corner(path, x, y, radius, style)
+        self.session.modifiers._set(path, node.modifiers, f"Round a corner of {_label(node)}")
+        return index
+
+    def with_corner(
+        self, path: NodePath, x: float, y: float, radius: Any = 1.0, style: str = "round"
+    ) -> tuple[Shape, int]:
+        """The node with the corner at ``(x, y)`` rounded, without changing anything
+        (for a preview), and the corner's index."""
         node = self.session.node(path)
         found = self._modifier(node)
         modifiers = list(node.modifiers)
+        existing = self.at(path, x, y)
         if found is None:
+            corner = Corner(**self.describe(path, x, y), radius=radius, style=style)
             modifiers.insert(0, CornersModifier(corners=[corner]))
             index = 0
         else:
             m, modifier = found
-            modifiers[m] = modifier.model_copy(update={"corners": [*modifier.corners, corner]})
-            index = len(modifier.corners)
-        self.session.modifiers._set(path, modifiers, f"Round a corner of {_label(node)}")
-        return index
+            corners = list(modifier.corners)
+            if existing is None:
+                corner = Corner(**self.describe(path, x, y), radius=radius, style=style)
+                corners.append(corner)
+                index = len(corners) - 1
+            else:
+                index = existing
+                corners[index] = corners[index].model_copy(
+                    update={"radius": radius, "style": style}
+                )
+            modifiers[m] = modifier.model_copy(update={"corners": corners})
+        return node.model_copy(update={"modifiers": modifiers}), index
 
     def update(self, path: NodePath, index: int, /, **fields: Any) -> None:
         """Change a corner's radius, style or position (``at``, ``x``, ``y``)."""
@@ -243,6 +260,19 @@ class CornerEdits(Commands):
         if found is None:
             raise ValueError(f"'{_label(node)}' has no rounded corners")
         return found
+
+
+def _turning(ring: list[kdb.Point]) -> list[kdb.Point]:
+    """The vertices of a ring where it turns by at least MIN_TURN_DEG: corners, not
+    the many small steps of an arc or circle."""
+    result = []
+    for index, p in enumerate(ring):
+        before, after = ring[index - 1], ring[(index + 1) % len(ring)]
+        a = math.atan2(p.y - before.y, p.x - before.x)
+        b = math.atan2(after.y - p.y, after.x - p.x)
+        if abs(math.degrees(math.remainder(b - a, 2 * math.pi))) >= MIN_TURN_DEG:
+            result.append(p)
+    return result
 
 
 def _same(a: Position, b: Position) -> bool:

@@ -384,7 +384,10 @@ class Corner(BaseModel):
         return at
 
     def where(self) -> str:
-        return self.at or f"{_format(self.x)}, {_format(self.y)}"
+        """Where it is, briefly: ``top_right`` for the node's own point."""
+        if self.at:
+            return self.at.removeprefix("self.")
+        return f"{_format(self.x)}, {_format(self.y)}".replace("self.", "")
 
 
 class CornersModifier(Modifier):

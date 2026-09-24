@@ -151,7 +151,8 @@ class NewProjectDialog(QDialog):
     # -- what it makes -------------------------------------------------------
 
     @property
-    def kind(self) -> str:
+    def making(self) -> str:
+        """``project`` or ``library``."""
         item = self.kinds.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item is not None else "project"
 
@@ -164,7 +165,7 @@ class NewProjectDialog(QDialog):
         return {
             "folder": self.folder(),
             "name": self.name.text().strip(),
-            "library": self.kind == "library",
+            "library": self.making == "library",
             "libraries": [self.libraries.item(i).toolTip() for i in range(self.libraries.count())],
             "process_from": self.process_from,
         }
@@ -188,11 +189,13 @@ class NewProjectDialog(QDialog):
     # -- reacting ------------------------------------------------------------
 
     def _kind_changed(self, _row: int) -> None:
-        label, _icon, about = KINDS[self.kind]
+        label, _icon, about = KINDS[self.making]
         self.heading.setText(f"New {label.lower()}")
         self.about.setText(about)
         if not self._named_by_user:  # suggest a free name for the kind
-            self.name.setText(self._free_name("untitled" if self.kind == "project" else "library"))
+            self.name.setText(
+                self._free_name("untitled" if self.making == "project" else "library")
+            )
         self._validate()
 
     def _name_edited(self, _text: str) -> None:

@@ -207,7 +207,7 @@ class PropertyEditor(QScrollArea):
         row.addWidget(apply)
         layout.addLayout(row)
         layout.addStretch()
-        self.setWidget(body)
+        self._show(body)
 
     def _enabled_toggle(self, node: Shape) -> QToolButton:
         """The eye in the title row: whether the shape is drawn (applied at once)."""
@@ -680,14 +680,24 @@ class PropertyEditor(QScrollArea):
         note.setObjectName("muted")
         layout.addWidget(note)
         layout.addStretch()
-        self.setWidget(body)
+        self._show(body)
+
+    def _show(self, content: QWidget) -> None:
+        """Replace the panel's content. The old content is deleted later, not now: the
+        change may come from one of its own fields or buttons (Enter in a field,
+        the eye), which Qt is still delivering an event to."""
+        old = self.takeWidget()
+        if old is not None:
+            old.hide()
+            old.deleteLater()
+        self.setWidget(content)
 
     def _show_placeholder(self, text: str) -> None:
         label = QLabel(text)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setWordWrap(True)
         label.setObjectName("muted")
-        self.setWidget(label)
+        self._show(label)
 
     # -- applying ----------------------------------------------------------
 

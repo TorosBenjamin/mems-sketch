@@ -157,3 +157,39 @@ def test_internal_parameters_are_locked_and_not_offered_where_placed(window):
     window.tree.select_paths([path])
     labels = [lab.text() for lab in window.properties.findChildren(QLabel)]
     assert "size" in labels and "inner" not in labels
+
+
+def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window, qtbot):
+    """Enter in a field, or a click on the eye or a card button, rebuilds the panel
+    from inside that widget's own event: the old widgets must outlive the event."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QToolButton
+
+    from mems_sketch import ArrayModifier
+
+    editor = window.properties
+    for text, field in (("3", "From x"), ("pitch", "To y")):
+        edit = fields(window)[field]
+        window.activateWindow()
+        qtbot.mouseClick(edit, Qt.MouseButton.LeftButton)  # focus, as a user gives it
+        edit.selectAll()
+        qtbot.keyClicks(edit, text)
+        qtbot.keyClick(edit, Qt.Key.Key_Return)
+        qtbot.wait(1)
+    bar = window.document.shapes[0]
+    assert (bar.x0, bar.y1) == (3, "pitch")
+    qtbot.keyClicks(editor.name_edit, "_2")
+    qtbot.keyClick(editor.name_edit, Qt.Key.Key_Return)
+    qtbot.wait(1)
+    assert window.document.shapes[0].name.endswith("_2")
+    qtbot.mouseClick(editor.enabled_toggle, Qt.MouseButton.LeftButton)
+    qtbot.wait(1)
+    assert window.document.shapes[0].enabled is False
+    window.document.nodes.replace(
+        ((0, 0),), window.document.shapes[0].model_copy(update={"modifiers": [ArrayModifier()]})
+    )
+    window.tree.select_paths([((0, 0),)])
+    remove = next(b for b in window.properties.findChildren(QToolButton) if b.toolTip() == "Remove")
+    qtbot.mouseClick(remove, Qt.MouseButton.LeftButton)
+    qtbot.wait(1)
+    assert window.document.shapes[0].modifiers == []

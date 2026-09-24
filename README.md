@@ -313,8 +313,10 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   it on the canvas; click it to pan there (the zoom stays) and edit it in the
   form below the list (At, X, Y with value dragging, description).
   Double-click a declared point to rename it. Right-click: Copy reference,
-  Rename, Delete, and for a default or shape point **Name this point**, which
-  declares a point right there, measured from it.
+  Rename, Delete. A default or shape point can be **re-exported**: it becomes
+  a point of this component, measured from the original (so it follows it),
+  named like it (`spring.end` becomes `end`, or `spring_end` when taken).
+  Right-click a placed part's group to re-export all its points at once.
 - **Tools** (the canvas modes in the canvas's corner; the drawing tools start
   from **Add**, the right-click menu or their shortcut. A tool stays active
   until another is chosen; Esc cancels what it is doing and, pressed again,

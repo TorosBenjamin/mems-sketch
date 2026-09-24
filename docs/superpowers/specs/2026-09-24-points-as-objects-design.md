@@ -25,8 +25,11 @@ A tree instead of a table, with a form under it for the selected point:
 - **Double-click** a declared point's name to rename it. Components that
   place this one follow: alignments (`to`, and `point` on the placing node),
   expressions (`comb1.anchor.x`), mirror `about` and their own points' `at`.
-- **Right-click**: Copy reference, Name this point (a default or shape point
-  becomes a declared point measured from it), Rename, Delete.
+- **Right-click**: Copy reference, Rename, Delete; a default or shape point
+  can be **re-exported**: it becomes a declared point measured from it, named
+  like the original (`spring.end` → `end`, else `spring_end`), and the name
+  is opened for editing. A placed part's group re-exports all its own points
+  (not its box points) in one step.
 - The form lives in the panel, not in Properties: Points and Properties
   share the right-hand anchor, so only one of them is open at a time.
 

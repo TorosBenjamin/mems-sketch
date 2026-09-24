@@ -221,11 +221,23 @@ class PointsPanel(_Panel):
             self.select(("declared", names[0]))
 
     def name_point(self, key: Key) -> None:
-        """Declare a point where a default or shape point is (measured from it)."""
+        """Re-export a default or shape point: declare one right there, measured from
+        it, and start renaming it."""
         names = []
         if self._guard(lambda: names.append(self.document.points.add(at=reference(key)))):
             self.select(("declared", names[0]))
             self.focused.emit(self.focused_marker())
+            self.rename(("declared", names[0]))
+
+    def export_all(self, shape: str) -> None:
+        """Re-export a shape's own points (a placed component's declared points), not
+        its box points, in one step."""
+        points = [n for g, n in self._positions if g == shape and n not in BBOX_POINTS]
+        names = []
+        if self._guard(
+            lambda: names.extend(self.document.points.export([f"{shape}.{n}" for n in points]))
+        ):
+            self.select(("declared", names[0]))
 
     def _remove(self) -> None:
         key = self.selected_key()
@@ -252,9 +264,18 @@ class PointsPanel(_Panel):
     def _menu(self, position) -> None:
         item = self.tree.itemAt(position)
         key = item.data(0, KEY_ROLE) if item is not None else None
+        group = item.data(0, GROUP_ROLE) if item is not None else None
+        menu = QMenu(self)
+        if group not in (None, "default") and not self.document.read_only:
+            own = [n for g, n in self._positions if g == group and n not in BBOX_POINTS]
+            action = menu.addAction(icons.icon("add"), f"Re-export the points of {group}")
+            action.setEnabled(bool(own))
+            action.setToolTip(", ".join(own) or "It declares no points of its own")
+            action.triggered.connect(lambda: self.export_all(group))
+            menu.exec(self.tree.viewport().mapToGlobal(position))
+            return
         if key is None:
             return
-        menu = QMenu(self)
         menu.addAction("Copy reference").triggered.connect(
             lambda: QApplication.clipboard().setText(reference(key))
         )
@@ -265,9 +286,9 @@ class PointsPanel(_Panel):
                     lambda: self._guard(lambda: self.document.points.remove(key[1]))
                 )
             else:
-                menu.addAction(icons.icon("add"), "Name this point").triggered.connect(
-                    lambda: self.name_point(key)
-                )
+                menu.addAction(
+                    icons.icon("add"), "Re-export as a point of this component"
+                ).triggered.connect(lambda: self.name_point(key))
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
     # -- the form ---------------------------------------------------------------
@@ -365,7 +386,10 @@ class PointsPanel(_Panel):
         note.setWordWrap(True)
         layout.addRow(note)
         if not self.document.read_only:
-            button = QPushButton(icons.icon("add"), "Name this point")
-            button.setToolTip("Declare a point here, measured from it, for whoever places this")
+            button = QPushButton(icons.icon("add"), "Re-export")
+            button.setToolTip(
+                "Make it a point of this component, for whoever places it (measured from "
+                "this one, so it follows it)"
+            )
             button.clicked.connect(lambda: self.name_point(key))
             layout.addRow(button)

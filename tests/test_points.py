@@ -66,7 +66,7 @@ def test_a_point_name_is_checked(session):
 def test_naming_a_shape_point(session):
     session.set_active("spring")
     name = session.points.add(at="beam.top_left")
-    assert name == "beam_top_left1"
+    assert name == "beam_top_left"
     assert session.results.declared_points()[name] == (0, 4)
 
 
@@ -75,3 +75,16 @@ def test_the_points_of_named_shapes(session):
     points = session.results.shape_points()
     assert set(points) == {"s1", "s2", "pad"}
     assert points["s1"]["tip"] == (40, 2)  # a placed component's declared points too
+
+
+def test_re_exporting_points_of_placed_parts_keeps_their_names(session):
+    session.set_active("top")
+    assert session.points.export(["s1.tip", "s2.tip", "s1.center"]) == [
+        "tip",
+        "s2_tip",
+        "s1_center",
+    ]
+    points = session.results.declared_points()
+    assert points["tip"] == (40, 2) and points["s2_tip"] == points["out"]
+    session.undo()  # one step
+    assert [p.name for p in session.active_definition.points] == ["out"]

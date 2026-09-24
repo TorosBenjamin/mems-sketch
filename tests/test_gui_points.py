@@ -21,7 +21,7 @@ def window(qtbot, monkeypatch):
     w.show()
     qtbot.waitExposed(w)
     w.document.nodes.add(RectShape(name="beam", layer="device", x0=0, y0=0, x1=40, y1=4))
-    w.document.points.add(at="beam.right")  # beam_right1
+    w.document.points.add(at="beam.right")  # beam_right
     w.tool_windows.open("points")
     return w
 
@@ -44,10 +44,10 @@ def markers(window, style):
 
 def test_the_list_holds_declared_default_and_shape_points(window):
     found = rows(window.points)
-    assert ("declared", "beam_right1") in found
+    assert ("declared", "beam_right") in found
     assert ("default", "center") in found and ("beam", "top_left") in found
-    assert found[("declared", "beam_right1")].text(1) == "40, 2"
-    assert found[("declared", "beam_right1")].flags() & Qt.ItemFlag.ItemIsEditable
+    assert found[("declared", "beam_right")].text(1) == "40, 2"
+    assert found[("declared", "beam_right")].flags() & Qt.ItemFlag.ItemIsEditable
     assert not found[("default", "center")].flags() & Qt.ItemFlag.ItemIsEditable
     groups = [window.points.tree.topLevelItem(i).text(0) for i in range(1, 3)]
     assert groups == ["Default", "beam"]
@@ -63,7 +63,7 @@ def test_hovering_a_point_shows_it_on_the_canvas(window):
 
 def test_clicking_a_point_pans_to_it_and_edits_it(window):
     window.canvas.set_view_state(4, -300, -300)
-    rows(window.points)[("declared", "beam_right1")].setSelected(True)
+    rows(window.points)[("declared", "beam_right")].setSelected(True)
     zoom, x, y = window.canvas.view_state()
     assert zoom == pytest.approx(4)
     assert (x, y) == pytest.approx((40, 2), abs=0.5)
@@ -71,12 +71,12 @@ def test_clicking_a_point_pans_to_it_and_edits_it(window):
     assert panel.at_edit.currentText() == "beam.right"
     panel.y_edit.setText("3")
     panel.y_edit.returnPressed.emit()
-    assert window.document.results.declared_points()["beam_right1"] == (40, 5)
-    assert panel.selected_key() == ("declared", "beam_right1")  # still selected after the edit
+    assert window.document.results.declared_points()["beam_right"] == (40, 5)
+    assert panel.selected_key() == ("declared", "beam_right")  # still selected after the edit
 
 
 def test_renaming_in_the_list(window):
-    rows(window.points)[("declared", "beam_right1")].setText(0, "tip")
+    rows(window.points)[("declared", "beam_right")].setText(0, "tip")
     assert [p.name for p in window.document.active_definition.points] == ["tip"]
     assert window.points.selected_key() == ("declared", "tip")
 
@@ -84,17 +84,29 @@ def test_renaming_in_the_list(window):
 def test_name_this_point(window):
     window.points.name_point(("beam", "top_left"))
     point = window.document.active_definition.points[-1]
-    assert (point.name, point.at) == ("beam_top_left1", "beam.top_left")
-    assert window.points.selected_key() == ("declared", "beam_top_left1")
+    assert (point.name, point.at) == ("beam_top_left", "beam.top_left")
+    assert window.points.selected_key() == ("declared", "beam_top_left")
     window.points.name_point(("default", "bottom_right"))
     assert window.document.active_definition.points[-1].at == "bottom_right"
 
 
 def test_points_show_only_while_the_points_panel_is_open(window):
     window.tree.select_paths([((0, 0),)])
-    assert [m.toolTip() for m in markers(window, "declared")] == ["beam_right1"]
+    assert [m.toolTip() for m in markers(window, "declared")] == ["beam_right"]
     assert markers(window, "selected")
     window.tool_windows.open("properties")  # the same side: Points closes
     assert markers(window, "declared") == [] and markers(window, "selected") == []
     window.settings.set("canvas/always_show_points", True)
     assert markers(window, "declared") and markers(window, "selected")
+
+
+def test_re_exporting_all_points_of_a_placed_part(window):
+    spring = window.document.active  # the fixture's component becomes a part of a new top
+    window.document.components.new("top2")
+    window.document.set_active("top2")
+    window.document.nodes.add_component(spring)
+    window.points.refresh()
+    group = next(g for g, _ in window.points._positions if g not in ("declared", "default"))
+    window.points.export_all(group)
+    assert [p.at for p in window.document.active_definition.points] == [f"{group}.beam_right"]
+    assert window.document.active_definition.points[0].name == "beam_right"

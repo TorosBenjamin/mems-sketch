@@ -3,8 +3,11 @@
 Layout::
 
     my_project/
-      project.yaml          format, name, top component (null for a library), libraries
+      project.yaml          format, name, top component (null for a library), libraries,
+                            imported cells
       process.yaml          layers and process constants
+      imports/
+        padframe.gds        a copy of each imported file (see core/imports.py)
       components/
         top.yaml            one file per local component
         comb.yaml
@@ -17,6 +20,11 @@ A library is a folder of component files (either directly or in a
 
     libraries:
       std: ../mems-std-lib
+
+An imported cell is a component named in ``project.yaml``::
+
+    imports:
+      padframe: {file: padframe.gds, cell: FRAME, layers: {1/0: device, 5/0: metal}}
 """
 
 from __future__ import annotations
@@ -25,6 +33,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.process import Layer, Process
 from mems_sketch.core.project import Library, Project
 from mems_sketch.core.user_component import ComponentDef
@@ -34,6 +43,7 @@ FORMAT = "mems-sketch/1"
 PROJECT_FILE = "project.yaml"
 PROCESS_FILE = "process.yaml"
 COMPONENTS_DIR = "components"
+IMPORTS_DIR = "imports"
 
 
 class ProjectFormatError(ValueError):
@@ -52,7 +62,18 @@ def save_project(project: Project, folder: str | Path) -> Path:
     header: dict[str, Any] = {"format": FORMAT, "name": project.name, "top": project.top}
     if libraries:
         header["libraries"] = libraries
+    if project.imports:
+        header["imports"] = {
+            name: {
+                "file": imported.file,
+                "cell": imported.cell,
+                "layers": dict(sorted(imported.layers.items())),
+                **({"description": imported.description} if imported.description else {}),
+            }
+            for name, imported in sorted(project.imports.items())
+        }
     _write(folder / PROJECT_FILE, yaml_format.dump(header))
+    _save_imports(project, folder / IMPORTS_DIR)
     _write(folder / PROCESS_FILE, yaml_format.dump(_process_data(project.process)))
     for name, definition in project.components.items():
         path = components_dir / f"{name}.yaml"
@@ -88,6 +109,25 @@ def _process_data(process: Process) -> dict[str, Any]:
         data["constants"] = yaml_format.to_data(process.constants)
     data["layers"] = layers
     return data
+
+
+def _save_imports(project: Project, imports_dir: Path) -> None:
+    """The imported files, each written once, and none that nothing uses any more."""
+    files = {imported.file: imported.data for imported in project.imports.values()}
+    if files:
+        imports_dir.mkdir(exist_ok=True)
+    for file, data in files.items():
+        path = imports_dir / file
+        if not (path.is_file() and path.read_bytes() == data):
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_bytes(data)
+            os.replace(tmp, path)
+    if imports_dir.is_dir():
+        for stale in imports_dir.iterdir():
+            if stale.is_file() and stale.name not in files:
+                stale.unlink()
+        if not any(imports_dir.iterdir()):
+            imports_dir.rmdir()
 
 
 def _write(path: Path, text: str) -> None:
@@ -136,7 +176,25 @@ def load_project(path: str | Path) -> Project:
         components=components,
         top=top,
         libraries=libraries,
+        imports=_load_imports(header.get("imports") or {}, folder / IMPORTS_DIR),
     )
+
+
+def _load_imports(entries: dict, imports_dir: Path) -> dict[str, ImportedCell]:
+    imports = {}
+    for name, entry in entries.items():
+        path = imports_dir / str(entry["file"])
+        if not path.is_file():
+            raise ProjectFormatError(f"imported file {path} is missing")
+        imports[name] = ImportedCell(
+            name=name,
+            file=str(entry["file"]),
+            cell=str(entry["cell"]),
+            layers={str(k): str(v) for k, v in (entry.get("layers") or {}).items()},
+            description=str(entry.get("description", "")),
+            data=path.read_bytes(),
+        )
+    return imports
 
 
 def load_library(name: str, folder: str | Path) -> Library:

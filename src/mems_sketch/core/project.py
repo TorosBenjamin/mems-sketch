@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mems_sketch.core.component import Component, Geometry, is_builtin
+from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.process import Layer, Process, Value, default_process
 from mems_sketch.core.shapes import RefShape, Shape, child_lists, find, walk
 from mems_sketch.core.user_component import ComponentDef, ParamDef
@@ -81,6 +82,7 @@ class Project:
     components: dict[str, ComponentDef] = field(default_factory=dict)
     top: str | None = DEFAULT_TOP  # None: a library, with no design of its own
     libraries: dict[str, Library] = field(default_factory=dict)
+    imports: dict[str, ImportedCell] = field(default_factory=dict)  # see core/imports.py
 
     def __post_init__(self) -> None:
         if self.top is not None and self.top not in self.components:
@@ -160,7 +162,7 @@ class Project:
             if not scope:
                 break
             scope = scope.rpartition("/")[0]
-        if is_builtin(name):
+        if name in self.imports or is_builtin(name):
             return name
         raise KeyError(f"unknown component '{name}'")
 
@@ -233,12 +235,14 @@ class Project:
                 with contextlib.suppress(KeyError):
                     self.qualify(qualified, context or "")
                     names.append(self.reference_name(qualified, context))
-        return [*dict.fromkeys(names), *component_types()]
+        return [*dict.fromkeys(names), *sorted(self.imports), *component_types()]
 
     def define_component(self, definition: ComponentDef) -> ComponentDef:
         """Add or replace a local component; the project is unchanged if it is invalid."""
         if is_builtin(definition.short_name):
             raise ValueError(f"'{definition.short_name}' is a built-in component name")
+        if definition.short_name in self.imports:
+            raise ValueError(f"'{definition.short_name}' is an imported component")
         previous = self.components
         self.components = {**previous, definition.name: definition}
         try:
@@ -291,7 +295,8 @@ class Project:
         """
         if new == old:
             return
-        if new in self.components or is_builtin(new.rpartition("/")[2]):
+        short = new.rpartition("/")[2]
+        if new in self.components or short in self.imports or is_builtin(short):
             raise ValueError(f"a component named '{new}' already exists")
         if new.startswith(f"{old}/"):
             raise ValueError(f"'{old}' cannot be private to itself")

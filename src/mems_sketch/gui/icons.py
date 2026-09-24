@@ -134,6 +134,7 @@ ICONS = {
     "undo": '<path d="M5.4 3.2 2.3 6.3l3.1 3.1"/><path d="M2.3 6.3h7.1a3.8 3.8 0 0 1 0 7.6H7"/>',
     "redo": '<path d="M10.6 3.2l3.1 3.1-3.1 3.1"/><path d="M13.7 6.3H6.6a3.8 3.8 0 0 0 0 7.6H9"/>',
     "export": '<path d="M8 10.2V1.9M5 4.8l3-2.9 3 2.9"/><path d="M2.4 9v4.7h11.2V9"/>',
+    "import": '<path d="M8 1.9v8.3M5 7.3l3 2.9 3-2.9"/><path d="M2.4 9v4.7h11.2V9"/>',
     "recompile": '<path d="M13.2 6.2A5.4 5.4 0 0 0 3.1 5.3M2.8 9.8a5.4 5.4 0 0 0 10.1.9"/>'
     '<path d="M2.7 2.4v3.2h3.2M13.3 13.6v-3.2h-3.2"/>',
     "settings": _gear(),
@@ -163,6 +164,8 @@ ICONS = {
     "component": _CHIP,  # a project component: purple
     "component_library": _CHIP.replace("{purple}", "{blue}")  # a library component: blue
     + '<path d="M6.5 6.5h3v3h-3z" fill="{blue}" fill-opacity=".35" stroke="none"/>',
+    "component_imported": _CHIP.replace("{purple}", "{green}")  # an imported cell: green
+    + '<path d="M6.5 6.5h3v3h-3z" fill="{green}" fill-opacity=".35" stroke="none"/>',
     "component_builtin": _CHIP.replace("{purple}", "{orange}")  # a built-in: orange
     + '<path d="M6.5 6.5h3v3h-3z" fill="{orange}" fill-opacity=".35" stroke="none"/>',
     "guide": '<path d="M3 13 13 3" stroke="{blue}" stroke-dasharray="2 1.6"/>'

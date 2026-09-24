@@ -52,7 +52,7 @@ from mems_sketch.core.shapes import (
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.help import HelpButton
-from mems_sketch.gui.panels import parse_value
+from mems_sketch.gui.panels import component_icon, parse_value, read_only_kind
 from mems_sketch.gui.value_edit import ElidedLineEdit, ValueEdit
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
@@ -439,6 +439,7 @@ class PropertyEditor(QScrollArea):
             return {field: value for field, value in values.items() if value is not None}
 
         self._editors["params"] = read
+        box.setVisible(bool(shown))  # e.g. an imported cell has no parameters
         return box
 
     def _align_editor(self, node: Shape, path: NodePath) -> QWidget:
@@ -739,24 +740,31 @@ class PropertyEditor(QScrollArea):
         title = QHBoxLayout()
         title.setSpacing(6)
         glyph = QLabel()
-        library = "." in name
-        glyph.setPixmap(icons.pixmap("component_library" if library else "component_builtin", 18))
+        what = read_only_kind(self.document.project, name)
+        glyph.setPixmap(icons.pixmap(component_icon(self.document.project, name), 18))
         label = ElidedLabel(name.rpartition(".")[2])
         label.setObjectName("card-title")
-        kind = QLabel("library component" if library else "built-in component")
+        kind = QLabel(f"{what} component")
         kind.setObjectName("muted")
         title.addWidget(glyph)
         title.addWidget(label, 1)
         title.addWidget(kind)
-        title.addWidget(
-            HelpButton(
-                "You see its interface: what you can set and align to when you place it. "
-                "Its shapes are how it is built, like the inside of a library in code: "
-                "View › Show implementation of read-only components shows them.\n\n"
-                "Try other values in the Parameters panel (Trial); copy it into the "
-                "project to change it."
-            )
+        explain = (
+            "You see its interface: what you can set and align to when you place it. "
+            "Its shapes are how it is built, like the inside of a library in code: "
+            "View › Show implementation of read-only components shows them.\n\n"
+            "Try other values in the Parameters panel (Trial); copy it into the "
+            "project to change it."
         )
+        if what == "imported":
+            imported = self.document.project.imports[name]
+            explain = (
+                f"Cell *{imported.cell}* of *{imported.file}*, imported from GDS: fixed "
+                "geometry, placed like any component (align to its center, top_left, …).\n\n"
+                "Right-click it in Components to re-import a newer file; every placement "
+                "follows."
+            )
+        title.addWidget(HelpButton(explain))
         layout.addLayout(title)
         if definition.description:
             about = QLabel(definition.description)

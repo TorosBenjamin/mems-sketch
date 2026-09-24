@@ -452,6 +452,27 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   file in `imports/`, so it does not depend on the original; right-click the
   component for **Re-import…** (a newer file: every placement follows) or
   **Remove import**. In code: `session.imports.add("frame.gds", cell="FRAME")`.
+- **History** (the clock on the right edge): for a project in a git
+  repository, what changed, in words and on the canvas. *Uncommitted changes*
+  compares the last commit with the design as it is now (saved or not); a
+  commit shows what it changed (right-click: compare it with the design now).
+  Changes are listed per component (`parameter slot_x: default 45 → 60`,
+  `shape cut › slot: x0 45 → 60`, `layer metal added`); click one to go to
+  it. The canvas tints the material added and hatches the material removed in
+  the component you are editing, with default parameters.
+  - **Commit**: with *Uncommitted changes* chosen, type a message (or keep the
+    suggested one, e.g. `Change parameter slot_x; add anchor_2`) and commit.
+    The project is saved and only its folder is committed; files staged
+    elsewhere in the repository stay staged and are named under the box.
+    Git needs your name and email once (`git config --global user.name …`).
+  - **Restore**: right-click a commit to bring back the project, or the
+    component you are editing, as it was. It is an ordinary edit (Undo takes
+    it back) and git is not touched: commit it to keep it.
+  - A saved project outside git gets **Initialize git here**. Branches,
+    merging, push and pull stay with your git tools; the current branch shows
+    in the panel's header.
+  - In code: `session.history.uncommitted().changes`,
+    `session.history.commit_changes("message")`, `session.history.restore(sha)`.
 
 ## Shapes and operations
 
@@ -598,10 +619,11 @@ code. MATLAB can use the same API through its Python interface
 | `core/expressions.py` | Safe arithmetic expressions with dependency resolution |
 | `components/library.py` | Built-ins: `rectangle`, `anchor`, `comb_drive`, `serpentine_spring` |
 | `process/rules.py` | Design-rule checks (minimum width and spacing) |
-| `storage/` | Project folders (canonical YAML), one-file documents (`document.py`) in every format (`formats/`: YAML, JSON, XML, .mat), and the legacy SQLite importer |
+| `core/diff.py` | What changed between two versions of a project: in words, and the geometry added and removed |
+| `storage/` | Project folders (canonical YAML), their history in git, one-file documents (`document.py`) in every format (`formats/`: YAML, JSON, XML, .mat), and the legacy SQLite importer |
 | `export/` | Exporter plugins: GDSII, OASIS, DXF, and geometry as JSON, XML, .mat |
 | `cli.py` | `mems-sketch-cli` |
-| `editing/` | `EditSession`: transactions, undo, files, and the edit commands (components, shapes, moves, points, parameters, process) |
+| `editing/` | `EditSession`: transactions, undo, files, and the edit commands (components, shapes, moves, points, parameters, process) and the project's history |
 | `gui/` | PySide6 frontend: the window (actions and menus, toolbar, tool windows, status bar), tabs, canvas and tools, panels, the Process tab, property editor, editor state, settings, theme and icons |
 
 ## Extending

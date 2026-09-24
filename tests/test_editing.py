@@ -536,3 +536,33 @@ def test_a_project_can_become_a_library_and_back(doc):
 def test_a_new_library_has_one_component_and_no_top(doc):
     doc.new(library=True)
     assert doc.project.top is None and doc.active == "component1"
+
+
+def test_create_saves_a_named_project_with_libraries_and_a_process(tmp_path):
+    doc = EditSession()
+    folder = doc.create(
+        tmp_path / "chip",
+        "chip",
+        libraries=[EXAMPLES / "libraries" / "mems_std"],
+        process_from=EXAMPLES / "resonator",
+    )
+    assert folder == tmp_path / "chip" and doc.path == folder and not doc.dirty
+    assert doc.project.name == "chip" and doc.project.top == "top"
+    assert list(doc.project.libraries) == ["mems_std"]
+    resonator = EditSession.open_project(EXAMPLES / "resonator")
+    assert doc.project.process == resonator.project.process
+    again = EditSession.open_project(folder)
+    assert again.project.name == "chip" and "mems_std" in again.project.libraries
+
+
+def test_create_a_library_and_what_it_refuses(tmp_path):
+    doc = EditSession()
+    doc.create(tmp_path / "parts", "parts", library=True)
+    assert doc.project.top is None
+    with pytest.raises(ValueError, match="already holds a project"):
+        EditSession().create(tmp_path / "parts", "again")
+    with pytest.raises(ValueError, match="needs a name"):
+        EditSession().create(tmp_path / "blank", " ")
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(ValueError, match="no components"):
+        EditSession().create(tmp_path / "x", "x", libraries=[tmp_path / "empty"])

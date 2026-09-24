@@ -203,6 +203,51 @@ def test_the_shape_under_the_cursor_is_outlined(window, qtbot):
     assert window.canvas._hover_item is None
 
 
+def test_shapes_are_found_a_few_pixels_away(window):
+    """Issue #2: over thin comb fingers the outline flickered between the comb and
+    nothing; a shape within a few pixels of the cursor is found too."""
+    one_rect(window)  # 0..40 x 0..20 µm at 4 px per µm
+    assert window.hit(40.5, 10) == ((0, 0),)  # 2 px beside the edge
+    assert window.hit(43, 10) is None  # 12 px away
+    window.canvas.set_view_state(0.5, 20, 10)  # zoomed out: the same pixels reach further
+    assert window.hit(46, 10) == ((0, 0),)
+
+
+def test_the_outline_stays_on_between_a_combs_fingers(window):
+    from mems_sketch import ArrayModifier
+
+    fingers = RectShape(
+        name="comb", layer="device", x0=0, y0=0, x1=2, y1=30,
+        modifiers=[ArrayModifier(columns=6, dx=10)],
+    )  # fmt: skip
+    window.document.nodes.add(fingers)
+    window.canvas.set_view_state(4, 25, 15)
+    window.tree.select_paths([])
+    window._hover(1, 15)  # on a finger
+    assert window._hovered == ((0, 0),)
+    window._hover(6, 15)  # in a gap, 16 px from both fingers
+    assert window._hovered == ((0, 0),)
+    assert window.hit(6, 15) == ((0, 0),)  # a click selects what is outlined
+    window._hover(6, 40)  # outside the comb
+    assert window._hovered is None and window.hit(6, 15) is None
+
+
+def test_the_scale_bar_is_a_whole_number_of_grid_steps(window):
+    """Issue #3: the scale bar can be read against the grid."""
+    canvas = window.canvas
+    for zoom in (0.37, 1, 2.9, 13, 150):
+        canvas.set_view_state(zoom, 0, 0)
+        cells = canvas.scale_bar_length() / canvas.grid_step()
+        assert cells == pytest.approx(round(cells)) and round(cells) in (1, 2, 5, 10)
+        assert canvas.scale_bar_length() * canvas.pixels_per_um() <= 125
+
+
+def test_there_is_no_axis_indicator(window):
+    """Issue #6: the view cannot flip, so an x/y indicator says nothing."""
+    assert "canvas/show_axis_gizmo" not in {setting.key for setting in SETTINGS}
+    assert "show_axis_gizmo" not in window.canvas.options
+
+
 # -- chrome --------------------------------------------------------------------
 
 
@@ -249,6 +294,18 @@ def test_tabs_have_icons_a_close_button_and_a_menu(window):
     close = pane.tabBar().tabButton(0, pane.tabBar().ButtonPosition.RightSide)
     close.click()  # closing the last tab opens the top component again
     assert [v.component for v in window.area.views()] == ["top"]
+
+
+def test_tabs_snap_into_place_instead_of_sliding(window):
+    from PySide6.QtWidgets import QStyle
+
+    bar = window.area.panes[0].tabBar()
+    assert bar.style().styleHint(QStyle.StyleHint.SH_Widget_Animation_Duration, None, bar) == 0
+
+
+def test_the_main_menu_button_is_square(window):
+    button = window.findChild(QToolButton, "main-menu")
+    assert button.width() == button.height()
 
 
 def test_canvas_caption_shows_the_component_and_view_mode(window):
@@ -348,8 +405,14 @@ def test_open_in_the_other_pane(resonator):
     assert [v.component for v in resonator.area.views()] == ["top", "suspension"]
 
 
-def test_a_new_library_has_no_top_and_its_tab_shows_a_component(window):
+def test_a_new_library_has_no_top_and_its_tab_shows_a_component(window, tmp_path, monkeypatch):
+    def fill(dialog):
+        dialog.location.setText(str(tmp_path))
+        return dialog.DialogCode.Accepted
+
+    monkeypatch.setattr(window, "show_dialog", fill)
     window.new_library()
+    assert window.document.path == tmp_path / "library"
     assert window.document.project.top is None
     assert [v.component for v in window.area.views()] == ["component1"]
     window._edit_top()  # no top component to open
@@ -396,6 +459,15 @@ def menu_texts(menu) -> dict:
         if action.menu() is not None:
             found |= {f"{action.text()}/{k}": v for k, v in menu_texts(action.menu()).items()}
     return found
+
+
+def test_the_explorer_header_makes_a_new_component(window, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("widget", True))
+    menu_texts(window.components.add_menu())["New component…"].trigger()
+    assert "widget" in window.document.project.components
+    assert window.document.active == "widget"
 
 
 def test_private_components_from_the_explorer_menu(resonator, monkeypatch):

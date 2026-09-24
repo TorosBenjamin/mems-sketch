@@ -70,6 +70,8 @@ THEMES = {
         "highlight": "#f07800",  # selection: orange, as in Blender and Unity
         "hover": "#f07800",
         "violation": "#d7002a",
+        "added": "#1f9d45",  # history: material a version added
+        "removed": "#d7002a",  # and removed (hatched: it is not there any more)
         "declared": "#008a3e",
         "selected": "#f07800",
         "pick": "#0a6fd6",
@@ -92,6 +94,8 @@ THEMES = {
         "highlight": "#ffa033",
         "hover": "#ffa033",
         "violation": "#ff2d55",
+        "added": "#3ddc84",
+        "removed": "#ff4d6a",
         "declared": "#3ddc84",
         "selected": "#ffa033",
         "pick": "#00c8ff",
@@ -201,6 +205,7 @@ class LayoutCanvas(QGraphicsView):
         self.setTransform(QTransform.fromScale(2, -2))
         self._layer_items: dict[str, QGraphicsPathItem] = {}
         self._overlay: list = []
+        self._change_items: list = []
         self._points: dict[str, list] = {}
         self._pan_from: QPointF | None = None
         self._right_from: QPointF | None = None  # right press: a click, until it drags
@@ -446,6 +451,32 @@ class LayoutCanvas(QGraphicsView):
             item.setZValue(1001)
             self.scene().addItem(item)
             self._overlay.append(item)
+
+    def show_changes(self, added: Geometry | None, removed: Geometry | None) -> None:
+        """What changed between two versions (see the History panel): material added
+        tinted, material removed hatched; None for nothing."""
+        for item in self._change_items:
+            self.scene().removeItem(item)
+        self._change_items.clear()
+        for geometry, style, pattern in (
+            (removed, "removed", Qt.BrushStyle.BDiagPattern),
+            (added, "added", Qt.BrushStyle.SolidPattern),
+        ):
+            if geometry is None:
+                continue
+            color = QColor(self.theme[style])
+            for region in geometry.layers.values():
+                item = QGraphicsPathItem(region_to_path(region))
+                pen = QPen(color, OUTLINE_PX)
+                pen.setCosmetic(True)
+                item.setPen(pen)
+                fill = QColor(color)
+                fill.setAlpha(90 if pattern == Qt.BrushStyle.SolidPattern else 200)
+                brush = QBrush(fill, pattern)  # patterns stay the same size at any zoom
+                item.setBrush(brush)
+                item.setZValue(995)  # under the selection
+                self.scene().addItem(item)
+                self._change_items.append(item)
 
     def show_points(
         self, style: str, points: list[tuple[str, float, float]], labels: bool = False

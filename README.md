@@ -110,7 +110,9 @@ Instead of calculating positions by hand, place shapes relative to each other:
 - **Components can declare points** (the Points panel, or `points:` in the
   component file), e.g. where a spring ends. A point's position may be
   measured from one of the component's own shapes (`at: spring.end`), which is
-  how a component passes on a point of a part inside it. Built-ins have some:
+  how a component passes on a point of a part inside it, or from the whole
+  component's box (`at: top_right`). Renaming a point updates the components
+  that place it (alignments, expressions, their points). Built-ins have some:
   `serpentine_spring` has `start` and `end`, `comb_drive` has `moving` and
   `fixed` (the outer edge of each spine).
 - **`align`** moves a shape so that its `point` lands on `to` (plus `dx`,
@@ -253,10 +255,13 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
 - **Canvas**: wheel to zoom, middle or right drag (or Space + drag, in any
   tool) to pan, F to fit; the buttons in the bottom-right corner zoom and fit
   too, and the **canvas modes** (Select, Hand, Move, Rotate, Align, Measure)
-  float in the top-right corner. The selection is outlined in orange with its alignment points, the
-  shape under the cursor is outlined dashed (what a click would select), rule
-  violations are boxed in red and the component's own points are marked in
-  green. The x axis is red and the y axis green; the corner shows an axis
+  float in the top-right corner. The selection is outlined in orange, the
+  shape under the cursor is outlined dashed (what a click would select) and
+  rule violations are boxed in red. Points are shown only while you work with
+  them: with the Points panel open, the component's own points are marked in
+  green and the selected shape's points in orange, with the dashed box they
+  come from; the Align tool marks what it can align to. **View → Overlays →
+  Always show points** shows them all the time. The x axis is red and the y axis green; the corner shows an axis
   indicator and a scale bar, and the top left what is shown (component,
   read-only) with the tab's **view mode**: click it to switch between drawn,
   as-etched and etch-compensated geometry. **View → Overlays** switches each
@@ -301,7 +306,15 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   saved or undone, and only affects that component's own tab (the components
   that place it still pass their own values). It also works on library and
   built-in components.
-- **Points**: the points the edited component declares for whoever places it.
+- **Points**: every point of the edited component, as a list. First the
+  points it declares for whoever places it (editable), then **Default**, the
+  points every component has (`center`, `left`, …, of the box around it),
+  then the points of each named shape, both read-only. Hover a point to see
+  it on the canvas; click it to pan there (the zoom stays) and edit it in the
+  form below the list (At, X, Y with value dragging, description).
+  Double-click a declared point to rename it. Right-click: Copy reference,
+  Rename, Delete, and for a default or shape point **Name this point**, which
+  declares a point right there, measured from it.
 - **Tools** (the canvas modes in the canvas's corner; the drawing tools start
   from **Add**, the right-click menu or their shortcut. A tool stays active
   until another is chosen; Esc cancels what it is doing and, pressed again,

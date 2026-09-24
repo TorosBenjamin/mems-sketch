@@ -469,6 +469,9 @@ def test_a_shape_cut_in_two_says_so_and_shows_its_box(window):
 
     window.tree.select_paths([((0, 0),)])
     boxes = [i for i in window.canvas._overlay if isinstance(i, QGraphicsPolygonItem)]
+    assert boxes == []  # only while working with points
+    window.tool_windows.open("points")
+    boxes = [i for i in window.canvas._overlay if isinstance(i, QGraphicsPolygonItem)]
     assert len(boxes) == 1
     corners = boxes[0].polygon()
     assert (corners.boundingRect().left(), corners.boundingRect().right()) == (0, 100)

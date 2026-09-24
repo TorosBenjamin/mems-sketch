@@ -364,3 +364,19 @@ def test_frame_and_islands_have_their_own_colours(window, name, qtbot):
     in_island = viewport.mapTo(window, QPoint(viewport.width() // 2, viewport.height() - 6))
     assert image.pixelColor(in_stripe).name() == TOKENS[name]["frame"]
     assert image.pixelColor(in_island).name() == TOKENS[name]["island"]
+
+
+@pytest.mark.parametrize("name", ["light", "dark"])
+def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, qtbot):
+    from mems_sketch.gui.theme import TOKENS
+
+    window.settings.set("appearance/ui_theme", name)
+    qtbot.wait(20)
+    canvas, island = window.canvas, window.tool_windows.editor_island
+    corner = canvas.mapTo(island, QPoint(0, canvas.height()))
+    assert corner.x() == 0 and corner.y() == island.height()  # no border around it
+    image = window.grab().toImage()
+    bottom_left = canvas.mapTo(window, QPoint(0, canvas.height() - 1))
+    assert image.pixelColor(bottom_left).name() == TOKENS[name]["frame"]  # rounded off
+    inside = canvas.mapTo(window, QPoint(12, canvas.height() - 12))
+    assert image.pixelColor(inside).name() == canvas.theme["background"]

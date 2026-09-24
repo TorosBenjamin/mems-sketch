@@ -13,7 +13,7 @@ from pathlib import Path
 
 import klayout.db as kdb
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -213,6 +213,7 @@ class MainWindow(QMainWindow):
                 lambda name, x, y, v=view: self._component_dropped(v, name, x, y)
             )
             canvas.set_theme(self.canvas_theme)
+            canvas.corner_color = self._frame_color()
             canvas.configure(**self._canvas_options())
             self._caption(view)
             canvas.left_pans = self.tool.name == "hand"
@@ -259,6 +260,10 @@ class MainWindow(QMainWindow):
         """Light or dark canvas background for every tab; remembered for next time."""
         self.settings.set("appearance/canvas_theme", theme)
 
+    def _frame_color(self) -> QColor:
+        """The window's frame colour: what shows around the islands."""
+        return QColor(theme.TOKENS[self.ui_theme]["frame"])
+
     def _toggle_dark(self, checked: bool) -> None:
         self.set_canvas_theme("dark" if checked else "light")
 
@@ -277,6 +282,7 @@ class MainWindow(QMainWindow):
         if key in ("appearance/ui_theme", "appearance/canvas_theme"):
             for view in self.area.views():
                 view.canvas.set_theme(self.canvas_theme)
+                view.canvas.corner_color = self._frame_color()
             self.dark_action.setChecked(self.canvas_theme == "dark")
             self.update_overlay()
         if key in CANVAS_OPTIONS.values():

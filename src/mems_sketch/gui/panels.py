@@ -1069,7 +1069,7 @@ class ParametersPanel(_Panel):
 class LayersPanel(_Panel):
     """The layers as shown: visibility and colour. Click a layer to draw on it.
 
-    Their definitions (GDS numbers, etch loss, rules) are part of the process
+    Their definitions (GDS numbers, rules) are part of the process
     and edited in the Process tab (:class:`LayerDefinitionsPanel`).
     """
 
@@ -1119,9 +1119,9 @@ class LayersPanel(_Panel):
 
 
 class LayerDefinitionsPanel(_Panel):
-    """The process's layers: name, GDS mapping, etch loss and rules (in the Process tab)."""
+    """The process's layers: name, GDS mapping and rules (in the Process tab)."""
 
-    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm")
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Min width µm", "Min space µm")
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -1135,10 +1135,8 @@ class LayerDefinitionsPanel(_Panel):
             QLabel("Layers"),
             ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
             ("remove", "Remove the selected layers", self._remove_layers),
-            help="The mask layers: their *GDS* layer and datatype for export, the "
-            "*undercut* the etch removes from each edge (for the as-etched and "
-            "etch-compensated views), and the *minimum width and spacing* the rule "
-            "checks use.",
+            help="The mask layers: their *GDS* layer and datatype for export, and the "
+            "*minimum width and spacing* the rule checks use.",
         )
         layout.addLayout(self.actions)
         layout.addWidget(self.layers)
@@ -1154,7 +1152,6 @@ class LayerDefinitionsPanel(_Panel):
                 layer.name,
                 layer.gds_layer,
                 layer.gds_datatype,
-                layer.undercut,
                 layer.min_width,
                 layer.min_space,
             ]
@@ -1181,9 +1178,8 @@ class LayerDefinitionsPanel(_Panel):
                 texts[0],
                 int(texts[1]),
                 int(texts[2]),
-                float(texts[3] or 0),
+                optional(texts[3]),
                 optional(texts[4]),
-                optional(texts[5]),
             )
             self.document.process.set_layer(name, layer)
 

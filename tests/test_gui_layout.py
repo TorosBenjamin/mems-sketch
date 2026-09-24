@@ -239,14 +239,6 @@ def test_the_mode_palette_switches_tools(window):
     assert window.tool.name == "measure" and buttons["Measure"].isChecked()
 
 
-def test_the_caption_changes_the_tabs_view_mode(window):
-    menu = window.canvas.mode_button.menu()
-    etched = next(a for a in menu.actions() if a.text() == "As etched")
-    etched.trigger()
-    assert window.view.view_mode == "etched"
-    assert window.canvas.mode_button.text() == "As etched ▾"
-
-
 def test_the_menu_key_opens_the_menu_at_the_centre(window, menus):
     canvas = window.canvas
     centre = canvas.viewport().rect().center()
@@ -317,11 +309,11 @@ def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window)
     assert headers(window.layers.layers) == ["Layer", "GDS"]
     window.open_process()
     definitions = window.area.process_view.layers.layers
-    assert "Undercut µm" in headers(definitions)
-    column = headers(definitions).index("Undercut µm")
+    assert "Undercut µm" not in headers(definitions)
+    column = headers(definitions).index("Min width µm")
     definitions.item(0, column).setText("0.5")
     first = next(iter(window.document.project.layers.values()))
-    assert first.undercut == 0.5
+    assert first.min_width == 0.5
 
 
 def test_a_tool_window_header_carries_the_panels_own_buttons(window):

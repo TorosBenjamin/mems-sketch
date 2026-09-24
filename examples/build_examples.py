@@ -82,7 +82,6 @@ library_folder = save(library, HERE / "libraries" / "mems_std")
 # -- a project that uses the library ----------------------------------------
 
 project = Project(name="resonator", process=default_process())
-project.layers["device"].undercut = 0.3
 project.process.constants["min_gap"] = 2
 project.libraries["std"] = load_library("std", library_folder)
 

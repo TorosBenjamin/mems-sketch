@@ -6,12 +6,12 @@ from mems_sketch import Instance, Layer, Project, export, load, save
 from mems_sketch.core.component import resolve_params, to_dbu
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.export.base import available_exporters
-from mems_sketch.process import etch, rules
+from mems_sketch.process import rules
 
 
 def make_design() -> Project:
     design = Project(name="accel")
-    design.add_layer(Layer("device", 1, 0, undercut=0.5, min_width=1.5, min_space=1.5))
+    design.add_layer(Layer("device", 1, 0, min_width=1.5, min_space=1.5))
     design.add_layer(Layer("anchor", 2, 0))
     design.set_variable("w", 2.0)
     design.set_variable("gap", "w * 1.5")
@@ -52,15 +52,6 @@ def test_rotation_and_placement():
     design.add(Instance("r", "rectangle", {"width": 100, "height": 10}, x=50, y=0, rotation=90))
     box = design.render().layers["device"].bbox()
     assert box == kdb.Box(to_dbu(45), to_dbu(-50), to_dbu(55), to_dbu(50))
-
-
-def test_etch_loss_shrinks_and_compensation_grows():
-    design = make_design()
-    drawn = design.render().layers["device"].area()
-    assert etch.etched(design).layers["device"].area() < drawn
-    assert etch.compensated(design).layers["device"].area() > drawn
-    # Undercut 0 on the anchor layer leaves it untouched.
-    assert etch.etched(design).layers["anchor"].area() == design.render().layers["anchor"].area()
 
 
 def test_rules_flag_narrow_features_and_unknown_layers():

@@ -42,7 +42,7 @@ def make_project() -> Project:
     project = Project(
         name="demo",
         process=Process(
-            layers={"device": Layer("device", 1, 0, undercut=0.25, min_width=1.0)},
+            layers={"device": Layer("device", 1, 0, min_width=1.0)},
             constants={"min_gap": 2, "gap": "1.5 * min_gap"},
         ),
     )
@@ -210,7 +210,7 @@ def test_yaml_is_canonical_and_minimal(tmp_path):
         "  y1: w\n"
     )
     process = (folder / "process.yaml").read_text()
-    assert "gds: [1, 0]" in process and "undercut: 0.25" in process
+    assert "gds: [1, 0]" in process and "min_width: 1" in process
 
 
 def test_changing_one_value_changes_one_line(tmp_path):
@@ -248,3 +248,14 @@ def test_load_errors_are_explicit(tmp_path):
         load(folder)
     with pytest.raises(ProjectFormatError, match="missing"):
         load(tmp_path / "nowhere")
+
+
+def test_an_undercut_in_an_older_project_is_ignored(tmp_path):
+    # Etch loss was part of the process once; files that still have it load.
+    folder = tmp_path / "old"
+    project = Project()
+    project.add_layer(Layer("device", 1))
+    save(project, folder)
+    process = folder / "process.yaml"
+    process.write_text(process.read_text().replace("gds: [1, 0]", "gds: [1, 0]\n    undercut: 0.3"))
+    assert load(folder).layers["device"] == Layer("device", 1)

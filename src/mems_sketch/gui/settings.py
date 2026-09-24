@@ -60,6 +60,17 @@ class Setting:
     keywords: tuple[str, ...] = field(default_factory=tuple)
 
 
+FRAME_RATES = {  # canvas/max_fps: value -> label
+    "display": "The display's refresh rate",
+    "30": "30 fps",
+    "60": "60 fps",
+    "120": "120 fps",
+    "144": "144 fps",
+    "240": "240 fps",
+    "0": "No limit",
+}
+
+
 SETTINGS: tuple[Setting, ...] = (
     # -- Appearance ---------------------------------------------------------
     Setting(
@@ -180,6 +191,27 @@ SETTINGS: tuple[Setting, ...] = (
         step=0.05,
         suffix=" ×",
         decimals=2,
+    ),
+    Setting(
+        "canvas/max_fps",
+        "display",
+        "Frame rate limit",
+        "Canvas",
+        "Performance",
+        "How often the canvas follows the mouse. Lower saves work on slower computers; "
+        "the display's rate is as smooth as the screen can show.",
+        choices=FRAME_RATES,
+        keywords=("fps", "refresh", "smooth", "lag", "speed"),
+    ),
+    Setting(
+        "canvas/draft_quality",
+        True,
+        "Draft quality while zooming and resizing",
+        "Canvas",
+        "Performance",
+        "Draw without smoothing during a zoom or resize, then in full quality once it "
+        "stops: much faster on big designs.",
+        keywords=("antialiasing", "fps", "lag", "speed"),
     ),
     # -- Snapping -----------------------------------------------------------
     Setting(

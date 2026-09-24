@@ -70,6 +70,8 @@ CANVAS_OPTIONS = {
     "show_scale_bar": "canvas/show_scale_bar",
     "gizmo_size_px": "canvas/gizmo_size_px",
     "zoom_step": "canvas/zoom_step",
+    "draft_quality": "canvas/draft_quality",
+    "max_fps": "canvas/max_fps",
 }
 
 
@@ -273,7 +275,10 @@ class MainWindow(QMainWindow):
         return theme.apply(app, self.settings.get("appearance/ui_theme"))
 
     def _canvas_options(self) -> dict:
-        return {option: self.settings.get(key) for option, key in CANVAS_OPTIONS.items()}
+        options = {option: self.settings.get(key) for option, key in CANVAS_OPTIONS.items()}
+        rate = options["max_fps"]  # "display", or a number of frames per second (0: none)
+        options["max_fps"] = round(self.screen().refreshRate()) if rate == "display" else int(rate)
+        return options
 
     def _setting_changed(self, key: str) -> None:
         """Apply a changed setting at once."""

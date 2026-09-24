@@ -76,6 +76,7 @@ class ComponentView(QWidget):
     def refresh(self, colors: dict, visible: dict[str, bool]) -> None:
         """Recompile the component and redraw; errors are kept for the messages panel."""
         self.errors = []
+        drawn = None
         try:
             drawn = self.document.results.geometry(component=self.component)
             geometry = (
@@ -83,10 +84,8 @@ class ComponentView(QWidget):
                 if self.view_mode == "drawn"
                 else self.document.results.geometry(self.view_mode, self.component)
             )
-            self.violations = self.document.results.check(drawn)
         except Exception as exc:  # noqa: BLE001 - shown in the messages panel
             geometry = Geometry()
-            self.violations = []
             self.errors.append(str(exc))
         self.node_regions = self.document.results.node_regions(visible, self.component)
         try:
@@ -101,6 +100,21 @@ class ComponentView(QWidget):
         if not self._fitted and geometry.layers:
             self._fitted = True
             self.canvas.fit()
+        self._check(drawn)
+
+    def _check(self, drawn: Geometry | None) -> None:
+        """The design rules, after the change is on screen: on a big design they take a
+        moment, and the edit should show at once (the check cannot run in the
+        background: klayout keeps Python's interpreter lock while it works)."""
+        self.violations = []
+        if drawn is None:
+            return
+        if self.canvas.isVisible():
+            self.canvas.viewport().repaint()
+        try:
+            self.violations = self.document.results.check(drawn)
+        except Exception as exc:  # noqa: BLE001 - shown in the messages panel
+            self.errors.append(str(exc))
 
     def _exists(self, path: NodePath) -> bool:
         """The node is still there (switched off or not: it stays selected)."""

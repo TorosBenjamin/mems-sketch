@@ -15,9 +15,10 @@ Wheel zooms around the cursor, F fits the view.
 from __future__ import annotations
 
 import math
+import time
 
 import klayout.db as kdb
-from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, QSizeF, Qt, Signal
+from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -26,6 +27,7 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPixmapCache,
     QPolygonF,
     QTransform,
 )
@@ -115,10 +117,17 @@ DEFAULT_OPTIONS = {
     "show_scale_bar": True,
     "gizmo_size_px": 70,
     "zoom_step": 1.25,
+    "draft_quality": True,  # no antialiasing while zooming or resizing, until it settles
+    "max_fps": 0,  # mouse moves handled (and so frames drawn) per second; 0: no limit
 }
 GIZMO_GRAB_PX = 7  # how close to a gizmo handle counts as on it
 RIGHT_CLICK_SLOP_PX = 4  # a right press that moves further is a pan, not a click
 MENU_CARET = "▾"  # after the text of a button that opens a menu
+# Rendered items are kept as pictures (Qt's item cache, held in the pixmap cache):
+# room for several full-view pictures on a large, high-resolution screen.
+PIXMAP_CACHE_KB = 256 * 1024
+DRAFT_SETTLE_MS = 200  # full quality again this long after the last zoom or resize step
+CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
 COMPONENT_MIME = "application/x-mems-sketch-component"  # a component dragged from the explorer
 # The world the user can pan over, in µm: ±1 m, inside the ±2.1 m that 32-bit
 # database units (nm) can hold. Cursor positions are kept inside it.
@@ -140,16 +149,20 @@ def region_to_path(region: kdb.Region) -> QPainterPath:
     return path
 
 
+def region_outline(region: kdb.Region) -> QPainterPath:
+    """The outer outlines of the merged polygons, without their holes (a light
+    outline, e.g. for hovering over a plate with thousands of holes)."""
+    path = QPainterPath()
+    for polygon in region.each_merged():
+        _add_loop(path, polygon.each_point_hull())
+    return path
+
+
 def _add_loop(path: QPainterPath, points) -> None:
-    first = True
-    for p in points:
-        point = QPointF(p.x * DBU_UM, p.y * DBU_UM)
-        if first:
-            path.moveTo(point)
-            first = False
-        else:
-            path.lineTo(point)
-    path.closeSubpath()
+    loop = QPolygonF([QPointF(p.x * DBU_UM, p.y * DBU_UM) for p in points])
+    if not loop.isEmpty():
+        path.addPolygon(loop)  # one call per loop, not one per point
+        path.closeSubpath()
 
 
 class LayoutCanvas(QGraphicsView):
@@ -212,6 +225,19 @@ class LayoutCanvas(QGraphicsView):
         self.setAcceptDrops(True)
         self._has_content = False
         self._wheel_anchor: QPointF | None = None  # scene point held under the cursor
+        if QPixmapCache.cacheLimit() < PIXMAP_CACHE_KB:
+            QPixmapCache.setCacheLimit(PIXMAP_CACHE_KB)
+        self._drafting = False
+        self._draft_timer = QTimer(self)
+        self._draft_timer.setSingleShot(True)
+        self._draft_timer.setInterval(DRAFT_SETTLE_MS)
+        self._draft_timer.timeout.connect(self._end_draft)
+        # Mouse moves wait for the next frame (see max_fps); only the latest counts.
+        self._pending_move: tuple | None = None
+        self._last_move_ms = 0.0
+        self._move_timer = QTimer(self)
+        self._move_timer.setSingleShot(True)
+        self._move_timer.timeout.connect(self._flush_move)
         self.corner_color: QColor | None = None  # what lies around the editor island
         # A large scene rect lets the user pan freely beyond the geometry.
         self.scene().setSceneRect(WORLD)
@@ -227,6 +253,8 @@ class LayoutCanvas(QGraphicsView):
     def configure(self, **options) -> None:
         """Change drawing options (see ``DEFAULT_OPTIONS``) and redraw."""
         self.options.update(options)
+        if not self.options["draft_quality"] and self._drafting:
+            self._end_draft()
         if self._shown is not None:
             self.show_geometry(*self._shown)
         self.viewport().update()
@@ -318,8 +346,27 @@ class LayoutCanvas(QGraphicsView):
         return box
 
     def resizeEvent(self, event) -> None:
+        self._begin_draft()
         super().resizeEvent(event)
         self._place_overlays()
+
+    def _begin_draft(self) -> None:
+        """Draw without antialiasing until zooming or resizing has settled: each step
+        then costs a fraction of a full-quality drawing of a big design."""
+        if not self.options["draft_quality"]:
+            return
+        if not self._drafting:
+            self._drafting = True
+            self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        self._draft_timer.start()
+
+    def _end_draft(self) -> None:
+        self._drafting = False
+        self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        for item in self.scene().items():
+            if item.cacheMode() != QGraphicsItem.CacheMode.NoCache:
+                item.update()  # its picture was drawn in draft quality
+        self.viewport().update()
 
     def _place_overlays(self) -> None:
         width, height = self.viewport().width(), self.viewport().height()
@@ -331,6 +378,7 @@ class LayoutCanvas(QGraphicsView):
         """Zoom about the centre of the view."""
         scale = self.pixels_per_um() * factor
         if 1e-4 < scale < 1e5:
+            self._begin_draft()
             anchor = self.transformationAnchor()
             self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
             self.scale(factor, factor)
@@ -356,6 +404,7 @@ class LayoutCanvas(QGraphicsView):
             item.setPen(pen)
             item.setBrush(QBrush(fill))
             item.setZValue(z)
+            item.setCacheMode(CACHED)  # drawn once; pans, hovers and drags reuse it
             item.setVisible(visible.get(layer, True))
             self.scene().addItem(item)
             self._layer_items[layer] = item
@@ -383,6 +432,7 @@ class LayoutCanvas(QGraphicsView):
                 tint.setAlpha(40)
                 item.setBrush(QBrush(tint))
                 item.setZValue(1000)
+                item.setCacheMode(CACHED)
                 self.scene().addItem(item)
                 self._overlay.append(item)
         for x0, y0, x1, y1 in markers:
@@ -435,6 +485,7 @@ class LayoutCanvas(QGraphicsView):
             item.setPen(pen)
             item.setBrush(QBrush(fill))
             item.setZValue(1050)
+            item.setCacheMode(CACHED)  # moving it reuses the picture
             self.scene().addItem(item)
             self._drag_items.append(item)
 
@@ -493,9 +544,10 @@ class LayoutCanvas(QGraphicsView):
         pen = QPen(QColor(self.theme["hover"]), 1.2)
         pen.setCosmetic(True)
         pen.setStyle(Qt.PenStyle.DashLine)
-        self._hover_item = QGraphicsPathItem(region_to_path(region))
+        self._hover_item = QGraphicsPathItem(region_outline(region))
         self._hover_item.setPen(pen)
         self._hover_item.setZValue(990)
+        self._hover_item.setCacheMode(CACHED)
         self.scene().addItem(self._hover_item)
 
     # -- gizmos --------------------------------------------------------------
@@ -667,6 +719,7 @@ class LayoutCanvas(QGraphicsView):
         factor = step if event.angleDelta().y() > 0 else 1 / step
         scale = abs(self.transform().m11()) * factor
         if 1e-4 < scale < 1e5:
+            self._begin_draft()
             self._zoom_about(event.position(), factor)
             self.view_changed.emit()
 
@@ -701,6 +754,7 @@ class LayoutCanvas(QGraphicsView):
         return button == Qt.MouseButton.LeftButton and (self.left_pans or self._space)
 
     def mousePressEvent(self, event) -> None:
+        self._flush_move()  # a move still waiting for its frame happened before this
         self.setFocus()
         if event.button() == Qt.MouseButton.RightButton:
             self._right_from = event.position()  # a click opens the menu; a drag pans
@@ -717,6 +771,7 @@ class LayoutCanvas(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
+        self._flush_move()
         if event.button() == Qt.MouseButton.LeftButton and not (self.left_pans or self._space):
             p = self._scene(event)
             self.double_clicked.emit(p.x(), p.y())
@@ -742,11 +797,28 @@ class LayoutCanvas(QGraphicsView):
                 self._gizmo_hover = part
                 self._update_cursor()
                 self.viewport().update()
-        self.cursor_moved.emit(p.x(), p.y())
         left = bool(event.buttons() & Qt.MouseButton.LeftButton) and self._left_down
-        self.moved.emit(p.x(), p.y(), event.modifiers(), left)
+        self._pending_move = (p.x(), p.y(), event.modifiers(), left)
+        fps = self.options["max_fps"]
+        wait = self._last_move_ms + 1000 / fps - time.monotonic() * 1000 if fps > 0 else 0
+        if wait <= 0:
+            self._flush_move()
+        elif not self._move_timer.isActive():
+            self._move_timer.start(max(1, math.ceil(wait)))
+
+    def _flush_move(self) -> None:
+        """Handle the latest mouse move now (the tools, hover, the status bar)."""
+        self._move_timer.stop()
+        if self._pending_move is None:
+            return
+        x, y, modifiers, left = self._pending_move
+        self._pending_move = None
+        self._last_move_ms = time.monotonic() * 1000
+        self.cursor_moved.emit(x, y)
+        self.moved.emit(x, y, modifiers, left)
 
     def mouseReleaseEvent(self, event) -> None:
+        self._flush_move()
         if event.button() == Qt.MouseButton.RightButton and self._right_from is not None:
             self._right_from = None
             p = self._scene(event)
@@ -857,12 +929,16 @@ class LayoutCanvas(QGraphicsView):
         left, right = math.floor(rect.left() / step), math.ceil(rect.right() / step)
         top, bottom = math.floor(rect.top() / step), math.ceil(rect.bottom() / step)
         if self.options["show_grid"] and (right - left) * (bottom - top) <= 400_000:
+            lines: dict[int, list[QLineF]] = {0: [], 1: [], 2: []}  # minor, major, axis
             for i in range(left, right + 1):
-                painter.setPen(axis if i == 0 else major if i % 5 == 0 else minor)
-                painter.drawLine(QPointF(i * step, rect.top()), QPointF(i * step, rect.bottom()))
+                kind = 2 if i == 0 else 1 if i % 5 == 0 else 0
+                lines[kind].append(QLineF(i * step, rect.top(), i * step, rect.bottom()))
             for j in range(top, bottom + 1):
-                painter.setPen(axis if j == 0 else major if j % 5 == 0 else minor)
-                painter.drawLine(QPointF(rect.left(), j * step), QPointF(rect.right(), j * step))
+                kind = 2 if j == 0 else 1 if j % 5 == 0 else 0
+                lines[kind].append(QLineF(rect.left(), j * step, rect.right(), j * step))
+            for kind, pen in enumerate((minor, major, axis)):
+                painter.setPen(pen)
+                painter.drawLines(lines[kind])
         if self.options["show_axes"]:
             for key, line in (
                 ("axis_x", (QPointF(rect.left(), 0), QPointF(rect.right(), 0))),

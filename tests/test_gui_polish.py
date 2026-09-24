@@ -190,13 +190,14 @@ def test_gizmos_can_be_hidden_and_are_not_shown_on_read_only_tabs(window):
     assert window.canvas.gizmo is None
 
 
-def test_the_shape_under_the_cursor_is_outlined(window):
+def test_the_shape_under_the_cursor_is_outlined(window, qtbot):
     one_rect(window)
     window.tree.select_paths([])
     mouse(window.canvas, QEvent.Type.MouseMove, 30, 5, Qt.MouseButton.NoButton)
     assert window._hovered == ((0, 0),) and window.canvas._hover_item is not None
     mouse(window.canvas, QEvent.Type.MouseMove, 80, 80, Qt.MouseButton.NoButton)
-    assert window.canvas._hover_item is None
+    # moves within one frame are handled at the next frame (canvas/max_fps)
+    qtbot.waitUntil(lambda: window.canvas._hover_item is None, timeout=1000)
     window.settings.set("canvas/hover_highlight", False)
     mouse(window.canvas, QEvent.Type.MouseMove, 30, 5, Qt.MouseButton.NoButton)
     assert window.canvas._hover_item is None

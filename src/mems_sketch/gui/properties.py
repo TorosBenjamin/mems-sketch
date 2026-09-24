@@ -51,6 +51,7 @@ from mems_sketch.core.shapes import (
 )
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
+from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import parse_value
 from mems_sketch.gui.value_edit import ElidedLineEdit, ValueEdit
 
@@ -455,7 +456,13 @@ class PropertyEditor(QScrollArea):
         target.addItems([name for name, *_ in self.document.results.align_targets(path)])
         target.setCurrentText(align.to if align else "")
         form.addRow("Point", self._applies(own))
-        form.addRow("To", self._applies(target))
+        explain = (
+            "Moves the shape so that its *Point* lands on *To* (another shape's point), "
+            "plus the offset, and keeps it there whenever anything changes."
+        )
+        if type(node).placed:
+            explain += "\n\nWhile aligned, x and y do not move it; rotation and mirroring do."
+        form.addRow("To", _with_help(self._applies(target), explain))
         # Switching alignment off applies at once; switching it on waits for a point.
         box.clicked.connect(lambda on: self.apply() if not on or target.currentText() else None)
         offsets = {}
@@ -468,11 +475,6 @@ class PropertyEditor(QScrollArea):
             line.addWidget(self._value_editor(f"align:{field}", value, prefix=field[1]), 1)
             offsets[field] = self._editors.pop(f"align:{field}")
         form.addRow("Offset", row)
-        if type(node).placed:
-            note = QLabel("While aligned, x and y do not move it; rotation and mirroring do.")
-            note.setWordWrap(True)
-            note.setObjectName("muted")
-            form.addRow(note)
 
         def read():
             if not box.isChecked():
@@ -746,6 +748,15 @@ class PropertyEditor(QScrollArea):
         title.addWidget(glyph)
         title.addWidget(label, 1)
         title.addWidget(kind)
+        title.addWidget(
+            HelpButton(
+                "You see its interface: what you can set and align to when you place it. "
+                "Its shapes are how it is built, like the inside of a library in code: "
+                "View › Show implementation of read-only components shows them.\n\n"
+                "Try other values in the Parameters panel (Trial); copy it into the "
+                "project to change it."
+            )
+        )
         layout.addLayout(title)
         if definition.description:
             about = QLabel(definition.description)
@@ -778,13 +789,6 @@ class PropertyEditor(QScrollArea):
             for point, (x, y) in points.items():
                 form.addRow(point, QLabel(f"x {x:g}, y {y:g} µm"))
             layout.addWidget(box)
-        note = QLabel(
-            "Its shapes are how it is built: View › Show implementation of read-only "
-            "components shows them. Try other values in the Parameters panel (Trial)."
-        )
-        note.setWordWrap(True)
-        note.setObjectName("muted")
-        layout.addWidget(note)
         layout.addStretch()
         self._show(body)
 
@@ -915,3 +919,14 @@ def _message(exc: Exception) -> str:
                 for e in errors()
             )
     return str(exc)
+
+
+def _with_help(widget: QWidget, text: str) -> QWidget:
+    """``widget`` with a "?" after it that explains ``text``."""
+    row = QWidget()
+    line = QHBoxLayout(row)
+    line.setContentsMargins(0, 0, 0, 0)
+    line.setSpacing(2)
+    line.addWidget(widget, 1)
+    line.addWidget(HelpButton(text))
+    return row

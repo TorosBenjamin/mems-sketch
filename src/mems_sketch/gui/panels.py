@@ -36,6 +36,7 @@ from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import COMPONENT_MIME
+from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -81,8 +82,11 @@ def _format(value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
 
 
-def _action_bar(title: QLabel | None, *actions: tuple[str, str, object]) -> QHBoxLayout:
-    """A tool window's header row: an optional title, then small icon buttons.
+def _action_bar(
+    title: QLabel | None, *actions: tuple[str, str, object], help: str | None = None
+) -> QHBoxLayout:
+    """A tool window's header row: an optional title, then small icon buttons and,
+    with ``help``, a "?" explaining it.
 
     ``actions`` are ``(icon, tooltip, slot)``; the buttons are also returned in
     the layout's ``buttons`` attribute (by tooltip) for tests and shortcuts.
@@ -105,6 +109,8 @@ def _action_bar(title: QLabel | None, *actions: tuple[str, str, object]) -> QHBo
         button.clicked.connect(slot)
         row.addWidget(button)
         row.buttons[tip] = button
+    if help:
+        row.addWidget(HelpButton(help))
     return row
 
 
@@ -1120,6 +1126,10 @@ class LayerDefinitionsPanel(_Panel):
             QLabel("Layers"),
             ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
             ("remove", "Remove the selected layers", self._remove_layers),
+            help="The mask layers: their *GDS* layer and datatype for export, the "
+            "*undercut* the etch removes from each edge (for the as-etched and "
+            "etch-compensated views), and the *minimum width and spacing* the rule "
+            "checks use.",
         )
         layout.addLayout(self.actions)
         layout.addWidget(self.layers)
@@ -1189,9 +1199,12 @@ class ConstantsPanel(_Panel):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self.actions = _action_bar(
-            QLabel("Use in expressions as process.<name>"),
+            QLabel("Constants"),
             ("add", "Add constant", lambda: self._guard(self.document.process.add_constant)),
             ("remove", "Remove the selected constants", self._remove_constants),
+            help="Numbers of the process, such as the device layer thickness. Every "
+            "expression in every component can use them as *process.<name>*, e.g. "
+            "*process.min_gap*.",
         )
         layout.addLayout(self.actions)
         layout.addWidget(self.constants)

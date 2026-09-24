@@ -195,7 +195,10 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   Every panel and the editor is an *island*, a rounded panel on the window's
   frame (as in JetBrains' Islands theme); Messages runs the full width at the
   bottom. A panel's header lines up with the editor tabs and carries the
-  panel's own buttons. Which windows are open and their sizes are remembered. **View →
+  panel's own buttons and a **?**: hover it for what the panel is for. The
+  same **?** explains things in place elsewhere (alignment, a read-only
+  component, points, the process, each preference) instead of paragraphs of
+  text. Which windows are open and their sizes are remembered. **View →
   Panels** lists them too.
 - **Status bar**: the current hint, the active tool and its options (the
   drawing layer and path width while drawing, the angle step for Rotate), the

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.gui import icons
+from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.theme import HEADER_HEIGHT
 
 ANCHORS = ("left-top", "left-bottom", "bottom", "right")
@@ -167,8 +168,17 @@ class ToolWindows(QWidget):
 
     # -- windows -------------------------------------------------------------
 
-    def add(self, name: str, title: str, icon: str, widget: QWidget, anchor: str) -> None:
-        """Add a tool window (closed) with a button on its stripe."""
+    def add(
+        self,
+        name: str,
+        title: str,
+        icon: str,
+        widget: QWidget,
+        anchor: str,
+        help: str | None = None,
+    ) -> None:
+        """Add a tool window (closed) with a button on its stripe; ``help`` explains it
+        from a "?" in its header."""
         if anchor not in ANCHORS:
             raise ValueError(f"unknown anchor '{anchor}'")
         button = QToolButton()
@@ -188,6 +198,8 @@ class ToolWindows(QWidget):
         row.setSpacing(1)
         for header_button in getattr(widget, "header_buttons", []):
             row.addWidget(header_button)
+        if help:
+            row.addWidget(HelpButton(help))
         buttons.hide()
         host.row.insertWidget(host.row.count() - 1, buttons)  # before the hide button
         self._windows[name] = _Window(name, title, widget, anchor, button, buttons)

@@ -33,6 +33,7 @@ the grid snap, and the rotation step come from the settings.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from typing import TYPE_CHECKING, ClassVar
 
@@ -116,6 +117,10 @@ class Tool:
         self.canvas.clear_drag_preview()
         self.canvas.show_box(None)
         return busy
+
+    def design_changed(self) -> None:
+        """After any edit or undo: by default, drop what the tool was doing."""
+        self.cancel()
 
     def hint(self) -> str:
         return ""
@@ -687,6 +692,132 @@ class AlignTool(Tool):
         return busy
 
 
+class CornersTool(Tool):
+    """Round corners: pick a shape, then click its corners.
+
+    A click rounds a corner (with the last radius used) or, on a rounded one,
+    makes it sharp again; dragging away from a corner sets its radius, drawn
+    as you drag. The corners go into the shape's corners modifier, recorded
+    so that they follow the design (see :mod:`mems_sketch.editing.corners`).
+    """
+
+    name, label, shortcut = "corners", "Corners", "O"
+    cursor = Qt.CursorShape.CrossCursor
+    hovers, icon = True, "fillet"
+    DRAG_PX = 4  # a press that moves further is a drag (sets the radius)
+
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__(window)
+        self.radius: float = 1.0  # the last radius used, for the next corner
+
+    def reset(self) -> None:
+        self.path: NodePath | None = None
+        self.candidates: list[tuple[float, float]] = []
+        self.rounded: list[tuple[int, tuple[float, float]]] = []
+        self._press: tuple[float, float] | None = None  # the corner a press is on
+        self._dragged: float | None = None  # the radius being dragged
+
+    @property
+    def busy(self) -> bool:
+        return self.path is not None
+
+    def activate(self) -> None:
+        super().activate()
+        if len(self.window.selection) == 1:
+            self.begin(self.window.selection[0])
+
+    def design_changed(self) -> None:
+        """Stay on the shape (its corners may have moved or gone), unless it is gone."""
+        self._press = self._dragged = None
+        if self.path is not None and not self._refresh():
+            self.reset()
+
+    def hint(self) -> str:
+        if self.path is None:
+            return "Corners: click the shape whose corners to round"
+        name = self.document.node(self.path).name or self.document.node(self.path).kind
+        return (
+            f"Corners of {name}: click a corner to round it (again: sharp), drag from it "
+            "to set the radius; Esc when done"
+        )
+
+    def begin(self, path: NodePath) -> None:
+        if not self.editable():
+            return
+        self.path = path
+        if not self._refresh() or not self.candidates:
+            self.reset()
+            self.window.report_error("this shape has no corners to round (does it build?)")
+            return
+        self.window.prompt(self.hint())
+        self.window.update_overlay()
+
+    def _refresh(self) -> bool:
+        if self.path is None:
+            return False
+        try:
+            self.candidates = self.document.corners.candidates(self.path)
+            self.rounded = self.document.corners.rounded(self.path)
+        except (ValueError, KeyError, IndexError):  # e.g. undone away
+            return False
+        return True
+
+    def _corner_at(self, x: float, y: float) -> tuple[float, float] | None:
+        points = self.candidates + [p for _, p in self.rounded]
+        best, found = self.reach, None
+        for px, py in points:
+            distance = math.hypot(px - x, py - y)
+            if distance < best:
+                best, found = distance, (px, py)
+        return found
+
+    def press(self, x, y, modifiers) -> None:
+        corner = self._corner_at(x, y) if self.path is not None else None
+        if corner is None:
+            hit = self.window.hit(x, y)
+            self.window.select_click(hit, False)
+            if hit is not None:
+                self.begin(hit)
+            return
+        self._press, self._dragged = corner, None
+
+    def move(self, x, y, modifiers, left) -> None:
+        if self._press is None or not left:
+            return
+        distance = math.hypot(x - self._press[0], y - self._press[1])
+        if self._dragged is None and distance * self.canvas.pixels_per_um() < self.DRAG_PX:
+            return
+        radius = distance if modifiers & CTRL else max(round(distance, 1), 0.1)
+        self._dragged = radius
+        self.window.prompt(f"Radius {radius:g} µm (release to set; Ctrl: exact)")
+        with contextlib.suppress(ValueError, KeyError):
+            node, _ = self.document.corners.with_corner(self.path, *self._press, _um(radius))
+            self.window._preview_node(node, self.path)
+
+    def release(self, x, y, modifiers) -> None:
+        corner, radius = self._press, self._dragged
+        self._press = self._dragged = None
+        if corner is None:
+            return
+        path = self.path
+        existing = self.document.corners.at(path, *corner)
+        if radius is not None:
+            self.radius = _um(radius)
+            self.window.run(lambda: self.document.corners.add(path, *corner, self.radius))
+        elif existing is not None:
+            self.window.run(lambda: self.document.corners.remove(path, existing))
+        else:
+            self.window.run(lambda: self.document.corners.add(path, *corner, self.radius))
+        self.window.prompt(self.hint())
+
+    def markers(self) -> dict[str, list[Candidate]]:
+        if self.path is None:
+            return {}
+        rounded = {p for _, p in self.rounded}
+        sharp = [("corner", x, y) for x, y in self.candidates if (x, y) not in rounded]
+        return {"pick": sharp, "anchor": [("rounded", x, y) for x, y in rounded]}
+
+
 class MeasureTool(Tool):
     """Click two points to measure; the rulers stay (per component) until cleared."""
 
@@ -1166,6 +1297,7 @@ TOOLS: tuple[type[Tool], ...] = (
     MoveTool,
     RotateTool,
     AlignTool,
+    CornersTool,
     MeasureTool,
     AngleTool,
     RectTool,

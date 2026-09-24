@@ -42,9 +42,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.core.shapes import MODIFIER_KINDS, Modifier, NodePath, Shape
+from mems_sketch.core.shapes import (
+    MODIFIER_KINDS,
+    CornersModifier,
+    Modifier,
+    NodePath,
+    Shape,
+)
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
+from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import parse_value
 from mems_sketch.gui.value_edit import ElidedLineEdit, ValueEdit
 
@@ -77,7 +84,12 @@ _LABELS = {
     "rotation": "Rotation °",
     "op": "Operation",
 }
-MODIFIER_TITLES = {"array": "Array", "polar_array": "Polar array", "mirror": "Mirror"}
+MODIFIER_TITLES = {
+    "array": "Array",
+    "polar_array": "Polar array",
+    "mirror": "Mirror",
+    "corners": "Corners",
+}
 MODIFIER_LABELS = {  # per kind, then per field
     "array": {"columns": "Columns", "rows": "Rows", "dx": "Step x", "dy": "Step y"},
     "polar_array": {
@@ -101,6 +113,8 @@ MODIFIER_TIPS = {
     "i is each copy's index",
     "mirror": "The shape and its mirror image: across a vertical or horizontal line, across "
     "a guide, or through a point",
+    "corners": "Chosen corners rounded or cut, each with its own radius: pick them on the "
+    "canvas with the Corners tool (O)",
 }
 SELF_POINTS = ("self.center", "self.left", "self.right", "self.top", "self.bottom")
 # Fields shown as one row of two: (first, second) -> row label, inside prefixes.
@@ -129,6 +143,7 @@ class PropertyEditor(QScrollArea):
     error = Signal(str)
     applied = Signal()
     previewed = Signal(object)  # the node as the fields describe it, while a value is dragged
+    pick_corners = Signal()  # "Pick on the canvas" in a corners card: the Corners tool
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -441,7 +456,13 @@ class PropertyEditor(QScrollArea):
         target.addItems([name for name, *_ in self.document.results.align_targets(path)])
         target.setCurrentText(align.to if align else "")
         form.addRow("Point", self._applies(own))
-        form.addRow("To", self._applies(target))
+        explain = (
+            "Moves the shape so that its *Point* lands on *To* (another shape's point), "
+            "plus the offset, and keeps it there whenever anything changes."
+        )
+        if type(node).placed:
+            explain += "\n\nWhile aligned, x and y do not move it; rotation and mirroring do."
+        form.addRow("To", _with_help(self._applies(target), explain))
         # Switching alignment off applies at once; switching it on waits for a point.
         box.clicked.connect(lambda on: self.apply() if not on or target.currentText() else None)
         offsets = {}
@@ -454,11 +475,6 @@ class PropertyEditor(QScrollArea):
             line.addWidget(self._value_editor(f"align:{field}", value, prefix=field[1]), 1)
             offsets[field] = self._editors.pop(f"align:{field}")
         form.addRow("Offset", row)
-        if type(node).placed:
-            note = QLabel("While aligned, x and y do not move it; rotation and mirroring do.")
-            note.setWordWrap(True)
-            note.setObjectName("muted")
-            form.addRow(note)
 
         def read():
             if not box.isChecked():
@@ -589,7 +605,10 @@ class PropertyEditor(QScrollArea):
         if "about" in type(modifier).model_fields:  # first: it replaces the axis fields below
             widgets["about"] = self._about_editor(key + "about", modifier.about, path)
             form.addRow(labels.get("about", "About"), widgets["about"])
-        widgets |= self._add_fields(form, modifier, kind, key, skip=("kind", "enabled", "about"))
+        skip = ("kind", "enabled", "about", "corners")
+        widgets |= self._add_fields(form, modifier, kind, key, skip=skip)
+        if isinstance(modifier, CornersModifier):
+            layout.addWidget(self._corners_editor(key, modifier, path, read_only))
         fields = {
             k[len(key) :]: self._editors.pop(k) for k in list(self._editors) if k.startswith(key)
         }
@@ -615,6 +634,65 @@ class PropertyEditor(QScrollArea):
             }
 
         return card, read
+
+    def _corners_editor(
+        self, key: str, modifier: CornersModifier, path: NodePath, read_only: bool
+    ) -> QWidget:
+        """A row per corner (where it is, its radius and style), and "Pick on the canvas"."""
+        box = QWidget()
+        rows = QVBoxLayout(box)
+        rows.setContentsMargins(0, 0, 4, 0)
+        rows.setSpacing(3)
+        readers = []
+        for index, corner in enumerate(modifier.corners):
+            line = QHBoxLayout()
+            line.setSpacing(4)
+            where = ElidedLabel(corner.where())
+            written = corner.at or f"x {corner.x}, y {corner.y}"
+            where.setToolTip(f"Where the corner is: {written}")
+            where.setMinimumWidth(40)
+            radius = self._value_editor(f"{key}corner{index}", corner.radius, prefix="r")
+            reader = self._editors.pop(f"{key}corner{index}")
+            style = _combo()
+            style.addItems(["round", "chamfer"])
+            style.setCurrentText(corner.style)
+            style.setEnabled(not read_only)
+            style.activated.connect(lambda _=0: self.apply())
+            remove = QToolButton()
+            icons.bind(remove, "close")
+            remove.setIconSize(QSize(12, 12))
+            remove.setAutoRaise(True)
+            remove.setToolTip("Make this corner sharp again")
+            remove.setEnabled(not read_only)
+            remove.clicked.connect(
+                lambda _=False, i=index: self._act(lambda: self.document.corners.remove(path, i))
+            )
+            line.addWidget(where, 2)
+            line.addWidget(radius, 2)
+            line.addWidget(style, 1)
+            line.addWidget(remove)
+            rows.addLayout(line)
+            readers.append(
+                lambda c=corner, r=reader, s=style: {
+                    **c.model_dump(),
+                    "radius": r(),
+                    "style": s.currentText(),
+                }
+            )
+        if not modifier.corners:
+            none = QLabel("No corners yet.")
+            none.setObjectName("muted")
+            rows.addWidget(none)
+        pick = QToolButton()
+        pick.setText("Pick on the canvas")
+        icons.bind(pick, "fillet")
+        pick.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        pick.setToolTip("The Corners tool (O): click a corner to round it, drag to set its radius")
+        pick.setEnabled(not read_only)
+        pick.clicked.connect(self.pick_corners)
+        rows.addWidget(pick)
+        self._editors[key + "corners"] = lambda: [read() for read in readers]
+        return box
 
     def _about_editor(self, key: str, value: str | None, path: NodePath) -> QWidget:
         """Where a mirror mirrors: nothing (use the axis), a guide, or a point."""
@@ -670,6 +748,15 @@ class PropertyEditor(QScrollArea):
         title.addWidget(glyph)
         title.addWidget(label, 1)
         title.addWidget(kind)
+        title.addWidget(
+            HelpButton(
+                "You see its interface: what you can set and align to when you place it. "
+                "Its shapes are how it is built, like the inside of a library in code: "
+                "View › Show implementation of read-only components shows them.\n\n"
+                "Try other values in the Parameters panel (Trial); copy it into the "
+                "project to change it."
+            )
+        )
         layout.addLayout(title)
         if definition.description:
             about = QLabel(definition.description)
@@ -702,13 +789,6 @@ class PropertyEditor(QScrollArea):
             for point, (x, y) in points.items():
                 form.addRow(point, QLabel(f"x {x:g}, y {y:g} µm"))
             layout.addWidget(box)
-        note = QLabel(
-            "Its shapes are how it is built: View › Show implementation of read-only "
-            "components shows them. Try other values in the Parameters panel (Trial)."
-        )
-        note.setWordWrap(True)
-        note.setObjectName("muted")
-        layout.addWidget(note)
         layout.addStretch()
         self._show(body)
 
@@ -839,3 +919,14 @@ def _message(exc: Exception) -> str:
                 for e in errors()
             )
     return str(exc)
+
+
+def _with_help(widget: QWidget, text: str) -> QWidget:
+    """``widget`` with a "?" after it that explains ``text``."""
+    row = QWidget()
+    line = QHBoxLayout(row)
+    line.setContentsMargins(0, 0, 0, 0)
+    line.setSpacing(2)
+    line.addWidget(widget, 1)
+    line.addWidget(HelpButton(text))
+    return row

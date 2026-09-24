@@ -65,6 +65,36 @@ from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
 from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import VIEW_MODES, ComponentView, EditorArea
 
+PANEL_HELP = {  # the "?" in each tool window's header
+    "components": "Every component, each listed once: the project's, each library's and "
+    "the built-in ones. A component can be *shared* (at the top of its group) or "
+    "*private* to another one, listed under it and placed only inside it.\n\n"
+    "Double-click to open one in a tab (library and built-in ones read-only); drag it "
+    "onto the canvas, or use Place, to put it in the component you are editing. "
+    "Right-click for everything else.",
+    "shapes": "The shape tree of the component you are editing, evaluated again "
+    "whenever a value changes. Operations (subtract, offset, …) hold the shapes they "
+    "act on, so nothing is lost: change a shape inside and the result follows.\n\n"
+    "Tick a shape to switch it off; a placed component opens to show what it is made "
+    "of (read-only).",
+    "layers": "Tick a layer to show it; click a layer to draw on it. What a layer is "
+    "(its GDS number, undercut and rules) is part of the process: View › Process.",
+    "messages": "Why the component does not build, and the rule checks: shapes "
+    "narrower or closer together than their layer allows. Click a message to see "
+    "where it is.",
+    "properties": "The selected shape's fields. Numbers can be dragged left and right "
+    "(*Shift* finer, *Ctrl* round steps) and the canvas follows as you drag; a click "
+    "edits the text. A field can hold an expression over the parameters, such as "
+    "*pitch * 2*.",
+    "parameters": "The component's parameters: the values whoever places it can set. "
+    "*Internal* ones (the lock) are only for inside it.\n\n*Trial* tries a value "
+    "without changing the design, on library components too.",
+    "points": "Every point of the component. Its own points are for whoever places "
+    "it (to align to); *Default* are the points every component has, from the box "
+    "around it; then the points of each named shape.\n\nHover a point to find it "
+    "on the canvas, click it to go there and edit it. *Re-export* makes a shape's "
+    "point one of this component's.",
+}
 STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
 GUIDE_REACH_PX = 6  # a click this close to a guide line selects it
 HIT_REACH_PX = 4  # a click this close to a shape still selects it (thin fingers, small parts)
@@ -72,7 +102,16 @@ DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
 DEFAULT_TOOL_WINDOWS = ("components", "shapes", "properties", "messages")
-CANVAS_MODES = ("select", "hand", "move", "rotate", "align", "measure", "angle")  # on the canvas
+CANVAS_MODES = (  # on the canvas
+    "select",
+    "hand",
+    "move",
+    "rotate",
+    "align",
+    "corners",
+    "measure",
+    "angle",
+)
 # Canvas options and the settings they come from (see gui/settings.py).
 CANVAS_OPTIONS = {
     "fill_opacity": "canvas/fill_opacity",
@@ -160,6 +199,7 @@ class MainWindow(QMainWindow):
         ):
             panel.error.connect(self.report_error)
         self.properties.previewed.connect(self._preview_node)
+        self.properties.pick_corners.connect(lambda: self.set_tool("corners"))
         self._double_shift = DoubleShift(self)
         self._double_shift.pressed.connect(self.search)
         self.winId()  # the native window, which every key typed in this window reaches first
@@ -681,7 +721,7 @@ class MainWindow(QMainWindow):
             ("parameters", "Parameters", "parameters", self.parameters, "right"),
             ("points", "Points", "point", self.points, "right"),
         ):
-            self.tool_windows.add(name, title, icon, widget, anchor)
+            self.tool_windows.add(name, title, icon, widget, anchor, PANEL_HELP[name])
         self._restore_tool_windows()
         self.tool_windows.changed.connect(self._save_tool_windows)
         self.tool_windows.changed.connect(self.update_overlay)  # points follow the panel
@@ -850,7 +890,7 @@ class MainWindow(QMainWindow):
 
     def refresh(self) -> None:
         """Recompile every open tab and update the panels (after any change)."""
-        self.tool.cancel()  # what it was doing was based on the previous state
+        self.tool.design_changed()  # what it was doing was based on the previous state
         for view in self.area.views():
             if not self.document.exists(view.component):
                 self.area.close_view(view)  # its component was deleted (or undone)
@@ -1052,10 +1092,11 @@ class MainWindow(QMainWindow):
         if target is not None:
             self.open_component(target)
 
-    def _preview_node(self, node) -> None:
-        """Draw the current tab as it would be with the selected node changed (a value
-        being dragged in Properties); applying it redraws everything as usual."""
-        view, path = self.view, self.properties.path
+    def _preview_node(self, node, path=None) -> None:
+        """Draw the current tab as it would be with a node changed (the selected one
+        by default: a value being dragged in Properties); applying it redraws
+        everything as usual."""
+        view, path = self.view, path or self.properties.path
         if path is None:
             return
         try:

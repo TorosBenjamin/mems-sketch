@@ -9,9 +9,10 @@ session like any other, with undo.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSplitter, QVBoxLayout, QWidget
 
 from mems_sketch.editing import EditSession
+from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import ConstantsPanel, LayerDefinitionsPanel
 
 
@@ -28,15 +29,24 @@ class ProcessView(QWidget):
         self.layers = LayerDefinitionsPanel(document)
         for panel in (self.constants, self.layers):
             panel.error.connect(self.error)
-        heading = QLabel("Process: constants for expressions (process.<name>) and layers")
+        heading = QLabel("Process")
         heading.setObjectName("heading")
-        heading.setContentsMargins(10, 8, 10, 6)
+        top = QHBoxLayout()
+        top.setContentsMargins(10, 8, 10, 6)
+        top.addWidget(heading)
+        top.addWidget(
+            HelpButton(
+                "What the whole project is made with: its constants, which every "
+                "expression can use, and its layers. Changes here affect every component."
+            )
+        )
+        top.addStretch()
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(self.constants)
         split.addWidget(self.layers)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(heading)
+        layout.addLayout(top)
         layout.addWidget(split, 1)
         self.refresh()
 

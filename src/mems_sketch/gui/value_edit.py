@@ -182,6 +182,9 @@ class ValueEdit(QLineEdit):
         self._hint = ""
         self.setProperty("expression", False)
         self.setProperty("invalid", False)
+        # A click must not focus the field before it sees the press (Qt does that for
+        # click focus): the press may start a drag. It takes focus itself for an edit.
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self._model = QStringListModel(self._names(), self)  # kept: the completer does not own it
         self._completer = QCompleter(self._model, self)
         self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -319,6 +322,8 @@ class ValueEdit(QLineEdit):
     def mousePressEvent(self, event) -> None:
         number = None if self.hasFocus() else self._number()
         if event.button() != Qt.MouseButton.LeftButton or number is None:
+            if not self.hasFocus():
+                self.setFocus(Qt.FocusReason.MouseFocusReason)
             super().mousePressEvent(event)
             return
         self._press = (event.position().x(), number)  # a drag, or a click to edit

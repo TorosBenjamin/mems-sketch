@@ -75,6 +75,8 @@ from mems_sketch.core.shapes.kinds import (
 from mems_sketch.core.shapes.modifiers import (
     MODIFIER_KINDS,
     ArrayModifier,
+    Corner,
+    CornersModifier,
     MirrorModifier,
     Modifier,
     PolarArrayModifier,
@@ -143,6 +145,8 @@ __all__ = [
     "ArrayModifier",
     "BooleanShape",
     "CircleShape",
+    "Corner",
+    "CornersModifier",
     "Evaluator",
     "FilletShape",
     "GroupShape",

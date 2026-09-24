@@ -195,7 +195,10 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   Every panel and the editor is an *island*, a rounded panel on the window's
   frame (as in JetBrains' Islands theme); Messages runs the full width at the
   bottom. A panel's header lines up with the editor tabs and carries the
-  panel's own buttons. Which windows are open and their sizes are remembered. **View →
+  panel's own buttons and a **?**: hover it for what the panel is for. The
+  same **?** explains things in place elsewhere (alignment, a read-only
+  component, points, the process, each preference) instead of paragraphs of
+  text. Which windows are open and their sizes are remembered. **View →
   Panels** lists them too.
 - **Status bar**: the current hint, the active tool and its options (the
   drawing layer and path width while drawing, the angle step for Rotate), the
@@ -339,6 +342,16 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   - **Align** (A, Ctrl+L): click a shape, one of its points, then the point to
     put it on. Fine-tune the offset in Properties; **Edit → Remove alignment**
     takes it off and leaves the shape where it is.
+  - **Corners** (O): click a shape, then its corners (they are marked; the
+    steps of curves are not corners). A click rounds a corner with the last
+    radius used, or makes a rounded one sharp again; dragging away from a
+    corner sets its radius, drawn as you drag (Ctrl: not rounded to 0.1 µm).
+    Works on a placed library part too: the rounding belongs to the
+    placement. The corners are kept in the shape's **Corners** modifier,
+    where Properties edits each one's radius and style (round or chamfer).
+    A corner is recorded so it follows the design: the shape's own point
+    (`top_right`), a neighbour's point, or the expressions the shape is
+    written with (`slot_x` for a corner a cut made).
   - **Measure** (D): click two points (they snap) to see the distance, dx and
     dy. Rulers stay until **Tools → Clear rulers**; they also work on
     read-only tabs.
@@ -420,6 +433,7 @@ which the canvas shows dashed while the shape is selected.
   | `array` | `columns` × `rows` copies, `dx`, `dy` apart; `i` and `j` are the copy's column and row, so each copy can differ (e.g. `length: 40 + 2*i`) |
   | `polar_array` | `count` copies around a centre `x`, `y`, `step` degrees apart (a full circle by default), turned with the circle or (`rotate: false`) keeping their orientation; `i` is the copy's index |
   | `mirror` | the node and its mirror image across the vertical line at `x` (`axis: x`), the horizontal line at `y` (`axis: y`) or both; or, with `about`, across a guide (`about: centerline`) or through a point (`about: mass.center`, point symmetry); `keep: false` leaves only the image |
+  | `corners` | chosen corners rounded (a tangent arc; a concave corner gains material) or chamfered, each with its own `radius` and `style`; a corner is a point (`at: self.top_right`, `at: beam.top`) or `x`, `y` expressions, so it follows the design, and one that is no longer a corner is an error. On a placed part it rounds that placement only |
 
   ```yaml
   - kind: ref

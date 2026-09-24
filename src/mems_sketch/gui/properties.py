@@ -42,7 +42,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.core.shapes import MODIFIER_KINDS, Modifier, NodePath, Shape
+from mems_sketch.core.shapes import (
+    MODIFIER_KINDS,
+    CornersModifier,
+    Modifier,
+    NodePath,
+    Shape,
+)
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.help import HelpButton
@@ -78,7 +84,12 @@ _LABELS = {
     "rotation": "Rotation °",
     "op": "Operation",
 }
-MODIFIER_TITLES = {"array": "Array", "polar_array": "Polar array", "mirror": "Mirror"}
+MODIFIER_TITLES = {
+    "array": "Array",
+    "polar_array": "Polar array",
+    "mirror": "Mirror",
+    "corners": "Corners",
+}
 MODIFIER_LABELS = {  # per kind, then per field
     "array": {"columns": "Columns", "rows": "Rows", "dx": "Step x", "dy": "Step y"},
     "polar_array": {
@@ -102,6 +113,8 @@ MODIFIER_TIPS = {
     "i is each copy's index",
     "mirror": "The shape and its mirror image: across a vertical or horizontal line, across "
     "a guide, or through a point",
+    "corners": "Chosen corners rounded or cut, each with its own radius: pick them on the "
+    "canvas with the Corners tool (O)",
 }
 SELF_POINTS = ("self.center", "self.left", "self.right", "self.top", "self.bottom")
 # Fields shown as one row of two: (first, second) -> row label, inside prefixes.
@@ -130,6 +143,7 @@ class PropertyEditor(QScrollArea):
     error = Signal(str)
     applied = Signal()
     previewed = Signal(object)  # the node as the fields describe it, while a value is dragged
+    pick_corners = Signal()  # "Pick on the canvas" in a corners card: the Corners tool
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -591,7 +605,10 @@ class PropertyEditor(QScrollArea):
         if "about" in type(modifier).model_fields:  # first: it replaces the axis fields below
             widgets["about"] = self._about_editor(key + "about", modifier.about, path)
             form.addRow(labels.get("about", "About"), widgets["about"])
-        widgets |= self._add_fields(form, modifier, kind, key, skip=("kind", "enabled", "about"))
+        skip = ("kind", "enabled", "about", "corners")
+        widgets |= self._add_fields(form, modifier, kind, key, skip=skip)
+        if isinstance(modifier, CornersModifier):
+            layout.addWidget(self._corners_editor(key, modifier, path, read_only))
         fields = {
             k[len(key) :]: self._editors.pop(k) for k in list(self._editors) if k.startswith(key)
         }
@@ -617,6 +634,65 @@ class PropertyEditor(QScrollArea):
             }
 
         return card, read
+
+    def _corners_editor(
+        self, key: str, modifier: CornersModifier, path: NodePath, read_only: bool
+    ) -> QWidget:
+        """A row per corner (where it is, its radius and style), and "Pick on the canvas"."""
+        box = QWidget()
+        rows = QVBoxLayout(box)
+        rows.setContentsMargins(0, 0, 4, 0)
+        rows.setSpacing(3)
+        readers = []
+        for index, corner in enumerate(modifier.corners):
+            line = QHBoxLayout()
+            line.setSpacing(4)
+            where = ElidedLabel(corner.where())
+            written = corner.at or f"x {corner.x}, y {corner.y}"
+            where.setToolTip(f"Where the corner is: {written}")
+            where.setMinimumWidth(40)
+            radius = self._value_editor(f"{key}corner{index}", corner.radius, prefix="r")
+            reader = self._editors.pop(f"{key}corner{index}")
+            style = _combo()
+            style.addItems(["round", "chamfer"])
+            style.setCurrentText(corner.style)
+            style.setEnabled(not read_only)
+            style.activated.connect(lambda _=0: self.apply())
+            remove = QToolButton()
+            icons.bind(remove, "close")
+            remove.setIconSize(QSize(12, 12))
+            remove.setAutoRaise(True)
+            remove.setToolTip("Make this corner sharp again")
+            remove.setEnabled(not read_only)
+            remove.clicked.connect(
+                lambda _=False, i=index: self._act(lambda: self.document.corners.remove(path, i))
+            )
+            line.addWidget(where, 2)
+            line.addWidget(radius, 2)
+            line.addWidget(style, 1)
+            line.addWidget(remove)
+            rows.addLayout(line)
+            readers.append(
+                lambda c=corner, r=reader, s=style: {
+                    **c.model_dump(),
+                    "radius": r(),
+                    "style": s.currentText(),
+                }
+            )
+        if not modifier.corners:
+            none = QLabel("No corners yet.")
+            none.setObjectName("muted")
+            rows.addWidget(none)
+        pick = QToolButton()
+        pick.setText("Pick on the canvas")
+        icons.bind(pick, "fillet")
+        pick.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        pick.setToolTip("The Corners tool (O): click a corner to round it, drag to set its radius")
+        pick.setEnabled(not read_only)
+        pick.clicked.connect(self.pick_corners)
+        rows.addWidget(pick)
+        self._editors[key + "corners"] = lambda: [read() for read in readers]
+        return box
 
     def _about_editor(self, key: str, value: str | None, path: NodePath) -> QWidget:
         """Where a mirror mirrors: nothing (use the axis), a guide, or a point."""

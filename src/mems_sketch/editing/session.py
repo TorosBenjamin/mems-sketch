@@ -41,6 +41,7 @@ from mems_sketch.core.shapes import (
 )
 from mems_sketch.core.user_component import ComponentDef, ParamDef
 from mems_sketch.editing.components import ComponentEdits, library_name
+from mems_sketch.editing.corners import CornerEdits
 from mems_sketch.editing.events import Event
 from mems_sketch.editing.modifiers import ModifierEdits
 from mems_sketch.editing.moves import MoveEdits
@@ -79,6 +80,7 @@ class EditSession:
         self.components = ComponentEdits(self)
         self.nodes = NodeEdits(self)
         self.modifiers = ModifierEdits(self)
+        self.corners = CornerEdits(self)
         self.moves = MoveEdits(self)
         self.points = PointEdits(self)
         self.parameters = ParameterEdits(self)

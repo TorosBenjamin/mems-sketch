@@ -6,6 +6,7 @@ the node (with the modifiers before it) produces and returns new geometry.
 * ``array``: copies on a grid, ``columns`` × ``rows`` with steps ``dx``, ``dy``
 * ``polar_array``: ``count`` copies around a centre ``x``, ``y``, ``step``
   degrees apart (a full circle by default), rotated with it or not
+* ``corners``: chosen corners rounded or chamfered, each with its own radius
 * ``mirror``: the node plus its mirror image across the vertical line at
   ``x`` (``axis: x``), the horizontal line at ``y`` (``axis: y``) or both; or,
   with ``about``, across a guide line (``about: centerline``) or through a
@@ -356,6 +357,92 @@ class MirrorModifier(Modifier):
         return copies
 
 
+class Corner(BaseModel):
+    """One corner of a :class:`CornersModifier`: where it is, and how it is cut.
+
+    Where is a point, ``at`` (``self.top_left``, one of the node's own points, or
+    ``beam.top``, another shape's), else ``x``, ``y`` (expressions, e.g.
+    ``slot.left.x`` and ``beam.top.y`` for a corner a cut made). So the corner
+    follows when the parameters change.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    at: str | None = None
+    x: Value = 0.0
+    y: Value = 0.0
+    radius: Value = 1.0  # for a chamfer, how far it cuts along each edge
+    style: Literal["round", "chamfer"] = "round"
+
+    @field_validator("at")
+    @classmethod
+    def _at(cls, at: str | None) -> str | None:
+        if at is not None:
+            parts = at.split(".")
+            if len(parts) != 2 or not all(part.isidentifier() for part in parts):
+                raise ValueError(f"'{at}' is not a point like 'self.top_left' or 'beam.top'")
+        return at
+
+    def where(self) -> str:
+        """Where it is, briefly: ``top_right`` for the node's own point."""
+        if self.at:
+            return self.at.removeprefix("self.")
+        return f"{_format(self.x)}, {_format(self.y)}".replace("self.", "")
+
+
+class CornersModifier(Modifier):
+    """Round (or chamfer) chosen corners of the node, each with its own radius.
+
+    Corners are found among the vertices of what the node makes (with the
+    modifiers above it), in the node's frame: a corner of a placed library part
+    can be rounded here without changing the part. A corner that is no longer
+    a vertex (after an edit) is an error, not a silent change elsewhere.
+    """
+
+    kind: Literal["corners"] = "corners"
+    icon: ClassVar[str] = "fillet"
+    corners: list[Corner] = []
+    segments: Value | None = None  # per full circle; default from ARC_TOLERANCE_UM
+
+    def point_references(self) -> list[str]:
+        return [f"{c.at}.{axis}" for c in self.corners if c.at for axis in "xy"]
+
+    def positions(self, variables: dict[str, float]) -> list[tuple[float, float]]:
+        """Where its corners are, with ``variables`` holding the points they use."""
+        result = []
+        for corner in self.corners:
+            if corner.at is None:
+                result.append((evaluate(corner.x, variables), evaluate(corner.y, variables)))
+                continue
+            names = (f"{corner.at}.x", f"{corner.at}.y")
+            if any(name not in variables for name in names):
+                node = corner.at.partition(".")[0]
+                raise ValueError(f"corner at '{corner.at}': no shape named '{node}' is visible")
+            result.append((variables[names[0]], variables[names[1]]))
+        return result
+
+    def apply(self, produce, variables):
+        from mems_sketch.core.shapes.geometry import round_corners
+
+        geometry, declared = produce(variables)
+        if not self.corners:
+            return geometry, declared
+        variables = self.resolved(variables, _points("self", geometry, declared))
+        specs = [
+            (x, y, evaluate(corner.radius, variables), corner.style)
+            for corner, (x, y) in zip(self.corners, self.positions(variables), strict=True)
+        ]
+        n = evaluate(self.segments, variables) if self.segments is not None else None
+        return round_corners(geometry, specs, n), declared
+
+    def summary(self):
+        count = len(self.corners)
+        return f"{count} corner{'s' if count != 1 else ''}"
+
+    def baked(self, node, variables, measure):
+        raise ValueError("rounded corners cannot be applied into shapes; keep the modifier")
+
+
 def _points(name: str, geometry: Geometry, declared: dict[str, Point]) -> NodePoints:
     from mems_sketch.core.shapes.points import NodePoints
 
@@ -393,9 +480,15 @@ def _bbox(geometry: Geometry) -> kdb.DBox | None:
     return None if box.empty() else box.to_dtype(DBU_UM)
 
 
-MODIFIER_KINDS: tuple[type[Modifier], ...] = (ArrayModifier, PolarArrayModifier, MirrorModifier)
+MODIFIER_KINDS: tuple[type[Modifier], ...] = (
+    ArrayModifier,
+    PolarArrayModifier,
+    MirrorModifier,
+    CornersModifier,
+)
 AnyModifier = Annotated[
-    ArrayModifier | PolarArrayModifier | MirrorModifier, Field(discriminator="kind")
+    ArrayModifier | PolarArrayModifier | MirrorModifier | CornersModifier,
+    Field(discriminator="kind"),
 ]
 MODIFIER_ADAPTER: TypeAdapter = TypeAdapter(AnyModifier)
 BY_MODIFIER_KIND: dict[str, type[Modifier]] = {m.kind_name(): m for m in MODIFIER_KINDS}

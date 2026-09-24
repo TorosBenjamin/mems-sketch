@@ -168,3 +168,22 @@ def test_the_window_applies_the_frame_rate_setting(qtbot):
     assert window.canvas.options["max_fps"] == 0
     window.settings.set("canvas/draft_quality", False)
     assert window.canvas.options["draft_quality"] is False
+
+
+def test_shape_outlines_are_one_pixel_wide(canvas):
+    """Qt draws 1 px cosmetic outlines with a fast rasterizer; wider ones are ~100x
+    slower on a shape with thousands of holes (0.6 s instead of 7 ms)."""
+    geometry = Geometry()
+    geometry.layers["device"] = plate_with_holes()
+    colors = {"device": QColor("#4c78a8")}
+    canvas.show_geometry(geometry, colors, {})
+    canvas.show_overlay(geometry, [])
+    canvas.show_hover(geometry.layers["device"])
+    canvas.show_drag_preview(geometry, colors)
+    items = [
+        *canvas._layer_items.values(),
+        *canvas._overlay,
+        canvas._hover_item,
+        *canvas._drag_items,
+    ]
+    assert all(item.pen().isCosmetic() and item.pen().widthF() <= 1.0 for item in items)

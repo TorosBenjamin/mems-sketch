@@ -128,6 +128,9 @@ MENU_CARET = "▾"  # after the text of a button that opens a menu
 PIXMAP_CACHE_KB = 256 * 1024
 DRAFT_SETTLE_MS = 200  # full quality again this long after the last zoom or resize step
 CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
+# Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
+# line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
+OUTLINE_PX = 1.0
 COMPONENT_MIME = "application/x-mems-sketch-component"  # a component dragged from the explorer
 # The world the user can pan over, in µm: ±1 m, inside the ±2.1 m that 32-bit
 # database units (nm) can hold. Cursor positions are kept inside it.
@@ -425,11 +428,11 @@ class LayoutCanvas(QGraphicsView):
         if highlight is not None:
             for region in highlight.layers.values():
                 item = QGraphicsPathItem(region_to_path(region))
-                pen = QPen(QColor(self.theme["highlight"]), 2)
+                pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
                 pen.setCosmetic(True)
                 item.setPen(pen)
                 tint = QColor(self.theme["highlight"])
-                tint.setAlpha(40)
+                tint.setAlpha(60)  # a stronger tint makes up for the thin outline
                 item.setBrush(QBrush(tint))
                 item.setZValue(1000)
                 item.setCacheMode(CACHED)
@@ -479,7 +482,7 @@ class LayoutCanvas(QGraphicsView):
             item = QGraphicsPathItem(region_to_path(region))
             fill = QColor(color)
             fill.setAlpha(150)
-            pen = QPen(QColor(self.theme["highlight"]), 1.5)
+            pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
             pen.setCosmetic(True)
             pen.setStyle(Qt.PenStyle.DashLine)
             item.setPen(pen)
@@ -541,7 +544,7 @@ class LayoutCanvas(QGraphicsView):
             self._hover_item = None
         if region is None or region.is_empty():
             return
-        pen = QPen(QColor(self.theme["hover"]), 1.2)
+        pen = QPen(QColor(self.theme["hover"]), OUTLINE_PX)
         pen.setCosmetic(True)
         pen.setStyle(Qt.PenStyle.DashLine)
         self._hover_item = QGraphicsPathItem(region_outline(region))

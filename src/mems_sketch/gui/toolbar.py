@@ -2,7 +2,7 @@
 
 ☰ (every menu), the project, undo and redo, then one button each to add a
 primitive, place a component and apply an operation; on the right, split
-view, find action and settings. Everything else is in ☰ or the editor's
+view, search and settings. Everything else is in ☰ or the editor's
 right-click menu.
 """
 
@@ -65,7 +65,7 @@ def build_toolbar(window: MainWindow) -> QToolBar:
 
 def _right_side(window: MainWindow) -> list:
     actions = window.actions_
-    return [actions.split, None, actions.find, actions.settings]
+    return [actions.split, None, actions.search, actions.settings]
 
 
 def _menu_button(

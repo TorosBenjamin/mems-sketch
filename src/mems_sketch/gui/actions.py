@@ -215,6 +215,8 @@ class Actions:
         self.panels = view.addMenu("Panels")
 
         help_menu = self.help = QMenu("&Help", w)
+        self.search = act("Search everywhere…", w.search, None, help_menu, "search")
+        self.search.setToolTip("Search everywhere (press Shift twice)")
         self.find = act("Find action…", w.find_action, "Ctrl+Shift+A", help_menu, "search")
         act("Keyboard shortcuts", lambda: w.show_settings("Keymap"), None, help_menu)
 

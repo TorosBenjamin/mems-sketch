@@ -912,6 +912,15 @@ class ParametersPanel(_Panel):
         for name in list(self.document.trials.get(self.document.active, {})):
             self._guard(lambda n=name: self.document.set_trial(n, None))
 
+    def select(self, name: str) -> None:
+        """Select the row of the parameter ``name``."""
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 0)
+            if cell is not None and cell.text() == name:
+                self.table.selectRow(row)
+                self.table.scrollToItem(cell)
+                return
+
     def refresh(self) -> None:
         parameters = self.document.active_definition.parameters
         if self.hide_implementation:  # its interface: public ones only

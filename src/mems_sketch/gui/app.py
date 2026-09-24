@@ -26,15 +26,14 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
-from mems_sketch.core.component import to_dbu
-from mems_sketch.core.shapes import NodePath
+from mems_sketch.core.component import component_types, to_dbu
+from mems_sketch.core.shapes import NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.export.base import available_exporters
 from mems_sketch.gui import icons, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
-from mems_sketch.gui.find_action import FindActionDialog, menu_actions
 from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
     INSIDE_ROLE,
@@ -43,11 +42,22 @@ from mems_sketch.gui.panels import (
     MessagesPanel,
     ParametersPanel,
     ShapeTree,
+    component_icon,
+    detail,
+    shape_icon,
     swatch_icon,
 )
 from mems_sketch.gui.points_panel import PointsPanel
 from mems_sketch.gui.process_view import ProcessView
 from mems_sketch.gui.properties import PropertyEditor
+from mems_sketch.gui.search import (
+    ALL,
+    DoubleShift,
+    Result,
+    SearchDialog,
+    action_results,
+    menu_actions,
+)
 from mems_sketch.gui.settings import PreferencesDialog, Settings
 from mems_sketch.gui.statusbar import ToolStatus
 from mems_sketch.gui.toolbar import build_toolbar
@@ -190,6 +200,10 @@ class MainWindow(QMainWindow):
             panel.error.connect(self.report_error)
         self.properties.previewed.connect(self._preview_node)
         self.properties.pick_corners.connect(lambda: self.set_tool("corners"))
+        self._double_shift = DoubleShift(self)
+        self._double_shift.pressed.connect(self.search)
+        self.winId()  # the native window, which every key typed in this window reaches first
+        self.windowHandle().installEventFilter(self._double_shift)
 
         self.setWindowIcon(icons.icon("component"))
         self.resize(1500, 950)
@@ -380,14 +394,70 @@ class MainWindow(QMainWindow):
         self._preferences = dialog
         dialog.show()
 
-    def find_action(self) -> None:
-        """Find Action (Ctrl+Shift+A): run a command by typing its name."""
-        dialog = FindActionDialog(menu_actions(self.actions_.root), self)
+    def search(self, scope: str = ALL) -> None:
+        """Search Everywhere (Shift twice): components, shapes, parameters, commands."""
+        dialog = SearchDialog(self.search_results(), scope, self)
         center = self.geometry().center()
         dialog.move(center.x() - dialog.width() // 2, self.geometry().top() + 90)
         self._find_dialog = dialog
         dialog.show()
         dialog.search.setFocus()
+
+    def find_action(self) -> None:
+        """Find Action (Ctrl+Shift+A): Search Everywhere, on commands."""
+        self.search("Actions")
+
+    def search_results(self) -> list[Result]:
+        """Everything Search Everywhere can find, in the order it lists them."""
+        project = self.document.project
+        results = [
+            Result(
+                name,
+                "Components",
+                lambda n=name: self.open_component(n),
+                detail="library"
+                if "." in name
+                else "project"
+                if name in project.components
+                else "built-in",
+                icon=icons.icon(component_icon(project, name)),
+            )
+            for name in [
+                *project.components,
+                *(
+                    f"{lib}.{c}"
+                    for lib, library in project.libraries.items()
+                    for c in library.components
+                ),
+                *component_types(),
+            ]
+        ]
+        results += [
+            Result(
+                shape.name or f"({shape.kind})",
+                "Shapes",
+                lambda p=path: self.tree.select_paths([p]),
+                detail=f"{detail(shape)} · in {self.document.active}",
+                icon=shape_icon(shape),
+            )
+            for path, shape in paths(self.document.shapes)
+        ]
+        results += [
+            Result(
+                parameter.name,
+                "Parameters",
+                lambda n=parameter.name: self.show_parameter(n),
+                detail=f"= {parameter.default} · of {self.document.active}",
+                icon=icons.icon("parameters"),
+            )
+            for parameter in self.document.active_definition.parameters
+        ]
+        return results + action_results(self.actions_.root)
+
+    def show_parameter(self, name: str) -> None:
+        """Open the Parameters panel on the parameter ``name``."""
+        self.tool_windows.open("parameters")
+        self.parameters.select(name)
 
     def open_aside(self, name: str) -> None:
         """Open a component in the other pane (splitting the editor if needed)."""

@@ -87,6 +87,7 @@ class Actions:
         self.save = act("Save", w.save_project, QKeySequence.StandardKey.Save, file, "save")
         act("Save as…", w.save_project_as, QKeySequence.StandardKey.SaveAs, file)
         file.addSeparator()
+        act("Import GDS…", lambda: w.components.import_gds(), "Ctrl+I", file, "import")
         export = file.addMenu("Export")
         icons.bind(export.menuAction(), "export")
         for mode, label in VIEW_MODES.items():

@@ -56,11 +56,14 @@ mems-sketch-cli check examples/resonator       # the same compiler, from the com
 
 ```
 my_project/
-  project.yaml        format, name, top component (null for a library), libraries
+  project.yaml        format, name, top component (null for a library), libraries,
+                      imported cells
   process.yaml        layers (GDS numbers, undercut, rules) and process constants
   components/
     top.yaml          one file per component; the design itself is the top component
     suspension.yaml
+  imports/
+    padframe.gds      a copy of each imported GDS file
 ```
 
 Files are always written the same way: default values are left out, keys stay
@@ -398,7 +401,18 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   (including components that use the edited one), it is rolled back with a
   message. Full undo/redo.
 - **File**: open a project (or a legacy `.mems` file), save to a folder,
-  export drawn, as-etched or etch-compensated geometry.
+  export drawn, as-etched or etch-compensated geometry, and **Import GDS…**
+  (Ctrl+I), see below.
+- **Importing GDS**: one cell of a GDS file (a foundry pad frame, alignment
+  marks, an earlier design) becomes a read-only component, listed under
+  **Imported** in Components, with no parameters. It is placed, arrayed,
+  aligned (to its `center`, `top_left`, …) and rounded like any component.
+  The import dialog picks the cell (its sub-cells are flattened), the
+  component's name and where each GDS layer goes: the project layer with the
+  same GDS numbers, a new layer, or left out. The project keeps a copy of the
+  file in `imports/`, so it does not depend on the original; right-click the
+  component for **Re-import…** (a newer file: every placement follows) or
+  **Remove import**. In code: `session.imports.add("frame.gds", cell="FRAME")`.
 
 ## Shapes and operations
 

@@ -44,7 +44,7 @@ class ImportEdits(Commands):
         data = path.read_bytes()
         read_layout(data)  # a readable file, or a clear error
         cell = cell or cells(data)[0]
-        name = name or self._free_name(_identifier(path.stem))
+        name = name or self.suggested_name(path)
         self._check_name(name)
         mapping = self.default_layers(data, cell) if layers is None else dict(layers)
         file = self._file_name(path.name, data)
@@ -108,6 +108,10 @@ class ImportEdits(Commands):
         self.session.edit(f"Remove import {name}", lambda p: p.imports.pop(name))
 
     # -- helpers -----------------------------------------------------------------
+
+    def suggested_name(self, path: str | Path) -> str:
+        """A free component name made from the file's name (``Pad frame`` -> ``pad_frame``)."""
+        return self._free_name(_identifier(Path(path).stem))
 
     def default_layers(self, data: bytes, cell: str) -> dict[str, str]:
         """Each GDS layer of ``cell`` to the project layer with its GDS numbers, or a

@@ -1,6 +1,5 @@
 """Importing a GDS cell as a component: placed, saved and updated like any other."""
 
-import klayout.db as kdb
 import pytest
 
 from mems_sketch.core.process import Layer
@@ -9,23 +8,8 @@ from mems_sketch.editing import EditSession
 from mems_sketch.storage import load, save
 
 
-def write_gds(path, boxes, dbu=0.001, cell="FRAME"):
-    """A GDS file with ``boxes``: (layer, datatype, x0, y0, x1, y1) in µm, the
-    last box inside a sub-cell (so the import has to flatten)."""
-    layout = kdb.Layout()
-    layout.dbu = dbu
-    top = layout.create_cell(cell)
-    child = layout.create_cell("PART")
-    for index, (layer, datatype, *box) in enumerate(boxes):
-        target = child if index == len(boxes) - 1 else top
-        target.shapes(layout.layer(layer, datatype)).insert(kdb.DBox(*box))
-    top.insert(kdb.DCellInstArray(child.cell_index(), kdb.DTrans()))
-    layout.write(str(path))
-    return path
-
-
 @pytest.fixture
-def gds(tmp_path):
+def gds(tmp_path, write_gds):
     return write_gds(
         tmp_path / "Pad frame.gds",
         [(1, 0, 0, 0, 100, 10), (5, 0, 0, 0, 10, 10), (1, 0, 0, 90, 100, 100)],
@@ -64,7 +48,7 @@ def test_layers_can_be_mapped_or_left_out(session, gds):
     assert set(session.results.geometry().layers) == {"device"}
 
 
-def test_a_file_on_another_grid_keeps_its_size(session, tmp_path):
+def test_a_file_on_another_grid_keeps_its_size(session, tmp_path, write_gds):
     path = write_gds(tmp_path / "coarse.gds", [(1, 0, 0, 0, 50, 20)], dbu=0.01)
     session.nodes.add_component(session.imports.add(path))
     assert area(session) == pytest.approx(1000)
@@ -84,7 +68,7 @@ def test_saved_with_a_copy_of_the_file(session, gds, tmp_path):
     assert not (tmp_path / "proj" / "imports").exists()  # nothing left that uses it
 
 
-def test_reimporting_updates_every_placement(session, gds, tmp_path):
+def test_reimporting_updates_every_placement(session, gds, tmp_path, write_gds):
     name = session.imports.add(gds)
     session.nodes.add_component(name)
     session.nodes.add_component(name, x=200)

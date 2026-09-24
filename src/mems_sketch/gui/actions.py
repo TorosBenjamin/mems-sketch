@@ -35,6 +35,7 @@ OVERLAYS = [  # View › Overlays: setting, label, icon
     ("canvas/show_scale_bar", "Scale bar", "ruler"),
     ("canvas/show_gizmos", "Move and rotate gizmos", "move"),
     ("canvas/hover_highlight", "Highlight under cursor", "select"),
+    ("canvas/always_show_points", "Always show points", "point"),
 ]
 OPERATIONS = [
     ("subtract", "Subtract"),

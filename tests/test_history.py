@@ -2,7 +2,7 @@
 
 import pytest
 
-from mems_sketch import BooleanShape, ComponentDef, Layer, ParamDef, Project, RectShape
+from mems_sketch import BooleanShape, ComponentDef, Layer, ParamDef, Project, RectShape, RefShape
 from mems_sketch.core.diff import ADDED, CHANGED, REMOVED, diff_projects
 from mems_sketch.editing import EditSession
 from mems_sketch.storage import git
@@ -113,6 +113,14 @@ def test_a_changed_shape_says_what_changed():
     [change] = diff_projects(old, new)
     assert (change.action, change.subject) == (CHANGED, "pad")
     assert change.details == ("switched off", "x0 0 → 5", "x1 10 → 15")
+
+
+def test_changed_parameters_of_a_placement_are_named_one_by_one():
+    def placed(fingers):
+        return RefShape(name="comb", component="comb_drive", params={"fingers": fingers, "gap": 2})
+
+    [change] = diff_projects(project(placed(16)), project(placed(10)))
+    assert change.details == ("params.fingers 16 → 10",)
 
 
 def test_changes_inside_an_operation_name_the_way_there():

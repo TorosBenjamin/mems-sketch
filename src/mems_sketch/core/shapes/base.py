@@ -97,6 +97,7 @@ class Node(BaseModel):
     child_fields: ClassVar[tuple[str, ...]] = ()  # fields holding lists of child nodes
     placed: ClassVar[bool] = False  # has x, y, rotation and mirroring; see placement()
     wraps: ClassVar[tuple[str, ...]] = ()  # operations that create it around shapes
+    cuts: ClassVar[bool] = False  # can split material into separate pieces
 
     name: str | None = None  # stable handle for the GUI and scripts
     modifiers: list[AnyModifier] = Field(default_factory=list)  # applied first to last

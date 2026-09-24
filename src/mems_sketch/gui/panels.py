@@ -692,6 +692,23 @@ class ShapeTree(QTreeWidget):
         self._rebuilding = False
         self.select_paths(keep)
 
+    def _show_pieces(self, item: QTreeWidgetItem, shape: Shape, path: NodePath) -> None:
+        """Say when a cut splits a shape, e.g. "2 pieces · subtract" (copies made by
+        modifiers are meant to be separate, so those are not counted)."""
+        if not shape.cuts or shape.modifiers or not shape.enabled:
+            return
+        try:
+            pieces = self.document.results.pieces(path)
+        except Exception:  # noqa: BLE001 - it does not build: the messages panel says why
+            return
+        if pieces > 1:
+            item.setData(0, DETAIL_ROLE, f"{pieces} pieces · {detail(shape)}")
+            item.setToolTip(
+                0,
+                f"{describe(shape)}\nIts result is {pieces} separate pieces; its points "
+                "(center, left, …) come from the box around all of them",
+            )
+
     def _interface_note(self) -> None:
         """Instead of the shapes of a component that cannot be edited."""
         library = "." in self.document.active
@@ -713,6 +730,7 @@ class ShapeTree(QTreeWidget):
         item.setData(0, DETAIL_ROLE, detail(shape))
         item.setToolTip(0, describe(shape))
         item.setIcon(0, shape_icon(shape))
+        self._show_pieces(item, shape, path)
         if shape.align is not None:
             item.setIcon(self.STATUS, icons.icon("link"))
             item.setToolTip(self.STATUS, f"Aligned: {alignment(shape)}")

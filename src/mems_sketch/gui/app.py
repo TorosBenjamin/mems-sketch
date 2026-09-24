@@ -830,7 +830,9 @@ class MainWindow(QMainWindow):
     def update_overlay(self) -> None:
         view = self.view
         markers = [v.bbox_um for v in view.violations if v.bbox_um]
-        self.canvas.show_overlay(self.document.results.highlight(view.selection), markers)
+        results = self.document.results
+        box = results.node_box(view.selection[0]) if len(view.selection) == 1 else None
+        self.canvas.show_overlay(results.highlight(view.selection), markers, box)
         self.canvas.show_guides(view.guides, set(view.selection))
         try:
             declared = [(n, x, y) for n, (x, y) in self.document.results.declared_points().items()]

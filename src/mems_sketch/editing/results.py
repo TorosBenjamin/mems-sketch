@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import klayout.db as kdb
 
-from mems_sketch.core.component import Geometry
+from mems_sketch.core.component import DBU_UM, Geometry
 from mems_sketch.core.shapes import (
     NodePath,
     NodeRecord,
@@ -121,6 +121,34 @@ class Results:
                 continue
             result.merge(record[path].geometry, to_ictrans(frame_of(record, path)))
         return result.merged() if result.layers else None
+
+    def pieces(self, path: NodePath, component: str | None = None) -> int:
+        """How many separate pieces a node's geometry has (all layers together), e.g.
+        two when a cut goes right through it."""
+        record = self.inspection(component)
+        if path not in record:
+            return 0
+        region = kdb.Region()
+        for r in record[path].geometry.layers.values():
+            region.insert(r)
+        return region.merged().count()
+
+    def node_box(
+        self, path: NodePath, component: str | None = None
+    ) -> list[tuple[float, float]] | None:
+        """Corners of the box a node's points (``center``, ``left``, …) come from, in
+        the component's frame (turned with the node's frame), or None without geometry."""
+        record = self.inspection(component)
+        if path not in record:
+            return None
+        box = kdb.Box()
+        for region in record[path].geometry.layers.values():
+            box += region.bbox()
+        if box.empty():
+            return None
+        frame, b = frame_of(record, path), box.to_dtype(DBU_UM)
+        corners = [(b.left, b.bottom), (b.right, b.bottom), (b.right, b.top), (b.left, b.top)]
+        return [(q.x, q.y) for q in (frame * kdb.DPoint(x, y) for x, y in corners)]
 
     def node_points(
         self, path: NodePath, component: str | None = None

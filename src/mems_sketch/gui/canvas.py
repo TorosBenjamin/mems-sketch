@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPathItem,
+    QGraphicsPolygonItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsSimpleTextItem,
@@ -368,8 +369,13 @@ class LayoutCanvas(QGraphicsView):
             self._layer_items[layer].setVisible(visible)
 
     def show_overlay(
-        self, highlight: Geometry | None, markers: list[tuple[float, float, float, float]]
+        self,
+        highlight: Geometry | None,
+        markers: list[tuple[float, float, float, float]],
+        box: list[tuple[float, float]] | None = None,
     ) -> None:
+        """Outline the selection, mark rule violations and, dashed, the box a selected
+        shape's points come from (so e.g. ``center`` of a shape cut in two makes sense)."""
         for item in self._overlay:
             self.scene().removeItem(item)
         self._overlay.clear()
@@ -385,6 +391,14 @@ class LayoutCanvas(QGraphicsView):
                 item.setZValue(1000)
                 self.scene().addItem(item)
                 self._overlay.append(item)
+        if box is not None:
+            item = QGraphicsPolygonItem(QPolygonF([QPointF(x, y) for x, y in box]))
+            pen = QPen(QColor(self.theme["highlight"]), 1, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            item.setPen(pen)
+            item.setZValue(1000)
+            self.scene().addItem(item)
+            self._overlay.append(item)
         for x0, y0, x1, y1 in markers:
             pad = 0.5
             item = QGraphicsRectItem(

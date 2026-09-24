@@ -16,6 +16,7 @@ class OffsetShape(Operation):
 
     icon: ClassVar[str] = "offset"
     wraps: ClassVar[tuple[str, ...]] = ("offset",)
+    cuts: ClassVar[bool] = True
 
     kind: Literal["offset"] = "offset"
     children: list[Shape]

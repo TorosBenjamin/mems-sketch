@@ -77,7 +77,10 @@ request into `main` from another branch; CI must be green, as for
 - Code follows the style around it; `ruff` settles formatting.
 - The backend (everything outside `mems_sketch/gui`) never imports Qt; a test
   enforces it.
-- A shape kind, an edit command, a tool window or an export format is added
-  as described under *Extending* in the README.
+- A shape kind, an edit command, a tool window, an export or file format is
+  added as described in [Extending](docs/developer/extending.md).
+- A visible change to the GUI comes with fresh pictures:
+  `python docs/screenshots.py` regenerates `docs/images/`; update the
+  [user guide](docs/user/README.md) where the change shows.
 - Design notes and plans for larger changes go in `docs/superpowers/specs/`
   and `docs/superpowers/plans/`.

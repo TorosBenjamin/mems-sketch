@@ -1,7 +1,9 @@
 """Exporter plugin interface and discovery.
 
 An exporter is any class with ``format_name``, ``file_extension`` and an
-``export(project, geometry, path)`` method. Exporters are found through the
+``export(project, geometry, path)`` method. One with ``wants_context = True``
+is also given the component and its parameter values (``component=``,
+``params=``), e.g. to write its points. Exporters are found through the
 ``mems_sketch.exporters`` entry-point group (see ``pyproject.toml``), so a new
 format can live in its own package, or be registered at runtime with
 :func:`register_exporter`.
@@ -35,14 +37,17 @@ def register_exporter(cls: type[Exporter]) -> type[Exporter]:
 
 
 def available_exporters() -> dict[str, type[Exporter]]:
-    found: dict[str, type[Exporter]] = {}
-    for ep in entry_points(group=ENTRY_POINT_GROUP):
-        found[ep.name] = ep.load()
-    if not found:  # running from a source tree without an installed package
-        from mems_sketch.export import klayout_formats
+    from mems_sketch.export import document_formats, klayout_formats
 
-        for cls in klayout_formats.BUILTIN:
-            found[cls.format_name] = cls
+    # The built-in ones even from a source tree (or an install older than them).
+    found: dict[str, type[Exporter]] = {
+        cls.format_name: cls for cls in (*klayout_formats.BUILTIN, *document_formats.BUILTIN)
+    }
+    for ep in entry_points(group=ENTRY_POINT_GROUP):
+        try:
+            found[ep.name] = ep.load()
+        except (ImportError, AttributeError):  # a stale or broken plugin: skip it
+            continue
     found.update(_runtime)
     return found
 
@@ -61,10 +66,14 @@ def export(
     path: str | Path,
     format_name: str | None = None,
     geometry: Geometry | None = None,
+    component: str | None = None,
+    params: dict | None = None,
 ) -> Path:
     """Export ``geometry`` (default: drawn project) to ``path``.
 
     The format is taken from ``format_name`` or, failing that, the file extension.
+    ``component`` and ``params`` say what the geometry is (for formats that
+    record it); ``geometry`` defaults to that component rendered with them.
     """
     path = Path(path)
     if format_name is None:
@@ -73,7 +82,11 @@ def export(
         if not matches:
             raise ValueError(f"no exporter handles '{suffix}' files")
         format_name = matches[0]
-    get_exporter(format_name).export(
-        project, project.render() if geometry is None else geometry, path
-    )
+    exporter = get_exporter(format_name)
+    if geometry is None:
+        geometry = project.render(component, params)
+    if getattr(exporter, "wants_context", False):
+        exporter.export(project, geometry, path, component=component, params=params)
+    else:
+        exporter.export(project, geometry, path)
     return path

@@ -1,4 +1,4 @@
-"""File › Import GDS…: which cell of the file, its name, and where its layers go."""
+"""File › Import…: which cell of the file, its name, and where its layers go."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class ImportDialog(QDialog):
     def __init__(self, document: EditSession, path: str | Path, parent=None) -> None:
         super().__init__(parent)
         self.document = document
-        self.data = Path(path).read_bytes()
+        self.data, _ = document.imports.read(path)
         names = cells(self.data)
         if not names:
             raise ValueError(f"{Path(path).name} has no cells")

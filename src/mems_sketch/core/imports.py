@@ -96,6 +96,17 @@ def gds_layers(data: bytes, cell: str) -> list[GdsLayer]:
     return sorted(found)
 
 
+def layer_names(data: bytes) -> dict[GdsLayer, str]:
+    """The names the file gives its layers (OASIS can, GDS cannot)."""
+    layout = read_layout(data)
+    names = {}
+    for index in layout.layer_indexes():
+        info = layout.get_info(index)
+        if info.name:
+            names[(info.layer, info.datatype)] = info.name
+    return names
+
+
 def _cell(layout: kdb.Layout, name: str) -> kdb.Cell:
     cell = layout.cell(name)
     if cell is None:

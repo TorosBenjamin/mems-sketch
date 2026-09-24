@@ -232,6 +232,25 @@ def test_the_outline_stays_on_between_a_combs_fingers(window):
     assert window._hovered is None and window.hit(6, 15) is None
 
 
+def test_the_scale_bar_is_a_whole_number_of_grid_steps(window):
+    """Issue #3: the scale bar can be read against the grid."""
+    canvas = window.canvas
+    for zoom in (0.37, 1, 2.9, 13, 150):
+        canvas.set_view_state(zoom, 0, 0)
+        cells = canvas.scale_bar_length() / canvas.grid_step()
+        assert cells == pytest.approx(round(cells)) and round(cells) in (1, 2, 5, 10)
+        assert canvas.scale_bar_length() * canvas.pixels_per_um() <= 125
+
+
+def test_there_is_no_axis_indicator(window):
+    """Issue #6: the view cannot flip, so an x/y indicator says nothing."""
+    assert "canvas/show_axis_gizmo" not in {setting.key for setting in SETTINGS}
+    assert "show_axis_gizmo" not in window.canvas.options
+
+
+# -- chrome --------------------------------------------------------------------
+
+
 def test_find_action_filters_and_runs(window):
     one_rect(window)
     window.find_action()

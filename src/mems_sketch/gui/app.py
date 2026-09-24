@@ -60,7 +60,7 @@ DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
 DEFAULT_TOOL_WINDOWS = ("components", "shapes", "properties", "messages")
-CANVAS_MODES = ("select", "hand", "move", "rotate", "align", "measure")  # on the canvas
+CANVAS_MODES = ("select", "hand", "move", "rotate", "align", "measure", "angle")  # on the canvas
 # Canvas options and the settings they come from (see gui/settings.py).
 CANVAS_OPTIONS = {
     "fill_opacity": "canvas/fill_opacity",
@@ -68,7 +68,6 @@ CANVAS_OPTIONS = {
     "show_grid": "canvas/show_grid",
     "grid_spacing_px": "canvas/grid_spacing_px",
     "show_axes": "canvas/show_axes",
-    "show_axis_gizmo": "canvas/show_axis_gizmo",
     "show_scale_bar": "canvas/show_scale_bar",
     "gizmo_size_px": "canvas/gizmo_size_px",
     "zoom_step": "canvas/zoom_step",
@@ -83,7 +82,8 @@ class MainWindow(QMainWindow):
         self.document = document or EditSession()
         self._problems: list[str] = []
         self._restoring = False  # while opening a project, the editor state is not saved
-        self.rulers: dict[str, list[tuple[float, float, float, float]]] = {}  # per component
+        # Per component: distances (x0, y0, x1, y1) and angles (vertex, arm, arm).
+        self.rulers: dict[str, list[tuple[float, ...]]] = {}
         self.settings = Settings(self)
         ComponentView.show_implementation = self.settings.get("editor/show_implementation")
         self.ui_theme = self._apply_ui_theme()
@@ -454,7 +454,7 @@ class MainWindow(QMainWindow):
             self.width_box.setValue(self.path_width)
             self.width_box.blockSignals(False)
         self.rulers = {
-            c: [tuple(float(v) for v in r) for r in rs]
+            c: [tuple(float(v) for v in r) for r in rs if len(r) in (4, 6)]
             for c, rs in state.get("rulers", {}).items()
             if exists(c)
         }
@@ -578,7 +578,7 @@ class MainWindow(QMainWindow):
 
     # -- rulers ------------------------------------------------------------
 
-    def add_ruler(self, ruler: tuple[float, float, float, float]) -> None:
+    def add_ruler(self, ruler: tuple[float, ...]) -> None:
         self.rulers.setdefault(self.document.active, []).append(ruler)
         self.draw_rulers()
         self.state_changed()
@@ -588,7 +588,7 @@ class MainWindow(QMainWindow):
         self.draw_rulers()
         self.state_changed()
 
-    def draw_rulers(self, extra: tuple[float, float, float, float] | None = None) -> None:
+    def draw_rulers(self, extra: tuple[float, ...] | None = None) -> None:
         """Show the rulers in every tab of the current component (plus one being drawn)."""
         for view in self.area.views():
             rulers = list(self.rulers.get(view.component, []))

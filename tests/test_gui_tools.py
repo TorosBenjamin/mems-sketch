@@ -182,6 +182,40 @@ def test_measure_works_on_read_only_tabs(window):
     assert window.rulers["anchor"] == [pytest.approx((-20, -20, 20, -20))]
 
 
+def test_angle_tool_measures_between_two_arms(window):
+    """Issue #5: an angle ruler."""
+    window.set_tool("angle")
+    click(window, 0, 0)  # the vertex
+    click(window, 40, 0)  # the first arm, along x
+    hover(window, 30, 30)
+    assert "45.00°" in window.statusBar().currentMessage() or window.tool.busy
+    click(window, 30, 30)
+    (ruler,) = window.rulers["top"]
+    assert ruler == pytest.approx((0, 0, 40, 0, 30, 30))
+    labels = [i.text() for i in window.canvas._ruler_items if hasattr(i, "text")]
+    assert "45.00°" in labels
+    assert not window.tool.busy
+
+
+def test_angles_are_the_short_way_round():
+    from mems_sketch.gui.canvas import angle_between
+
+    assert angle_between((0, 0), (1, 0), (0, 1)) == pytest.approx((0, 90))
+    assert angle_between((0, 0), (0, 1), (1, 0)) == pytest.approx((0, 90))  # from the x arm
+    assert angle_between((0, 0), (1, 0), (-1, -0.0001))[1] == pytest.approx(180, abs=0.01)
+
+
+def test_rulers_are_ticked_every_grid_step(window):
+    """Issue #4: ticks along a ruler at the grid's spacing."""
+    window.set_tool("measure")
+    click(window, 0, 0)
+    click(window, 100, 0)
+    canvas = window.canvas
+    assert canvas._rulers == [pytest.approx((0, 0, 100, 0))]
+    step = canvas.grid_step()
+    assert 100 / step == pytest.approx(round(100 / step))  # whole steps: a tick on each
+
+
 # -- editor state ------------------------------------------------------------
 
 

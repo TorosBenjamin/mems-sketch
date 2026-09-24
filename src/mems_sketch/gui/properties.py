@@ -5,6 +5,10 @@ next to the field. For a component reference the component's own parameter
 schema is shown, with defaults as placeholders. Edits are applied with the
 Apply button or Enter and go through the document, so invalid input is
 rejected without changing the design.
+
+Modifiers are cards, as in Blender: each has its own settings (applied with
+the rest), and buttons that act at once: switch on or off, move up or down,
+apply (turn into real shapes) and remove. "Add modifier" adds one at the end.
 """
 
 from __future__ import annotations
@@ -13,25 +17,29 @@ import contextlib
 import typing
 
 import klayout.db as kdb
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from mems_sketch.core.expressions import evaluate
-from mems_sketch.core.shapes import NodePath, Shape
+from mems_sketch.core.shapes import MODIFIER_KINDS, Modifier, NodePath, Shape
 from mems_sketch.editing import EditSession
+from mems_sketch.gui import icons
 from mems_sketch.gui.panels import parse_value
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
@@ -40,7 +48,7 @@ _SPECIAL = {
     "name",
     "enabled",
     "repeat",
-    "modifiers",  # the Repeat section edits the first array; other modifiers are kept
+    "modifiers",  # edited as cards
     "align",
     "params",
     "points",
@@ -63,6 +71,32 @@ _LABELS = {
     "rotation": "Rotation °",
     "op": "Operation",
 }
+MODIFIER_TITLES = {"array": "Array", "polar_array": "Polar array", "mirror": "Mirror"}
+MODIFIER_LABELS = {  # per kind, then per field
+    "array": {"columns": "Columns", "rows": "Rows", "dx": "Step x", "dy": "Step y"},
+    "polar_array": {
+        "count": "Copies",
+        "x": "Centre x",
+        "y": "Centre y",
+        "step": "Angle step °",
+        "rotate": "Turn the copies",
+    },
+    "mirror": {
+        "about": "About",
+        "axis": "Axis",
+        "x": "Line at x",
+        "y": "Line at y",
+        "keep": "Keep the original",
+    },
+}
+MODIFIER_TIPS = {
+    "array": "Copies on a grid; i and j are each copy's column and row",
+    "polar_array": "Copies around a centre (a full circle unless an angle step is given); "
+    "i is each copy's index",
+    "mirror": "The shape and its mirror image: across a vertical or horizontal line, across "
+    "a guide, or through a point",
+}
+SELF_POINTS = ("self.center", "self.left", "self.right", "self.top", "self.bottom")
 
 
 class PropertyEditor(QScrollArea):
@@ -144,7 +178,7 @@ class PropertyEditor(QScrollArea):
         if "params" in fields:
             layout.addWidget(self._params_editor(node))
         layout.addWidget(self._align_editor(node, path))
-        layout.addWidget(self._repeat_editor(node))
+        layout.addWidget(self._modifiers_editor(node, path))
 
         apply = QPushButton("Apply")
         apply.setDefault(True)
@@ -324,25 +358,161 @@ class PropertyEditor(QScrollArea):
         self._editors["align"] = read
         return box
 
-    def _repeat_editor(self, node: Shape) -> QWidget:
-        box = _section("Repeat on grid (index i, j)")
-        box.setCheckable(True)
-        box.setChecked(node.repeat is not None)
-        form = _form(box)
-        repeat = node.repeat
-        fields = {}
-        for field, default in (("columns", 1), ("rows", 1), ("dx", 0.0), ("dy", 0.0)):
-            value = getattr(repeat, field) if repeat else default
-            form.addRow(field, self._value_editor(f"repeat:{field}", value))
-            fields[field] = self._editors.pop(f"repeat:{field}")
-
-        def read():
-            if not box.isChecked():
-                return None
-            return {field: reader() for field, reader in fields.items()}
-
-        self._editors["repeat"] = read
+    def _modifiers_editor(self, node: Shape, path: NodePath) -> QWidget:
+        """The modifier stack: one card each, and "Add modifier"."""
+        box = _section("Modifiers")
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 6, 0, 4)
+        column.setSpacing(6)
+        readers = []
+        read_only = self.document.read_only
+        for index, modifier in enumerate(node.modifiers):
+            card, read = self._modifier_card(node, path, index, modifier, read_only)
+            column.addWidget(card)
+            readers.append(read)
+        add = QToolButton()
+        add.setText("Add modifier")
+        icons.bind(add, "add")
+        add.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        add.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        add.setEnabled(not read_only)
+        menu = QMenu(add)
+        for kind in MODIFIER_KINDS:
+            name = kind.kind_name()
+            action = menu.addAction(icons.icon(kind.icon), MODIFIER_TITLES.get(name, name))
+            action.setToolTip(MODIFIER_TIPS.get(name, ""))
+            action.triggered.connect(
+                lambda _=False, k=name: self._act(lambda: self.document.modifiers.add(path, k))
+            )
+        add.setMenu(menu)
+        self.add_modifier_menu = menu  # for tests
+        row = QHBoxLayout()
+        row.addWidget(add)
+        row.addStretch()
+        column.addLayout(row)
+        self._editors["modifiers"] = lambda: [read() for read in readers]
         return box
+
+    def _modifier_card(self, node, path, index: int, modifier: Modifier, read_only: bool):
+        kind = modifier.kind
+        card = QFrame()
+        card.setObjectName("modifier-card")
+        card.setProperty("off", not modifier.enabled)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(8, 4, 4, 6)
+        layout.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setSpacing(1)
+        glyph = QLabel()
+        glyph.setPixmap(icons.pixmap(type(modifier).icon, 16))
+        title = QLabel(MODIFIER_TITLES.get(kind, kind))
+        title.setObjectName("card-title")
+        title.setToolTip(MODIFIER_TIPS.get(kind, ""))
+        summary = QLabel(modifier.summary().removeprefix(kind.replace("_", " ")).strip())
+        summary.setObjectName("muted")
+        header.addWidget(glyph)
+        header.addSpacing(4)
+        header.addWidget(title)
+        header.addSpacing(6)
+        header.addWidget(summary, 1)
+        last = len(node.modifiers) - 1
+        modifiers = self.document.modifiers
+        for icon, tip, enabled, action in (
+            (
+                "eye" if modifier.enabled else "eye_off",
+                "Switch off" if modifier.enabled else "Switch on",
+                True,
+                lambda: modifiers.set_enabled(path, index, not modifier.enabled),
+            ),
+            (
+                "up",
+                "Move up (applied earlier)",
+                index > 0,
+                lambda: modifiers.move(path, index, index - 1),
+            ),
+            (
+                "down",
+                "Move down (applied later)",
+                index < last,
+                lambda: modifiers.move(path, index, index + 1),
+            ),
+            (
+                "apply",
+                "Apply: turn it into real shapes (only the first modifier)",
+                index == 0,
+                lambda: modifiers.apply(path),
+            ),
+            ("close", "Remove", True, lambda: modifiers.remove(path, index)),
+        ):
+            button = QToolButton()
+            icons.bind(button, icon)
+            button.setIconSize(QSize(14, 14))
+            button.setAutoRaise(True)
+            button.setToolTip(tip)
+            button.setEnabled(enabled and not read_only)
+            button.clicked.connect(lambda _=False, a=action: self._act(a))
+            header.addWidget(button)
+        layout.addLayout(header)
+
+        form = _form()
+        form.setContentsMargins(22, 0, 4, 0)
+        labels = MODIFIER_LABELS.get(kind, {})
+        fields: dict[str, typing.Callable[[], object]] = {}
+        widgets: dict[str, QWidget] = {}
+        order = sorted(type(modifier).model_fields.items(), key=lambda f: f[0] != "about")
+        for field, info in order:  # "about" first: it replaces the axis fields below it
+            if field in ("kind", "enabled"):
+                continue
+            key = f"modifier{index}:{field}"
+            value = getattr(modifier, field)
+            if field == "about":
+                widget = self._about_editor(key, value, path)
+            else:
+                widget = self._field_editor(key, info.annotation, value)
+            fields[field] = self._editors.pop(key)
+            widgets[field] = widget
+            form.addRow(labels.get(field, field.replace("_", " ").capitalize()), widget)
+        layout.addLayout(form)
+        if kind == "mirror":  # a line or point given by "about" replaces axis, x and y
+            about = widgets["about"].findChild(QComboBox) or widgets["about"]
+
+            def update_axis(text: str) -> None:
+                for field in ("axis", "x", "y"):
+                    widgets[field].setEnabled(not text.strip())
+
+            about.currentTextChanged.connect(update_axis)
+            update_axis(about.currentText())
+
+        def read() -> dict:
+            return {"kind": kind, "enabled": modifier.enabled} | {
+                field: reader() for field, reader in fields.items()
+            }
+
+        return card, read
+
+    def _about_editor(self, key: str, value: str | None, path: NodePath) -> QWidget:
+        """Where a mirror mirrors: nothing (use the axis), a guide, or a point."""
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.addItem("")
+        guides = [name for p, name, *_ in self.document.results.guides() if p != path]
+        combo.addItems(guides)
+        points = [name for name, *_ in self.document.results.align_targets(path)]
+        combo.addItems([*SELF_POINTS, *points])
+        combo.setCurrentText(value or "")
+        combo.lineEdit().setPlaceholderText("the axis below")
+        combo.setToolTip("A guide's name (mirror across it), or a point (mirror through it)")
+        self._editors[key] = lambda: combo.currentText().strip() or None
+        return combo
+
+    def _act(self, action) -> None:
+        """Run a modifier button's command; problems are reported, not raised."""
+        try:
+            action()
+            self.applied.emit()
+        except Exception as exc:  # noqa: BLE001 - reported to the user
+            self.error.emit(_message(exc))
 
     def _show_placeholder(self, text: str) -> None:
         label = QLabel(text)

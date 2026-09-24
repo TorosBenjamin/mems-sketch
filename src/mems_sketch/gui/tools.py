@@ -43,6 +43,7 @@ from mems_sketch.core.shapes import (
     Align,
     CircleShape,
     Evaluator,
+    GuideShape,
     NodePath,
     PathShape,
     PolygonShape,
@@ -750,6 +751,7 @@ class DrawTool(Tool):
     """Base of the drawing tools: points snap to shape points, else to the grid."""
 
     draws = True
+    uses_layer: ClassVar[bool] = True  # draws on the chosen layer (a guide does not)
     cursor = Qt.CursorShape.CrossCursor
     noun: ClassVar[str]
 
@@ -789,7 +791,7 @@ class DrawTool(Tool):
         """Checks before the first point: the tab can be edited and a layer is chosen."""
         if not self.editable():
             return False
-        if self.window.draw_layer is None:
+        if self.uses_layer and self.window.draw_layer is None:
             self.window.report_error("add a layer to draw on first")
             return False
         return True
@@ -1046,6 +1048,36 @@ class PathTool(_PointsTool):
         )
 
 
+class GuideTool(_TwoPointTool):
+    """A construction line: drag, or click its two ends (Shift: 45° steps)."""
+
+    name, label, shortcut, noun = "guide", "Guide", "G", "guide"
+    icon = "guide"
+    uses_layer = False
+
+    def hint(self) -> str:
+        if not self.placed:
+            return "Guide: drag, or click where it starts (snaps to points; Ctrl: no snapping)"
+        return "Guide: click where it ends (Shift: 45° steps, Esc cancels)"
+
+    def shape(self, start, end, modifiers) -> Shape | None:
+        if start == end:
+            return None
+        return GuideShape(x0=start[0], y0=start[1], x1=end[0], y1=end[1])
+
+    def preview(self, shape, outline, closed) -> None:
+        ends = [(shape.x0, shape.y0), (shape.x1, shape.y1)] if shape is not None else outline
+        super().preview(None, ends, False)  # draws nothing: just its line
+
+    def describe(self, shape) -> str:
+        length = math.hypot(shape.x1 - shape.x0, shape.y1 - shape.y0)
+        return f"Guide {length:g} µm, {shape.summary().removeprefix('guide ')}"
+
+    def _finish(self, x, y, modifiers) -> None:
+        shape = self.shape(self.placed[0], self.locate(x, y, modifiers), modifiers)
+        self.add(shape, "a guide needs two different end points")
+
+
 TOOLS: tuple[type[Tool], ...] = (
     SelectTool,
     HandTool,
@@ -1057,6 +1089,7 @@ TOOLS: tuple[type[Tool], ...] = (
     CircleTool,
     PolygonTool,
     PathTool,
+    GuideTool,
 )
 
 

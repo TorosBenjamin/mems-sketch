@@ -216,8 +216,10 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   button adds a component or a library.
 - **Shapes**: the shapes of the component being edited, one line each: the
   name, then briefly what it is (the layer of a primitive, the component a
-  reference places, `3×2` when repeated) in grey; a link icon marks an aligned
-  shape (hover it for e.g. `bottom at spring.end`). Checkboxes enable or
+  reference places, a guide's angle) in grey. A link icon marks an aligned
+  shape (hover it for e.g. `bottom at spring.end`) and a modifier icon a
+  shape with modifiers (hover it for the stack, e.g. `array 1×6 → mirror
+  about axis`). Checkboxes enable or
   disable a node; Ctrl/Shift-click selects several. Operations show their
   operands under them (booleans under A and B). A placed component expands to
   show what is inside it, in grey italics: that belongs to the component's
@@ -244,7 +246,13 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
 - **Properties**: generated from the selected node's schema. Any numeric field
   takes a number or an expression, with its value shown beside it. For a
   component the component's own parameters are listed, with their declared
-  defaults as placeholders.
+  defaults as placeholders. **Modifiers** are cards, as in Blender: each shows
+  its settings (applied with the rest), and buttons that act at once: switch
+  on or off, move up or down (the order matters), apply (turn the first one
+  into real shapes) and remove. **Add modifier** adds an array, polar array
+  or mirror. A mirror's **About** offers the guides, the shape's own points
+  (`self.left`, ...) and the other shapes' points; leave it empty to mirror
+  across the axis given below it.
 - **Parameters**: the current tab's parameters: default (number or
   expression), min, max, trial and the resolved value. A **trial** value shows
   the component with another value without changing the design: it is not
@@ -282,6 +290,9 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   - **Polygon** (P) and **Path** (W): click the points; a double-click, Enter
     or (for a polygon) a click on the first point finishes, Backspace takes
     back the last point. Shift keeps segments at 0°, 45° or 90°.
+  - **Guide** (G): drag, or click its two ends (Shift: 45° steps). Guides are
+    drawn dashed with their names and selected by clicking near the line;
+    they draw nothing on any layer.
 
   The drawing tools draw on the layer chosen in the status bar (clicking a
   layer in the Layers window also chooses it); paths get the **Width** next

@@ -200,6 +200,13 @@ QToolTip {{
     border-radius: 4px;
 }}
 
+QFrame#modifier-card {{
+    background: {editor}; border: 1px solid {border_strong}; border-radius: 6px;
+}}
+QFrame#modifier-card[off="true"] QLabel, QFrame#modifier-card[off="true"] QLineEdit {{
+    color: {muted};
+}}
+QLabel#card-title {{ font-weight: 600; }}
 QWidget#canvas-buttons {{
     background: {editor}; border: 1px solid {border_strong}; border-radius: 6px;
 }}

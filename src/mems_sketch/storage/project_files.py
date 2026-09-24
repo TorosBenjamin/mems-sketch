@@ -155,16 +155,20 @@ def project_folder(path: str | Path) -> Path:
     return path.parent if path.name == PROJECT_FILE else path
 
 
-def load_project(path: str | Path) -> Project:
-    """Load a project from its folder or its ``project.yaml``."""
+def load_project(path: str | Path, libraries_from: str | Path | None = None) -> Project:
+    """Load a project from its folder or its ``project.yaml``.
+
+    Libraries are found relative to ``libraries_from`` if given (a copy of a
+    project, e.g. an earlier version from git, uses the real project's)."""
     folder = project_folder(path)
+    base = Path(libraries_from) if libraries_from is not None else folder
     header = _read(folder / PROJECT_FILE)
     if not isinstance(header, dict) or header.get("format") != FORMAT:
         raise ProjectFormatError(f"{folder / PROJECT_FILE} is not a {FORMAT} project file")
     process = _load_process(folder / PROCESS_FILE)
     components = _load_components(folder / COMPONENTS_DIR)
     libraries = {
-        name: load_library(name, (folder / rel) if not Path(rel).is_absolute() else Path(rel))
+        name: load_library(name, (base / rel) if not Path(rel).is_absolute() else Path(rel))
         for name, rel in (header.get("libraries") or {}).items()
     }
     top = header.get("top", "top")  # null: a library, with no top component

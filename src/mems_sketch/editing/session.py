@@ -43,6 +43,7 @@ from mems_sketch.core.user_component import ComponentDef, ParamDef
 from mems_sketch.editing.components import ComponentEdits, library_name
 from mems_sketch.editing.corners import CornerEdits
 from mems_sketch.editing.events import Event
+from mems_sketch.editing.history import History
 from mems_sketch.editing.imports import ImportEdits
 from mems_sketch.editing.modifiers import ModifierEdits
 from mems_sketch.editing.moves import MoveEdits
@@ -87,6 +88,7 @@ class EditSession:
         self.points = PointEdits(self)
         self.parameters = ParameterEdits(self)
         self.process = ProcessEdits(self)
+        self.history = History(self)
 
     @classmethod
     def open_project(cls, path: str | Path) -> EditSession:
@@ -247,6 +249,7 @@ class EditSession:
         self._undo.clear()
         self._redo.clear()
         self.trials.clear()
+        self.history.forget()
         self._saved = self._fingerprints()
         self._set_dirty(False)
         self.changed.emit()

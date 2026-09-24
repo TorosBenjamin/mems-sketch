@@ -34,6 +34,7 @@ from mems_sketch.gui import icons, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
+from mems_sketch.gui.history_panel import HistoryPanel
 from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
     INSIDE_ROLE,
@@ -89,6 +90,12 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "parameters": "The component's parameters: the values whoever places it can set. "
     "*Internal* ones (the lock) are only for inside it.\n\n*Trial* tries a value "
     "without changing the design, on library components too.",
+    "history": "What changed, from the project's commits in git. *Uncommitted "
+    "changes* are those since the last commit, saved or not; choose a commit to see "
+    "what it changed. The canvas shows the material added (tinted) and removed "
+    "(hatched) in the component you are editing, with default parameters.\n\n"
+    "Click a change to go to it; right-click a commit to compare it with the design "
+    "now. Commit with your usual git tools: nothing here changes the repository.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "
@@ -161,6 +168,9 @@ class MainWindow(QMainWindow):
         self.points.focused.connect(self._point_focused)
         self._hovered_point = None
         self.messages = MessagesPanel()
+        self.history = HistoryPanel(self.document)
+        self.history.comparison_changed.connect(self.update_overlay)
+        self.history.navigate.connect(self._go_to_change)
         self._build_tool_windows()
 
         self._build_actions()
@@ -196,6 +206,7 @@ class MainWindow(QMainWindow):
             self.layers,
             self.points,
             self.components,
+            self.history,
         ):
             panel.error.connect(self.report_error)
         self.properties.previewed.connect(self._preview_node)
@@ -711,6 +722,7 @@ class MainWindow(QMainWindow):
             ("properties", "Properties", "properties", self.properties, "right"),
             ("parameters", "Parameters", "parameters", self.parameters, "right"),
             ("points", "Points", "point", self.points, "right"),
+            ("history", "History", "history", self.history, "right"),
         ):
             self.tool_windows.add(name, title, icon, widget, anchor, PANEL_HELP[name])
         self._restore_tool_windows()
@@ -918,6 +930,7 @@ class MainWindow(QMainWindow):
         self.properties.hide_implementation = hidden
         self.parameters.refresh()
         self.points.refresh()
+        self.history.refresh()
         self._refresh_layer_box()
         self.components.refresh()
         self.tree.rebuild([p for p in view.selection if self._exists(p)])
@@ -951,6 +964,10 @@ class MainWindow(QMainWindow):
         box = results.node_box(single) if shown and single is not None else None
         self.canvas.show_overlay(results.highlight(view.selection), markers, box)
         self.canvas.show_guides(view.guides, set(view.selection))
+        changes = (
+            self.history.geometry(view.component) if self.tool_windows.is_open("history") else None
+        )
+        self.canvas.show_changes(*(changes or (None, None)))
         open_ = self.tool_windows.is_open("points")
         focus = (
             [m for m in (self.points.focused_marker(), self._hovered_point) if m] if open_ else []
@@ -976,6 +993,21 @@ class MainWindow(QMainWindow):
         """Points are drawn while you work with them: the Points panel is open (or
         the setting says always); the align tool shows its own candidates."""
         return self.settings.get("canvas/always_show_points") or self.tool_windows.is_open("points")
+
+    def _go_to_change(self, change) -> None:
+        """A change clicked in the History panel: open its component and select the
+        shape (or what held a removed one), panning to it."""
+        if change.component is None or not self.document.exists(change.component):
+            return
+        self.open_component(change.component)
+        if change.path is None or not self._exists(change.path):
+            return
+        self.tree.select_paths([change.path])
+        box = self.document.results.node_box(change.path)
+        if box:
+            xs, ys = [x for x, _ in box], [y for _, y in box]
+            zoom = self.canvas.pixels_per_um()
+            self.canvas.set_view_state(zoom, (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
 
     def _point_hovered(self, marker) -> None:
         self._hovered_point = marker

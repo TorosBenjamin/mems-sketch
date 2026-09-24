@@ -1102,7 +1102,8 @@ def _no_components(name: str):
     raise KeyError(name)  # drawn primitives never refer to components
 
 
-def probe(x: float, y: float) -> kdb.Region:
-    """A tiny region at a point, to test what lies under it."""
+def probe(x: float, y: float, reach: float = 0.0) -> kdb.Region:
+    """A small square around a point, to test what lies under it (``reach`` in µm)."""
     point = kdb.Point(to_dbu(x), to_dbu(y))
-    return kdb.Region(kdb.Box(point.x - 1, point.y - 1, point.x + 1, point.y + 1))
+    r = max(1, to_dbu(reach))
+    return kdb.Region(kdb.Box(point.x - r, point.y - r, point.x + r, point.y + r))

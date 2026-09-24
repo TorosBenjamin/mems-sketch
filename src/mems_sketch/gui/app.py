@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
+from mems_sketch.core.component import to_dbu
 from mems_sketch.core.shapes import NodePath
 from mems_sketch.editing import EditSession
 from mems_sketch.export.base import available_exporters
@@ -54,6 +55,7 @@ from mems_sketch.gui.views import VIEW_MODES, ComponentView, EditorArea
 
 STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
 GUIDE_REACH_PX = 6  # a click this close to a guide line selects it
+HIT_REACH_PX = 4  # a click this close to a shape still selects it (thin fingers, small parts)
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
 OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
@@ -994,12 +996,19 @@ class MainWindow(QMainWindow):
     def _hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
         if self.implementation_hidden(view):
             return None  # its shapes are not shown
-        at = probe(x, y)
-        hit = next(
+        hit = self._region_hit(view, probe(x, y)) or self._guide_hit(view, x, y)
+        if hit is None:  # nothing right under it: the nearest within a few pixels
+            reach = HIT_REACH_PX / view.canvas.pixels_per_um()
+            hit = self._region_hit(view, probe(x, y, reach))
+        return hit
+
+    @staticmethod
+    def _region_hit(view: ComponentView, at: kdb.Region) -> NodePath | None:
+        """The topmost shape touching ``at``."""
+        return next(
             (p for p, region in reversed(view.node_regions) if not (region & at).is_empty()),
             None,
         )
-        return hit if hit is not None else self._guide_hit(view, x, y)
 
     def _guide_hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
         """The top-level shape holding a guide line near ``(x, y)`` (a few pixels)."""
@@ -1010,8 +1019,18 @@ class MainWindow(QMainWindow):
         return None
 
     def hit(self, x: float, y: float) -> NodePath | None:
-        """The top-level shape under ``(x, y)`` in the current tab."""
-        return self._hit(self.view, x, y)
+        """The top-level shape under ``(x, y)`` in the current tab.
+
+        Between the parts of the outlined shape (a comb's fingers) it is still that
+        shape, while inside its box: the outline does not flicker on and off, and a
+        click selects what is outlined.
+        """
+        found = self._hit(self.view, x, y)
+        if found is None and self._hovered is not None:
+            region = dict(self.view.node_regions).get(self._hovered)
+            if region is not None and region.bbox().contains(kdb.Point(to_dbu(x), to_dbu(y))):
+                return self._hovered
+        return found
 
     def on_selection(self, x: float, y: float) -> bool:
         """Whether ``(x, y)`` lies on one of the selected shapes."""

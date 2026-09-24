@@ -203,7 +203,33 @@ def test_the_shape_under_the_cursor_is_outlined(window, qtbot):
     assert window.canvas._hover_item is None
 
 
-# -- chrome --------------------------------------------------------------------
+def test_shapes_are_found_a_few_pixels_away(window):
+    """Issue #2: over thin comb fingers the outline flickered between the comb and
+    nothing; a shape within a few pixels of the cursor is found too."""
+    one_rect(window)  # 0..40 x 0..20 µm at 4 px per µm
+    assert window.hit(40.5, 10) == ((0, 0),)  # 2 px beside the edge
+    assert window.hit(43, 10) is None  # 12 px away
+    window.canvas.set_view_state(0.5, 20, 10)  # zoomed out: the same pixels reach further
+    assert window.hit(46, 10) == ((0, 0),)
+
+
+def test_the_outline_stays_on_between_a_combs_fingers(window):
+    from mems_sketch import ArrayModifier
+
+    fingers = RectShape(
+        name="comb", layer="device", x0=0, y0=0, x1=2, y1=30,
+        modifiers=[ArrayModifier(columns=6, dx=10)],
+    )  # fmt: skip
+    window.document.nodes.add(fingers)
+    window.canvas.set_view_state(4, 25, 15)
+    window.tree.select_paths([])
+    window._hover(1, 15)  # on a finger
+    assert window._hovered == ((0, 0),)
+    window._hover(6, 15)  # in a gap, 16 px from both fingers
+    assert window._hovered == ((0, 0),)
+    assert window.hit(6, 15) == ((0, 0),)  # a click selects what is outlined
+    window._hover(6, 40)  # outside the comb
+    assert window._hovered is None and window.hit(6, 15) is None
 
 
 def test_find_action_filters_and_runs(window):

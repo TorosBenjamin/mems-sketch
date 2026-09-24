@@ -216,6 +216,17 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     # -- Editor -------------------------------------------------------------
     Setting(
+        "editor/show_implementation",
+        False,
+        "Show how library and built-in components are built",
+        "Editor",
+        "Components",
+        "A component you cannot edit shows its interface: public parameters, points and "
+        "its geometry. On: also its shapes, guides, internal parameters and private "
+        "components (read-only).",
+        keywords=("read-only", "library", "internal", "private", "shapes"),
+    ),
+    Setting(
         "editor/restore_state",
         True,
         "Reopen tabs, views and rulers with the project",

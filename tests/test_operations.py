@@ -49,7 +49,7 @@ def design() -> Project:
 
 @pytest.mark.parametrize(
     ("op", "expected"),
-    [("union", 175), ("subtract", 75), ("intersect", 25), ("xor", 150)],
+    [("subtract", 75), ("intersect", 25), ("xor", 150)],
 )
 def test_boolean_ops(design, op, expected):
     design.add(BooleanShape(op=op, a=[rect(0, 0, 10, 10)], b=[rect(5, 5, 15, 15)]))

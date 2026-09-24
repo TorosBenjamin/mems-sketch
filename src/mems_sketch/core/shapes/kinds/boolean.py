@@ -1,4 +1,8 @@
-"""Boolean of two child lists, per layer."""
+"""Boolean of two child lists, per layer.
+
+Each operand list is merged first, and everything on a layer is merged in the
+end anyway, so there is no union: several shapes on one layer already are one.
+"""
 
 from __future__ import annotations
 
@@ -13,12 +17,12 @@ if TYPE_CHECKING:
 
 
 class BooleanShape(Operation):
-    icon: ClassVar[str] = "union"
+    icon: ClassVar[str] = "subtract"
     child_fields: ClassVar[tuple[str, ...]] = ("a", "b")
-    wraps: ClassVar[tuple[str, ...]] = ("union", "subtract", "intersect", "xor")
+    wraps: ClassVar[tuple[str, ...]] = ("subtract", "intersect", "xor")
 
     kind: Literal["boolean"] = "boolean"
-    op: Literal["union", "subtract", "intersect", "xor"]
+    op: Literal["subtract", "intersect", "xor"]
     a: list[Shape]
     b: list[Shape]
 

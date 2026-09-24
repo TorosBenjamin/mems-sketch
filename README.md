@@ -202,7 +202,13 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
 - **Tabs**: every component opens in its own tab, with its own zoom, selection
   and view mode; the panels show the current tab. Double-click a component in
   the Components panel, or a placed component in the canvas or the Shapes
-  tree, to open it. Library and built-in components open read-only. **View →
+  tree, to open it. Library and built-in components open read-only and show
+  their **interface**, as a library does in code: the geometry, and in
+  Properties the description, public parameters (with limits) and points,
+  as text. Their shapes, guides, internal parameters and private components
+  are how they are built and stay hidden (**View → Show implementation of
+  read-only components** shows them, read-only). Trial values still work in
+  the Parameters panel. **View →
   Split view** (Ctrl+\\) shows two tabs side by side: edit a spring on one side
   and watch the resonator that uses it on the other. A `*` on a tab marks a
   component changed since the last save. Tabs show whether a component is the
@@ -241,7 +247,8 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   disable a node; Ctrl/Shift-click selects several. Operations show their
   operands under them (booleans under A and B). A placed component expands to
   show what is inside it, in grey italics: that belongs to the component's
-  definition, so it is read-only here (changing it would change every copy).
+  definition, so it is read-only here (changing it would change every copy);
+  a library component does not open up unless its implementation is shown.
   Double-click such a row to open the component with that shape selected.
 - **Canvas**: wheel to zoom, middle or right drag (or Space + drag, in any
   tool) to pan, F to fit; the buttons in the bottom-right corner zoom and fit
@@ -257,7 +264,7 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
 - **Right-click** in the canvas (a click; a right drag pans): **Add** a
   primitive with its first point where you clicked, **Place component**, and
   for the selection (the shape under the cursor is selected first) Combine
-  (union, subtract, intersect, XOR), offset, fillet, transform, layer map,
+  (subtract, intersect, XOR; there is no union, since shapes on one layer are merged anyway), offset, fillet, transform, layer map,
   make or unpack component, rotate 90° and mirror, duplicate and delete.
   Entries that do not apply are greyed out. The keyboard's menu key opens it
   too.
@@ -370,7 +377,7 @@ subtraction stays editable and parametric.
 | Primitive | `rect`, `polygon`, `circle`, `arc`, `path` | `arc` is an annular sector (a ring at 360°); `path` is a centreline with a width and flush/square/round ends |
 | Reference | `ref` (or `Instance(...)`) | A component with parameters and placement |
 | Operation | `transform` | Mirror, scale, rotate and move the children as one piece (formerly `group`, still read) |
-| | `boolean` | `a` union / subtract / intersect / xor `b` |
+| | `boolean` | `a` subtract / intersect / xor `b` (each operand list merged) |
 | | `offset` | Grow (+) or shrink (−) outlines |
 | | `fillet` | Round convex (`radius`) and concave (`inner_radius`) corners |
 | | `layer_map` | Move geometry between layers, e.g. derive an anchor layer from a device outline |

@@ -67,7 +67,7 @@ def test_wrap_requires_siblings_and_enough_operands(doc):
     grouped = doc.nodes.wrap([a], "transform")
     inner = (*grouped, (0, 0))
     with pytest.raises(ValueError, match="siblings"):
-        doc.nodes.wrap([inner, ((0, 1),)], "union")
+        doc.nodes.wrap([inner, ((0, 1),)], "subtract")
     with pytest.raises(ValueError, match="at least two"):
         doc.nodes.wrap([b], "subtract")
 
@@ -85,9 +85,9 @@ def test_delete_several_nodes_including_nested(doc):
 def test_duplicate_gives_fresh_names_to_the_whole_subtree(doc):
     a = doc.nodes.add_primitive("rect")
     b = doc.nodes.add_primitive("rect")
-    op = doc.nodes.wrap([a, b], "union")
+    op = doc.nodes.wrap([a, b], "subtract")
     copy = doc.nodes.duplicate(op)
-    assert [s.name for s in doc.shapes] == ["union1", "union2"]
+    assert [s.name for s in doc.shapes] == ["subtract1", "subtract2"]
     assert [c.name for c in doc.node(copy).a + doc.node(copy).b] == ["rect3", "rect4"]
 
 

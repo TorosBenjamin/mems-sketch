@@ -6,7 +6,7 @@ parameter changes; nothing is ever edited destructively. Leaves are primitives
 components (``ref``). Inner nodes are operations:
 
 * ``transform``  its children moved/rotated/mirrored/scaled as one piece
-* ``boolean``    ``a`` op ``b`` with op in union / subtract / intersect / xor
+* ``boolean``    ``a`` op ``b`` with op in subtract / intersect / xor
 * ``offset``     grow (positive) or shrink (negative) by a distance
 * ``fillet``     round convex and concave corners
 * ``layer_map``  move geometry between layers (select, rename, derive layers)

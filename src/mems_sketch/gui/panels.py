@@ -203,6 +203,7 @@ class ComponentsPanel(_Panel):
         self.tree.itemCollapsed.connect(lambda item: self._set_expanded(item, False))
         self.tree.itemExpanded.connect(lambda item: self._set_expanded(item, True))
         self._refreshing = False
+        self.hide_implementation = True  # a library's private components (the setting)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -278,7 +279,8 @@ class ComponentsPanel(_Panel):
             font.setBold(True)
             item.setFont(0, font)
             item.setIcon(0, icons.icon("eye" if self.document.read_only else "edit", "blue"))
-        for child in project.private_components(name):
+        library_internals = "." in name and self.hide_implementation
+        for child in [] if library_internals else project.private_components(name):
             self._component(item, child)
         active = self.document.active
         if item.childCount() and (
@@ -638,6 +640,8 @@ class ShapeTree(QTreeWidget):
         self.itemSelectionChanged.connect(self._emit_selection)
         self.itemChanged.connect(self._item_changed)
         self._rebuilding = False
+        self.hide_implementation = False  # a read-only component: its interface only
+        self.show_implementation = False  # the setting: what placed library parts hold
         # Per component: collapsed operations (others are open) and opened
         # placed components (others are closed).
         self.collapsed: dict[str, set[NodePath]] = {}
@@ -665,6 +669,11 @@ class ShapeTree(QTreeWidget):
         keep = self.selected_paths() if keep is None else keep
         self._rebuilding = True
         self.clear()
+        if self.hide_implementation:
+            self._interface_note()
+            self._rebuilding = False
+            self.select_paths([])
+            return
         for index, shape in enumerate(self.document.shapes):
             self._add(self.invisibleRootItem(), shape, ((0, index),))
         collapsed = self.collapsed.get(self.document.active, set())
@@ -681,6 +690,21 @@ class ShapeTree(QTreeWidget):
                 pending.extend(item.child(i) for i in range(item.childCount()))
         self._rebuilding = False
         self.select_paths(keep)
+
+    def _interface_note(self) -> None:
+        """Instead of the shapes of a component that cannot be edited."""
+        library = "." in self.document.active
+        item = QTreeWidgetItem(self, ["Library component" if library else "Built-in component"])
+        item.setData(0, DETAIL_ROLE, "interface only")
+        item.setIcon(0, icons.icon("lock"))
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setForeground(0, QBrush(QColor("#8c8f99")))
+        item.setToolTip(
+            0,
+            "Its shapes are how it is built: they are hidden, like the internals of a "
+            "library in code. View › Show implementation of read-only components shows "
+            "them; copy it into the project to change it.",
+        )
 
     def _add(self, parent: QTreeWidgetItem, shape: Shape, path: NodePath) -> None:
         item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})"])
@@ -726,6 +750,8 @@ class ShapeTree(QTreeWidget):
         found = project.definition(target)
         if found is None or not found[0].shapes:
             return  # a built-in (or empty) component has nothing to show
+        if target not in project.components and not self.show_implementation:
+            return  # a library component: how it is built is not shown
         item.setData(0, PLACES_ROLE, target)
         QTreeWidgetItem(item, ["…"])
 
@@ -827,6 +853,7 @@ class ParametersPanel(_Panel):
         self.title = QLabel()
         self.table = _table(self.COLUMNS)
         self.table.itemChanged.connect(self._changed)
+        self.hide_implementation = False  # a read-only component: public parameters only
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -847,6 +874,8 @@ class ParametersPanel(_Panel):
 
     def refresh(self) -> None:
         parameters = self.document.active_definition.parameters
+        if self.hide_implementation:  # its interface: public ones only
+            parameters = [p for p in parameters if not p.internal]
         read_only = self.document.read_only
         suffix = " (read-only; trial values work)" if read_only else ""
         self.title.setText(f"Parameters of <b>{self.document.active}</b>{suffix}")
@@ -940,6 +969,7 @@ class PointsPanel(_Panel):
         self.title = QLabel()
         self.table = _table(self.COLUMNS)
         self.table.itemChanged.connect(self._changed)
+        self.hide_implementation = False  # a read-only component: public parameters only
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)

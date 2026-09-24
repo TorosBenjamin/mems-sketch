@@ -54,7 +54,7 @@ class FindActionDialog(QDialog):
         self.setObjectName("find-action")
         self.resize(560, 380)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Type an action name, e.g. “union” or “fit”")
+        self.search.setPlaceholderText("Type an action name, e.g. “subtract” or “fit”")
         self.search.addAction(icons.icon("search"), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(self._filter)
         self.search.installEventFilter(self)

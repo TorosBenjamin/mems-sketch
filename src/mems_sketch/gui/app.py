@@ -81,6 +81,7 @@ class MainWindow(QMainWindow):
         self._restoring = False  # while opening a project, the editor state is not saved
         self.rulers: dict[str, list[tuple[float, float, float, float]]] = {}  # per component
         self.settings = Settings(self)
+        ComponentView.show_implementation = self.settings.get("editor/show_implementation")
         self.ui_theme = self._apply_ui_theme()
         self.draw_layer: str | None = None  # the layer the drawing tools draw on
         self.path_width = self.settings.get("editor/path_width")
@@ -290,6 +291,10 @@ class MainWindow(QMainWindow):
             for view in self.area.views():
                 view.canvas.configure(**options)
             self._show_zoom()
+        if key == "editor/show_implementation":
+            ComponentView.show_implementation = self.settings.get(key)
+            self.tree.select_paths([])
+            self.refresh()
         if key in ("canvas/show_gizmos", "canvas/hover_highlight"):
             self.canvas.show_hover(None)
             self._hovered = None
@@ -778,9 +783,22 @@ class MainWindow(QMainWindow):
         self._problems = self.document.problems()
         self._refresh_panels()
 
+    def implementation_hidden(self, view: ComponentView | None = None) -> bool:
+        """A read-only component shows its interface only (unless the user asked to see
+        how it is built): public parameters, points and geometry, no shapes."""
+        view = view or self.view
+        return view.implementation_hidden
+
     def _refresh_panels(self) -> None:
         """Show the current tab in the panels, toolbar and title."""
         view = self.view
+        hidden = self.implementation_hidden(view)
+        self.tree.hide_implementation = hidden
+        self.parameters.hide_implementation = hidden
+        shown = self.settings.get("editor/show_implementation")
+        self.components.hide_implementation = not shown
+        self.tree.show_implementation = shown
+        self.properties.hide_implementation = hidden
         self.parameters.refresh()
         self.points.refresh()
         self._refresh_layer_box()
@@ -923,6 +941,8 @@ class MainWindow(QMainWindow):
             self.open_component(target)
 
     def _hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
+        if self.implementation_hidden(view):
+            return None  # its shapes are not shown
         at = probe(x, y)
         hit = next(
             (p for p, region in reversed(view.node_regions) if not (region & at).is_empty()),
@@ -953,6 +973,8 @@ class MainWindow(QMainWindow):
 
     def select_box(self, x0: float, y0: float, x1: float, y1: float, additive: bool) -> None:
         """Select the top-level shapes lying entirely inside a box."""
+        if self.implementation_hidden():
+            return
         box = kdb.Box(
             *(round(v * 1000) for v in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
         )

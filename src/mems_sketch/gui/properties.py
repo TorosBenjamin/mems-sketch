@@ -132,6 +132,7 @@ class PropertyEditor(QScrollArea):
         self.setFrameShape(QScrollArea.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.path: NodePath | None = None
+        self.hide_implementation = False  # a read-only component: show its interface
         self._editors: dict[str, typing.Callable[[], object]] = {}
         self._scope: dict[str, float] = {}
         self._show_placeholder("Select a shape to edit its properties.")
@@ -140,6 +141,9 @@ class PropertyEditor(QScrollArea):
 
     def show_node(self, path: NodePath | None) -> None:
         self.path = path
+        if path is None and self.hide_implementation:
+            self._show_interface()
+            return
         if path is None:
             self._show_placeholder("Select a shape to edit its properties.")
             return
@@ -605,6 +609,78 @@ class PropertyEditor(QScrollArea):
             self.applied.emit()
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))
+
+    def _show_interface(self) -> None:
+        """What a component offers whoever places it, as text: its description,
+        public parameters and declared points (for one that cannot be edited)."""
+        name = self.document.active
+        definition = self.document.definition_of(name)
+        try:
+            values = self.document.results.scope()
+        except Exception:  # noqa: BLE001 - values then show "?"
+            values = {}
+        try:
+            points = self.document.results.declared_points()
+        except Exception:  # noqa: BLE001
+            points = {}
+        body = QWidget()
+        body.setObjectName("properties-body")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(4)
+        title = QHBoxLayout()
+        title.setSpacing(6)
+        glyph = QLabel()
+        library = "." in name
+        glyph.setPixmap(icons.pixmap("component_library" if library else "component_builtin", 18))
+        label = ElidedLabel(name.rpartition(".")[2])
+        label.setObjectName("card-title")
+        kind = QLabel("library component" if library else "built-in component")
+        kind.setObjectName("muted")
+        title.addWidget(glyph)
+        title.addWidget(label, 1)
+        title.addWidget(kind)
+        layout.addLayout(title)
+        if definition.description:
+            about = QLabel(definition.description)
+            about.setWordWrap(True)
+            layout.addWidget(about)
+        parameters = [p for p in definition.parameters if not p.internal]
+        box = _section("Parameters")
+        form = _form(box)
+        for parameter in parameters:
+            value = values.get(parameter.name)
+            text = _format(parameter.default)
+            if isinstance(parameter.default, str) and value is not None:
+                text += f"  ({value:g})"
+            limits = [
+                f"≥ {parameter.min:g}" if parameter.min is not None else "",
+                f"≤ {parameter.max:g}" if parameter.max is not None else "",
+                "whole number" if parameter.integer else "",
+            ]
+            limits = ", ".join(t for t in limits if t)
+            shown = ElidedLabel(f"{text}    {limits}" if limits else text)
+            shown.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            shown.setToolTip(parameter.description or parameter.name)
+            form.addRow(parameter.name, shown)
+        if not parameters:
+            form.addRow(QLabel("None."))
+        layout.addWidget(box)
+        if points:
+            box = _section("Points")
+            form = _form(box)
+            for point, (x, y) in points.items():
+                form.addRow(point, QLabel(f"x {x:g}, y {y:g} µm"))
+            layout.addWidget(box)
+        note = QLabel(
+            "Its shapes are how it is built: View › Show implementation of read-only "
+            "components shows them. Try other values in the Parameters panel (Trial)."
+        )
+        note.setWordWrap(True)
+        note.setObjectName("muted")
+        layout.addWidget(note)
+        layout.addStretch()
+        self.setWidget(body)
 
     def _show_placeholder(self, text: str) -> None:
         label = QLabel(text)

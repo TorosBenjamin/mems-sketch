@@ -26,6 +26,8 @@ VIEW_MODES = {"drawn": "Drawn", "etched": "As etched", "compensated": "Etch comp
 class ComponentView(QWidget):
     """One tab: a component, its canvas, selection and view mode."""
 
+    show_implementation = False  # the window's setting: shapes of read-only components
+
     def __init__(self, document: EditSession, component: str) -> None:
         super().__init__()
         self.document = document
@@ -45,6 +47,12 @@ class ComponentView(QWidget):
     @property
     def read_only(self) -> bool:
         return self.component not in self.document.project.components
+
+    @property
+    def implementation_hidden(self) -> bool:
+        """A read-only component shows its interface, not its shapes (see the
+        ``editor/show_implementation`` setting, mirrored in :attr:`show_implementation`)."""
+        return self.read_only and not self.show_implementation
 
     def title(self) -> str:
         name = self.component
@@ -85,6 +93,8 @@ class ComponentView(QWidget):
             self.guides = self.document.results.guides(self.component)
         except Exception:  # noqa: BLE001 - the messages panel shows why
             self.guides = []
+        if self.implementation_hidden:
+            self.guides = []  # construction lines are part of how it is built
         self.canvas.show_guides(self.guides, set(self.selection))
         self.selection = [p for p in self.selection if self._exists(p)]
         self.canvas.show_geometry(geometry, colors, visible)

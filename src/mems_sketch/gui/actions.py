@@ -37,7 +37,6 @@ OVERLAYS = [  # View › Overlays: setting, label, icon
     ("canvas/hover_highlight", "Highlight under cursor", "select"),
 ]
 OPERATIONS = [
-    ("union", "Union"),
     ("subtract", "Subtract"),
     ("intersect", "Intersect"),
     ("xor", "XOR"),
@@ -46,7 +45,7 @@ OPERATIONS = [
     ("transform", "Transform"),
     ("layer_map", "Layer map"),
 ]
-BOOLEANS = ("union", "subtract", "intersect", "xor")  # under Operations › Combine
+BOOLEANS = ("subtract", "intersect", "xor")  # under Operations › Combine
 
 
 def _label(window, path) -> str:
@@ -170,7 +169,7 @@ class Actions:
 
         operations = self.operations_menu = QMenu("&Operations", w)
         combine = self.combine = operations.addMenu("Combine")
-        icons.bind(combine.menuAction(), "union")
+        icons.bind(combine.menuAction(), "subtract")
         self.operations: dict[str, QAction] = {}
         for op, label in OPERATIONS:
             menu = combine if op in BOOLEANS else operations
@@ -197,6 +196,16 @@ class Actions:
         self.dark = act("Dark canvas", w._toggle_dark, None, view)
         self.dark.setCheckable(True)
         self.dark.setChecked(w.canvas_theme == "dark")
+        implementation = act(
+            "Show implementation of read-only components",
+            lambda checked: w.settings.set("editor/show_implementation", checked),
+            None,
+            view,
+            "shapes",
+        )
+        implementation.setCheckable(True)
+        implementation.setChecked(w.settings.get("editor/show_implementation"))
+        self.settings_toggles["editor/show_implementation"] = implementation
         view.addSeparator()
         act("Open top component", w._edit_top, "Ctrl+T", view, "top")
         act("Process", w.open_process, None, view, "layers")

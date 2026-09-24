@@ -15,7 +15,6 @@ from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QMenu
 
 from mems_sketch.gui import icons
-from mems_sketch.gui.views import VIEW_MODES
 
 if TYPE_CHECKING:
     from mems_sketch.gui.app import MainWindow
@@ -87,10 +86,8 @@ class Actions:
         self.save = act("Save", w.save_project, QKeySequence.StandardKey.Save, file, "save")
         act("Save as…", w.save_project_as, QKeySequence.StandardKey.SaveAs, file)
         file.addSeparator()
-        export = file.addMenu("Export")
-        icons.bind(export.menuAction(), "export")
-        for mode, label in VIEW_MODES.items():
-            act(f"{label} geometry…", lambda _=False, m=mode: w.export_file(m), menu=export)
+        act("Import…", lambda: w.components.import_gds(), "Ctrl+I", file, "import")
+        act("Export…", w.export_file, "Ctrl+E", file, "export")
         file.addSeparator()
         self.settings = act("Settings…", w.show_settings, "Ctrl+Alt+S", file, "settings")
         file.addSeparator()

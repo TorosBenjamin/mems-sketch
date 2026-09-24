@@ -9,8 +9,8 @@ from mems_sketch.editing import EditSession, Event
 from mems_sketch.storage import load
 
 
-def area(doc: EditSession, mode: str = "drawn") -> float:
-    region = doc.results.geometry(mode).layers.get("device")
+def area(doc: EditSession) -> float:
+    region = doc.results.geometry().layers.get("device")
     return 0.0 if region is None else region.area() / 1e6
 
 
@@ -160,15 +160,8 @@ def test_process_constants_and_layers(doc):
     with pytest.raises(ValueError):
         doc.process.remove_constant("gap")  # still used
     name = doc.process.add_layer()
-    doc.process.set_layer(name, Layer("oxide", 9, 0, 0.2, 1.0, None))
+    doc.process.set_layer(name, Layer("oxide", 9, 0, 1.0, None))
     assert "oxide" in doc.project.layers and name not in doc.project.layers
-
-
-def test_view_modes_apply_etch(doc):
-    doc.process.set_layer("device", Layer("device", 1, 0, 1.0))
-    doc.nodes.add(RectShape(layer="device", x0=0, y0=0, x1=10, y1=10))
-    assert area(doc, "etched") == pytest.approx(64)
-    assert area(doc, "compensated") == pytest.approx(144)
 
 
 def test_save_open_export(doc, tmp_path):
@@ -178,7 +171,7 @@ def test_save_open_export(doc, tmp_path):
     other = EditSession()
     other.open(tmp_path / "proj" / "project.yaml")
     assert other.project == doc.project and other.path == tmp_path / "proj"
-    assert other.export(tmp_path / "a.gds", "compensated").exists()
+    assert other.export(tmp_path / "a.gds").exists()
     assert load(tmp_path / "proj") == doc.project
 
 

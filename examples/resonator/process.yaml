@@ -3,7 +3,6 @@ constants:
 layers:
   device:
     gds: [1, 0]
-    undercut: 0.3
     min_width: 2
     min_space: 2
   anchor:

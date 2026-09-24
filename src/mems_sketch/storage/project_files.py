@@ -3,8 +3,11 @@
 Layout::
 
     my_project/
-      project.yaml          format, name, top component (null for a library), libraries
+      project.yaml          format, name, top component (null for a library), libraries,
+                            imported cells
       process.yaml          layers and process constants
+      imports/
+        padframe.gds        a copy of each imported file (see core/imports.py)
       components/
         top.yaml            one file per local component
         comb.yaml
@@ -17,6 +20,11 @@ A library is a folder of component files (either directly or in a
 
     libraries:
       std: ../mems-std-lib
+
+An imported cell is a component named in ``project.yaml``::
+
+    imports:
+      padframe: {file: padframe.gds, cell: FRAME, layers: {1/0: device, 5/0: metal}}
 """
 
 from __future__ import annotations
@@ -25,6 +33,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.process import Layer, Process
 from mems_sketch.core.project import Library, Project
 from mems_sketch.core.user_component import ComponentDef
@@ -34,6 +43,7 @@ FORMAT = "mems-sketch/1"
 PROJECT_FILE = "project.yaml"
 PROCESS_FILE = "process.yaml"
 COMPONENTS_DIR = "components"
+IMPORTS_DIR = "imports"
 
 
 class ProjectFormatError(ValueError):
@@ -52,12 +62,15 @@ def save_project(project: Project, folder: str | Path) -> Path:
     header: dict[str, Any] = {"format": FORMAT, "name": project.name, "top": project.top}
     if libraries:
         header["libraries"] = libraries
+    if project.imports:
+        header["imports"] = imports_data(project)
     _write(folder / PROJECT_FILE, yaml_format.dump(header))
-    _write(folder / PROCESS_FILE, yaml_format.dump(_process_data(project.process)))
+    _save_imports(project, folder / IMPORTS_DIR)
+    _write(folder / PROCESS_FILE, yaml_format.dump(process_data(project.process)))
     for name, definition in project.components.items():
         path = components_dir / f"{name}.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = yaml_format.to_data(definition)
+        data = component_data(definition)
         data["name"] = definition.short_name  # the folder gives the owner
         _write(path, yaml_format.dump(data))
     for stale in components_dir.rglob("*.yaml"):
@@ -74,11 +87,47 @@ def _component_path(file: Path, components_dir: Path) -> str:
     return file.relative_to(components_dir).with_suffix("").as_posix()
 
 
-def _process_data(process: Process) -> dict[str, Any]:
+# -- the pieces, as plain data (also for one-file documents: storage/document.py)
+
+
+def component_data(definition: ComponentDef) -> dict[str, Any]:
+    return yaml_format.to_data(definition)
+
+
+def component_from_data(name: str, data: dict[str, Any]) -> ComponentDef:
+    """A component named ``name`` (its path: ``comb/finger``) from its data."""
+    return ComponentDef.model_validate({**data, "name": name})
+
+
+def imports_data(project: Project) -> dict[str, Any]:
+    """The imported cells, without the files' content."""
+    return {
+        name: {
+            "file": imported.file,
+            "cell": imported.cell,
+            "layers": dict(sorted(imported.layers.items())),
+            **({"description": imported.description} if imported.description else {}),
+        }
+        for name, imported in sorted(project.imports.items())
+    }
+
+
+def imported_from_data(name: str, entry: dict[str, Any], data: bytes) -> ImportedCell:
+    return ImportedCell(
+        name=name,
+        file=str(entry["file"]),
+        cell=str(entry["cell"]),
+        layers={str(k): str(v) for k, v in (entry.get("layers") or {}).items()},
+        description=str(entry.get("description", "")),
+        data=data,
+    )
+
+
+def process_data(process: Process) -> dict[str, Any]:
     layers = {}
     for layer in process.layers.values():
         entry: dict[str, Any] = {"gds": [layer.gds_layer, layer.gds_datatype]}
-        for key in ("undercut", "min_width", "min_space"):
+        for key in ("min_width", "min_space"):
             value = getattr(layer, key)
             if value:
                 entry[key] = yaml_format.to_data(value)
@@ -88,6 +137,25 @@ def _process_data(process: Process) -> dict[str, Any]:
         data["constants"] = yaml_format.to_data(process.constants)
     data["layers"] = layers
     return data
+
+
+def _save_imports(project: Project, imports_dir: Path) -> None:
+    """The imported files, each written once, and none that nothing uses any more."""
+    files = {imported.file: imported.data for imported in project.imports.values()}
+    if files:
+        imports_dir.mkdir(exist_ok=True)
+    for file, data in files.items():
+        path = imports_dir / file
+        if not (path.is_file() and path.read_bytes() == data):
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_bytes(data)
+            os.replace(tmp, path)
+    if imports_dir.is_dir():
+        for stale in imports_dir.iterdir():
+            if stale.is_file() and stale.name not in files:
+                stale.unlink()
+        if not any(imports_dir.iterdir()):
+            imports_dir.rmdir()
 
 
 def _write(path: Path, text: str) -> None:
@@ -115,16 +183,20 @@ def project_folder(path: str | Path) -> Path:
     return path.parent if path.name == PROJECT_FILE else path
 
 
-def load_project(path: str | Path) -> Project:
-    """Load a project from its folder or its ``project.yaml``."""
+def load_project(path: str | Path, libraries_from: str | Path | None = None) -> Project:
+    """Load a project from its folder or its ``project.yaml``.
+
+    Libraries are found relative to ``libraries_from`` if given (a copy of a
+    project, e.g. an earlier version from git, uses the real project's)."""
     folder = project_folder(path)
+    base = Path(libraries_from) if libraries_from is not None else folder
     header = _read(folder / PROJECT_FILE)
     if not isinstance(header, dict) or header.get("format") != FORMAT:
         raise ProjectFormatError(f"{folder / PROJECT_FILE} is not a {FORMAT} project file")
     process = _load_process(folder / PROCESS_FILE)
     components = _load_components(folder / COMPONENTS_DIR)
     libraries = {
-        name: load_library(name, (folder / rel) if not Path(rel).is_absolute() else Path(rel))
+        name: load_library(name, (base / rel) if not Path(rel).is_absolute() else Path(rel))
         for name, rel in (header.get("libraries") or {}).items()
     }
     top = header.get("top", "top")  # null: a library, with no top component
@@ -136,7 +208,18 @@ def load_project(path: str | Path) -> Project:
         components=components,
         top=top,
         libraries=libraries,
+        imports=_load_imports(header.get("imports") or {}, folder / IMPORTS_DIR),
     )
+
+
+def _load_imports(entries: dict, imports_dir: Path) -> dict[str, ImportedCell]:
+    imports = {}
+    for name, entry in entries.items():
+        path = imports_dir / str(entry["file"])
+        if not path.is_file():
+            raise ProjectFormatError(f"imported file {path} is missing")
+        imports[name] = imported_from_data(name, entry, path.read_bytes())
+    return imports
 
 
 def load_library(name: str, folder: str | Path) -> Library:
@@ -150,7 +233,10 @@ def load_library(name: str, folder: str | Path) -> Library:
 def _load_process(path: Path) -> Process:
     if not path.is_file():
         return Process()
-    data = _read(path) or {}
+    return process_from_data(_read(path) or {})
+
+
+def process_from_data(data: dict[str, Any]) -> Process:
     layers = {}
     for name, entry in (data.get("layers") or {}).items():
         gds = entry.get("gds", [0, 0])
@@ -158,7 +244,6 @@ def _load_process(path: Path) -> Process:
             name=name,
             gds_layer=int(gds[0]),
             gds_datatype=int(gds[1]) if len(gds) > 1 else 0,
-            undercut=float(entry.get("undercut", 0.0)),
             min_width=_optional_float(entry.get("min_width")),
             min_space=_optional_float(entry.get("min_space")),
         )

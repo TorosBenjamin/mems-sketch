@@ -1,7 +1,7 @@
 [project]
 name = "mems-sketch"
 version = "0.1.0"
-description = "Parametric MEMS layout design: components, etch-loss compensation, rule checks and pluggable export."
+description = "Parametric MEMS layout design: components, rule checks and pluggable export."
 requires-python = ">=3.11"
 dependencies = [
     "klayout>=0.29",
@@ -11,7 +11,8 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.6"]
-dev = ["pytest>=8", "pytest-qt>=4.4", "ruff==0.16.8", "PySide6>=6.6"]  # ruff pinned: CI and local agree
+matlab = ["scipy>=1.10"]  # .mat files
+dev = ["pytest>=8", "pytest-qt>=4.4", "ruff==0.16.8", "PySide6>=6.6", "scipy>=1.10"]  # ruff pinned: CI and local agree
 
 [project.scripts]
 mems-sketch-cli = "mems_sketch.cli:main"
@@ -25,6 +26,9 @@ mems-sketch = "mems_sketch.gui.app:main"
 gds = "mems_sketch.export.klayout_formats:GdsExporter"
 oasis = "mems_sketch.export.klayout_formats:OasisExporter"
 dxf = "mems_sketch.export.klayout_formats:DxfExporter"
+json = "mems_sketch.export.document_formats:JsonExporter"
+xml = "mems_sketch.export.document_formats:XmlExporter"
+mat = "mems_sketch.export.document_formats:MatExporter"
 
 [build-system]
 requires = ["hatchling"]

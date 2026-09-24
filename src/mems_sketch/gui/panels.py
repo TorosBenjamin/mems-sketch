@@ -41,6 +41,11 @@ from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 SLOT_LABELS = {"boolean": ("A", "B")}
+IMPORT_FILTER = (
+    "Layouts (*.gds *.gds2 *.gdsii *.oas *.json *.xml *.mat);;"
+    "GDS and OASIS (*.gds *.gds2 *.gdsii *.oas);;"
+    "Geometry documents (*.json *.xml *.mat);;All files (*)"
+)
 
 
 def describe(shape: Shape) -> str:
@@ -252,6 +257,12 @@ class ComponentsPanel(_Panel):
             for name in library.components:
                 if "/" not in name:
                     self._component(group, f"{library.name}.{name}")
+        if project.imports:
+            imported = self._group(
+                "Imported", "imported", "import", "Cells imported from GDS files (read-only)"
+            )
+            for name in sorted(project.imports):
+                self._component(imported, name)
         builtins = self._group("Built-in", "builtin", "builtin", "Built-in components")
         for name in component_types():
             self._component(builtins, name)
@@ -312,6 +323,9 @@ class ComponentsPanel(_Panel):
         owner = name.rpartition(".")[2].rpartition("/")[0]
         if "." in name:
             kind = "library component, read-only: copy it into the project to edit it"
+        elif name in project.imports:
+            imported = project.imports[name]
+            kind = f"imported, read-only: cell {imported.cell} of {imported.file}"
         elif name in project.components:
             kind = "top component" if name == project.top else "project component"
         else:
@@ -408,6 +422,8 @@ class ComponentsPanel(_Panel):
             group = item.data(0, self.GROUP_ROLE)
             if group == "project":
                 self._project_actions(menu)
+            elif group == "imported":
+                _menu_action(menu, "Import…", self.import_gds, "import")
             elif group.startswith("library:"):
                 library = group.partition(":")[2]
                 _menu_action(
@@ -424,6 +440,7 @@ class ComponentsPanel(_Panel):
     def _project_actions(self, menu) -> None:
         _menu_action(menu, "New component…", self._new, "add")
         _menu_action(menu, "Add library…", self.add_library, "library")
+        _menu_action(menu, "Import…", self.import_gds, "import")
         if self.document.project.top is not None:
             menu.addSeparator()
             _menu_action(menu, "Make the project a library (no top component)", self._no_top)
@@ -462,6 +479,14 @@ class ComponentsPanel(_Panel):
                     lambda: self._guard(lambda: self.document.components.set_top(name)),
                     "top",
                 )
+        elif name in project.imports:
+            _menu_action(menu, "Re-import…", lambda: self.reimport(name), "import")
+            _menu_action(
+                menu,
+                "Remove import",
+                lambda: self._guard(lambda: self.document.imports.remove(name)),
+                "delete",
+            )
         elif "." in name:
             _menu_action(
                 menu,
@@ -511,6 +536,34 @@ class ComponentsPanel(_Panel):
             folder = QFileDialog.getExistingDirectory(self, "Add library: choose its folder")
         if folder:
             self._guard(lambda: self.document.components.add_library(folder))
+
+    def import_gds(self, path: str | None = None) -> str | None:
+        """Choose a layout (GDS, OASIS or a geometry document) and how to import it;
+        returns the new component's name."""
+        from mems_sketch.gui.import_dialog import ImportDialog
+
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(self, "Import", "", IMPORT_FILTER)
+        if not path:
+            return None
+        try:
+            dialog = ImportDialog(self.document, path, self)
+        except (OSError, ValueError) as exc:
+            self.error.emit(str(exc))
+            return None
+        if not dialog.exec():
+            return None
+        names = []
+        if self._guard(lambda: names.append(self.document.imports.add(path, **dialog.choices()))):
+            return names[0]
+        return None
+
+    def reimport(self, name: str, path: str | None = None) -> None:
+        """Take a newer version of an imported file."""
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(self, f"Re-import {name}", "", IMPORT_FILTER)
+        if path:
+            self._guard(lambda: self.document.imports.reimport(name, path))
 
     def _no_top(self) -> None:
         self._guard(lambda: self.document.components.set_top(None))
@@ -563,12 +616,21 @@ class _ComponentTree(QTreeWidget):
 
 
 def component_icon(project, name: str) -> str:
-    """Project, library and built-in components have their own icons."""
+    """Project, library, imported and built-in components have their own icons."""
     if "." in name:
         return "component_library"
     if name in project.components:
         return "top" if name == project.top else "component"
+    if name in project.imports:
+        return "component_imported"
     return "component_builtin"
+
+
+def read_only_kind(project, name: str) -> str:
+    """What a component that cannot be edited is: ``library``, ``imported`` or ``built-in``."""
+    if "." in name:
+        return "library"
+    return "imported" if name in project.imports else "built-in"
 
 
 def _menu_action(menu, text: str, slot, icon: str | None = None):
@@ -723,8 +785,8 @@ class ShapeTree(QTreeWidget):
 
     def _interface_note(self) -> None:
         """Instead of the shapes of a component that cannot be edited."""
-        library = "." in self.document.active
-        item = QTreeWidgetItem(self, ["Library component" if library else "Built-in component"])
+        kind = read_only_kind(self.document.project, self.document.active)
+        item = QTreeWidgetItem(self, [f"{kind.capitalize()} component"])
         item.setData(0, DETAIL_ROLE, "interface only")
         item.setIcon(0, icons.icon("lock"))
         item.setFlags(Qt.ItemFlag.ItemIsEnabled)
@@ -1069,7 +1131,7 @@ class ParametersPanel(_Panel):
 class LayersPanel(_Panel):
     """The layers as shown: visibility and colour. Click a layer to draw on it.
 
-    Their definitions (GDS numbers, etch loss, rules) are part of the process
+    Their definitions (GDS numbers, rules) are part of the process
     and edited in the Process tab (:class:`LayerDefinitionsPanel`).
     """
 
@@ -1119,9 +1181,9 @@ class LayersPanel(_Panel):
 
 
 class LayerDefinitionsPanel(_Panel):
-    """The process's layers: name, GDS mapping, etch loss and rules (in the Process tab)."""
+    """The process's layers: name, GDS mapping and rules (in the Process tab)."""
 
-    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm")
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Min width µm", "Min space µm")
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -1135,10 +1197,8 @@ class LayerDefinitionsPanel(_Panel):
             QLabel("Layers"),
             ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
             ("remove", "Remove the selected layers", self._remove_layers),
-            help="The mask layers: their *GDS* layer and datatype for export, the "
-            "*undercut* the etch removes from each edge (for the as-etched and "
-            "etch-compensated views), and the *minimum width and spacing* the rule "
-            "checks use.",
+            help="The mask layers: their *GDS* layer and datatype for export, and the "
+            "*minimum width and spacing* the rule checks use.",
         )
         layout.addLayout(self.actions)
         layout.addWidget(self.layers)
@@ -1154,7 +1214,6 @@ class LayerDefinitionsPanel(_Panel):
                 layer.name,
                 layer.gds_layer,
                 layer.gds_datatype,
-                layer.undercut,
                 layer.min_width,
                 layer.min_space,
             ]
@@ -1181,9 +1240,8 @@ class LayerDefinitionsPanel(_Panel):
                 texts[0],
                 int(texts[1]),
                 int(texts[2]),
-                float(texts[3] or 0),
+                optional(texts[3]),
                 optional(texts[4]),
-                optional(texts[5]),
             )
             self.document.process.set_layer(name, layer)
 

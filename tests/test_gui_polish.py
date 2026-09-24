@@ -308,9 +308,8 @@ def test_the_main_menu_button_is_square(window):
     assert button.width() == button.height()
 
 
-def test_canvas_caption_shows_the_component_and_view_mode(window):
+def test_canvas_caption_shows_the_component(window):
     assert window.canvas._caption == ("top", "top component")
-    assert window.canvas.mode_button.text() == "Drawn ▾"
     window.open_component("comb_drive")
     assert "read-only" in window.canvas._caption[1]
 

@@ -116,7 +116,7 @@ QDockWidget > QWidget {{ background: {window}; }}
 
 QTabWidget::pane {{ border: none; }}
 QTabWidget::tab-bar {{ left: 6px; }}
-QTabBar {{ background: {island}; qproperty-drawBase: 0; }}
+QTabBar {{ background: transparent; qproperty-drawBase: 0; }}  /* the island shows, rounded corners too */
 QTabBar::tab {{
     background: transparent; color: {text}; height: 22px; padding: 2px 10px; margin: 3px 2px;
     border: 1px solid transparent; border-radius: 6px;

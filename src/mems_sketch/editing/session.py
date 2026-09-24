@@ -43,6 +43,8 @@ from mems_sketch.core.user_component import ComponentDef, ParamDef
 from mems_sketch.editing.components import ComponentEdits, library_name
 from mems_sketch.editing.corners import CornerEdits
 from mems_sketch.editing.events import Event
+from mems_sketch.editing.history import History
+from mems_sketch.editing.imports import ImportEdits
 from mems_sketch.editing.modifiers import ModifierEdits
 from mems_sketch.editing.moves import MoveEdits
 from mems_sketch.editing.naming import fresh_name
@@ -52,7 +54,7 @@ from mems_sketch.editing.points import PointEdits
 from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
 from mems_sketch.export.base import export
-from mems_sketch.storage import load, save
+from mems_sketch.storage import is_copy, load, save
 from mems_sketch.storage.project_files import PROJECT_FILE, load_library, project_folder
 
 UNDO_LIMIT = 200
@@ -81,10 +83,12 @@ class EditSession:
         self.nodes = NodeEdits(self)
         self.modifiers = ModifierEdits(self)
         self.corners = CornerEdits(self)
+        self.imports = ImportEdits(self)
         self.moves = MoveEdits(self)
         self.points = PointEdits(self)
         self.parameters = ParameterEdits(self)
         self.process = ProcessEdits(self)
+        self.history = History(self)
 
     @classmethod
     def open_project(cls, path: str | Path) -> EditSession:
@@ -218,7 +222,7 @@ class EditSession:
         """Open a project folder, its project.yaml, or a legacy .mems file."""
         path = Path(path)
         project = load(path)
-        if path.suffix == ".mems":  # legacy import: must be saved as a project folder
+        if is_copy(path):  # a legacy design or a one-file document: saved as a folder
             self._reset(project, None)
             self._set_dirty(True)
         else:
@@ -235,8 +239,15 @@ class EditSession:
         self.changed.emit()  # tabs drop their "modified" marks
         return target
 
-    def export(self, path: str | Path, mode: str = "drawn") -> Path:
-        return export(self.project, path, geometry=self.results.geometry(mode))
+    def export(self, path: str | Path) -> Path:
+        component = self.active
+        return export(
+            self.project,
+            path,
+            geometry=self.results.geometry(),
+            component=component,
+            params=self.trials_for(component),
+        )
 
     def _reset(self, project: Project, path: Path | None) -> None:
         self.project = project
@@ -245,6 +256,7 @@ class EditSession:
         self._undo.clear()
         self._redo.clear()
         self.trials.clear()
+        self.history.forget()
         self._saved = self._fingerprints()
         self._set_dirty(False)
         self.changed.emit()

@@ -3,8 +3,8 @@
     mems-sketch-cli new     my_project
     mems-sketch-cli info    my_project
     mems-sketch-cli check   my_project [--component plate] [--set pitch=15] [--json]
-    mems-sketch-cli export  my_project out.gds [--etch compensated] [--set pitch=15]
-    mems-sketch-cli convert old_design.mems my_project
+    mems-sketch-cli export  my_project out.gds [--set pitch=15]   (also .oas .dxf .json .xml .mat)
+    mems-sketch-cli convert my_project design.json                  (and back; .xml .mat .yaml)
 
 ``check`` exits with status 1 when there are rule violations, so it can gate
 CI. Errors exit with status 2. Nothing here depends on the GUI.
@@ -21,10 +21,8 @@ from pathlib import Path
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.project import Project, new_project
 from mems_sketch.export.base import available_exporters, export
-from mems_sketch.process import etch, rules
-from mems_sketch.storage import load, save
-
-ETCH_MODES = ("drawn", "etched", "compensated")
+from mems_sketch.process import rules
+from mems_sketch.storage import is_document, load, save
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -64,9 +62,13 @@ def _parser() -> argparse.ArgumentParser:
     exp.add_argument("--format", choices=sorted(available_exporters()), help="override format")
     exp.set_defaults(handler=_export)
 
-    convert = commands.add_parser("convert", help="convert a legacy .mems file to a project")
-    convert.add_argument("legacy", type=Path)
-    convert.add_argument("folder", type=Path)
+    convert = commands.add_parser(
+        "convert",
+        help="translate a project between a folder and one file (.json, .xml, .mat, .yaml); "
+        "also reads legacy .mems files",
+    )
+    convert.add_argument("source", type=Path, help="project folder, project.yaml or one file")
+    convert.add_argument("target", type=Path, help="a folder, or a file named by its format")
     convert.set_defaults(handler=_convert)
     return parser
 
@@ -81,7 +83,6 @@ def _geometry_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="NAME=VALUE",
         help="override a parameter (number or expression); may be repeated",
     )
-    parser.add_argument("--etch", choices=ETCH_MODES, default="drawn", help="geometry to use")
 
 
 def _parameters(assignments: list[str]) -> dict[str, float | str]:
@@ -98,12 +99,7 @@ def _parameters(assignments: list[str]) -> dict[str, float | str]:
 
 
 def _geometry(project: Project, args: argparse.Namespace) -> Geometry:
-    drawn = project.render(args.component, _parameters(args.set))
-    if args.etch == "etched":
-        return etch.etched(project, drawn)
-    if args.etch == "compensated":
-        return etch.compensated(project, drawn)
-    return drawn
+    return project.render(args.component, _parameters(args.set))
 
 
 def _new(args: argparse.Namespace) -> int:
@@ -124,7 +120,6 @@ def _info(args: argparse.Namespace) -> int:
         rules_text = ", ".join(
             f"{k} {v:g}"
             for k, v in (
-                ("undercut", layer.undercut),
                 ("min width", layer.min_width),
                 ("min space", layer.min_space),
             )
@@ -178,15 +173,25 @@ def _check(args: argparse.Namespace) -> int:
 
 def _export(args: argparse.Namespace) -> int:
     project = load(args.project)
-    path = export(project, args.output, format_name=args.format, geometry=_geometry(project, args))
+    params = _parameters(args.set)
+    path = export(
+        project,
+        args.output,
+        format_name=args.format,
+        geometry=project.render(args.component, params),
+        component=args.component,
+        params=params,
+    )
     print(f"wrote {path}")
     return 0
 
 
 def _convert(args: argparse.Namespace) -> int:
-    project = load(args.legacy)
-    save(project, args.folder)
-    print(f"converted {args.legacy} -> {args.folder}")
+    project = load(args.source)
+    if not is_document(args.target) and (args.target / "project.yaml").exists():
+        raise FileExistsError(f"{args.target} already contains a project")
+    save(project, args.target)
+    print(f"converted {args.source} -> {args.target}")
     return 0
 
 

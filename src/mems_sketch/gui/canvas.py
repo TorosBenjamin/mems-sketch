@@ -42,7 +42,6 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -71,6 +70,8 @@ THEMES = {
         "highlight": "#f07800",  # selection: orange, as in Blender and Unity
         "hover": "#f07800",
         "violation": "#d7002a",
+        "added": "#1f9d45",  # history: material a version added
+        "removed": "#d7002a",  # and removed (hatched: it is not there any more)
         "declared": "#008a3e",
         "selected": "#f07800",
         "pick": "#0a6fd6",
@@ -93,6 +94,8 @@ THEMES = {
         "highlight": "#ffa033",
         "hover": "#ffa033",
         "violation": "#ff2d55",
+        "added": "#3ddc84",
+        "removed": "#ff4d6a",
         "declared": "#3ddc84",
         "selected": "#ffa033",
         "pick": "#00c8ff",
@@ -182,7 +185,6 @@ class LayoutCanvas(QGraphicsView):
     cursor_moved = Signal(float, float)
     view_changed = Signal()  # zoomed or panned
     context_requested = Signal(float, float, QPoint)  # right click: µm, global position
-    mode_chosen = Signal(str)  # a view mode picked in the caption
     component_dropped = Signal(str, float, float)  # a component dragged in: name, x, y (µm)
 
     def __init__(self, parent=None) -> None:
@@ -203,6 +205,7 @@ class LayoutCanvas(QGraphicsView):
         self.setTransform(QTransform.fromScale(2, -2))
         self._layer_items: dict[str, QGraphicsPathItem] = {}
         self._overlay: list = []
+        self._change_items: list = []
         self._points: dict[str, list] = {}
         self._pan_from: QPointF | None = None
         self._right_from: QPointF | None = None  # right press: a click, until it drags
@@ -275,18 +278,6 @@ class LayoutCanvas(QGraphicsView):
             self.caption_details.setVisible(bool(subtitle))
             self.caption.adjustSize()
 
-    def set_view_modes(self, modes: dict[str, str], current: str) -> None:
-        """The view modes offered by the caption's button (mode: label), and the current one."""
-        self.mode_button.setText(f"{modes.get(current, current)} {MENU_CARET}")
-        menu = self.mode_button.menu()
-        menu.clear()
-        for mode, label in modes.items():
-            action = menu.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(mode == current)
-            action.triggered.connect(lambda _=False, m=mode: self.mode_chosen.emit(m))
-        self.caption.adjustSize()
-
     def set_mode_actions(self, actions: list[QAction]) -> None:
         """The canvas modes (select, move, ...) in the top-right corner, one button each."""
         layout = self.mode_palette.layout()
@@ -314,21 +305,15 @@ class LayoutCanvas(QGraphicsView):
         return box
 
     def _build_caption(self) -> None:
-        """Top left: the component, the view mode (a menu) and details."""
+        """Top left: the component and details about it."""
         box = self.caption = self._overlay_box(Qt.Orientation.Horizontal)
         box.layout().setContentsMargins(8, 2, 8, 2)
         box.layout().setSpacing(6)
         self.caption_title = QLabel(box)
         self.caption_title.setObjectName("heading")
-        self.mode_button = QToolButton(box)
-        self.mode_button.setToolTip("What the canvas shows: the drawn layout or a process view")
-        self.mode_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.mode_button.setAutoRaise(True)
-        self.mode_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.mode_button.setMenu(QMenu(self.mode_button))
         self.caption_details = QLabel(box)
         self.caption_details.setObjectName("muted")
-        for widget in (self.caption_title, self.mode_button, self.caption_details):
+        for widget in (self.caption_title, self.caption_details):
             box.layout().addWidget(widget)
         box.move(8, 8)
 
@@ -466,6 +451,32 @@ class LayoutCanvas(QGraphicsView):
             item.setZValue(1001)
             self.scene().addItem(item)
             self._overlay.append(item)
+
+    def show_changes(self, added: Geometry | None, removed: Geometry | None) -> None:
+        """What changed between two versions (see the History panel): material added
+        tinted, material removed hatched; None for nothing."""
+        for item in self._change_items:
+            self.scene().removeItem(item)
+        self._change_items.clear()
+        for geometry, style, pattern in (
+            (removed, "removed", Qt.BrushStyle.BDiagPattern),
+            (added, "added", Qt.BrushStyle.SolidPattern),
+        ):
+            if geometry is None:
+                continue
+            color = QColor(self.theme[style])
+            for region in geometry.layers.values():
+                item = QGraphicsPathItem(region_to_path(region))
+                pen = QPen(color, OUTLINE_PX)
+                pen.setCosmetic(True)
+                item.setPen(pen)
+                fill = QColor(color)
+                fill.setAlpha(90 if pattern == Qt.BrushStyle.SolidPattern else 200)
+                brush = QBrush(fill, pattern)  # patterns stay the same size at any zoom
+                item.setBrush(brush)
+                item.setZValue(995)  # under the selection
+                self.scene().addItem(item)
+                self._change_items.append(item)
 
     def show_points(
         self, style: str, points: list[tuple[str, float, float]], labels: bool = False

@@ -34,6 +34,7 @@ from mems_sketch.gui import icons, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
+from mems_sketch.gui.history_panel import HistoryPanel
 from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
     INSIDE_ROLE,
@@ -63,7 +64,7 @@ from mems_sketch.gui.statusbar import ToolStatus
 from mems_sketch.gui.toolbar import build_toolbar
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
 from mems_sketch.gui.toolwindows import ToolWindows
-from mems_sketch.gui.views import VIEW_MODES, ComponentView, EditorArea
+from mems_sketch.gui.views import ComponentView, EditorArea
 
 PANEL_HELP = {  # the "?" in each tool window's header
     "components": "Every component, each listed once: the project's, each library's and "
@@ -78,7 +79,7 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "Tick a shape to switch it off; a placed component opens to show what it is made "
     "of (read-only).",
     "layers": "Tick a layer to show it; click a layer to draw on it. What a layer is "
-    "(its GDS number, undercut and rules) is part of the process: View › Process.",
+    "(its GDS number and rules) is part of the process: View › Process.",
     "messages": "Why the component does not build, and the rule checks: shapes "
     "narrower or closer together than their layer allows. Click a message to see "
     "where it is.",
@@ -89,6 +90,15 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "parameters": "The component's parameters: the values whoever places it can set. "
     "*Internal* ones (the lock) are only for inside it.\n\n*Trial* tries a value "
     "without changing the design, on library components too.",
+    "history": "What changed, from the project's commits in git. *Uncommitted "
+    "changes* are those since the last commit, saved or not; choose a commit to see "
+    "what it changed. The canvas shows the material added (tinted) and removed "
+    "(hatched) in the component you are editing, with default parameters. Click a "
+    "change to go to it.\n\n"
+    "*Commit* saves the project and commits its folder, nothing else. Right-click a "
+    "commit to compare it with the design now, or to restore the project (or the "
+    "component you are editing) as it was: an ordinary edit, which Undo takes back. "
+    "Branches, merging and remotes stay with your git tools.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "
@@ -99,7 +109,18 @@ STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the la
 GUIDE_REACH_PX = 6  # a click this close to a guide line selects it
 HIT_REACH_PX = 4  # a click this close to a shape still selects it (thin fingers, small parts)
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
-OPEN_FILTER = "MEMS projects (project.yaml);;Legacy designs (*.mems)"
+OPEN_FILTER = (
+    "MEMS projects (project.yaml);;One-file projects (*.json *.xml *.mat *.yaml *.yml);;"
+    "Legacy designs (*.mems)"
+)
+EXPORT_NAMES = {  # in File › Export…; others show their format name
+    "gds": "GDSII",
+    "oasis": "OASIS",
+    "dxf": "DXF",
+    "json": "Geometry as JSON",
+    "xml": "Geometry as XML",
+    "mat": "Geometry for MATLAB",
+}
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
 DEFAULT_TOOL_WINDOWS = ("components", "shapes", "properties", "messages")
 CANVAS_MODES = (  # on the canvas
@@ -161,6 +182,9 @@ class MainWindow(QMainWindow):
         self.points.focused.connect(self._point_focused)
         self._hovered_point = None
         self.messages = MessagesPanel()
+        self.history = HistoryPanel(self.document)
+        self.history.comparison_changed.connect(self.update_overlay)
+        self.history.navigate.connect(self._go_to_change)
         self._build_tool_windows()
 
         self._build_actions()
@@ -196,6 +220,7 @@ class MainWindow(QMainWindow):
             self.layers,
             self.points,
             self.components,
+            self.history,
         ):
             panel.error.connect(self.report_error)
         self.properties.previewed.connect(self._preview_node)
@@ -234,10 +259,6 @@ class MainWindow(QMainWindow):
     def selection(self, paths: list[NodePath]) -> None:
         self.view.selection = paths
 
-    @property
-    def view_mode(self) -> str:
-        return self.view.view_mode
-
     def open_component(self, name: str) -> None:
         """Open a component in a tab (or go to its tab), like opening a file."""
         if not self.document.exists(name):
@@ -269,7 +290,6 @@ class MainWindow(QMainWindow):
             canvas.key_pressed.connect(lambda key: self.tool.key(key))
             canvas.view_changed.connect(self.state_changed)
             canvas.view_changed.connect(self._show_zoom)
-            canvas.mode_chosen.connect(lambda mode, v=view: self.set_view_mode(mode, v))
             canvas.context_requested.connect(
                 lambda x, y, at, v=view: self._context_menu(v, x, y, at)
             )
@@ -505,7 +525,6 @@ class MainWindow(QMainWindow):
                 tabs.append(
                     {
                         "component": view.component,
-                        "mode": view.view_mode,
                         "zoom": zoom,
                         "center": [x, y],
                         "selection": [[list(step) for step in path] for path in view.selection],
@@ -598,9 +617,6 @@ class MainWindow(QMainWindow):
                         self.area.open_process(target)
                         continue
                     view = self.area.open(tab["component"], target)
-                    view.view_mode = tab.get("mode", "drawn")
-                    if view.view_mode not in VIEW_MODES:
-                        view.view_mode = "drawn"
                     view.selection = [_path(p) for p in tab.get("selection", [])]
                     view._fitted = True
                     self._render(view)
@@ -720,6 +736,7 @@ class MainWindow(QMainWindow):
             ("properties", "Properties", "properties", self.properties, "right"),
             ("parameters", "Parameters", "parameters", self.parameters, "right"),
             ("points", "Points", "point", self.points, "right"),
+            ("history", "History", "history", self.history, "right"),
         ):
             self.tool_windows.add(name, title, icon, widget, anchor, PANEL_HELP[name])
         self._restore_tool_windows()
@@ -927,6 +944,7 @@ class MainWindow(QMainWindow):
         self.properties.hide_implementation = hidden
         self.parameters.refresh()
         self.points.refresh()
+        self.history.refresh()
         self._refresh_layer_box()
         self.components.refresh()
         self.tree.rebuild([p for p in view.selection if self._exists(p)])
@@ -938,8 +956,7 @@ class MainWindow(QMainWindow):
         self._update_title()
 
     def _caption(self, view: ComponentView) -> None:
-        """The canvas caption: component, view mode and whether it can be edited."""
-        view.canvas.set_view_modes(VIEW_MODES, view.view_mode)
+        """The canvas caption: the component and whether it can be edited."""
         details = []
         if view.read_only:
             details.append("read-only")
@@ -961,6 +978,10 @@ class MainWindow(QMainWindow):
         box = results.node_box(single) if shown and single is not None else None
         self.canvas.show_overlay(results.highlight(view.selection), markers, box)
         self.canvas.show_guides(view.guides, set(view.selection))
+        changes = (
+            self.history.geometry(view.component) if self.tool_windows.is_open("history") else None
+        )
+        self.canvas.show_changes(*(changes or (None, None)))
         open_ = self.tool_windows.is_open("points")
         focus = (
             [m for m in (self.points.focused_marker(), self._hovered_point) if m] if open_ else []
@@ -986,6 +1007,21 @@ class MainWindow(QMainWindow):
         """Points are drawn while you work with them: the Points panel is open (or
         the setting says always); the align tool shows its own candidates."""
         return self.settings.get("canvas/always_show_points") or self.tool_windows.is_open("points")
+
+    def _go_to_change(self, change) -> None:
+        """A change clicked in the History panel: open its component and select the
+        shape (or what held a removed one), panning to it."""
+        if change.component is None or not self.document.exists(change.component):
+            return
+        self.open_component(change.component)
+        if change.path is None or not self._exists(change.path):
+            return
+        self.tree.select_paths([change.path])
+        box = self.document.results.node_box(change.path)
+        if box:
+            xs, ys = [x for x, _ in box], [y for _, y in box]
+            zoom = self.canvas.pixels_per_um()
+            self.canvas.set_view_state(zoom, (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
 
     def _point_hovered(self, marker) -> None:
         self._hovered_point = marker
@@ -1100,7 +1136,7 @@ class MainWindow(QMainWindow):
         if path is None:
             return
         try:
-            geometry = self.document.results.preview(path, node, view.view_mode)
+            geometry = self.document.results.preview(path, node)
         except Exception:  # noqa: BLE001 - not valid: keep the last picture
             return
         view.canvas.show_geometry(geometry, self.layers.colors, self.layers.visible)
@@ -1196,19 +1232,6 @@ class MainWindow(QMainWindow):
         size = max(x1 - x0, y1 - y0, 5.0)
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         self.canvas.zoom_to(QRectF(cx - size * 2, cy - size * 2, size * 4, size * 4))
-
-    def set_view_mode(self, mode: str, view: ComponentView | None = None) -> None:
-        """Show a tab as drawn, as etched or etch compensated (see ``VIEW_MODES``)."""
-        view = view or self.view
-        if mode not in VIEW_MODES or mode == view.view_mode:
-            return
-        view.view_mode = mode
-        view.refresh(self.layers.colors, self.layers.visible)
-        self._caption(view)
-        if view is self.area.current:
-            self._show_messages()
-            self._update_overlay()
-        self.state_changed()
 
     def _context_menu(self, view: ComponentView, x: float, y: float, at: QPoint) -> None:
         """The editor's right-click menu; a shape under the cursor is selected first."""
@@ -1403,7 +1426,9 @@ class MainWindow(QMainWindow):
             self._remember_dir(path)
             if self.document.path is None:
                 self.statusBar().showMessage(
-                    "Imported a legacy design: use Save as… to store it as a project folder", 10000
+                    f"Opened {Path(path).name} as a copy: use Save as… to store it as a "
+                    "project folder",
+                    10000,
                 )
 
     def _open(self, path: str) -> None:
@@ -1442,20 +1467,19 @@ class MainWindow(QMainWindow):
         self._remember_dir(str(target / "project.yaml"))
         return self._run(lambda: self.document.save(target))[0]
 
-    def export_file(self, mode: str) -> None:
+    def export_file(self) -> None:
         exporters = available_exporters()
         filters = ";;".join(
-            f"{name.upper()} (*{cls.file_extension})" for name, cls in exporters.items()
+            f"{EXPORT_NAMES.get(name, name.upper())} (*{cls.file_extension})"
+            for name, cls in exporters.items()
         )
-        path, chosen = QFileDialog.getSaveFileName(
-            self, f"Export {VIEW_MODES[mode].lower()} geometry", self._last_dir(), filters
-        )
+        path, chosen = QFileDialog.getSaveFileName(self, "Export", self._last_dir(), filters)
         if not path:
             return
         extension = chosen[chosen.find("*") + 1 : chosen.find(")")]
         if not Path(path).suffix:
             path += extension
-        if self._run(lambda: self.document.export(path, mode))[0]:
+        if self._run(lambda: self.document.export(path))[0]:
             self._remember_dir(path)
             self.statusBar().showMessage(f"Exported {path}", 5000)
 

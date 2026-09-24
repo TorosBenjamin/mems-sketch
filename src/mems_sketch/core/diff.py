@@ -277,20 +277,30 @@ def _json(shape: Shape) -> str:
 # -- words -------------------------------------------------------------------------
 
 
-def _fields(old: dict[str, Any], new: dict[str, Any]) -> tuple[str, ...]:
-    """``field old → new`` for every field that differs."""
-    details = []
+def _fields(old: dict[str, Any], new: dict[str, Any], prefix: str = "") -> tuple[str, ...]:
+    """``field old → new`` for every field that differs; inside a plain mapping (a
+    placement's ``params``, an ``align``) per entry: ``params.fingers 16 → 10``."""
+    details: list[str] = []
     for key in _union(old, new):
         before, after = old.get(key), new.get(key)
         if before == after:
             continue
-        if key == "enabled":
+        if _mapping(before) and _mapping(after):
+            details += _fields(before, after, f"{prefix}{key}.")
+        elif prefix:
+            details.append(f"{prefix}{key} {_short(before)} → {_short(after)}")
+        elif key == "enabled":
             details.append("switched on" if after else "switched off")
         elif key == "description":
             details.append("description changed")
         else:
             details.append(f"{key} {_short(before)} → {_short(after)}")
     return tuple(details)
+
+
+def _mapping(value: Any) -> bool:
+    """A dict of values, not a model with a kind (a modifier reads better whole)."""
+    return isinstance(value, dict) and "kind" not in value
 
 
 def _short(value: Any) -> str:

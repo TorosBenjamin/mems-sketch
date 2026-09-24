@@ -16,6 +16,7 @@ from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QColor
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QInputDialog,
     QLabel,
@@ -33,6 +34,7 @@ from mems_sketch.gui import icons, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
+from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
     INSIDE_ROLE,
     ComponentsPanel,
@@ -1313,11 +1315,34 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Discard
 
     def new_project(self, library: bool = False) -> None:
-        if self._confirm_discard():
-            self.save_editor_state()
+        """The New Project wizard: name, folder, process and libraries; saved at once."""
+        if not self._confirm_discard():
+            return
+        last = Path(self._last_dir())  # the last project's folder: offer the one it is in
+        location = last.parent if (last / "project.yaml").exists() else last
+        dialog = NewProjectDialog(str(location), library, self)
+        if self.show_dialog(dialog) == QDialog.DialogCode.Accepted:
+            self.create_project(**dialog.values())
+
+    def show_dialog(self, dialog: QDialog) -> int:
+        """Run a dialog (tests fill it in instead)."""
+        return dialog.exec()
+
+    def create_project(self, folder: Path, name: str, **options) -> bool:
+        """Start a new project or library in ``folder`` (see ``EditSession.create``)."""
+
+        def create() -> None:
+            self.document.create(folder, name, **options)  # raises before anything changes
             self.area.close_all()
             self.rulers = {}
-            self.document.new(library=library)
+            self.layers.visible = {}
+            self.refresh()
+
+        self.save_editor_state()
+        if not self._run(create)[0]:
+            return False
+        self._remember_dir(str(Path(folder) / "project.yaml"))
+        return True
 
     def new_library(self) -> None:
         """A new project without a top component: a set of components to place elsewhere."""

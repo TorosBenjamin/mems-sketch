@@ -234,6 +234,7 @@ QWidget#canvas-buttons {{
     background: {editor}; border: 1px solid {border_strong}; border-radius: 6px;
 }}
 QLabel#muted {{ color: {muted}; }}
+QLabel#muted[error="true"] {{ color: {error}; }}
 QLabel#heading {{ font-weight: 600; font-size: 13px; }}
 QWidget#view-header {{ background: {editor}; border-bottom: 1px solid {border}; }}
 QWidget#view-header QLabel {{ color: {muted}; }}

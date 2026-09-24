@@ -59,6 +59,7 @@ POINT_SIZES = {  # marker size in pixels
     "pick": 11,  # candidates while aligning
     "snap": 13,  # the point a drag snaps to
     "anchor": 9,  # a point a tool has fixed (move base, rotation pivot, ruler start)
+    "focus": 15,  # the point hovered or selected in the Points panel
 }
 # Colours per canvas theme. Grid lines are drawn with the ``grid`` colour at
 # increasing opacity for minor lines, every fifth line and the axes.
@@ -75,6 +76,7 @@ THEMES = {
         "pick": "#0a6fd6",
         "snap": "#e0007a",
         "anchor": "#e0007a",
+        "focus": "#7a3ee0",
         "ruler": "#b35c00",
         "guide": "#1b8a96",
         "axis_x": "#e0443e",
@@ -96,6 +98,7 @@ THEMES = {
         "pick": "#00c8ff",
         "snap": "#ff5fb0",
         "anchor": "#ff5fb0",
+        "focus": "#b18cff",
         "ruler": "#ffb000",
         "guide": "#4cc2cf",
         "axis_x": "#f0584f",

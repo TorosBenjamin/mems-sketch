@@ -181,3 +181,16 @@ def rename_node_references(shapes: list[Shape], old: str, new: str) -> list[Shap
         return None
 
     return map_expressions(shapes, change)
+
+
+def point_renamer(nodes: set[str], old: str, new: str) -> Callable[[str], str | None]:
+    """A ``change`` for :func:`map_expressions`: point ``old`` of the nodes named in
+    ``nodes`` (which place a component whose point was renamed) becomes ``new``."""
+
+    def change(name: str) -> str | None:
+        head, dot, rest = name.partition(".")
+        if head in nodes and dot and (rest == old or rest.startswith(f"{old}.")):
+            return f"{head}.{new}{rest[len(old) :]}"
+        return None
+
+    return change

@@ -160,6 +160,15 @@ SETTINGS: tuple[Setting, ...] = (
         "Overlays",
     ),
     Setting(
+        "canvas/always_show_points",
+        False,
+        "Always show points",
+        "Canvas",
+        "Overlays",
+        "Otherwise points show while the Points panel is open or you are aligning.",
+        keywords=("points", "markers", "labels"),
+    ),
+    Setting(
         "canvas/show_gizmos",
         True,
         "Show move and rotate handles on the selection",

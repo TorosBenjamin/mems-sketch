@@ -161,7 +161,7 @@ def test_property_editor_edits_the_alignment(window):
     editor._editors["align"] = lambda: {"point": "left", "to": "rect1.right", "dx": 5, "dy": 0}
     editor.apply()
     assert window.document.node(((0, 1),)).align.to == "rect1.right"
-    assert window.points.table.rowCount() == 0
+    assert window.document.active_definition.points == []
 
 
 def test_canvas_is_white_by_default_and_can_be_dark(window):

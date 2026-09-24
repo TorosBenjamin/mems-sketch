@@ -45,6 +45,8 @@ from mems_sketch.core.shapes import (
     Point,
     Shape,
     check_point_reference,
+    map_expressions,
+    point_renamer,
     point_values,
     references,
     rename_node_references,
@@ -106,9 +108,9 @@ class ParamDef(_Model):
 class PointDef(_Model):
     """A named alignment point of a component, e.g. where a spring attaches.
 
-    The position is ``(x, y)``, measured from the point ``at`` (``node.point``,
-    a point of one of the component's own shapes) when given, else from the
-    origin. Both may be expressions over the component's parameters.
+    The position is ``(x, y)``, measured from the point ``at`` when given: a
+    point of one of the component's own top-level shapes (``node.point``) or of
+    the whole component (``center``, ``top_left``, …). Else from the origin. Both may be expressions over the component's parameters.
     """
 
     name: str
@@ -129,7 +131,9 @@ class PointDef(_Model):
     @field_validator("at")
     @classmethod
     def _reference(cls, at: str | None) -> str | None:
-        return None if at is None else check_point_reference(at)
+        if at is None or at in BBOX_POINTS:  # e.g. "center": of the whole component
+            return at
+        return check_point_reference(at)
 
 
 class ComponentDef(_Model):
@@ -182,6 +186,25 @@ class ComponentDef(_Model):
                 return p
         raise KeyError(f"component '{self.name}' has no parameter '{name}'")
 
+    def rename_point(self, old: str, new: str) -> None:
+        """Rename one of this component's declared points (see
+        :meth:`Project.rename_point` for the components that place it)."""
+        if any(p.name == new for p in self.points):
+            raise ValueError(f"point '{new}' already exists")
+        for index, point in enumerate(self.points):
+            if point.name == old:
+                self.points[index] = PointDef.model_validate({**point.model_dump(), "name": new})
+                return
+        raise KeyError(f"component '{self.name}' has no point '{old}'")
+
+    def follow_point_rename(self, nodes: set[str], old: str, new: str) -> None:
+        """Update what uses point ``old`` of the nodes named in ``nodes``, which place
+        a component whose point is now called ``new``: alignments, expressions and
+        this component's own points."""
+        change = point_renamer(nodes, old, new)
+        self.shapes = map_expressions(self.shapes, change)
+        self._rewrite_points(change)
+
     def rename_shape(self, old: str, new: str) -> None:
         """Rename a shape and update the alignments and expressions that use its points."""
         if any(s.name == new for s in walk(self.shapes)):
@@ -196,6 +219,10 @@ class ComponentDef(_Model):
             head, dot, rest = name.partition(".")
             return f"{new}.{rest}" if head == old and dot else None
 
+        self._rewrite_points(change)
+
+    def _rewrite_points(self, change: Callable[[str], str | None]) -> None:
+        """Pass the names this component's points measure from through ``change``."""
         self.points = [
             p.model_copy(
                 update={
@@ -237,19 +264,25 @@ class UserComponent(Component):
     def compile(self, params: Params) -> tuple[Geometry, dict[str, Point]]:
         variables = {**self.scope, **{k: float(v) for k, v in params.model_dump().items()}}
         geometry, local = Evaluator(self._lookup).render_scoped(self.definition.shapes, variables)
-        return geometry, declared_points(self.definition, variables, local)
+        return geometry, declared_points(self.definition, variables, local, geometry)
 
 
 def declared_points(
-    definition: ComponentDef, variables: dict[str, float], shapes: dict[str, NodePoints]
+    definition: ComponentDef,
+    variables: dict[str, float],
+    shapes: dict[str, NodePoints],
+    geometry: Geometry | None = None,
 ) -> dict[str, Point]:
-    """Positions of a component's declared points, given its evaluated top-level shapes."""
+    """Positions of a component's declared points, given its evaluated top-level shapes
+    and its geometry (for points measured from its own ``center``, ``left``, …)."""
     result = {}
     for point in definition.points:
         v = {**variables, "i": 0.0, "j": 0.0}
         v.update(point_values([e for e in (point.x, point.y) if isinstance(e, str)], shapes))
         base = (0.0, 0.0)
-        if point.at is not None:
+        if point.at in BBOX_POINTS:
+            base = NodePoints(definition.name, geometry or Geometry(), {}).point(point.at)
+        elif point.at is not None:
             node, _, name = point.at.partition(".")
             if node not in shapes:
                 raise ValueError(

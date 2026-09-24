@@ -39,10 +39,10 @@ from mems_sketch.gui.panels import (
     LayersPanel,
     MessagesPanel,
     ParametersPanel,
-    PointsPanel,
     ShapeTree,
     swatch_icon,
 )
+from mems_sketch.gui.points_panel import PointsPanel
 from mems_sketch.gui.process_view import ProcessView
 from mems_sketch.gui.properties import PropertyEditor
 from mems_sketch.gui.settings import PreferencesDialog, Settings
@@ -104,6 +104,9 @@ class MainWindow(QMainWindow):
         self.layers = LayersPanel(self.document)
         self.layers.layers.currentCellChanged.connect(self._layer_row_chosen)
         self.points = PointsPanel(self.document)
+        self.points.hovered.connect(self._point_hovered)
+        self.points.focused.connect(self._point_focused)
+        self._hovered_point = None
         self.messages = MessagesPanel()
         self._build_tool_windows()
 
@@ -301,6 +304,8 @@ class MainWindow(QMainWindow):
             ComponentView.show_implementation = self.settings.get(key)
             self.tree.select_paths([])
             self.refresh()
+        if key == "canvas/always_show_points":
+            self.update_overlay()
         if key in ("canvas/show_gizmos", "canvas/hover_highlight"):
             self.canvas.show_hover(None)
             self._hovered = None
@@ -605,6 +610,7 @@ class MainWindow(QMainWindow):
             self.tool_windows.add(name, title, icon, widget, anchor)
         self._restore_tool_windows()
         self.tool_windows.changed.connect(self._save_tool_windows)
+        self.tool_windows.changed.connect(self.update_overlay)  # points follow the panel
 
     def _restore_tool_windows(self) -> None:
         """The tool windows as they were left, or the ones a first start opens."""
@@ -836,23 +842,47 @@ class MainWindow(QMainWindow):
         view = self.view
         markers = [v.bbox_um for v in view.violations if v.bbox_um]
         results = self.document.results
-        box = results.node_box(view.selection[0]) if len(view.selection) == 1 else None
+        single = view.selection[0] if len(view.selection) == 1 else None
+        shown = self.points_shown()
+        box = results.node_box(single) if shown and single is not None else None
         self.canvas.show_overlay(results.highlight(view.selection), markers, box)
         self.canvas.show_guides(view.guides, set(view.selection))
-        try:
-            declared = [(n, x, y) for n, (x, y) in self.document.results.declared_points().items()]
-        except Exception:  # noqa: BLE001 - the messages panel shows why
-            declared = []
-        self.canvas.show_points("declared", declared, labels=True)
-        tool_markers = self.tool.markers()
-        selected = (
-            self.document.results.node_points(view.selection[0]) if len(view.selection) == 1 else []
+        open_ = self.tool_windows.is_open("points")
+        focus = (
+            [m for m in (self.points.focused_marker(), self._hovered_point) if m] if open_ else []
         )
+        declared = []
+        if shown:
+            try:
+                declared = [(n, x, y) for n, (x, y) in results.declared_points().items()]
+            except Exception:  # noqa: BLE001 - the messages panel shows why
+                declared = []
+        highlighted = {m[0] for m in focus}  # drawn once, highlighted
+        self.canvas.show_points("declared", [d for d in declared if d[0] not in highlighted], True)
+        tool_markers = self.tool.markers()
+        selected = results.node_points(single) if shown and single is not None else []
         self.canvas.show_points("selected", [] if "pick" in tool_markers else selected)
+        self.canvas.show_points("focus", focus, labels=True)
         for style in ("pick", "anchor"):
             self.canvas.show_points(style, tool_markers.get(style, []))
         self._place_gizmo()
         self._show_zoom()
+
+    def points_shown(self) -> bool:
+        """Points are drawn while you work with them: the Points panel is open (or
+        the setting says always); the align tool shows its own candidates."""
+        return self.settings.get("canvas/always_show_points") or self.tool_windows.is_open("points")
+
+    def _point_hovered(self, marker) -> None:
+        self._hovered_point = marker
+        self.update_overlay()
+
+    def _point_focused(self, marker) -> None:
+        """A point chosen in the Points panel: pan to it (the zoom stays)."""
+        if marker is not None:
+            zoom = self.canvas.pixels_per_um()
+            self.canvas.set_view_state(zoom, marker[1], marker[2])
+        self.update_overlay()
 
     def _place_gizmo(self) -> None:
         """The active tool's gizmo on the selection's centre (only in the current tab)."""

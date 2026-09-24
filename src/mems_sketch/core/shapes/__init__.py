@@ -107,6 +107,7 @@ from mems_sketch.core.shapes.render import (
 from mems_sketch.core.shapes.rewrite import (
     map_expressions,
     offset_value,
+    point_renamer,
     rename_node_references,
     rewrite,
     translated,
@@ -183,6 +184,7 @@ __all__ = [
     "placement_of",
     "point_dependencies",
     "point_names",
+    "point_renamer",
     "point_values",
     "references",
     "rename_node_references",

@@ -171,3 +171,26 @@ def test_canvas_is_white_by_default_and_can_be_dark(window):
     again = MainWindow()  # the choice is remembered
     assert again.canvas.backgroundBrush().color().name() == "#1e1f22"
     again.close()
+
+
+def test_switching_off_a_shape_inside_an_operation_in_the_list(window, qtbot):
+    """Issue #1: unticking a shape in the Shapes list rebuilt the list while Qt was
+    still ticking the item, which crashed. The change is now applied just after."""
+    from PySide6.QtCore import Qt
+
+    from mems_sketch.gui.panels import PATH_ROLE
+
+    window.add_primitive("rect")
+    window.add_primitive("circle")
+    window.tree.select_paths([((0, 0),), ((0, 1),)])
+    window.wrap("subtract")
+    window.tree.expandAll()
+    items, pending = [], [window.tree.topLevelItem(0)]
+    while pending:
+        item = pending.pop()
+        items.append(item)
+        pending.extend(item.child(i) for i in range(item.childCount()))
+    inner = next(i for i in items if i.data(0, PATH_ROLE) == ((0, 0), (1, 0)))
+    inner.setCheckState(0, Qt.CheckState.Unchecked)
+    assert window.document.node(((0, 0), (1, 0))).enabled  # not while Qt is in the item
+    qtbot.waitUntil(lambda: not window.document.node(((0, 0), (1, 0))).enabled)

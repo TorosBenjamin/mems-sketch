@@ -360,8 +360,14 @@ def test_open_in_the_other_pane(resonator):
     assert [v.component for v in resonator.area.views()] == ["top", "suspension"]
 
 
-def test_a_new_library_has_no_top_and_its_tab_shows_a_component(window):
+def test_a_new_library_has_no_top_and_its_tab_shows_a_component(window, tmp_path, monkeypatch):
+    def fill(dialog):
+        dialog.location.setText(str(tmp_path))
+        return dialog.DialogCode.Accepted
+
+    monkeypatch.setattr(window, "show_dialog", fill)
     window.new_library()
+    assert window.document.path == tmp_path / "library"
     assert window.document.project.top is None
     assert [v.component for v in window.area.views()] == ["component1"]
     window._edit_top()  # no top component to open

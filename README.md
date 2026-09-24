@@ -73,6 +73,20 @@ changes one line. See `examples/resonator` and the library it uses,
 - A component has **parameters** (with defaults, limits and optional integer
   constraint) and a **shape tree**. A default may be an expression over other
   parameters, e.g. `hole_r` defaulting to `pitch / 6`.
+- A parameter is **public** (the default: whoever places the component may
+  set it) or **internal** (`internal: true`): used only inside the component,
+  typically a derived value such as `hole_r`. Where the component is placed,
+  internal parameters are not offered, and setting one is an error. Trial
+  values still work on them while you edit the component itself.
+- A component is **shared** or **private** to another one, like a nested
+  class: `comb/finger` is `finger`, made for `comb` and placed only inside it
+  (in `comb` itself or in comb's other private components, which call it
+  plain `finger`). Its file is `components/comb/finger.yaml`. So the
+  components are one flat set, each defined once, and the hierarchy says
+  what belongs to what, not where things are used. A bare name is looked up
+  from the inside out: the component's own private components, its owner's,
+  then the shared ones, then the built-ins. **Make component** from a
+  selection makes a private component of the one being edited.
 - The design is the **top** component. Its parameters play the role of global
   variables, so any project can be placed inside another one.
 - Values passed to a component are evaluated in the caller's scope. Parameters
@@ -119,9 +133,10 @@ libraries:
   std: ../libraries/mems_std
 ```
 
-Its components are placed as `std.perforated_plate`. Libraries are read-only
-and self-contained: inside a library, bare names refer to that library's own
-components (then built-ins), never to the project's.
+Its components are placed as `std.perforated_plate`. A library exports its
+shared components; its private ones are its own business. Libraries are
+read-only and self-contained: inside a library, bare names refer to that
+library's own components (then built-ins), never to the project's.
 
 A project without a top component (`top: null` in `project.yaml`) is a
 library: just components, meant to be placed elsewhere
@@ -205,14 +220,17 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   where the change was made, reopening it if it was closed.
 - **Components** (an explorer): the project, each library and the built-ins,
   with their own icons (purple project components, blue library ones, orange
-  built-ins; a star for the top component). These are definitions: every
-  component expands to the components it uses, and those expand in turn
-  (hover one to see where it is placed). The placements themselves, each with
-  its own name, are in the Shapes list. Double-click opens a component in a tab; drag one onto the canvas, or
-  use **Place**, to put it into the component being edited. Right-click for
-  the rest: open in the other pane, rename (updates every reference and tab),
-  duplicate, delete, set as top, copy a library component into the project,
-  new component, add or remove a library, make the project a library. The +
+  built-ins; a star for the top component). These are definitions, each
+  listed once: a component expands to its private components (hover one to
+  see what it places and where it is placed). The placements themselves,
+  each with its own name, are in the Shapes list. Double-click opens a
+  component in a tab; drag one onto the canvas, or use **Place**, to put it
+  into the component being edited (a private one only inside its owner).
+  Right-click for the rest: open in the other pane, new private component,
+  **Make shared** / **Make private to**, rename (updates every reference and
+  tab), duplicate, delete (with its private components), set as top, copy a
+  library component into the project (with its private components), new
+  component, add or remove a library, make the project a library. The +
   button adds a component or a library.
 - **Shapes**: the shapes of the component being edited, one line each: the
   name, then briefly what it is (the layer of a primitive, the component a
@@ -243,10 +261,20 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   make or unpack component, rotate 90° and mirror, duplicate and delete.
   Entries that do not apply are greyed out. The keyboard's menu key opens it
   too.
-- **Properties**: generated from the selected node's schema. Any numeric field
-  takes a number or an expression, with its value shown beside it. For a
-  component the component's own parameters are listed, with their declared
-  defaults as placeholders. **Modifiers** are cards, as in Blender: each shows
+- **Properties**: generated from the selected node's schema. The shape's name
+  is the title (click it to rename), with an eye beside it that switches
+  the shape off or on at once (it stays selected); pairs such as x and y, or
+  columns and rows, share a row. Any numeric field takes a number or an expression. An
+  expression is tinted and shows its value inside the field (a red border
+  and tooltip if it cannot be evaluated). Typing a name offers the matching
+  parameters, process constants and points; the parameter button (on hover)
+  picks a parameter, **makes a parameter from the value** (asks for a name,
+  sets the default and uses it), or replaces an expression by its value.
+  Long names and expressions never widen the panel: a field not being edited
+  shows the start and cuts the rest with "…" (all of it in the tooltip and
+  while editing). For
+  a component the component's own parameters are listed, with their
+  declared defaults as placeholders. **Modifiers** are cards, as in Blender: each shows
   its settings (applied with the rest), and buttons that act at once: switch
   on or off, move up or down (the order matters), apply (turn the first one
   into real shapes) and remove. **Add modifier** adds an array, polar array
@@ -254,7 +282,8 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   (`self.left`, ...) and the other shapes' points; leave it empty to mirror
   across the axis given below it.
 - **Parameters**: the current tab's parameters: default (number or
-  expression), min, max, trial and the resolved value. A **trial** value shows
+  expression), min, max, trial and the resolved value. The lock button makes
+  the selected parameters internal (a lock beside the name) or public again. A **trial** value shows
   the component with another value without changing the design: it is not
   saved or undone, and only affects that component's own tab (the components
   that place it still pass their own values). It also works on library and

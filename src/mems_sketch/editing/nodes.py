@@ -43,11 +43,24 @@ class NodeEdits(Commands):
         return self.add(default_shape(kind, layer))
 
     def add_component(self, component: str, x: float = 0.0, y: float = 0.0) -> NodePath:
-        """Place a component (its origin at ``x, y``) in the active component."""
-        stem = component.rsplit(".", 1)[-1].split("_")[0]
-        return self.add(
-            RefShape(name=self.session.unique_name(stem), component=component, x=x, y=y)
-        )
+        """Place a component (its origin at ``x, y``) in the active component.
+
+        ``component`` is its unique name (``comb/finger``, ``lib.plate``) or a
+        name as the active component writes it; a private component can only be
+        placed inside its owner.
+        """
+        project, active = self.session.project, self.session.active
+        try:
+            target = project.qualify(component, active)
+        except KeyError:
+            target = project.qualify(component)  # a unique name, e.g. from the explorer
+        written = project.reference_name(target, active)
+        try:
+            project.qualify(written, active)  # a private component elsewhere is refused
+        except KeyError as exc:
+            raise ValueError(str(exc)) from None
+        stem = written.rsplit(".", 1)[-1].rsplit("/", 1)[-1].split("_")[0]
+        return self.add(RefShape(name=self.session.unique_name(stem), component=written, x=x, y=y))
 
     def replace(self, path: NodePath, new: Shape) -> None:
         """Replace a node. A new name is also used by alignments and point expressions."""

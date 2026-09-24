@@ -42,6 +42,8 @@ TOKENS = {
         "input_border": "#c9ccd6",
         "tooltip": "#ffffff",
         "scroll": "#c9ccd6",
+        "expression": "#f1ecfd",  # a field holding an expression (a parameter's purple, light)
+        "error": "#db3b4b",
     },
     "dark": {
         "frame": "#26282c",  # measured from IntelliJ's dark Islands theme
@@ -61,6 +63,8 @@ TOKENS = {
         "input_border": "#4e5157",
         "tooltip": "#393b40",
         "scroll": "#4e5157",
+        "expression": "#2f2940",
+        "error": "#e55765",
     },
 }
 
@@ -200,6 +204,14 @@ QToolTip {{
     border-radius: 4px;
 }}
 
+QLineEdit[expression="true"] {{ background: {expression}; }}
+QLineEdit[invalid="true"] {{ border: 1px solid {error}; }}
+QLineEdit#title-edit {{
+    background: transparent; border: 1px solid transparent; font-size: 14px; font-weight: 600;
+    padding: 2px 4px;
+}}
+QLineEdit#title-edit:hover {{ border: 1px solid {border_strong}; }}
+QLineEdit#title-edit:focus {{ border: 1px solid {accent}; background: {editor}; }}
 QFrame#modifier-card {{
     background: {editor}; border: 1px solid {border_strong}; border-radius: 6px;
 }}

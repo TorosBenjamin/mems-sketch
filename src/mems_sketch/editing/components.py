@@ -43,31 +43,20 @@ class ComponentEdits(Commands):
         every copy.
         """
         project = self.session.project
-        found = project.definition(project.qualify(component))
-        if found is None:
-            return []
-        definition, namespace = found
         counts: dict[str, int] = {}
-        for shape in walk(definition.shapes):
-            if isinstance(shape, RefShape):
-                try:
-                    target = project.qualify(shape.component, namespace)
-                except KeyError:
-                    continue  # the messages panel reports it
-                # copies whose count is an expression are counted once
-                counts[target] = counts.get(target, 0) + total_copies(shape.modifiers)
+        # unresolved references are left out: the messages panel reports them
+        for shape, target in project.references_of(project.qualify(component)):
+            # copies whose count is an expression are counted once
+            counts[target] = counts.get(target, 0) + total_copies(shape.modifiers)
         return list(counts.items())
 
     def users(self, component: str) -> list[str]:
         """The local components that place ``component`` directly."""
-        return [
-            name
-            for name in self.session.project.components
-            if any(target == component for target, _ in self.placed(name))
-        ]
+        return self.session.project.users(component)
 
-    def new(self, name: str) -> str:
-        self._check_name(name)
+    def new(self, name: str, owner: str | None = None) -> str:
+        """A new empty component: shared, or private to ``owner``."""
+        name = self._check_name(name, owner)
         self.session.edit(
             f"New component {name}",
             lambda p: p.components.__setitem__(name, ComponentDef(name=name)),
@@ -76,9 +65,11 @@ class ComponentEdits(Commands):
         return name
 
     def delete(self, name: str) -> None:
-        if name not in self.session.project.components:
+        """Delete a component and its private components (none may be in use elsewhere)."""
+        project = self.session.project
+        if name not in project.components:
             raise ValueError(f"'{name}' is not a component of this project")
-        if len(self.session.project.components) == 1:
+        if all(k == name or k.startswith(f"{name}/") for k in project.components):
             raise ValueError("a project needs at least one component")
         self.session.edit(f"Delete component {name}", lambda p: p.remove_component(name))
 
@@ -90,26 +81,41 @@ class ComponentEdits(Commands):
         shapes to copy; place them instead.
         """
         project = self.session.project
-        found = project.definition(project.qualify(component))
-        if found is None:
+        qualified = project.qualify(component)
+        if project.definition(qualified) is None:
             raise ValueError(f"'{component}' is built in: it has no shapes to copy; place it")
-        definition, namespace = found
-        taken = set(project.components)
-        stem = component.rpartition(".")[2]
+        library, _, path = qualified.rpartition(".")
+        # A local copy stays with its owner; a library component becomes shared.
+        owner = path.rpartition("/")[0] if not library else ""
+        stem = path.rpartition("/")[2]
+        taken = {k.rpartition("/")[2] for k in project.components if k.rpartition("/")[0] == owner}
         name = name or (stem if stem not in taken and not is_builtin(stem) else None)
         name = name or fresh_name(f"{stem}_copy", taken)
-        self._check_name(name)
-        copied = definition.model_copy(deep=True, update={"name": name})
-        if namespace is not None:
-            for shape in walk(copied.shapes):
-                if isinstance(shape, RefShape):
-                    shape.component = project.qualify(shape.component, namespace)
-        self.session.edit(
-            f"Copy {component} into the project",
-            lambda p: p.components.__setitem__(name, copied),
-        )
-        self.session.set_active(name)
-        return name
+        root = self._check_name(name, owner or None)
+        prefix = f"{library}." if library else ""
+        pool = project.libraries[library].components if library else project.components
+        # The component and its private components, each with where it goes.
+        subtree = {
+            prefix + key: root + key[len(path) :]
+            for key in pool
+            if key == path or key.startswith(f"{path}/")
+        }
+
+        def change(p: Project) -> None:
+            copies = {
+                key: p.definition(source)[0].model_copy(deep=True, update={"name": key})
+                for source, key in subtree.items()
+            }
+            p.components.update(copies)  # first: references may name each other
+            for source, key in subtree.items():
+                for shape in walk(copies[key].shapes):
+                    if isinstance(shape, RefShape):  # written as seen from the copy
+                        target = p.qualify(shape.component, source)
+                        shape.component = p.reference_name(subtree.get(target, target), key)
+
+        self.session.edit(f"Copy {component} into the project", change)
+        self.session.set_active(root)
+        return root
 
     # -- libraries ---------------------------------------------------------
 
@@ -141,16 +147,36 @@ class ComponentEdits(Commands):
         self.session.edit(f"Remove library {name}", lambda p: p.libraries.pop(name))
 
     def rename(self, old: str, new: str) -> None:
-        self._check_name(new)
+        """Give a component a new (short) name; its private components follow."""
+        owner = old.rpartition("/")[0] or None
+        self._move(old, self._check_name(new, owner), f"Rename component {old}")
+
+    def move(self, name: str, owner: str | None) -> str:
+        """Make a component private to ``owner``, or shared (``None``); its own
+        private components come along. Refused if a component that places it could
+        no longer see it."""
+        short = name.rpartition("/")[2]
+        where = f"private to {owner}" if owner else "shared"
+        new = self._check_name(short, owner)
+        self._move(name, new, f"Make {short} {where}")
+        return new
+
+    def _move(self, old: str, new: str, description: str) -> None:
+        moved = {
+            k: new + k[len(old) :]
+            for k in self.session.project.components
+            if k == old or k.startswith(f"{old}/")
+        }
 
         def change(project: Project) -> None:
-            project.rename_component(old, new)
-            if self.session.active == old:
-                self.session.active = new
+            project.move_component(old, new)
+            self.session.active = moved.get(self.session.active, self.session.active)
 
-        self.session.edit(
-            f"Rename component {old}", change, lambda: self.session.component_renamed.emit(old, new)
-        )
+        def done() -> None:
+            for before, after in moved.items():
+                self.session.component_renamed.emit(before, after)
+
+        self.session.edit(description, change, done)
 
     def set_top(self, name: str | None) -> None:
         """Make a local component the top one; ``None`` makes the project a library."""
@@ -158,28 +184,41 @@ class ComponentEdits(Commands):
         def change(project: Project) -> None:
             if name is not None and name not in project.components:
                 raise ValueError(f"'{name}' is not a local component")
+            if name is not None and "/" in name:
+                raise ValueError(f"'{name}' is private: make it shared to use it as the top")
             project.top = name
 
         description = f"Make {name} the top component" if name else "Make the project a library"
         self.session.edit(description, change)
 
-    def _check_name(self, name: str) -> None:
+    def _check_name(self, name: str, owner: str | None = None) -> str:
+        """The path of a new component ``name`` (private to ``owner``), if it is free."""
         if not name.isidentifier():
             raise ValueError(f"'{name}' is not a valid component name")
-        if name in self.session.project.components or is_builtin(name):
-            raise ValueError(f"a component named '{name}' already exists")
+        if owner is not None and owner not in self.session.project.components:
+            raise ValueError(f"'{owner}' is not a component of this project")
+        path = f"{owner}/{name}" if owner else name
+        if path in self.session.project.components or is_builtin(name):
+            where = f" in {owner}" if owner else ""
+            raise ValueError(f"a component named '{name}' already exists{where}")
+        return path
 
     def make(self, paths: list[NodePath], name: str) -> NodePath:
         """Move sibling nodes into a new component and put a reference in their place.
 
         A single transform becomes a component of its children, placed where
-        the transform was (with its alignment, modifiers and name). Parameters of the active component that the nodes use become parameters
-        of the new component (with the same defaults and limits) and are passed
-        through by the reference, so the geometry is unchanged.
+        the transform was (with its alignment, modifiers and name). Parameters of
+        the active component that the nodes use become parameters of the new
+        component (with the same defaults and limits) and are passed through by
+        the reference, so the geometry is unchanged.
+
+        The new component is private to the active one (it was part of it);
+        :meth:`move` makes it shared. Returns the reference's path.
         """
-        self._check_name(name)
+        short = name
+        name = self._check_name(short, self.session.active)
         ordered, first, nodes = self.session.nodes.siblings(paths)
-        placement: dict[str, Any] = {"name": self.session.unique_name(name)}
+        placement: dict[str, Any] = {"name": self.session.unique_name(short)}
         if len(nodes) == 1 and isinstance(nodes[0], TransformShape):
             # A transform becomes a component placed where the transform was.
             transform = nodes[0]
@@ -206,13 +245,15 @@ class ComponentEdits(Commands):
                     if dep not in used:
                         used.add(dep)
                         pending.append(dep)
-        parameters = [
-            p.model_copy() for p in self.session.active_definition.parameters if p.name in used
+        parameters = [  # passed in by the reference, so public in the new component
+            p.model_copy(update={"internal": False})
+            for p in self.session.active_definition.parameters
+            if p.name in used
         ]
         definition = ComponentDef(
             name=name, parameters=parameters, shapes=[n.model_copy(deep=True) for n in nodes]
         )
-        reference = RefShape(component=name, params={p: p for p in sorted(used)}, **placement)
+        reference = RefShape(component=short, params={p: p for p in sorted(used)}, **placement)
         indices = {p[-1][1] for p in ordered}
 
         def change(project: Project) -> None:
@@ -222,7 +263,7 @@ class ComponentEdits(Commands):
             kept = [s for i, s in enumerate(target) if i not in indices]
             target[:] = kept[:first] + [reference] + kept[first:]
 
-        self.session.edit(f"Make component {name}", change)
+        self.session.edit(f"Make component {short}", change)
         return (*ordered[0][:-1], (ordered[0][-1][0], first))
 
     def unpack(self, path: NodePath) -> NodePath:
@@ -236,17 +277,26 @@ class ComponentEdits(Commands):
         node = self.session.node(path)
         if not isinstance(node, RefShape):
             raise ValueError("select a component reference to unpack")  # noqa: TRY004
-        found = self.session.project.definition(self.session.project.qualify(node.component))
+        project, active = self.session.project, self.session.active
+        found = project.definition(project.qualify(node.component, active))
         if found is None:
             raise ValueError(f"'{node.component}' is a built-in component: it has no shapes")
-        definition, namespace = found
+        definition, context = found
         values = _parameter_values(definition, node.params)
         shapes = map_expressions(
             definition.shapes, lambda n: _as_expression(values[n]) if n in values else None
         )
         for shape in walk(shapes):
-            if isinstance(shape, RefShape) and namespace is not None:
-                shape.component = self.session.project.qualify(shape.component, namespace)
+            if isinstance(shape, RefShape):  # written as seen from the active component
+                target = project.qualify(shape.component, context)
+                try:
+                    project.qualify(project.reference_name(target, active), active)
+                except KeyError:
+                    raise ValueError(
+                        f"'{node.component}' places its private component '{shape.component}': "
+                        "make that shared first, then unpack"
+                    ) from None
+                shape.component = project.reference_name(target, active)
         taken = {s.name for s in walk(self.session.shapes) if s.name}
         for old in [s.name for s in walk(shapes) if s.name in taken]:
             new = fresh_name(old, taken | {s.name for s in walk(shapes) if s.name})

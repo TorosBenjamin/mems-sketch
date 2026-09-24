@@ -74,10 +74,10 @@ def test_make_component_and_switch_components(window, monkeypatch):
     window.make_component()
     assert window.document.shapes[0].component == "cell"
     assert window.selection == [((0, 0),)]
-    window.document.set_active("cell")
+    window.document.set_active("top/cell")  # private to the component it came from
     assert window.tree.topLevelItemCount() == 2
     assert window.selection == []  # selection does not leak across components
-    assert "editing cell" in window.windowTitle()
+    assert "editing top/cell" in window.windowTitle()
 
 
 def test_open_example_project_with_library(window, tmp_path):

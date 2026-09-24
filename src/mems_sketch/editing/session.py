@@ -320,8 +320,20 @@ class EditSession:
             return {}
         return {k: v for k, v in trials.items() if k in schema}
 
-    def component_names(self) -> list[str]:
-        return self.project.component_names()
+    def component_names(self, component: str | None = None) -> list[str]:
+        """What can be placed in a component (default: the active one), as it writes
+        them; not the component itself."""
+        component = component or self.active
+        return [
+            name
+            for name in self.project.component_names(component)
+            if self.project.qualify(name, component) != component
+        ]
+
+    def resolve(self, name: str, component: str | None = None) -> str:
+        """The unique name of what a reference ``name`` in a component (default: the
+        active one) places."""
+        return self.project.qualify(name, component or self.active)
 
     def component(self, name: str) -> Component:
         return self.compiled().component(name)
@@ -346,8 +358,7 @@ class EditSession:
         node = node_at(self.definition_of(component).shapes, path)
         if not isinstance(node, RefShape):
             return None
-        namespace = component.partition(".")[0] if "." in component else None
-        return self.project.qualify(node.component, namespace)
+        return self.project.qualify(node.component, component)
 
     def set_active(self, name: str) -> None:
         """Make a component active: a local one to edit, or a library/built-in one to view."""

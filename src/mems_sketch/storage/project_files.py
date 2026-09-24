@@ -7,7 +7,9 @@ Layout::
       process.yaml          layers and process constants
       components/
         top.yaml            one file per local component
-        plate.yaml
+        comb.yaml
+        comb/
+          finger.yaml       a component private to comb (named "finger" in the file)
 
 A library is a folder of component files (either directly or in a
 ``components/`` subfolder), loaded read-only under the name given in
@@ -53,11 +55,23 @@ def save_project(project: Project, folder: str | Path) -> Path:
     _write(folder / PROJECT_FILE, yaml_format.dump(header))
     _write(folder / PROCESS_FILE, yaml_format.dump(_process_data(project.process)))
     for name, definition in project.components.items():
-        _write(components_dir / f"{name}.yaml", yaml_format.dump(yaml_format.to_data(definition)))
-    for stale in components_dir.glob("*.yaml"):
-        if stale.stem not in project.components:
+        path = components_dir / f"{name}.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = yaml_format.to_data(definition)
+        data["name"] = definition.short_name  # the folder gives the owner
+        _write(path, yaml_format.dump(data))
+    for stale in components_dir.rglob("*.yaml"):
+        if _component_path(stale, components_dir) not in project.components:
             stale.unlink()
+    for directory in sorted(components_dir.rglob("*"), reverse=True):  # deepest first
+        if directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()
     return folder
+
+
+def _component_path(file: Path, components_dir: Path) -> str:
+    """``components/comb/finger.yaml`` -> ``comb/finger``."""
+    return file.relative_to(components_dir).with_suffix("").as_posix()
 
 
 def _process_data(process: Process) -> dict[str, Any]:
@@ -156,8 +170,18 @@ def _load_process(path: Path) -> Process:
 
 
 def _load_components(folder: Path) -> dict[str, ComponentDef]:
+    """Every component file, private ones in their owner's folder (``comb/finger.yaml``)."""
     components = {}
-    for path in sorted(folder.glob("*.yaml")) if folder.is_dir() else []:
+    files = []
+    pending = [folder] if folder.is_dir() else []
+    while pending:  # only an owner's folder holds private components: comb/ beside comb.yaml
+        current = pending.pop()
+        for path in sorted(current.glob("*.yaml")):
+            files.append(path)
+            if path.with_suffix("").is_dir():
+                pending.append(path.with_suffix(""))
+    files.sort(key=lambda p: (len(p.parts), p))
+    for path in files:
         try:
             definition = ComponentDef.model_validate(_read(path))
         except Exception as exc:
@@ -166,7 +190,12 @@ def _load_components(folder: Path) -> dict[str, ComponentDef]:
             raise ProjectFormatError(
                 f"{path}: component name '{definition.name}' does not match the file name"
             )
-        components[definition.name] = definition
+        name = _component_path(path, folder)
+        try:
+            definition = ComponentDef.model_validate({**definition.model_dump(), "name": name})
+        except Exception as exc:
+            raise ProjectFormatError(f"{path}: {exc}") from exc
+        components[name] = definition
     return components
 
 

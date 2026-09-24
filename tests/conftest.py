@@ -66,6 +66,8 @@ def git_repo(tmp_path):
     folder = tmp_path / "repo" / "demo"
     folder.mkdir(parents=True)
     _run_git(folder.parent, "init", "-q")
+    _run_git(folder.parent, "config", "user.name", "Test")  # the app commits too
+    _run_git(folder.parent, "config", "user.email", "test@example.com")
     return folder
 
 

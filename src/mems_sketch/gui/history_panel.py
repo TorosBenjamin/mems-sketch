@@ -1,11 +1,17 @@
-"""The History tool window: the project's commits in git, and what each changed.
+"""The History tool window: the project's commits in git, what each changed,
+committing and restoring.
 
 The list starts with *Uncommitted changes* (the last commit against the
 project being edited, saved or not), then the commits that changed the
 project, newest first. Choosing one lists its changes below, grouped by
 component, and the canvas shows the material it added (tinted) and removed
-(hatched) in the component being edited. Right-click a commit to compare it
-with the design as it is now. Nothing here changes the repository.
+(hatched) in the component being edited.
+
+With *Uncommitted changes* chosen, a message box and **Commit** save the
+project and commit its folder (only it). Right-click a commit to compare it
+with the design now, or to restore the project or the open component as it
+was (an ordinary, undoable edit). A saved project outside git gets an
+**Initialize git here** button. Branches, merging and remotes are left to git.
 """
 
 from __future__ import annotations
@@ -16,13 +22,17 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMenu,
+    QPushButton,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from mems_sketch.core.component import Geometry
@@ -31,14 +41,14 @@ from mems_sketch.editing import EditSession
 from mems_sketch.editing.history import Comparison
 from mems_sketch.gui import icons
 from mems_sketch.gui.panels import _action_bar, _Panel
+from mems_sketch.storage import git
 
 KEY_ROLE = Qt.ItemDataRole.UserRole + 30  # a version row: ("uncommitted",) or ("commit", sha)
 CHANGE_ROLE = Qt.ItemDataRole.UserRole + 31  # a change row: its Change
 UNCOMMITTED = ("uncommitted",)
-NOT_IN_GIT = (
-    "The project is not in a git repository. Save it in one (or run *git init* in its "
-    "folder) to see what each commit changed."
-)
+NOT_IN_GIT = "The project is not in a git repository yet: start one to keep its history."
+NOT_SAVED = "Save the project in a folder to keep its history in git."
+NO_GIT = "History needs *git*, which is not installed."
 GROUP_ICONS = {PROJECT: "settings", PROCESS: "layers", IMPORTS: "import"}
 ACTION_ICONS = {ADDED: "add", REMOVED: "remove"}  # anything else: "modified"
 
@@ -75,6 +85,13 @@ class HistoryPanel(_Panel):
         self.note.setTextFormat(Qt.TextFormat.RichText)
         self.note.setContentsMargins(8, 6, 8, 6)
         self.note.setObjectName("muted")
+        self.init_button = QPushButton("Initialize git here")
+        self.init_button.setToolTip("Make the project's folder a git repository")
+        self.init_button.clicked.connect(self.init_repository)
+        init_row = QHBoxLayout()
+        init_row.setContentsMargins(8, 0, 8, 6)
+        init_row.addWidget(self.init_button)
+        init_row.addStretch(1)
 
         self.versions = QTreeWidget()
         self.versions.setHeaderLabels(["Version", "When"])
@@ -92,15 +109,40 @@ class HistoryPanel(_Panel):
         self.changes.setHeaderHidden(True)
         self.changes.itemClicked.connect(self._change_clicked)
 
+        self.message = QLineEdit()
+        self.message.returnPressed.connect(self.commit)
+        self.commit_button = QPushButton("Commit")
+        self.commit_button.setToolTip("Save the project and commit its folder")
+        self.commit_button.clicked.connect(self.commit)
+        self.commit_note = QLabel()  # files staged elsewhere, left out
+        self.commit_note.setObjectName("muted")
+        self.commit_note.setWordWrap(True)
+        self.commit_box = QWidget()
+        box = QVBoxLayout(self.commit_box)
+        box.setContentsMargins(6, 6, 6, 2)
+        box.setSpacing(4)
+        row = QHBoxLayout()
+        row.addWidget(self.message, 1)
+        row.addWidget(self.commit_button)
+        box.addLayout(row)
+        box.addWidget(self.commit_note)
+        lower = QWidget()
+        lower_layout = QVBoxLayout(lower)
+        lower_layout.setContentsMargins(0, 0, 0, 0)
+        lower_layout.setSpacing(0)
+        lower_layout.addWidget(self.commit_box)
+        lower_layout.addWidget(self.changes, 1)
+
         self.split = QSplitter(Qt.Orientation.Vertical)
         self.split.addWidget(self.versions)
-        self.split.addWidget(self.changes)
+        self.split.addWidget(lower)
         self.split.setSizes([160, 300])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addLayout(header)
         layout.addWidget(self.note)
+        layout.addLayout(init_row)
         layout.addWidget(self.split, 1)
         self.document.file_changed.connect(self._file_changed)
 
@@ -113,7 +155,8 @@ class HistoryPanel(_Panel):
         available = history.available
         self.split.setVisible(available)
         self.note.setVisible(not available)
-        self.note.setText(_rich(NOT_IN_GIT))
+        self.note.setText(_rich(self._why_not()))
+        self.init_button.setVisible(not available and history.can_init())
         self.versions.blockSignals(True)
         self.versions.clear()
         if available:
@@ -156,6 +199,12 @@ class HistoryPanel(_Panel):
             self.key = tuple(item.data(0, KEY_ROLE))
             self.compare()
 
+    def _why_not(self) -> str:
+        """Why there is no history, in words."""
+        if not git.available():
+            return NO_GIT
+        return NOT_SAVED if self.document.path is None else NOT_IN_GIT
+
     def _menu(self, pos) -> None:
         item = self.versions.itemAt(pos)
         key = tuple(item.data(0, KEY_ROLE)) if item is not None else None
@@ -164,7 +213,33 @@ class HistoryPanel(_Panel):
         menu = QMenu(self)
         menu.addAction("Show what this commit changed", lambda: self.choose(key))
         menu.addAction("Compare with the design now", lambda: self.choose(("since", key[1])))
+        menu.addSeparator()
+        menu.addAction("Restore the project as it was", lambda: self.restore(key[1]))
+        active = self.document.active
+        if active in self.document.project.components:
+            menu.addAction(f"Restore {active} as it was", lambda: self.restore(key[1], active))
         menu.exec(self.versions.viewport().mapToGlobal(pos))
+
+    # -- writing ---------------------------------------------------------------
+
+    def commit(self) -> None:
+        """Save and commit the project with the message (or the suggested one)."""
+        message = self.message.text().strip() or self.message.placeholderText()
+        if self._guard(lambda: self.document.history.commit_changes(message)):
+            self.message.clear()
+            self.key = UNCOMMITTED
+            self.reload()
+
+    def restore(self, sha: str, component: str | None = None) -> None:
+        """Bring back the project (or one component) as it was; then show what that
+        changed against the last commit."""
+        if self._guard(lambda: self.document.history.restore(sha, component)):
+            self.choose(UNCOMMITTED)
+
+    def init_repository(self) -> None:
+        if self._guard(self.document.history.init):
+            self.key = UNCOMMITTED
+            self.reload()
 
     def choose(self, key: Key) -> None:
         """Show a comparison: ``UNCOMMITTED``, ``("commit", sha)`` (what it changed)
@@ -199,6 +274,7 @@ class HistoryPanel(_Panel):
     def _show(self, comparison: Comparison | None) -> None:
         self.comparison = comparison
         self.title.setText(self._describe() if comparison is not None else "")
+        self._update_commit_box()
         self._geometry.clear()
         self.changes.clear()
         if comparison is not None:
@@ -207,10 +283,31 @@ class HistoryPanel(_Panel):
 
     def _describe(self) -> str:
         if self.key == UNCOMMITTED:
-            return "Since the last commit"
-        if self.key[0] == "since":
-            return f"From {self.key[1][:7]} to now"
-        return f"Commit {self.key[1][:7]}"
+            text = "Since the last commit"
+        elif self.key[0] == "since":
+            text = f"From {self.key[1][:7]} to now"
+        else:
+            text = f"Commit {self.key[1][:7]}"
+        branch = self.document.history.branch
+        return f"{branch} · {text}" if branch else text
+
+    def _update_commit_box(self) -> None:
+        """The message box shows with uncommitted changes to commit."""
+        history = self.document.history
+        shown = (
+            self.key == UNCOMMITTED
+            and self.comparison is not None
+            and bool(self.comparison.changes)
+        )
+        self.commit_box.setVisible(shown)
+        if not shown:
+            return
+        self.message.setPlaceholderText(history.suggested_message(self.comparison))
+        elsewhere = history.staged_elsewhere()
+        self.commit_note.setVisible(bool(elsewhere))
+        if elsewhere:
+            names = ", ".join(elsewhere[:3]) + (" …" if len(elsewhere) > 3 else "")
+            self.commit_note.setText(f"Left out: staged outside the project ({names}).")
 
     def _list(self, comparison: Comparison) -> None:
         if not comparison.changes:

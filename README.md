@@ -419,9 +419,20 @@ Every menu is under **☰** at the left of the toolbar; the menu paths below
   Changes are listed per component (`parameter slot_x: default 45 → 60`,
   `shape cut › slot: x0 45 → 60`, `layer metal added`); click one to go to
   it. The canvas tints the material added and hatches the material removed in
-  the component you are editing, with default parameters. Commit with your
-  usual git tools: the app only reads the repository. In code:
-  `session.history.uncommitted().changes`, `session.history.commit("HEAD")`.
+  the component you are editing, with default parameters.
+  - **Commit**: with *Uncommitted changes* chosen, type a message (or keep the
+    suggested one, e.g. `Change parameter slot_x; add anchor_2`) and commit.
+    The project is saved and only its folder is committed; files staged
+    elsewhere in the repository stay staged and are named under the box.
+    Git needs your name and email once (`git config --global user.name …`).
+  - **Restore**: right-click a commit to bring back the project, or the
+    component you are editing, as it was. It is an ordinary edit (Undo takes
+    it back) and git is not touched: commit it to keep it.
+  - A saved project outside git gets **Initialize git here**. Branches,
+    merging, push and pull stay with your git tools; the current branch shows
+    in the panel's header.
+  - In code: `session.history.uncommitted().changes`,
+    `session.history.commit_changes("message")`, `session.history.restore(sha)`.
 
 ## Shapes and operations
 

@@ -6,9 +6,9 @@ A project is a folder of YAML files that is meant to live in git. A YAML diff is
 hard to read, and one number can move half the device. The History tool window
 shows what changed, in words a designer uses and on the canvas.
 
-The feature only reads the repository. People commit, branch and merge with their
-usual git tools. Committing from the app can come later, once the viewer has
-proven itself.
+Part 1 reads the repository. Part 2 commits the project, restores earlier
+versions and starts a repository. Branching, merging and remotes stay with the
+user's own git tools.
 
 ## Reading versions (`storage/git.py`)
 
@@ -101,7 +101,43 @@ How versions are matched:
     Refresh button (after committing outside the app).
 - A project outside git shows a note on how to get history.
 
+## Part 2: committing, restoring, starting a repository
+
+**Commit**
+- Git: `git add --all -- .` in the project folder, then `git commit -- .`.
+- Only the folder is committed. Anything the user staged elsewhere stays staged,
+  and the panel names those files under the message box.
+- `session.history.commit_changes(message)` saves first, so unsaved edits are
+  committed too.
+- It refuses, in words:
+  - with no changes;
+  - with an empty message;
+  - when git has no name or email. The message says how to set them.
+
+**Suggested message**
+- The suggestion comes from the change list, for example
+  `Change parameter slot_x; add anchor_2`. Longer lists end with "and N more".
+- The first commit is suggested as `Start <project>`.
+- It is shown as the placeholder: Enter or Commit with an empty box uses it.
+
+**Restore**
+- `session.history.restore(sha, component=None)` is one `session.edit` (undoable).
+- The whole project gets back the commit's components, process, imports, name and
+  top.
+- One component gets back itself and its private components (`comb/...`). The
+  other components keep their place in the order.
+- Git is not touched: the restored design shows as uncommitted changes, and the
+  panel switches to them.
+
+**Initialize**
+- A saved project outside any repository gets an **Initialize git here** button,
+  which runs `git init` in its folder.
+- An unsaved project, or a machine without git, gets a note saying so.
+
+**Branch**
+- The panel header shows the current branch (`main · Since the last commit`).
+
 ## Not now
 
-- Committing, staging, branches and restoring a version.
+- Branches, merging, push and pull; staging parts of a change.
 - Comparing with parameter values other than the defaults.

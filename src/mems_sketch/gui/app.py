@@ -93,9 +93,12 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "history": "What changed, from the project's commits in git. *Uncommitted "
     "changes* are those since the last commit, saved or not; choose a commit to see "
     "what it changed. The canvas shows the material added (tinted) and removed "
-    "(hatched) in the component you are editing, with default parameters.\n\n"
-    "Click a change to go to it; right-click a commit to compare it with the design "
-    "now. Commit with your usual git tools: nothing here changes the repository.",
+    "(hatched) in the component you are editing, with default parameters. Click a "
+    "change to go to it.\n\n"
+    "*Commit* saves the project and commits its folder, nothing else. Right-click a "
+    "commit to compare it with the design now, or to restore the project (or the "
+    "component you are editing) as it was: an ordinary edit, which Undo takes back. "
+    "Branches, merging and remotes stay with your git tools.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "

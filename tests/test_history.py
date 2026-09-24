@@ -151,3 +151,87 @@ def test_process_imports_and_components():
         ("comb", "component removed"),
     ]
     assert {c.action for c in diff_projects(old, new)} == {ADDED, REMOVED, CHANGED}
+
+
+# -- committing and restoring -----------------------------------------------------
+
+
+def test_committing_saves_and_commits_the_project(session):
+    session.nodes.add(RectShape(name="pad", layer="device", x0=0, y0=20, x1=10, y1=30))
+    assert session.history.suggested_message() == "Start demo"  # the first commit
+    sha = session.history.commit_changes("First sketch")
+    assert not session.dirty
+    [latest] = session.history.commits()
+    assert (latest.sha, latest.subject) == (sha, "First sketch")
+    assert session.history.uncommitted().changes == []
+    with pytest.raises(ValueError, match="nothing to commit"):
+        session.history.commit_changes("Again")
+
+
+def test_only_the_project_folder_is_committed(session, git_repo):
+    other = git_repo.parent / "notes.txt"
+    other.write_text("not part of the design")
+    run_git = __import__("subprocess").run
+    run_git(["git", "add", "notes.txt"], cwd=git_repo.parent, check=True)
+    assert session.history.staged_elsewhere() == ["notes.txt"]
+    session.history.commit_changes("First sketch")
+    assert session.history.staged_elsewhere() == ["notes.txt"]  # still staged, not committed
+
+
+def test_the_suggested_message_names_what_changed(session, commit):
+    commit(session, "First sketch")
+    session.parameters.update("length", default=120)
+    session.nodes.add(RectShape(name="pad", layer="device", x0=0, y0=20, x1=10, y1=30))
+    assert session.history.suggested_message() == "Change parameter length; add pad"
+
+
+def test_committing_needs_a_name_and_email(session, git_repo, tmp_path, monkeypatch):
+    run_git = __import__("subprocess").run
+    for key in ("user.name", "user.email"):
+        run_git(["git", "config", "--unset", key], cwd=git_repo, check=True)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "no-global-config"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    with pytest.raises(ValueError, match="does not know who you are"):
+        session.history.commit_changes("First sketch")
+
+
+def test_restoring_a_version_is_one_undoable_edit(session, commit):
+    commit(session, "First sketch")
+    session.parameters.update("length", default=120)
+    session.components.new("frame")
+    session.set_active("top")
+    commit(session, "Longer, with a frame")
+    session.nodes.add(RectShape(name="pad", layer="device", x0=0, y0=20, x1=10, y1=30))
+    first = session.history.commits()[-1].sha
+    session.history.restore(first)
+    assert "frame" not in session.project.components
+    assert session.project.components["top"].parameters[0].default == 100
+    assert len(session.project.components["top"].shapes) == 1
+    assert session.history.commits()[0].subject == "Longer, with a frame"  # git untouched
+    session.undo()
+    assert "frame" in session.project.components
+
+
+def test_restoring_one_component_leaves_the_others(session, commit):
+    session.components.new("frame")
+    session.set_active("top")
+    commit(session, "First sketch")
+    session.parameters.update("length", default=120)
+    session.nodes.add(RectShape(name="pad", layer="device", x0=0, y0=20, x1=10, y1=30))
+    session.components.new("spring")
+    first = session.history.commits()[-1].sha
+    session.history.restore(first, "top")
+    assert session.project.components["top"].parameters[0].default == 100
+    assert list(session.project.components) == ["top", "frame", "spring"]
+    with pytest.raises(ValueError, match="not in"):
+        session.history.restore(first, "spring")
+
+
+def test_a_saved_project_outside_git_can_start_a_repository(tmp_path):
+    session = EditSession()
+    assert not session.history.can_init()  # not saved yet
+    session.save(tmp_path / "plain")
+    assert session.history.can_init()
+    session.history.init()
+    assert session.history.available and not session.history.can_init()
+    assert session.history.branch  # e.g. "main" or "master", before any commit

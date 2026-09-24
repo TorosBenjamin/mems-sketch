@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING
 
 import klayout.db as kdb
@@ -10,6 +11,8 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.shapes import (
     NodePath,
     NodeRecord,
+    Shape,
+    container_of,
     frame_of,
     node_at,
     to_ictrans,
@@ -67,6 +70,25 @@ class Results:
             return etch.etched(self.session.project, drawn)
         if mode == "compensated":
             return etch.compensated(self.session.project, drawn)
+        return drawn
+
+    def preview(self, path: NodePath, node: Shape, mode: str = "drawn") -> Geometry:
+        """The active component as it would be with ``node`` at ``path``, without
+        changing anything (e.g. while a value is dragged). Raises if it does not build."""
+        project, component = self.session.project, self.session.active
+        definition = project.components[component].model_copy(deep=True)
+        container, index = container_of(definition.shapes, path)
+        container[index] = node
+        trial = dataclasses.replace(
+            project, components={**project.components, component: definition}
+        )
+        drawn = self.session.compiler.session(trial).render(
+            component, self.session.trials_for(component)
+        )
+        if mode == "etched":
+            return etch.etched(trial, drawn)
+        if mode == "compensated":
+            return etch.compensated(trial, drawn)
         return drawn
 
     def check(

@@ -121,9 +121,14 @@ PAIR_LABELS = {  # (kind, first field) -> row label, where the default does not 
 }
 
 
+# Fields holding a count: dragged in whole numbers, never below 1.
+COUNT_FIELDS = {"columns", "rows", "count", "segments", "turns", "fingers"}
+
+
 class PropertyEditor(QScrollArea):
     error = Signal(str)
     applied = Signal()
+    previewed = Signal(object)  # the node as the fields describe it, while a value is dragged
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -267,7 +272,11 @@ class PropertyEditor(QScrollArea):
         """A field for a number or an expression (see :class:`ValueEdit`)."""
         parameters = [p.name for p in self.document.active_definition.parameters]
         edit = ValueEdit(value, self._scope, parameters, prefix=prefix, optional=optional)
+        if field.rpartition(":")[2] in COUNT_FIELDS:
+            edit.integer, edit.minimum = True, 1
         edit.returnPressed.connect(self.apply)
+        edit.scrubbed.connect(self._preview)
+        edit.scrub_finished.connect(self.apply)  # one step to undo, however long the drag
         edit.make_parameter.connect(lambda v, e=edit: self._make_parameter(e, v))
         edit.setReadOnly(self.document.read_only)
         self._editors[field] = edit.value
@@ -392,6 +401,12 @@ class PropertyEditor(QScrollArea):
                 widget = self._value_editor(f"param:{field}", current, optional=True)
                 readers[field] = self._editors.pop(f"param:{field}")
                 widget.setPlaceholderText(_format(default))
+                widget.integer = info.annotation is int
+                for limit in info.metadata:  # the schema's limits (ge / le)
+                    if getattr(limit, "ge", None) is not None:
+                        widget.minimum = limit.ge
+                    if getattr(limit, "le", None) is not None:
+                        widget.maximum = limit.le
             label = info.description or field
             if field in component.internal:
                 label = f"{field} (internal)"
@@ -708,6 +723,15 @@ class PropertyEditor(QScrollArea):
         for field, read in self._editors.items():
             data[field] = read()
         return type(node).model_validate(data)
+
+    def _preview(self) -> None:
+        """Show what the fields describe, without applying it (while a value is dragged)."""
+        if self.path is None:
+            return
+        try:
+            self.previewed.emit(self._collect())
+        except Exception:  # noqa: BLE001, S110 - not valid yet: keep the last preview
+            pass
 
     def apply(self) -> None:
         if self.path is None:

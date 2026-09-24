@@ -10,6 +10,12 @@
   its value.
 * An optional prefix (``x``, ``y``) is drawn inside the field, so pairs such
   as x and y can sit side by side.
+* A number can be dragged, as in Blender: press on the field and drag left or
+  right to decrease or increase it (Shift: finer, Ctrl: in round steps). While
+  dragging, :attr:`ValueEdit.scrubbed` reports each value (for a live
+  preview) and :attr:`ValueEdit.scrub_finished` the last one. A click without
+  dragging edits the text. An empty optional field starts from the number in
+  its placeholder (the default); an expression is not dragged.
 * When the field is not being edited, a text too long for it is shown from
   its start and cut with "…" (the value only if there is room left); the
   whole text is in the tooltip and back while editing. The field may shrink,
@@ -18,6 +24,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 from PySide6.QtCore import QPoint, QRect, QSize, QStringListModel, Qt, Signal
@@ -101,6 +108,7 @@ class ElidedLineEdit(QLineEdit):
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)
         self._layout()
+        self._update_cursor()
 
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
@@ -108,10 +116,50 @@ class ElidedLineEdit(QLineEdit):
         self._layout()
 
 
+DRAG_START_PX = 3  # a smaller move is a click
+PIXELS_PER_STEP = 8  # of a whole number
+
+
+def drag_step(value: float, integer: bool = False) -> float:
+    """How far one pixel of dragging moves ``value``: finer for small numbers."""
+    if integer:
+        return 1 / PIXELS_PER_STEP
+    magnitude = abs(value) if value else 1.0
+    return max(10 ** math.floor(math.log10(magnitude)) / 50, 0.001)
+
+
+def dragged_value(
+    start: float,
+    dx: float,
+    modifiers=Qt.KeyboardModifier.NoModifier,
+    integer: bool = False,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """``start`` dragged ``dx`` pixels (Shift: ten times finer, Ctrl: round steps)."""
+    step = drag_step(start, integer)
+    if modifiers & Qt.KeyboardModifier.ShiftModifier:
+        step /= 10
+    value = start + dx * step
+    if integer:
+        value = round(value)
+    elif modifiers & Qt.KeyboardModifier.ControlModifier:
+        value = round(value / (step * 50)) * step * 50
+    else:
+        value = round(value / step) * step
+    if minimum is not None:
+        value = max(value, minimum)
+    if maximum is not None:
+        value = min(value, maximum)
+    return round(value, 9)
+
+
 class ValueEdit(QLineEdit):
     """See the module docstring. ``scope`` holds the names an expression may use."""
 
     make_parameter = Signal(object)  # the field's current value: make a parameter of it
+    scrubbed = Signal(float)  # each value while it is dragged
+    scrub_finished = Signal(float)  # the value when the drag ends
 
     def __init__(
         self,
@@ -126,6 +174,11 @@ class ValueEdit(QLineEdit):
         self.parameters = list(parameters or [])  # the component's own, listed first
         self.prefix = prefix
         self.optional = optional
+        self.integer = False  # whole numbers only (counts), when dragged
+        self.minimum: float | None = None
+        self.maximum: float | None = None
+        self._press: tuple[float, float] | None = None  # x and value where a drag began
+        self._scrubbing = False
         self._hint = ""
         self.setProperty("expression", False)
         self.setProperty("invalid", False)
@@ -243,13 +296,67 @@ class ValueEdit(QLineEdit):
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)
         self._layout()
+        self._update_cursor()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._layout()
 
+    # -- dragging the value -------------------------------------------------------
+
+    def _number(self) -> float | None:
+        """The number shown (or the default in the placeholder), if it can be dragged."""
+        if self.isReadOnly() or not self.isEnabled():
+            return None
+        text = self.text().strip() or self.placeholderText().strip()
+        return float(text) if is_number(text) else None
+
+    def _dragged(self, dx: float, modifiers) -> float:
+        return dragged_value(
+            self._press[1], dx, modifiers, self.integer, self.minimum, self.maximum
+        )
+
+    def mousePressEvent(self, event) -> None:
+        number = None if self.hasFocus() else self._number()
+        if event.button() != Qt.MouseButton.LeftButton or number is None:
+            super().mousePressEvent(event)
+            return
+        self._press = (event.position().x(), number)  # a drag, or a click to edit
+        self._scrubbing = False
+        event.accept()
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._press is None:
+            super().mouseMoveEvent(event)
+            return
+        dx = event.position().x() - self._press[0]
+        if not self._scrubbing and abs(dx) < DRAG_START_PX:
+            return
+        self._scrubbing = True
+        value = self._dragged(dx, event.modifiers())
+        self.setText(_format(value))
+        self.scrubbed.emit(value)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._press is None:
+            super().mouseReleaseEvent(event)
+            return
+        self._press = None
+        if self._scrubbing:
+            self._scrubbing = False
+            value = float(self.text())
+            self.scrub_finished.emit(value)
+            return
+        self.setFocus(Qt.FocusReason.MouseFocusReason)  # a click: edit the text
+        self.selectAll()
+
+    def _update_cursor(self) -> None:
+        dragging = not self.hasFocus() and self._number() is not None
+        self.setCursor(Qt.CursorShape.SizeHorCursor if dragging else Qt.CursorShape.IBeamCursor)
+
     def enterEvent(self, event) -> None:
         self._bind.setVisible(self.isEnabled() and not self.isReadOnly())
+        self._update_cursor()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
@@ -262,6 +369,7 @@ class ValueEdit(QLineEdit):
         super().focusOutEvent(event)
         self.setCursorPosition(0)  # next time, start at the beginning
         self._layout()
+        self._update_cursor()
 
     # -- names -------------------------------------------------------------------
 

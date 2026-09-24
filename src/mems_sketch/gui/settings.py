@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.gui import icons
+from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.theme import UI_THEMES
 
 ORGANIZATION = APPLICATION = "mems-sketch"
@@ -433,17 +434,23 @@ class PreferencesDialog(QDialog):
                 outer.addLayout(form)
                 groups[setting.group] = form
             editor = self._editor(setting)
-            if setting.help:
-                editor.setToolTip(setting.help)
+            shown = editor
+            if setting.help:  # a "?" after it explains it
+                shown = QWidget()
+                line = QHBoxLayout(shown)
+                line.setContentsMargins(0, 0, 0, 0)
+                line.setSpacing(4)
+                line.addWidget(editor)
+                line.addWidget(HelpButton(setting.help))
+                line.addStretch(1)
             if isinstance(editor, QCheckBox):  # the check box carries its label
-                groups[setting.group].addRow(editor)
-                self._rows[setting.key] = (editor,)
+                groups[setting.group].addRow(shown)
+                self._rows[setting.key] = (shown,)
                 continue
             label = QLabel(setting.label)
             label.setFixedWidth(170)  # the same for every group, so the fields line up
-            label.setToolTip(setting.help)
-            groups[setting.group].addRow(label, editor)
-            self._rows[setting.key] = (label, editor)
+            groups[setting.group].addRow(label, shown)
+            self._rows[setting.key] = (label, shown)
         outer.addStretch(1)
         return widget
 

@@ -45,6 +45,8 @@ from mems_sketch.core.shapes import (
     Point,
     Shape,
     check_point_reference,
+    map_expressions,
+    point_renamer,
     point_values,
     references,
     rename_node_references,
@@ -67,6 +69,10 @@ class ParamDef(_Model):
     parameters and ``process.*`` constants, e.g. ``gap`` defaulting to
     ``"1.5 * width"``. Defaults are resolved in dependency order, after the
     values given by the caller, and then checked against ``min``/``max``.
+
+    An ``internal`` parameter is used only by the component itself (often a
+    derived value such as ``pitch = width + gap``): where the component is
+    placed it is not offered and cannot be set. Public ones are its interface.
     """
 
     name: str
@@ -74,6 +80,7 @@ class ParamDef(_Model):
     min: float | None = None
     max: float | None = None
     integer: bool = False
+    internal: bool = False
     description: str = ""
 
     @field_validator("name")
@@ -101,9 +108,9 @@ class ParamDef(_Model):
 class PointDef(_Model):
     """A named alignment point of a component, e.g. where a spring attaches.
 
-    The position is ``(x, y)``, measured from the point ``at`` (``node.point``,
-    a point of one of the component's own shapes) when given, else from the
-    origin. Both may be expressions over the component's parameters.
+    The position is ``(x, y)``, measured from the point ``at`` when given: a
+    point of one of the component's own top-level shapes (``node.point``) or of
+    the whole component (``center``, ``top_left``, …). Else from the origin. Both may be expressions over the component's parameters.
     """
 
     name: str
@@ -124,10 +131,19 @@ class PointDef(_Model):
     @field_validator("at")
     @classmethod
     def _reference(cls, at: str | None) -> str | None:
-        return None if at is None else check_point_reference(at)
+        if at is None or at in BBOX_POINTS:  # e.g. "center": of the whole component
+            return at
+        return check_point_reference(at)
 
 
 class ComponentDef(_Model):
+    """A user component.
+
+    ``name`` is its path: ``plate`` for a shared component, ``comb/finger`` for
+    ``finger``, a *private* component of ``comb`` (see
+    :mod:`mems_sketch.core.project` for what can place it).
+    """
+
     name: str
     description: str = ""
     parameters: list[ParamDef] = Field(default_factory=list)
@@ -137,9 +153,19 @@ class ComponentDef(_Model):
     @field_validator("name")
     @classmethod
     def _valid_name(cls, name: str) -> str:
-        if not name.isidentifier():
+        if not all(part.isidentifier() for part in name.split("/")):
             raise ValueError(f"'{name}' is not a valid component name")
         return name
+
+    @property
+    def short_name(self) -> str:
+        """The name without its owners: ``finger`` for ``comb/finger``."""
+        return self.name.rpartition("/")[2]
+
+    @property
+    def owner(self) -> str | None:
+        """The component this one is private to, or None for a shared one."""
+        return self.name.rpartition("/")[0] or None
 
     @model_validator(mode="after")
     def _unique_params(self):
@@ -160,6 +186,25 @@ class ComponentDef(_Model):
                 return p
         raise KeyError(f"component '{self.name}' has no parameter '{name}'")
 
+    def rename_point(self, old: str, new: str) -> None:
+        """Rename one of this component's declared points (see
+        :meth:`Project.rename_point` for the components that place it)."""
+        if any(p.name == new for p in self.points):
+            raise ValueError(f"point '{new}' already exists")
+        for index, point in enumerate(self.points):
+            if point.name == old:
+                self.points[index] = PointDef.model_validate({**point.model_dump(), "name": new})
+                return
+        raise KeyError(f"component '{self.name}' has no point '{old}'")
+
+    def follow_point_rename(self, nodes: set[str], old: str, new: str) -> None:
+        """Update what uses point ``old`` of the nodes named in ``nodes``, which place
+        a component whose point is now called ``new``: alignments, expressions and
+        this component's own points."""
+        change = point_renamer(nodes, old, new)
+        self.shapes = map_expressions(self.shapes, change)
+        self._rewrite_points(change)
+
     def rename_shape(self, old: str, new: str) -> None:
         """Rename a shape and update the alignments and expressions that use its points."""
         if any(s.name == new for s in walk(self.shapes)):
@@ -174,6 +219,10 @@ class ComponentDef(_Model):
             head, dot, rest = name.partition(".")
             return f"{new}.{rest}" if head == old and dot else None
 
+        self._rewrite_points(change)
+
+    def _rewrite_points(self, change: Callable[[str], str | None]) -> None:
+        """Pass the names this component's points measure from through ``change``."""
         self.points = [
             p.model_copy(
                 update={
@@ -203,6 +252,7 @@ class UserComponent(Component):
         self.type_name = definition.name
         self.scope = dict(scope or {})
         self.Params = _params_model(definition, self.scope)
+        self.internal = frozenset(p.name for p in definition.parameters if p.internal)
         self._lookup = lookup
 
     def build(self, params: Params) -> Geometry:
@@ -214,19 +264,25 @@ class UserComponent(Component):
     def compile(self, params: Params) -> tuple[Geometry, dict[str, Point]]:
         variables = {**self.scope, **{k: float(v) for k, v in params.model_dump().items()}}
         geometry, local = Evaluator(self._lookup).render_scoped(self.definition.shapes, variables)
-        return geometry, declared_points(self.definition, variables, local)
+        return geometry, declared_points(self.definition, variables, local, geometry)
 
 
 def declared_points(
-    definition: ComponentDef, variables: dict[str, float], shapes: dict[str, NodePoints]
+    definition: ComponentDef,
+    variables: dict[str, float],
+    shapes: dict[str, NodePoints],
+    geometry: Geometry | None = None,
 ) -> dict[str, Point]:
-    """Positions of a component's declared points, given its evaluated top-level shapes."""
+    """Positions of a component's declared points, given its evaluated top-level shapes
+    and its geometry (for points measured from its own ``center``, ``left``, …)."""
     result = {}
     for point in definition.points:
         v = {**variables, "i": 0.0, "j": 0.0}
         v.update(point_values([e for e in (point.x, point.y) if isinstance(e, str)], shapes))
         base = (0.0, 0.0)
-        if point.at is not None:
+        if point.at in BBOX_POINTS:
+            base = NodePoints(definition.name, geometry or Geometry(), {}).point(point.at)
+        elif point.at is not None:
             node, _, name = point.at.partition(".")
             if node not in shapes:
                 raise ValueError(

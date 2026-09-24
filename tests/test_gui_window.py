@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QDockWidget, QInputDialog, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
 from mems_sketch.gui.app import MainWindow
 
@@ -59,7 +59,7 @@ def test_component_parameters_show_declared_defaults(window):
     window.add_component("comb_drive")
     fields = window.properties.findChildren(QLineEdit)
     assert any(f.placeholderText() == "10" for f in fields)  # default finger count
-    window.document.set_parameter("n", 4.0)
+    window.document.parameters.set("n", 4.0)
     window.properties.show_node(((0, 0),))
     window.properties._editors["params"] = lambda: {"fingers": "n"}
     window.properties.apply()
@@ -74,22 +74,30 @@ def test_make_component_and_switch_components(window, monkeypatch):
     window.make_component()
     assert window.document.shapes[0].component == "cell"
     assert window.selection == [((0, 0),)]
-    window.document.set_active("cell")
+    window.document.set_active("top/cell")  # private to the component it came from
     assert window.tree.topLevelItemCount() == 2
     assert window.selection == []  # selection does not leak across components
-    assert "editing cell" in window.windowTitle()
+    assert "editing top/cell" in window.windowTitle()
 
 
 def test_open_example_project_with_library(window, tmp_path):
-    shutil.copytree(EXAMPLES / "resonator", tmp_path / "resonator")
-    shutil.copytree(EXAMPLES / "libraries", tmp_path / "libraries")
+    shutil.copytree(
+        EXAMPLES / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    shutil.copytree(
+        EXAMPLES / "libraries",
+        tmp_path / "libraries",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
     window.open_project(str(tmp_path / "resonator" / "project.yaml"))
     assert window.document.project.name == "resonator"
     labels = [
         window.components.tree.topLevelItem(i).text(0)
         for i in range(window.components.tree.topLevelItemCount())
     ]
-    assert labels == ["Project: resonator", "Library: std", "Built-in"]
+    assert labels == ["resonator", "std", "Built-in"]
     assert window.messages.item(0).text() == "No rule violations."
 
 
@@ -98,23 +106,20 @@ def test_undo_restores_tree_and_view_mode_switch(window):
     window.add_primitive("circle")
     window.document.undo()
     assert window.tree.topLevelItemCount() == 1
-    window.mode_box.setCurrentIndex(1)
+    window.set_view_mode("etched")
     assert window.view_mode == "etched"
 
 
 def test_layers_panel_is_shown_on_its_own_and_every_panel_can_be_reopened(window):
-    docks = {d.windowTitle(): d for d in window.findChildren(QDockWidget)}
-    layers = docks["Layers"]
-    assert not layers.visibleRegion().isEmpty()  # not hidden behind another tab
-    assert window.tabifiedDockWidgets(layers) == []
+    windows = window.tool_windows
+    windows.open("layers")
+    assert window.layers.isVisible()  # in place of Shapes, not behind it
     assert window.layers.layers.rowCount() == len(window.document.project.layers)
 
-    layers.close()
-    panels = next(a.menu() for a in window.menuBar().actions() if a.text() == "&View")
-    panels = next(a.menu() for a in panels.actions() if a.text() == "Panels")
-    reopen = next(a for a in panels.actions() if a.text() == "Layers")
+    windows.close("layers")
+    reopen = next(a for a in window.actions_.panels.actions() if a.text() == "Layers")
     reopen.trigger()
-    assert layers.isVisible()
+    assert window.layers.isVisible() and reopen.isChecked()
 
 
 def test_align_tool_picks_two_points_on_the_canvas(window):
@@ -122,7 +127,7 @@ def test_align_tool_picks_two_points_on_the_canvas(window):
 
     window.add_primitive("rect")  # rect1: 100 x 50 at the origin
     window._select_result(
-        lambda: window.document.add_shape(
+        lambda: window.document.nodes.add(
             RectShape(name="post", layer="device", x0=300, y0=300, x1=310, y1=320)
         )
     )
@@ -135,7 +140,7 @@ def test_align_tool_picks_two_points_on_the_canvas(window):
     assert window.align_step is None
     align = window.document.node(((0, 1),)).align
     assert (align.point, align.to) == ("bottom", "rect1.top")
-    assert "bottom at rect1.top" in window.tree.topLevelItem(1).text(1)
+    assert "bottom at rect1.top" in window.tree.topLevelItem(1).toolTip(1)
 
 
 def test_align_tool_cancels_and_needs_a_selection(window):
@@ -156,7 +161,7 @@ def test_property_editor_edits_the_alignment(window):
     editor._editors["align"] = lambda: {"point": "left", "to": "rect1.right", "dx": 5, "dy": 0}
     editor.apply()
     assert window.document.node(((0, 1),)).align.to == "rect1.right"
-    assert window.points.table.rowCount() == 0
+    assert window.document.active_definition.points == []
 
 
 def test_canvas_is_white_by_default_and_can_be_dark(window):
@@ -166,3 +171,26 @@ def test_canvas_is_white_by_default_and_can_be_dark(window):
     again = MainWindow()  # the choice is remembered
     assert again.canvas.backgroundBrush().color().name() == "#1e1f22"
     again.close()
+
+
+def test_switching_off_a_shape_inside_an_operation_in_the_list(window, qtbot):
+    """Issue #1: unticking a shape in the Shapes list rebuilt the list while Qt was
+    still ticking the item, which crashed. The change is now applied just after."""
+    from PySide6.QtCore import Qt
+
+    from mems_sketch.gui.panels import PATH_ROLE
+
+    window.add_primitive("rect")
+    window.add_primitive("circle")
+    window.tree.select_paths([((0, 0),), ((0, 1),)])
+    window.wrap("subtract")
+    window.tree.expandAll()
+    items, pending = [], [window.tree.topLevelItem(0)]
+    while pending:
+        item = pending.pop()
+        items.append(item)
+        pending.extend(item.child(i) for i in range(item.childCount()))
+    inner = next(i for i in items if i.data(0, PATH_ROLE) == ((0, 0), (1, 0)))
+    inner.setCheckState(0, Qt.CheckState.Unchecked)
+    assert window.document.node(((0, 0), (1, 0))).enabled  # not while Qt is in the item
+    qtbot.waitUntil(lambda: not window.document.node(((0, 0), (1, 0))).enabled)

@@ -28,7 +28,7 @@ HERE = Path(__file__).parent
 
 # -- a reusable component library ------------------------------------------
 
-library = Project(name="mems_std")
+library = Project(name="mems_std", top=None)  # a library: no top component
 library.define_component(
     ComponentDef(
         name="perforated_plate",
@@ -36,7 +36,13 @@ library.define_component(
         parameters=[
             ParamDef(name="size", default=160, min=10, description="Edge length (µm)"),
             ParamDef(name="pitch", default=20, min=2, description="Hole pitch (µm)"),
-            ParamDef(name="hole_r", default="pitch / 6", min=0.5, description="Hole radius (µm)"),
+            ParamDef(
+                name="hole_r",
+                default="pitch / 6",
+                min=0.5,
+                internal=True,
+                description="Hole radius (µm), follows the pitch",
+            ),
         ],
         shapes=[
             BooleanShape(

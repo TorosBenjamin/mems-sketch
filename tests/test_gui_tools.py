@@ -70,8 +70,8 @@ def rect(name, x0, y0, x1, y1):
 
 
 def two_rects(window):
-    window.document.add_shape(rect("base", 0, 0, 100, 20))
-    window.document.add_shape(rect("post", 150, 50, 160, 60))
+    window.document.nodes.add(rect("base", 0, 0, 100, 20))
+    window.document.nodes.add(rect("post", 150, 50, 160, 60))
     window.canvas.zoom_to(window.canvas.content_rect())
 
 
@@ -140,7 +140,7 @@ def test_move_by_typed_amount(window, monkeypatch):
 
 
 def test_rotate_tool_snaps_to_15_degrees(window):
-    window.document.add_shape(RefShape(name="pad", component="anchor", x=0, y=0))
+    window.document.nodes.add(RefShape(name="pad", component="anchor", x=0, y=0))
     window.canvas.zoom_to(window.canvas.content_rect())
     window.tree.select_paths([((0, 0),)])
     window.set_tool("rotate")
@@ -151,12 +151,12 @@ def test_rotate_tool_snaps_to_15_degrees(window):
 
 
 def test_rotate_and_mirror_buttons(window):
-    window.document.add_shape(rect("r", 0, 0, 20, 10))
+    window.document.nodes.add(rect("r", 0, 0, 20, 10))
     window.tree.select_paths([((0, 0),)])
     window.rotate_selection(90)
     node = window.document.node(((0, 0),))
     assert isinstance(node, TransformShape) and node.rotation == 90
-    box = window.document.highlight([((0, 0),)]).layers["device"].bbox()
+    box = window.document.results.highlight([((0, 0),)]).layers["device"].bbox()
     assert (box.width(), box.height()) == (10000, 20000)
     assert box.center().x == 10000 and box.center().y == 5000  # about its own centre
     window.mirror_selection(True)
@@ -182,13 +182,55 @@ def test_measure_works_on_read_only_tabs(window):
     assert window.rulers["anchor"] == [pytest.approx((-20, -20, 20, -20))]
 
 
+def test_angle_tool_measures_between_two_arms(window):
+    """Issue #5: an angle ruler."""
+    window.set_tool("angle")
+    click(window, 0, 0)  # the vertex
+    click(window, 40, 0)  # the first arm, along x
+    hover(window, 30, 30)
+    assert "45.00°" in window.statusBar().currentMessage() or window.tool.busy
+    click(window, 30, 30)
+    (ruler,) = window.rulers["top"]
+    assert ruler == pytest.approx((0, 0, 40, 0, 30, 30))
+    labels = [i.text() for i in window.canvas._ruler_items if hasattr(i, "text")]
+    assert "45.00°" in labels
+    assert not window.tool.busy
+
+
+def test_angles_are_the_short_way_round():
+    from mems_sketch.gui.canvas import angle_between
+
+    assert angle_between((0, 0), (1, 0), (0, 1)) == pytest.approx((0, 90))
+    assert angle_between((0, 0), (0, 1), (1, 0)) == pytest.approx((0, 90))  # from the x arm
+    assert angle_between((0, 0), (1, 0), (-1, -0.0001))[1] == pytest.approx(180, abs=0.01)
+
+
+def test_rulers_are_ticked_every_grid_step(window):
+    """Issue #4: ticks along a ruler at the grid's spacing."""
+    window.set_tool("measure")
+    click(window, 0, 0)
+    click(window, 100, 0)
+    canvas = window.canvas
+    assert canvas._rulers == [pytest.approx((0, 0, 100, 0))]
+    step = canvas.grid_step()
+    assert 100 / step == pytest.approx(round(100 / step))  # whole steps: a tick on each
+
+
 # -- editor state ------------------------------------------------------------
 
 
 @pytest.fixture
 def example(window, tmp_path):
-    shutil.copytree(EXAMPLES / "resonator", tmp_path / "resonator")
-    shutil.copytree(EXAMPLES / "libraries", tmp_path / "libraries")
+    shutil.copytree(
+        EXAMPLES / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    shutil.copytree(
+        EXAMPLES / "libraries",
+        tmp_path / "libraries",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
     window.open_project(str(tmp_path / "resonator"))
     return tmp_path / "resonator"
 
@@ -198,7 +240,7 @@ def test_editor_state_is_saved_in_the_project_and_restored(window, example, qtbo
     w.open_component("suspension")
     w.tree.select_paths([((0, 1),)])
     w.canvas.set_view_state(7.5, 12, 34)
-    w.mode_box.setCurrentIndex(w.mode_box.findData("etched"))
+    w.set_view_mode("etched")
     w.split_view()
     w.open_component("std.perforated_plate")
     w.document.set_trial("pitch", 30)

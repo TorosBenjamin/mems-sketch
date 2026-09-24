@@ -1,33 +1,56 @@
 """The layout canvas: layers as filled outlines, selection highlight, rule markers,
-alignment points and rulers.
+alignment points, rulers and the viewport overlays (scale bar,
+the caption with the view mode, the canvas modes, zoom buttons and the
+move/rotate gizmos).
 
-The canvas itself only zooms (wheel) and pans (middle or right drag, left drag
-while Space is held or in hand mode). Left-button presses, moves and releases
-are passed on as signals; the active tool (see :mod:`mems_sketch.gui.tools`)
-decides what they do.
+The canvas itself only zooms (wheel) and pans (middle drag, right drag, left
+drag while Space is held or in hand mode). A right click without dragging asks
+for the context menu. Left-button presses, moves and releases are passed on as
+signals; the active tool (see :mod:`mems_sketch.gui.tools`) decides what they do.
 
 Scene units are micrometres with y pointing up (the view flips Qt's y axis).
-Wheel zooms around the cursor, middle or right drag pans, F fits the view.
+Wheel zooms around the cursor, F fits the view.
 """
 
 from __future__ import annotations
 
 import math
+import time
 
 import klayout.db as kdb
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen, QTransform
+from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QAction,
+    QBrush,
+    QColor,
+    QFont,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmapCache,
+    QPolygonF,
+    QTransform,
+)
 from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPathItem,
+    QGraphicsPolygonItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsSimpleTextItem,
     QGraphicsView,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from mems_sketch.core.component import DBU_UM, Geometry
+from mems_sketch.gui import icons
+from mems_sketch.gui.theme import ISLAND_RADIUS
 
 PALETTE = ["#4c78a8", "#f58518", "#54a24b", "#e45756", "#72b7b2", "#b279a2", "#eeca3b", "#9d755d"]
 POINT_SIZES = {  # marker size in pixels
@@ -36,6 +59,7 @@ POINT_SIZES = {  # marker size in pixels
     "pick": 11,  # candidates while aligning
     "snap": 13,  # the point a drag snaps to
     "anchor": 9,  # a point a tool has fixed (move base, rotation pivot, ruler start)
+    "focus": 15,  # the point hovered or selected in the Points panel
 }
 # Colours per canvas theme. Grid lines are drawn with the ``grid`` colour at
 # increasing opacity for minor lines, every fifth line and the axes.
@@ -43,31 +67,77 @@ THEMES = {
     "light": {
         "background": "#ffffff",
         "grid": (0, 0, 0),
-        "grid_alpha": (18, 40, 90),
-        "highlight": "#e0007a",
+        "grid_alpha": (16, 34, 90),
+        "highlight": "#f07800",  # selection: orange, as in Blender and Unity
+        "hover": "#f07800",
         "violation": "#d7002a",
         "declared": "#008a3e",
-        "selected": "#e0007a",
-        "pick": "#0072d6",
+        "selected": "#f07800",
+        "pick": "#0a6fd6",
         "snap": "#e0007a",
         "anchor": "#e0007a",
+        "focus": "#7a3ee0",
         "ruler": "#b35c00",
+        "guide": "#1b8a96",
+        "axis_x": "#e0443e",
+        "axis_y": "#3f9b3f",
+        "gizmo_free": "#6c707e",
+        "gizmo_ring": "#3574f0",
+        "overlay": "#1e1f22",  # overlay text
+        "overlay_muted": "#818594",
     },
     "dark": {
         "background": "#1e1f22",
         "grid": (255, 255, 255),
-        "grid_alpha": (14, 32, 70),
-        "highlight": "#ffd400",
+        "grid_alpha": (12, 28, 70),
+        "highlight": "#ffa033",
+        "hover": "#ffa033",
         "violation": "#ff2d55",
         "declared": "#3ddc84",
-        "selected": "#ffd400",
+        "selected": "#ffa033",
         "pick": "#00c8ff",
-        "snap": "#ffd400",
-        "anchor": "#ffd400",
+        "snap": "#ff5fb0",
+        "anchor": "#ff5fb0",
+        "focus": "#b18cff",
         "ruler": "#ffb000",
+        "guide": "#4cc2cf",
+        "axis_x": "#f0584f",
+        "axis_y": "#6cc36c",
+        "gizmo_free": "#dfe1e5",
+        "gizmo_ring": "#548af7",
+        "overlay": "#dfe1e5",
+        "overlay_muted": "#868a91",
     },
 }
 DEFAULT_THEME = "light"
+# Canvas options (the window fills them from the settings; see gui/settings.py).
+DEFAULT_OPTIONS = {
+    "fill_opacity": 45,  # %
+    "outline_width": 1.0,  # px
+    "show_grid": True,
+    "grid_spacing_px": 12,
+    "show_axes": True,
+    "show_scale_bar": True,
+    "gizmo_size_px": 70,
+    "zoom_step": 1.25,
+    "draft_quality": True,  # no antialiasing while zooming or resizing, until it settles
+    "max_fps": 0,  # mouse moves handled (and so frames drawn) per second; 0: no limit
+}
+GIZMO_GRAB_PX = 7  # how close to a gizmo handle counts as on it
+RIGHT_CLICK_SLOP_PX = 4  # a right press that moves further is a pan, not a click
+MENU_CARET = "▾"  # after the text of a button that opens a menu
+# Rendered items are kept as pictures (Qt's item cache, held in the pixmap cache):
+# room for several full-view pictures on a large, high-resolution screen.
+PIXMAP_CACHE_KB = 256 * 1024
+DRAFT_SETTLE_MS = 200  # full quality again this long after the last zoom or resize step
+CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
+# Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
+# line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
+OUTLINE_PX = 1.0
+COMPONENT_MIME = "application/x-mems-sketch-component"  # a component dragged from the explorer
+# The world the user can pan over, in µm: ±1 m, inside the ±2.1 m that 32-bit
+# database units (nm) can hold. Cursor positions are kept inside it.
+WORLD = QRectF(-1e6, -1e6, 2e6, 2e6)
 
 
 def layer_color(index: int) -> QColor:
@@ -85,16 +155,20 @@ def region_to_path(region: kdb.Region) -> QPainterPath:
     return path
 
 
+def region_outline(region: kdb.Region) -> QPainterPath:
+    """The outer outlines of the merged polygons, without their holes (a light
+    outline, e.g. for hovering over a plate with thousands of holes)."""
+    path = QPainterPath()
+    for polygon in region.each_merged():
+        _add_loop(path, polygon.each_point_hull())
+    return path
+
+
 def _add_loop(path: QPainterPath, points) -> None:
-    first = True
-    for p in points:
-        point = QPointF(p.x * DBU_UM, p.y * DBU_UM)
-        if first:
-            path.moveTo(point)
-            first = False
-        else:
-            path.lineTo(point)
-    path.closeSubpath()
+    loop = QPolygonF([QPointF(p.x * DBU_UM, p.y * DBU_UM) for p in points])
+    if not loop.isEmpty():
+        path.addPolygon(loop)  # one call per loop, not one per point
+        path.closeSubpath()
 
 
 class LayoutCanvas(QGraphicsView):
@@ -107,12 +181,18 @@ class LayoutCanvas(QGraphicsView):
     key_pressed = Signal(object)  # Enter or Backspace, for the active tool
     cursor_moved = Signal(float, float)
     view_changed = Signal()  # zoomed or panned
+    context_requested = Signal(float, float, QPoint)  # right click: µm, global position
+    mode_chosen = Signal(str)  # a view mode picked in the caption
+    component_dropped = Signal(str, float, float)  # a component dragged in: name, x, y (µm)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        # Wheel zoom keeps the point under the cursor itself (see wheelEvent):
+        # AnchorUnderMouse relies on QGraphicsView's own mouse tracking, which
+        # the mouse handlers here bypass.
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -125,17 +205,49 @@ class LayoutCanvas(QGraphicsView):
         self._overlay: list = []
         self._points: dict[str, list] = {}
         self._pan_from: QPointF | None = None
+        self._right_from: QPointF | None = None  # right press: a click, until it drags
         self.left_pans = False  # hand mode: the left button pans
         self._space = False  # Space held: the left button pans
         self._left_down = False
         self._drag_items: list = []
         self._ruler_items: list = []
+        self._rulers: list[tuple[float, float, float, float]] = []  # distances, for ticks
         self._box_item: QGraphicsRectItem | None = None
         self._sketch_item: QGraphicsPathItem | None = None
+        self._hover_item: QGraphicsPathItem | None = None
+        self.options = dict(DEFAULT_OPTIONS)
+        self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
+        self._caption: tuple[str, str] = ("", "")
+        # The move/rotate gizmo: kind ("move" or "rotate"), centre in µm, the
+        # part under the cursor or being dragged, and the drag's offset/rotation.
+        self._gizmo: tuple[str, float, float] | None = None
+        self._gizmo_hover: str | None = None
+        self._gizmo_active: str | None = None
+        self._gizmo_offset = (0.0, 0.0)
+        self._gizmo_sweep: tuple[float, float] | None = None  # start angle, angle
+        self._overlay_buttons = self._build_overlay_buttons()
+        self.mode_palette = self._overlay_box(Qt.Orientation.Vertical)
+        self._build_caption()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAcceptDrops(True)
         self._has_content = False
+        self._wheel_anchor: QPointF | None = None  # scene point held under the cursor
+        if QPixmapCache.cacheLimit() < PIXMAP_CACHE_KB:
+            QPixmapCache.setCacheLimit(PIXMAP_CACHE_KB)
+        self._drafting = False
+        self._draft_timer = QTimer(self)
+        self._draft_timer.setSingleShot(True)
+        self._draft_timer.setInterval(DRAFT_SETTLE_MS)
+        self._draft_timer.timeout.connect(self._end_draft)
+        # Mouse moves wait for the next frame (see max_fps); only the latest counts.
+        self._pending_move: tuple | None = None
+        self._last_move_ms = 0.0
+        self._move_timer = QTimer(self)
+        self._move_timer.setSingleShot(True)
+        self._move_timer.timeout.connect(self._flush_move)
+        self.corner_color: QColor | None = None  # what lies around the editor island
         # A large scene rect lets the user pan freely beyond the geometry.
-        self.scene().setSceneRect(QRectF(-1e6, -1e6, 2e6, 2e6))
+        self.scene().setSceneRect(WORLD)
 
     # -- content -----------------------------------------------------------
 
@@ -145,21 +257,161 @@ class LayoutCanvas(QGraphicsView):
         self.setBackgroundBrush(QColor(self.theme["background"]))
         self.viewport().update()
 
+    def configure(self, **options) -> None:
+        """Change drawing options (see ``DEFAULT_OPTIONS``) and redraw."""
+        self.options.update(options)
+        if not self.options["draft_quality"] and self._drafting:
+            self._end_draft()
+        if self._shown is not None:
+            self.show_geometry(*self._shown)
+        self.viewport().update()
+
+    def set_caption(self, title: str, subtitle: str = "") -> None:
+        """The caption in the top-left corner: the component and details about it."""
+        if (title, subtitle) != self._caption:
+            self._caption = (title, subtitle)
+            self.caption_title.setText(title)
+            self.caption_details.setText(subtitle)
+            self.caption_details.setVisible(bool(subtitle))
+            self.caption.adjustSize()
+
+    def set_view_modes(self, modes: dict[str, str], current: str) -> None:
+        """The view modes offered by the caption's button (mode: label), and the current one."""
+        self.mode_button.setText(f"{modes.get(current, current)} {MENU_CARET}")
+        menu = self.mode_button.menu()
+        menu.clear()
+        for mode, label in modes.items():
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(mode == current)
+            action.triggered.connect(lambda _=False, m=mode: self.mode_chosen.emit(m))
+        self.caption.adjustSize()
+
+    def set_mode_actions(self, actions: list[QAction]) -> None:
+        """The canvas modes (select, move, ...) in the top-right corner, one button each."""
+        layout = self.mode_palette.layout()
+        while layout.count():
+            layout.takeAt(0).widget().deleteLater()
+        for action in actions:
+            button = QToolButton(self.mode_palette)
+            button.setDefaultAction(action)
+            button.setIconSize(QSize(18, 18))
+            button.setAutoRaise(True)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            layout.addWidget(button)
+            button.show()  # the canvas may be visible already: count it in the size now
+        self.mode_palette.adjustSize()
+        self._place_overlays()
+
+    def _overlay_box(self, orientation: Qt.Orientation) -> QWidget:
+        """A floating group of buttons on the canvas."""
+        box = QWidget(self)
+        box.setObjectName("canvas-buttons")
+        box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QHBoxLayout(box) if orientation == Qt.Orientation.Horizontal else QVBoxLayout(box)
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(1)
+        return box
+
+    def _build_caption(self) -> None:
+        """Top left: the component, the view mode (a menu) and details."""
+        box = self.caption = self._overlay_box(Qt.Orientation.Horizontal)
+        box.layout().setContentsMargins(8, 2, 8, 2)
+        box.layout().setSpacing(6)
+        self.caption_title = QLabel(box)
+        self.caption_title.setObjectName("heading")
+        self.mode_button = QToolButton(box)
+        self.mode_button.setToolTip("What the canvas shows: the drawn layout or a process view")
+        self.mode_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.mode_button.setAutoRaise(True)
+        self.mode_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.mode_button.setMenu(QMenu(self.mode_button))
+        self.caption_details = QLabel(box)
+        self.caption_details.setObjectName("muted")
+        for widget in (self.caption_title, self.mode_button, self.caption_details):
+            box.layout().addWidget(widget)
+        box.move(8, 8)
+
+    def _build_overlay_buttons(self) -> QWidget:
+        """Zoom in, zoom out and fit, floating in the bottom-right corner."""
+        box = self._overlay_box(Qt.Orientation.Horizontal)
+        layout = box.layout()
+        for name, tip, slot in (
+            ("zoom_in", "Zoom in", lambda: self.zoom_by(self.options["zoom_step"])),
+            ("zoom_out", "Zoom out", lambda: self.zoom_by(1 / self.options["zoom_step"])),
+            ("fit", "Fit (F)", self.fit),
+        ):
+            button = QToolButton(box)
+            icons.bind(button, name)
+            button.setIconSize(QSize(16, 16))
+            button.setToolTip(tip)
+            button.setAutoRaise(True)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.clicked.connect(slot)
+            layout.addWidget(button)
+        box.adjustSize()
+        return box
+
+    def resizeEvent(self, event) -> None:
+        self._begin_draft()
+        super().resizeEvent(event)
+        self._place_overlays()
+
+    def _begin_draft(self) -> None:
+        """Draw without antialiasing until zooming or resizing has settled: each step
+        then costs a fraction of a full-quality drawing of a big design."""
+        if not self.options["draft_quality"]:
+            return
+        if not self._drafting:
+            self._drafting = True
+            self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        self._draft_timer.start()
+
+    def _end_draft(self) -> None:
+        self._drafting = False
+        self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        for item in self.scene().items():
+            if item.cacheMode() != QGraphicsItem.CacheMode.NoCache:
+                item.update()  # its picture was drawn in draft quality
+        self.viewport().update()
+
+    def _place_overlays(self) -> None:
+        width, height = self.viewport().width(), self.viewport().height()
+        zoom, modes = self._overlay_buttons, self.mode_palette
+        zoom.move(width - zoom.width() - 8, height - zoom.height() - 8)
+        modes.move(width - modes.width() - 8, 8)
+
+    def zoom_by(self, factor: float) -> None:
+        """Zoom about the centre of the view."""
+        scale = self.pixels_per_um() * factor
+        if 1e-4 < scale < 1e5:
+            self._begin_draft()
+            anchor = self.transformationAnchor()
+            self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+            self.scale(factor, factor)
+            self.setTransformationAnchor(anchor)
+            self.view_changed.emit()
+
     def show_geometry(
         self, geometry: Geometry, colors: dict[str, QColor], visible: dict[str, bool]
     ) -> None:
+        self._shown = (geometry, colors, visible)
         for item in self._layer_items.values():
             self.scene().removeItem(item)
         self._layer_items.clear()
+        alpha = round(255 * self.options["fill_opacity"] / 100)
+        width = self.options["outline_width"]
         for z, (layer, region) in enumerate(sorted(geometry.layers.items())):
             color = colors.get(layer, QColor("#888888"))
             item = QGraphicsPathItem(region_to_path(region))
             fill = QColor(color)
-            fill.setAlpha(110)
-            pen = QPen(color, 0)  # cosmetic: one pixel wide at any zoom
+            fill.setAlpha(alpha)
+            pen = QPen(color, width)
+            pen.setCosmetic(True)  # the same width in pixels at any zoom
             item.setPen(pen)
             item.setBrush(QBrush(fill))
             item.setZValue(z)
+            item.setCacheMode(CACHED)  # drawn once; pans, hovers and drags reuse it
             item.setVisible(visible.get(layer, True))
             self.scene().addItem(item)
             self._layer_items[layer] = item
@@ -172,20 +424,37 @@ class LayoutCanvas(QGraphicsView):
             self._layer_items[layer].setVisible(visible)
 
     def show_overlay(
-        self, highlight: Geometry | None, markers: list[tuple[float, float, float, float]]
+        self,
+        highlight: Geometry | None,
+        markers: list[tuple[float, float, float, float]],
+        box: list[tuple[float, float]] | None = None,
     ) -> None:
+        """Outline the selection, mark rule violations and, dashed, the box a selected
+        shape's points come from (so e.g. ``center`` of a shape cut in two makes sense)."""
         for item in self._overlay:
             self.scene().removeItem(item)
         self._overlay.clear()
         if highlight is not None:
             for region in highlight.layers.values():
                 item = QGraphicsPathItem(region_to_path(region))
-                pen = QPen(QColor(self.theme["highlight"]), 2)
+                pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
                 pen.setCosmetic(True)
                 item.setPen(pen)
+                tint = QColor(self.theme["highlight"])
+                tint.setAlpha(60)  # a stronger tint makes up for the thin outline
+                item.setBrush(QBrush(tint))
                 item.setZValue(1000)
+                item.setCacheMode(CACHED)
                 self.scene().addItem(item)
                 self._overlay.append(item)
+        if box is not None:
+            item = QGraphicsPolygonItem(QPolygonF([QPointF(x, y) for x, y in box]))
+            pen = QPen(QColor(self.theme["highlight"]), 1, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            item.setPen(pen)
+            item.setZValue(1000)
+            self.scene().addItem(item)
+            self._overlay.append(item)
         for x0, y0, x1, y1 in markers:
             pad = 0.5
             item = QGraphicsRectItem(
@@ -230,12 +499,13 @@ class LayoutCanvas(QGraphicsView):
             item = QGraphicsPathItem(region_to_path(region))
             fill = QColor(color)
             fill.setAlpha(150)
-            pen = QPen(QColor(self.theme["highlight"]), 1.5)
+            pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
             pen.setCosmetic(True)
             pen.setStyle(Qt.PenStyle.DashLine)
             item.setPen(pen)
             item.setBrush(QBrush(fill))
             item.setZValue(1050)
+            item.setCacheMode(CACHED)  # moving it reuses the picture
             self.scene().addItem(item)
             self._drag_items.append(item)
 
@@ -243,6 +513,9 @@ class LayoutCanvas(QGraphicsView):
         for item in self._drag_items:
             item.setTransform(QTransform())
             item.setPos(dx, dy)
+        if self._gizmo is not None:
+            self._gizmo_offset = (dx, dy)
+            self.viewport().update()
 
     def rotate_drag_preview(self, angle: float, pivot: tuple[float, float]) -> None:
         """Show the preview rotated by ``angle`` degrees (counter-clockwise) about ``pivot``."""
@@ -256,6 +529,9 @@ class LayoutCanvas(QGraphicsView):
         for item in self._drag_items:
             self.scene().removeItem(item)
         self._drag_items.clear()
+        if self._gizmo_offset != (0.0, 0.0):
+            self._gizmo_offset = (0.0, 0.0)
+            self.viewport().update()
 
     def show_box(self, corners: tuple[float, float, float, float] | None) -> None:
         """The selection box being dragged out, or None to hide it."""
@@ -278,6 +554,76 @@ class LayoutCanvas(QGraphicsView):
             self.scene().addItem(self._box_item)
         self._box_item.setRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)).normalized())
 
+    def show_hover(self, region: kdb.Region | None) -> None:
+        """Outline the shape under the cursor (pre-selection), or nothing."""
+        if self._hover_item is not None:
+            self.scene().removeItem(self._hover_item)
+            self._hover_item = None
+        if region is None or region.is_empty():
+            return
+        pen = QPen(QColor(self.theme["hover"]), OUTLINE_PX)
+        pen.setCosmetic(True)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        self._hover_item = QGraphicsPathItem(region_outline(region))
+        self._hover_item.setPen(pen)
+        self._hover_item.setZValue(990)
+        self._hover_item.setCacheMode(CACHED)
+        self.scene().addItem(self._hover_item)
+
+    # -- gizmos --------------------------------------------------------------
+
+    def set_gizmo(self, kind: str | None, center: tuple[float, float] | None = None) -> None:
+        """Show the ``move`` or ``rotate`` gizmo at ``center`` (µm), or none."""
+        gizmo = (kind, *center) if kind is not None and center is not None else None
+        if gizmo != self._gizmo:
+            self._gizmo = gizmo
+            self._gizmo_hover = self._gizmo_active = None
+            self._gizmo_offset, self._gizmo_sweep = (0.0, 0.0), None
+            self.viewport().update()
+
+    @property
+    def gizmo(self) -> tuple[str, float, float] | None:
+        return self._gizmo
+
+    def gizmo_hit(self, x: float, y: float) -> str | None:
+        """The gizmo part at ``(x, y)`` µm: ``x``, ``y``, ``free`` or ``ring``, else None."""
+        if self._gizmo is None:
+            return None
+        p = self.mapFromScene(QPointF(x, y))
+        return self._gizmo_part(p.x(), p.y())
+
+    def _gizmo_screen(self) -> tuple[float, float]:
+        _, gx, gy = self._gizmo
+        c = self.mapFromScene(QPointF(gx + self._gizmo_offset[0], gy + self._gizmo_offset[1]))
+        return c.x(), c.y()
+
+    def _gizmo_part(self, px: float, py: float) -> str | None:
+        kind = self._gizmo[0]
+        cx, cy = self._gizmo_screen()
+        size, grab = self.options["gizmo_size_px"], GIZMO_GRAB_PX
+        dx, dy = px - cx, py - cy
+        if kind == "rotate":
+            return "ring" if abs(math.hypot(dx, dy) - size * 0.8) <= grab else None
+        if math.hypot(dx, dy) <= 9:
+            return "free"
+        if abs(dy) <= grab and 12 <= dx <= size + 4:
+            return "x"
+        if abs(dx) <= grab and 12 <= -dy <= size + 4:
+            return "y"
+        return None
+
+    def set_gizmo_active(self, part: str | None) -> None:
+        """The part being dragged (drawn highlighted), or None when the drag ends."""
+        self._gizmo_active = part
+        if part is None:
+            self._gizmo_offset, self._gizmo_sweep = (0.0, 0.0), None
+        self.viewport().update()
+
+    def set_gizmo_sweep(self, start: float, angle: float) -> None:
+        """While rotating with the ring: the angle swept from ``start`` (degrees)."""
+        self._gizmo_sweep = (start, angle)
+        self.viewport().update()
+
     def show_sketch(self, points: list[tuple[float, float]], closed: bool) -> None:
         """The outline of a shape being drawn (no points hides it)."""
         if self._sketch_item is not None:
@@ -298,25 +644,88 @@ class LayoutCanvas(QGraphicsView):
         self._sketch_item.setZValue(1100)
         self.scene().addItem(self._sketch_item)
 
-    def show_rulers(self, rulers: list[tuple[float, float, float, float]]) -> None:
-        """Measurement lines with their length, dx and dy."""
+    def show_guides(self, guides: list, selected: set) -> None:
+        """Guide lines, dashed, with their names; those in ``selected`` stand out.
+
+        ``guides`` are ``(path, name, start, end)`` in µm.
+        """
+        for item in getattr(self, "_guide_items", []):
+            self.scene().removeItem(item)
+        self._guide_items = []
+        for path, name, (x0, y0), (x1, y1) in guides:
+            chosen = path in selected
+            color = QColor(self.theme["highlight" if chosen else "guide"])
+            pen = QPen(color, 2.0 if chosen else 1.3)
+            pen.setCosmetic(True)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            line = self.scene().addLine(x0, y0, x1, y1, pen)
+            line.setZValue(1040)
+            for x, y in ((x0, y0), (x1, y1)):
+                end = _PointMarker(color, 6)
+                end.setPos(x, y)
+                self.scene().addItem(end)
+                self._guide_items.append(end)
+            label = QGraphicsSimpleTextItem(name)
+            label.setBrush(color)
+            label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            label.setPos(x1, y1)
+            label.setZValue(1040)
+            self.scene().addItem(label)
+            self._guide_items += [line, label]
+
+    def show_rulers(self, rulers: list[tuple[float, ...]]) -> None:
+        """Measurements: a distance ``(x0, y0, x1, y1)`` is a line with its length, dx
+        and dy, and a tick every grid step; an angle ``(vx, vy, ax, ay, bx, by)`` is
+        two arms from the vertex with an arc and the angle between them."""
         for item in self._ruler_items:
             self.scene().removeItem(item)
         self._ruler_items.clear()
+        self._rulers = [r for r in rulers if len(r) == 4]  # ticked in drawForeground
         color = QColor(self.theme["ruler"])
-        for x0, y0, x1, y1 in rulers:
-            pen = QPen(color, 1.5)
-            pen.setCosmetic(True)
+        pen = QPen(color, 1.5)
+        pen.setCosmetic(True)
+        for ruler in rulers:
+            if len(ruler) == 6:
+                self._show_angle(ruler, pen)
+                continue
+            x0, y0, x1, y1 = ruler
             line = self.scene().addLine(x0, y0, x1, y1, pen)
             line.setZValue(1150)
             length = math.hypot(x1 - x0, y1 - y0)
-            text = QGraphicsSimpleTextItem(f"{length:.3f} µm  (dx {x1 - x0:.3f}, dy {y1 - y0:.3f})")
-            text.setBrush(color)
-            text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
-            text.setPos((x0 + x1) / 2, (y0 + y1) / 2)
-            text.setZValue(1150)
-            self.scene().addItem(text)
-            self._ruler_items += [line, text]
+            text = f"{length:.3f} µm  (dx {x1 - x0:.3f}, dy {y1 - y0:.3f})"
+            self._ruler_items += [line, self._ruler_text(text, (x0 + x1) / 2, (y0 + y1) / 2)]
+        self.viewport().update()
+
+    def _show_angle(self, ruler: tuple[float, ...], pen: QPen) -> None:
+        vx, vy, ax, ay, bx, by = ruler
+        path = QPainterPath(QPointF(ax, ay))
+        path.lineTo(vx, vy)
+        path.lineTo(bx, by)
+        start, sweep = angle_between((vx, vy), (ax, ay), (bx, by))
+        radius = 0.35 * min(math.hypot(ax - vx, ay - vy), math.hypot(bx - vx, by - vy))
+        if radius > 0:
+            # Qt's angles run clockwise on screen; the view flips y, so they run
+            # counter-clockwise in µm like ours.
+            box = QRectF(vx - radius, vy - radius, 2 * radius, 2 * radius)
+            path.arcMoveTo(box, -start)
+            path.arcTo(box, -start, -sweep)
+        item = self.scene().addPath(path, pen)
+        item.setZValue(1150)
+        middle = math.radians(start + sweep / 2)
+        at = radius * 1.15 if radius > 0 else 0
+        text = self._ruler_text(
+            f"{sweep:.2f}°", vx + at * math.cos(middle), vy + at * math.sin(middle)
+        )
+        self._ruler_items += [item, text]
+
+    def _ruler_text(self, text: str, x: float, y: float) -> QGraphicsSimpleTextItem:
+        label = QGraphicsSimpleTextItem(text)
+        label.setBrush(QColor(self.theme["ruler"]))
+        label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        label.setPos(x, y)
+        label.setZValue(1150)
+        self.scene().addItem(label)
+        return label
 
     def view_state(self) -> tuple[float, float, float]:
         """Zoom (pixels per µm) and the centre of the view, to restore it later."""
@@ -360,23 +769,50 @@ class LayoutCanvas(QGraphicsView):
     # -- interaction -------------------------------------------------------
 
     def wheelEvent(self, event) -> None:
-        factor = 1.25 if event.angleDelta().y() > 0 else 0.8
+        step = self.options["zoom_step"]
+        factor = step if event.angleDelta().y() > 0 else 1 / step
         scale = abs(self.transform().m11()) * factor
         if 1e-4 < scale < 1e5:
-            self.scale(factor, factor)
+            self._begin_draft()
+            self._zoom_about(event.position(), factor)
             self.view_changed.emit()
 
+    def _zoom_about(self, pos: QPointF, factor: float) -> None:
+        """Zoom keeping the scene point under ``pos`` (viewport pixels) in place."""
+        # Scrolling is in whole pixels; reusing the anchor of the previous step
+        # (while it is still under the cursor) keeps that rounding from adding up.
+        anchor = self._wheel_anchor
+        if anchor is None or (self.viewportTransform().map(anchor) - pos).manhattanLength() > 1:
+            anchor = self.viewportTransform().inverted()[0].map(pos)
+        self._wheel_anchor = anchor
+        self.scale(factor, factor)
+        shift = self.viewportTransform().map(anchor) - pos
+        for bar, delta in (
+            (self.horizontalScrollBar(), shift.x()),
+            (self.verticalScrollBar(), shift.y()),
+        ):
+            bar.setValue(bar.value() + round(delta))
+
     def _scene(self, event) -> QPointF:
-        return self.mapToScene(event.position().toPoint())
+        """The cursor in µm, kept inside ``WORLD`` (zoomed far out, the view shows more)."""
+        p = self.mapToScene(event.position().toPoint())
+        return QPointF(
+            min(max(p.x(), WORLD.left()), WORLD.right()),
+            min(max(p.y(), WORLD.top()), WORLD.bottom()),
+        )
 
     def _pans(self, event) -> bool:
         button = event.button()
-        if button in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+        if button == Qt.MouseButton.MiddleButton:
             return True
         return button == Qt.MouseButton.LeftButton and (self.left_pans or self._space)
 
     def mousePressEvent(self, event) -> None:
+        self._flush_move()  # a move still waiting for its frame happened before this
         self.setFocus()
+        if event.button() == Qt.MouseButton.RightButton:
+            self._right_from = event.position()  # a click opens the menu; a drag pans
+            return
         if self._pans(event):
             self._pan_from = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -389,6 +825,7 @@ class LayoutCanvas(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
+        self._flush_move()
         if event.button() == Qt.MouseButton.LeftButton and not (self.left_pans or self._space):
             p = self._scene(event)
             self.double_clicked.emit(p.x(), p.y())
@@ -396,6 +833,11 @@ class LayoutCanvas(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        if self._right_from is not None:
+            if (event.position() - self._right_from).manhattanLength() <= RIGHT_CLICK_SLOP_PX:
+                return
+            self._pan_from, self._right_from = self._right_from, None  # it is a drag: pan
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
         if self._pan_from is not None:
             delta = event.position() - self._pan_from
             self._pan_from = event.position()
@@ -403,11 +845,39 @@ class LayoutCanvas(QGraphicsView):
             self.verticalScrollBar().setValue(int(self.verticalScrollBar().value() - delta.y()))
             return
         p = self._scene(event)
-        self.cursor_moved.emit(p.x(), p.y())
+        if self._gizmo is not None and not self._left_down:
+            part = self._gizmo_part(event.position().x(), event.position().y())
+            if part != self._gizmo_hover:
+                self._gizmo_hover = part
+                self._update_cursor()
+                self.viewport().update()
         left = bool(event.buttons() & Qt.MouseButton.LeftButton) and self._left_down
-        self.moved.emit(p.x(), p.y(), event.modifiers(), left)
+        self._pending_move = (p.x(), p.y(), event.modifiers(), left)
+        fps = self.options["max_fps"]
+        wait = self._last_move_ms + 1000 / fps - time.monotonic() * 1000 if fps > 0 else 0
+        if wait <= 0:
+            self._flush_move()
+        elif not self._move_timer.isActive():
+            self._move_timer.start(max(1, math.ceil(wait)))
+
+    def _flush_move(self) -> None:
+        """Handle the latest mouse move now (the tools, hover, the status bar)."""
+        self._move_timer.stop()
+        if self._pending_move is None:
+            return
+        x, y, modifiers, left = self._pending_move
+        self._pending_move = None
+        self._last_move_ms = time.monotonic() * 1000
+        self.cursor_moved.emit(x, y)
+        self.moved.emit(x, y, modifiers, left)
 
     def mouseReleaseEvent(self, event) -> None:
+        self._flush_move()
+        if event.button() == Qt.MouseButton.RightButton and self._right_from is not None:
+            self._right_from = None
+            p = self._scene(event)
+            self.context_requested.emit(p.x(), p.y(), event.globalPosition().toPoint())
+            return
         if self._pan_from is not None:
             self._pan_from = None
             self._update_cursor()
@@ -419,6 +889,40 @@ class LayoutCanvas(QGraphicsView):
             self.released.emit(p.x(), p.y(), event.modifiers())
             return
         super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event) -> None:
+        """The menu opens on releasing the right button (see mouseReleaseEvent); the
+        keyboard's menu key opens it at the centre of the view."""
+        if event.reason() == event.Reason.Keyboard:
+            center = self.viewport().rect().center()
+            p = self.mapToScene(center)
+            self.context_requested.emit(p.x(), p.y(), self.viewport().mapToGlobal(center))
+        event.accept()
+
+    # -- dropping components from the explorer -------------------------------
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(COMPONENT_MIME):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(COMPONENT_MIME):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        data = event.mimeData()
+        if not data.hasFormat(COMPONENT_MIME):
+            super().dropEvent(event)
+            return
+        name = bytes(data.data(COMPONENT_MIME)).decode()
+        p = self.mapToScene(event.position().toPoint())
+        step = self.grid_step()
+        event.acceptProposedAction()
+        self.component_dropped.emit(name, round(p.x() / step) * step, round(p.y() / step) * step)
 
     def keyReleaseEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
@@ -432,8 +936,17 @@ class LayoutCanvas(QGraphicsView):
         self._update_cursor()
 
     def _update_cursor(self) -> None:
+        part = self._gizmo_hover if self._gizmo is not None else None
         if self.left_pans or self._space:
             self.setCursor(Qt.CursorShape.OpenHandCursor)
+        elif part is not None:
+            self.setCursor(
+                {
+                    "x": Qt.CursorShape.SizeHorCursor,
+                    "y": Qt.CursorShape.SizeVerCursor,
+                    "free": Qt.CursorShape.SizeAllCursor,
+                }.get(part, Qt.CursorShape.PointingHandCursor)
+            )
         else:
             self.setCursor(getattr(self, "_tool_cursor", Qt.CursorShape.ArrowCursor))
 
@@ -469,21 +982,231 @@ class LayoutCanvas(QGraphicsView):
         )
         left, right = math.floor(rect.left() / step), math.ceil(rect.right() / step)
         top, bottom = math.floor(rect.top() / step), math.ceil(rect.bottom() / step)
-        if (right - left) * (bottom - top) > 400_000:
+        if self.options["show_grid"] and (right - left) * (bottom - top) <= 400_000:
+            lines: dict[int, list[QLineF]] = {0: [], 1: [], 2: []}  # minor, major, axis
+            for i in range(left, right + 1):
+                kind = 2 if i == 0 else 1 if i % 5 == 0 else 0
+                lines[kind].append(QLineF(i * step, rect.top(), i * step, rect.bottom()))
+            for j in range(top, bottom + 1):
+                kind = 2 if j == 0 else 1 if j % 5 == 0 else 0
+                lines[kind].append(QLineF(rect.left(), j * step, rect.right(), j * step))
+            for kind, pen in enumerate((minor, major, axis)):
+                painter.setPen(pen)
+                painter.drawLines(lines[kind])
+        if self.options["show_axes"]:
+            for key, line in (
+                ("axis_x", (QPointF(rect.left(), 0), QPointF(rect.right(), 0))),
+                ("axis_y", (QPointF(0, rect.top()), QPointF(0, rect.bottom()))),
+            ):
+                color = QColor(self.theme[key])
+                color.setAlpha(150)
+                pen = QPen(color, 1.5)
+                pen.setCosmetic(True)
+                painter.setPen(pen)
+                painter.drawLine(*line)
+
+    def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
+        """The overlays, drawn in pixels on top of everything."""
+        painter.save()
+        painter.resetTransform()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        height = self.viewport().height()
+        self._draw_ruler_ticks(painter)
+        if self.options["show_scale_bar"]:
+            self._draw_scale_bar(painter, 16, height)
+        if self._gizmo is not None:
+            self._draw_gizmo(painter)
+        self._round_corners(painter)
+        painter.restore()
+
+    def _round_corners(self, painter: QPainter) -> None:
+        """Paint over the parts of the view outside its island's rounded outline, in
+        the colour around the island, so the canvas has the island's round corners."""
+        island = self.parentWidget()
+        while island is not None and island.objectName() != "island":
+            island = island.parentWidget()
+        if island is None or self.corner_color is None:
             return
-        for i in range(left, right + 1):
-            painter.setPen(axis if i == 0 else major if i % 5 == 0 else minor)
-            painter.drawLine(QPointF(i * step, rect.top()), QPointF(i * step, rect.bottom()))
-        for j in range(top, bottom + 1):
-            painter.setPen(axis if j == 0 else major if j % 5 == 0 else minor)
-            painter.drawLine(QPointF(rect.left(), j * step), QPointF(rect.right(), j * step))
+        viewport = self.viewport()
+        outline = QPainterPath()
+        outline.addRoundedRect(
+            QRectF(viewport.mapFrom(island, QPoint(0, 0)), QSizeF(island.size())),
+            ISLAND_RADIUS,
+            ISLAND_RADIUS,
+        )
+        view = QPainterPath()
+        view.addRect(QRectF(viewport.rect()))
+        painter.fillPath(view.subtracted(outline), self.corner_color)
+
+    def _draw_ruler_ticks(self, painter: QPainter) -> None:
+        """A tick across each distance ruler every grid step (longer every fifth)."""
+        step = self.grid_step()
+        pen = QPen(QColor(self.theme["ruler"]), 1)
+        painter.setPen(pen)
+        for x0, y0, x1, y1 in self._rulers:
+            length = math.hypot(x1 - x0, y1 - y0)
+            if length == 0 or length / step > 2000:
+                continue
+            start = QPointF(self.mapFromScene(QPointF(x0, y0)))
+            end = QPointF(self.mapFromScene(QPointF(x1, y1)))
+            along = end - start
+            pixels = math.hypot(along.x(), along.y())
+            if pixels == 0:
+                continue
+            across = QPointF(-along.y() / pixels, along.x() / pixels)
+            ticks = []
+            for k in range(int(length / step + 1e-9) + 1):
+                at = start + along * (k * step / length)
+                size = 6 if k % 5 == 0 else 3.5
+                ticks.append(QLineF(at - across * size, at + across * size))
+            painter.drawLines(ticks)
+
+    def scale_bar_length(self) -> float:
+        """The scale bar's length in µm: a whole number of grid steps (1, 2, 5 or 10 of
+        them), about 100 pixels long, so it can be read against the grid."""
+        step = self.grid_step()
+        cell = step * self.pixels_per_um()
+        cells = max((n for n in (1, 2, 5, 10) if n * cell <= 120), default=1)
+        return cells * step
+
+    def _draw_scale_bar(self, painter: QPainter, x: float, height: float) -> None:
+        pixels = self.pixels_per_um()
+        length = self.scale_bar_length()
+        width = length * pixels
+        y = height - 18
+        color = QColor(self.theme["overlay"])
+        painter.setPen(QPen(color, 1.5))
+        painter.drawLine(QPointF(x, y), QPointF(x + width, y))
+        painter.drawLine(QPointF(x, y - 4), QPointF(x, y + 4))
+        painter.drawLine(QPointF(x + width, y - 4), QPointF(x + width, y + 4))
+        cell = self.grid_step() * pixels  # a tick at every grid line it spans
+        painter.setPen(QPen(color, 1))
+        painter.drawLines(
+            [QLineF(x + k * cell, y - 2.5, x + k * cell, y) for k in range(1, round(width / cell))]
+        )
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        painter.setFont(font)
+        painter.drawText(
+            QRectF(x, y - 18, width, 14), Qt.AlignmentFlag.AlignCenter, _length_text(length)
+        )
+
+    def _draw_gizmo(self, painter: QPainter) -> None:
+        kind = self._gizmo[0]
+        cx, cy = self._gizmo_screen()
+        size = self.options["gizmo_size_px"]
+        focus = self._gizmo_active or self._gizmo_hover
+
+        def pen(key: str, part: str, width: float = 2.5) -> QPen:
+            color = QColor(self.theme[key])
+            if focus is not None and focus != part:
+                color.setAlpha(110)
+            wide = width + (1.5 if focus == part else 0)
+            return _round_pen(color, wide)
+
+        if kind == "rotate":
+            radius = size * 0.8
+            ring = pen("gizmo_ring", "ring", 3)
+            halo = QColor(self.theme["background"])
+            halo.setAlpha(200)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(_round_pen(halo, ring.widthF() + 3))
+            painter.drawEllipse(QPointF(cx, cy), radius, radius)
+            painter.setPen(ring)
+            painter.drawEllipse(QPointF(cx, cy), radius, radius)
+            if self._gizmo_sweep is not None:
+                start, angle = self._gizmo_sweep
+                color = QColor(self.theme["gizmo_ring"])
+                fill = QColor(color)
+                fill.setAlpha(90)
+                painter.setBrush(fill)
+                painter.setPen(Qt.PenStyle.NoPen)
+                box = QRectF(cx - radius, cy - radius, 2 * radius, 2 * radius)
+                painter.drawPie(box, round(start * 16), round(angle * 16))
+                painter.setPen(_round_pen(color, 2))
+                for a in (start, start + angle):  # screen y points down
+                    end = QPointF(
+                        cx + radius * math.cos(math.radians(a)),
+                        cy - radius * math.sin(math.radians(a)),
+                    )
+                    painter.drawLine(QPointF(cx, cy), end)
+                self._draw_chip(painter, QPointF(cx + radius + 10, cy - radius), f"{angle:+g}°")
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(self.theme["gizmo_ring"]))
+            painter.drawEllipse(QPointF(cx, cy), 3, 3)
+            return
+        halo = QColor(self.theme["background"])
+        halo.setAlpha(200)
+        for key, part, (dx, dy) in (("axis_x", "x", (1, 0)), ("axis_y", "y", (0, -1))):
+            p = pen(key, part, 3)
+            start = QPointF(cx + dx * 12, cy + dy * 12)
+            tip = QPointF(cx + dx * size, cy + dy * size)
+            nx, ny = -dy, dx  # normal
+            head = QPolygonF(
+                [
+                    tip + QPointF(dx * 13, dy * 13),
+                    tip + QPointF(nx * 6.5, ny * 6.5),
+                    tip - QPointF(nx * 6.5, ny * 6.5),
+                ]
+            )
+            # a halo in the background colour keeps the arrow visible on any drawing
+            painter.setPen(_round_pen(halo, p.widthF() + 3))
+            painter.setBrush(halo)
+            painter.drawLine(start, tip)
+            painter.drawPolygon(head)
+            painter.setPen(p)
+            painter.drawLine(start, tip)
+            painter.setBrush(p.color())
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPolygon(head)
+        free = pen("gizmo_free", "free", 2)
+        painter.setPen(free)
+        fill = QColor(self.theme["background"])
+        fill.setAlpha(160)
+        painter.setBrush(fill)
+        painter.drawEllipse(QPointF(cx, cy), 7, 7)
+
+    def _draw_chip(self, painter: QPainter, at: QPointF, text: str) -> None:
+        """A small label on a rounded background, readable on any drawing."""
+        font = QFont(self.font())
+        font.setBold(True)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        box = QRectF(
+            at.x(),
+            at.y() - metrics.height(),
+            metrics.horizontalAdvance(text) + 12,
+            metrics.height() + 6,
+        )
+        background = QColor(self.theme["background"])
+        background.setAlpha(220)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(background)
+        painter.drawRoundedRect(box, 4, 4)
+        painter.setPen(QColor(self.theme["overlay"]))
+        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def grid_step(self) -> float:
-        """Grid spacing in µm: a 1-2-5 step giving at least ~12 px between lines."""
+        """Grid spacing in µm: the smallest 1-2-5 step with lines at least
+        ``grid_spacing_px`` apart."""
         pixels_per_um = abs(self.transform().m11())
-        target = 12 / pixels_per_um
+        target = self.options["grid_spacing_px"] / pixels_per_um
         exponent = math.floor(math.log10(target))
         return next(m * 10**exponent for m in (1, 2, 5, 10) if m * 10**exponent >= target)
+
+
+def _round_pen(color: QColor, width: float) -> QPen:
+    pen = QPen(color, width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    return pen
+
+
+def _length_text(um: float) -> str:
+    if um >= 1000:
+        return f"{um / 1000:g} mm"
+    if um < 1:
+        return f"{um * 1000:g} nm"
+    return f"{um:g} µm"
 
 
 class _PointMarker(QGraphicsEllipseItem):
@@ -502,3 +1225,16 @@ class _PointMarker(QGraphicsEllipseItem):
         half = self._size / 2
         painter.drawLine(QPointF(-half, 0), QPointF(half, 0))
         painter.drawLine(QPointF(0, -half), QPointF(0, half))
+
+
+def angle_between(
+    vertex: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
+) -> tuple[float, float]:
+    """The angle at ``vertex`` from arm ``a`` to arm ``b``, the short way round:
+    ``(direction of the first arm, sweep)`` in degrees, counter-clockwise, sweep 0..180."""
+    first = math.degrees(math.atan2(a[1] - vertex[1], a[0] - vertex[0]))
+    second = math.degrees(math.atan2(b[1] - vertex[1], b[0] - vertex[0]))
+    sweep = (second - first) % 360
+    if sweep > 180:
+        return second, 360 - sweep
+    return first, sweep

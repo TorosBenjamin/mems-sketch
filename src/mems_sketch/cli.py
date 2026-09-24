@@ -19,8 +19,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from mems_sketch.core.component import Geometry
-from mems_sketch.core.process import default_process
-from mems_sketch.core.project import Project
+from mems_sketch.core.project import Project, new_project
 from mems_sketch.export.base import available_exporters, export
 from mems_sketch.process import etch, rules
 from mems_sketch.storage import load, save
@@ -45,6 +44,9 @@ def _parser() -> argparse.ArgumentParser:
     new = commands.add_parser("new", help="create an empty project folder")
     new.add_argument("folder", type=Path)
     new.add_argument("--name", help="project name (default: folder name)")
+    new.add_argument(
+        "--library", action="store_true", help="a library: components only, no top component"
+    )
     new.set_defaults(handler=_new)
 
     info = commands.add_parser("info", help="list components, parameters and layers")
@@ -107,7 +109,7 @@ def _geometry(project: Project, args: argparse.Namespace) -> Geometry:
 def _new(args: argparse.Namespace) -> int:
     if (args.folder / "project.yaml").exists():
         raise FileExistsError(f"{args.folder} already contains a project")
-    project = Project(name=args.name or args.folder.name, process=default_process())
+    project = new_project(args.name or args.folder.name, library=args.library)
     save(project, args.folder)
     print(f"created {args.folder}")
     return 0
@@ -115,7 +117,8 @@ def _new(args: argparse.Namespace) -> int:
 
 def _info(args: argparse.Namespace) -> int:
     project = load(args.project)
-    print(f"project {project.name} (top: {project.top})")
+    kind = f"top: {project.top}" if project.top else "library, no top component"
+    print(f"project {project.name} ({kind})")
     print("layers:")
     for layer in project.layers.values():
         rules_text = ", ".join(

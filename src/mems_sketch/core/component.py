@@ -62,6 +62,23 @@ class Component:
 
     type_name: ClassVar[str]
     Params: ClassVar[type[Params]]
+    # Parameters only the component itself uses: a placement cannot set them.
+    internal: frozenset[str] = frozenset()
+
+    def public_params(self) -> dict[str, Any]:
+        """The parameters a placement may set (name -> pydantic field info)."""
+        return {k: v for k, v in self.Params.model_fields.items() if k not in self.internal}
+
+    def check_placement(self, names: Iterable[str]) -> None:
+        """Refuse values given where the component is placed for its internal parameters."""
+        hidden = sorted(set(names) & self.internal)
+        if hidden:
+            listed = ", ".join(f"'{n}'" for n in hidden)
+            raise ValueError(
+                f"{listed} of component '{self.type_name}' "
+                f"{'is' if len(hidden) == 1 else 'are'} internal: "
+                "it cannot be set where the component is placed"
+            )
 
     def build(self, params: Params) -> Geometry:
         raise NotImplementedError

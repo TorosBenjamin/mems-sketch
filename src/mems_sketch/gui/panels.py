@@ -4,19 +4,25 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPixmap
+from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
+    QMenu,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -26,36 +32,37 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.component import component_types
 from mems_sketch.core.expressions import ExpressionError, resolve_variables
 from mems_sketch.core.process import Layer
-from mems_sketch.core.shapes import NodePath, Shape, child_lists
-from mems_sketch.gui.document import ProjectDocument
+from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
+from mems_sketch.editing import EditSession
+from mems_sketch.gui import icons
+from mems_sketch.gui.canvas import COMPONENT_MIME
+from mems_sketch.gui.help import HelpButton
+from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 SLOT_LABELS = {"boolean": ("A", "B")}
 
 
 def describe(shape: Shape) -> str:
-    """Short summary shown next to a node's name, with its alignment if it has one."""
-    summary = _summary(shape)
+    """A node's summary with its alignment, if it has one (the shape list's tooltip)."""
+    summary = shape.summary()
     if shape.align is not None:
-        summary += f" · {shape.align.point} at {shape.align.to}"
+        summary += f" · {alignment(shape)}"
     return summary
 
 
-def _summary(shape: Shape) -> str:
-    match shape.kind:
-        case "ref":
-            return shape.component
-        case "boolean":
-            return shape.op
-        case "rect" | "polygon" | "circle" | "arc" | "path":
-            return f"{shape.kind} · {shape.layer}"
-        case "offset":
-            return f"offset {shape.distance}"
-        case "fillet":
-            return f"fillet {shape.radius}"
-        case "layer_map":
-            return "layers " + ", ".join(f"{a}→{b}" for a, b in shape.mapping.items())
-    return shape.kind
+def alignment(shape: Shape) -> str:
+    return f"{shape.align.point} at {shape.align.to}"
+
+
+def detail(shape: Shape) -> str:
+    """The muted text after a node's name: what it is, briefly."""
+    return shape.detail()
+
+
+def modifier_stack(shape: Shape) -> str:
+    """The modifier stack in words, first to last (switched-off ones marked)."""
+    return " → ".join(m.summary() + ("" if m.enabled else " (off)") for m in shape.modifiers)
 
 
 def parse_value(text: str) -> float | str:
@@ -75,12 +82,56 @@ def _format(value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
 
 
-def _button_row(*buttons: QPushButton) -> QHBoxLayout:
+def _action_bar(
+    title: QLabel | None, *actions: tuple[str, str, object], help: str | None = None
+) -> QHBoxLayout:
+    """A tool window's header row: an optional title, then small icon buttons and,
+    with ``help``, a "?" explaining it.
+
+    ``actions`` are ``(icon, tooltip, slot)``; the buttons are also returned in
+    the layout's ``buttons`` attribute (by tooltip) for tests and shortcuts.
+    """
     row = QHBoxLayout()
-    for button in buttons:
+    row.setContentsMargins(6, 2, 4, 2)
+    row.setSpacing(1)
+    if title is not None:
+        title.setObjectName("muted")
+        row.addWidget(title, 1)
+    else:
+        row.addStretch(1)
+    row.buttons = {}
+    for name, tip, slot in actions:
+        button = QToolButton()
+        icons.bind(button, name)
+        button.setIconSize(QSize(16, 16))
+        button.setToolTip(tip)
+        button.setAutoRaise(True)
+        button.clicked.connect(slot)
         row.addWidget(button)
-    row.addStretch()
+        row.buttons[tip] = button
+    if help:
+        row.addWidget(HelpButton(help))
     return row
+
+
+def swatch_icon(color: QColor) -> QIcon:
+    """A small rounded square in a layer's colour."""
+    pixmap = QPixmap(24, 24)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(color.darker(130))
+    fill = QColor(color)
+    fill.setAlpha(200)
+    painter.setBrush(fill)
+    painter.drawRoundedRect(3, 3, 18, 18, 4, 4)
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    return QIcon(pixmap)
+
+
+def shape_icon(shape: Shape) -> QIcon:
+    return icons.icon(shape.icon_name())
 
 
 def _table(columns: Sequence[str]) -> QTableWidget:
@@ -88,14 +139,24 @@ def _table(columns: Sequence[str]) -> QTableWidget:
     table.setHorizontalHeaderLabels(list(columns))
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
     table.horizontalHeader().setStretchLastSection(True)
+    table.horizontalHeader().setHighlightSections(False)
     table.verticalHeader().hide()
+    table.verticalHeader().setDefaultSectionSize(26)
+    table.setShowGrid(False)
+    table.setFrameShape(QTableWidget.Shape.NoFrame)
     return table
+
+
+def _blank_icon() -> QIcon:
+    pixmap = QPixmap(16, 16)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    return QIcon(pixmap)
 
 
 def _readonly(text: str) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-    item.setForeground(QBrush(QColor("#808080")))
+    item.setForeground(QBrush(QColor("#8c8f99")))
     return item
 
 
@@ -115,54 +176,54 @@ class _Panel(QWidget):
 
 
 class ComponentsPanel(_Panel):
-    """The project's components, library components and built-ins.
+    """An explorer of the components: the project's, each library's and the built-ins.
 
-    Double-click to open one in a tab (library and built-in components open
-    read-only); Place inserts the selected one into the component being edited.
+    These are definitions, each listed once. A component expands to its
+    *private* components (``comb/finger``: made for comb, placed only inside
+    it); shared ones sit at the top of their group. What places what is in
+    the tooltips, and the placements themselves (each with its own name) are
+    in the Shapes list. Double-click opens a component in a tab (library and
+    built-in ones read-only); drag one onto the canvas, or use Place, to put it
+    into the component being edited. Right-click for everything else.
     """
 
     place_requested = Signal(str)
     open_requested = Signal(str)
+    open_aside_requested = Signal(str)  # open in the other pane
+    process_requested = Signal()
+    collapse_changed = Signal()
     NAME_ROLE = Qt.ItemDataRole.UserRole
+    GROUP_ROLE = Qt.ItemDataRole.UserRole + 1  # "project", "library:<name>", "builtin"
+    PROCESS_ROLE = Qt.ItemDataRole.UserRole + 2  # the Process item
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.tree = QTreeWidget()
+        self.tree = _ComponentTree()
         self.tree.setHeaderHidden(True)
+        self.tree.setItemDelegate(DetailDelegate(self.tree))
         self.tree.itemDoubleClicked.connect(self._activated)
-        self.collapsed: set[str] = set()  # group titles, e.g. "Built-in"
-        self.tree.itemCollapsed.connect(lambda item: self._set_collapsed(item, True))
-        self.tree.itemExpanded.connect(lambda item: self._set_collapsed(item, False))
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._context_menu)
+        self.collapsed: set[str] = set()  # collapsed groups, e.g. "Built-in"
+        self.expanded: set[str] = set()  # expanded components, by their path in the tree
+        self.tree.itemCollapsed.connect(lambda item: self._set_expanded(item, False))
+        self.tree.itemExpanded.connect(lambda item: self._set_expanded(item, True))
         self._refreshing = False
+        self.hide_implementation = True  # a library's private components (the setting)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            None,
+            ("add", "New component or library", self._add_menu),
+            ("place", "Place the selected component in the edited one", self._place),
+            ("collapse", "Collapse all", self._collapse_all),
+        )
+        self.header_buttons = list(self.actions.buttons.values())  # shown in the dock header
         layout.addWidget(self.tree)
-        row = QHBoxLayout()
-        for text, slot in (
-            ("New", self._new),
-            ("Rename", self._rename),
-            ("Delete", self._delete),
-            ("Set top", self._set_top),
-            ("Place", self._place),
-        ):
-            button = QPushButton(text)
-            button.clicked.connect(slot)
-            row.addWidget(button)
-        layout.addLayout(row)
 
-    collapse_changed = Signal()
-
-    def _set_collapsed(self, item: QTreeWidgetItem, collapsed: bool) -> None:
-        if self._refreshing or item.parent() is not None:
-            return
-        key = self._group_key(item.text(0))
-        (self.collapsed.add if collapsed else self.collapsed.discard)(key)
-        self.collapse_changed.emit()
-
-    @staticmethod
-    def _group_key(title: str) -> str:
-        return "project" if title.startswith("Project: ") else title
+    # -- building ------------------------------------------------------------
 
     def refresh(self) -> None:
         self._refreshing = True
@@ -173,37 +234,137 @@ class ComponentsPanel(_Panel):
 
     def _fill(self) -> None:
         project = self.document.project
+        scroll = self.tree.verticalScrollBar().value()
         self.tree.clear()
-        local = QTreeWidgetItem(self.tree, [f"Project: {project.name}"])
-        for name, definition in project.components.items():
-            label = name + ("  (top)" if name == project.top else "")
-            item = QTreeWidgetItem(local, [label])
-            item.setData(0, self.NAME_ROLE, name)
-            item.setToolTip(0, definition.description or name)
-            self._mark_active(item, name, label)
+        local = self._group(project.name, "project", "folder", "Project components")
+        process = QTreeWidgetItem(local, ["Process"])
+        process.setData(0, self.PROCESS_ROLE, True)
+        process.setIcon(0, icons.icon("layers"))
+        process.setToolTip(0, "The process's layers and constants (opens in a tab)")
+        shared = [n for n in project.components if "/" not in n]
+        for name in sorted(shared, key=lambda n: n != project.top):  # top first
+            self._component(local, name)
         for library in project.libraries.values():
-            group = QTreeWidgetItem(self.tree, [f"Library: {library.name}"])
+            where = f" — {library.path}" if library.path else ""
+            group = self._group(
+                library.name, f"library:{library.name}", "library", f"Library{where}"
+            )
             for name in library.components:
-                item = QTreeWidgetItem(group, [name])
-                item.setData(0, self.NAME_ROLE, f"{library.name}.{name}")
-                self._mark_active(item, f"{library.name}.{name}", name)
-        builtins = QTreeWidgetItem(self.tree, ["Built-in"])
+                if "/" not in name:
+                    self._component(group, f"{library.name}.{name}")
+        builtins = self._group("Built-in", "builtin", "builtin", "Built-in components")
         for name in component_types():
-            item = QTreeWidgetItem(builtins, [name])
-            item.setData(0, self.NAME_ROLE, name)
-            self._mark_active(item, name, name)
-        self.tree.expandAll()
-        for i in range(self.tree.topLevelItemCount()):
-            group = self.tree.topLevelItem(i)
-            if self._group_key(group.text(0)) in self.collapsed:
-                group.setExpanded(False)
+            self._component(builtins, name)
+        self.tree.verticalScrollBar().setValue(scroll)
 
-    def _mark_active(self, item: QTreeWidgetItem, name: str, label: str) -> None:
-        if name == self.document.active:
+    def _group(self, title: str, key: str, icon: str, tip: str) -> QTreeWidgetItem:
+        item = QTreeWidgetItem(self.tree, [title])
+        item.setIcon(0, icons.icon(icon))
+        item.setData(0, self.GROUP_ROLE, key)
+        item.setToolTip(0, tip)
+        font = QFont()
+        font.setBold(True)
+        item.setFont(0, font)
+        item.setExpanded(self._state_key(item) not in self.collapsed)
+        return item
+
+    def _component(self, parent: QTreeWidgetItem, name: str):
+        """A component's row, with its private components below it."""
+        project = self.document.project
+        label = name.rpartition(".")[2].rpartition("/")[2]
+        item = QTreeWidgetItem(parent, [label])
+        item.setData(0, self.NAME_ROLE, name)
+        item.setIcon(0, icons.icon(component_icon(project, name)))
+        if name == project.top and name != "top":  # the star shows it too
+            item.setData(0, DETAIL_ROLE, "top")
+        item.setToolTip(0, self._tooltip(name))
+        drag = Qt.ItemFlag.ItemIsDragEnabled  # onto the canvas, where it may be placed
+        placeable = self._placeable(name)
+        item.setFlags(item.flags() | drag if placeable else item.flags() & ~drag)
+        if name == self.document.active:  # the tab being edited
             font = QFont()
             font.setBold(True)
             item.setFont(0, font)
-            item.setText(0, f"✎ {label}" if not self.document.read_only else f"👁 {label}")
+            item.setIcon(0, icons.icon("eye" if self.document.read_only else "edit", "blue"))
+        library_internals = "." in name and self.hide_implementation
+        for child in [] if library_internals else project.private_components(name):
+            self._component(item, child)
+        active = self.document.active
+        if item.childCount() and (
+            self._path_key(item) in self.expanded or active.startswith(f"{name}/")
+        ):
+            item.setExpanded(True)
+        return item
+
+    def _placeable(self, name: str) -> bool:
+        """Whether ``name`` can be placed in the component being edited."""
+        project, active = self.document.project, self.document.active
+        if active not in project.components or name == active:
+            return False
+        try:
+            project.qualify(project.reference_name(name, active), active)
+            return True
+        except KeyError:
+            return False
+
+    def _tooltip(self, name: str) -> str:
+        project = self.document.project
+        owner = name.rpartition(".")[2].rpartition("/")[0]
+        if "." in name:
+            kind = "library component, read-only: copy it into the project to edit it"
+        elif name in project.components:
+            kind = "top component" if name == project.top else "project component"
+        else:
+            kind = "built-in component, read-only"
+        if owner:
+            kind += f"\nprivate to {owner}: placed only inside it"
+        lines = [f"{name} — {kind}"]
+        places = [target for target, _count in self.document.components.placed(name)]
+        if places:
+            lines.append(f"places {', '.join(places)}")
+        users = self.document.components.users(name)
+        if users:
+            lines.append(f"placed in {', '.join(users)}")
+        return "\n".join(lines)
+
+    # -- expanded state --------------------------------------------------------
+
+    def _state_key(self, item: QTreeWidgetItem) -> str:
+        """Groups keep the keys the editor state has always used."""
+        key = item.data(0, self.GROUP_ROLE)
+        if key == "project":
+            return "project"
+        if key == "builtin":
+            return "Built-in"
+        return f"Library: {key.partition(':')[2]}"
+
+    def _path_key(self, item: QTreeWidgetItem) -> str:
+        names = []
+        while item is not None and item.data(0, self.GROUP_ROLE) is None:
+            names.append(item.data(0, self.NAME_ROLE))
+            item = item.parent()
+        group = item.data(0, self.GROUP_ROLE) if item is not None else ""
+        return "/".join([group, *reversed(names)])
+
+    def _set_expanded(self, item: QTreeWidgetItem, expanded: bool) -> None:
+        if self._refreshing or item.data(0, self.PROCESS_ROLE):
+            return
+        if item.data(0, self.GROUP_ROLE) is not None:
+            key = self._state_key(item)
+            (self.collapsed.discard if expanded else self.collapsed.add)(key)
+        else:
+            key = self._path_key(item)
+            (self.expanded.add if expanded else self.expanded.discard)(key)
+        self.collapse_changed.emit()
+
+    def _collapse_all(self) -> None:
+        self.expanded.clear()
+        self.tree.collapseAll()
+        for i in range(self.tree.topLevelItemCount()):
+            self.tree.topLevelItem(i).setExpanded(True)
+        self.collapse_changed.emit()
+
+    # -- actions -----------------------------------------------------------------
 
     def selected(self) -> str | None:
         items = self.tree.selectedItems()
@@ -213,33 +374,166 @@ class ComponentsPanel(_Panel):
         return name is not None and name in self.document.project.components
 
     def _activated(self, item: QTreeWidgetItem) -> None:
+        if item.data(0, self.PROCESS_ROLE):
+            self.process_requested.emit()
+            return
         name = item.data(0, self.NAME_ROLE)
         if name is not None:
             self.open_requested.emit(name)
 
-    def _new(self) -> None:
-        name, ok = QInputDialog.getText(self, "New component", "Component name:")
-        if ok and name.strip():
-            self._guard(lambda: self.document.new_component(name.strip()))
+    def add_menu(self) -> QMenu:
+        """The header's + menu."""
+        menu = QMenu(self)
+        _menu_action(menu, "New component…", self._new, "add")
+        _menu_action(menu, "Add library…", self.add_library, "library")
+        return menu
 
-    def _rename(self) -> None:
-        old = self.selected()
+    def _add_menu(self) -> None:
+        button = self.actions.buttons["New component or library"]
+        self.add_menu().exec(button.mapToGlobal(button.rect().bottomLeft()))
+
+    def _context_menu(self, position) -> None:
+        menu = self.menu_for(self.tree.itemAt(position))
+        if not menu.isEmpty():
+            menu.exec(self.tree.viewport().mapToGlobal(position))
+
+    def menu_for(self, item: QTreeWidgetItem | None) -> QMenu:
+        """The right-click menu for an item of the explorer (or its empty space)."""
+        menu = QMenu(self)
+        if item is None:
+            self._project_actions(menu)
+        elif item.data(0, self.PROCESS_ROLE):
+            _menu_action(menu, "Open the process", self.process_requested.emit, "layers")
+        elif item.data(0, self.GROUP_ROLE) is not None:
+            group = item.data(0, self.GROUP_ROLE)
+            if group == "project":
+                self._project_actions(menu)
+            elif group.startswith("library:"):
+                library = group.partition(":")[2]
+                _menu_action(
+                    menu,
+                    f"Remove library {library}",
+                    lambda: self._guard(lambda: self.document.components.remove_library(library)),
+                    "remove",
+                )
+        else:
+            self.tree.setCurrentItem(item)
+            self._component_actions(menu, item.data(0, self.NAME_ROLE))
+        return menu
+
+    def _project_actions(self, menu) -> None:
+        _menu_action(menu, "New component…", self._new, "add")
+        _menu_action(menu, "Add library…", self.add_library, "library")
+        if self.document.project.top is not None:
+            menu.addSeparator()
+            _menu_action(menu, "Make the project a library (no top component)", self._no_top)
+
+    def _component_actions(self, menu, name: str) -> None:
+        project = self.document.project
+        active = self.document.active
+        _menu_action(menu, "Open", lambda: self.open_requested.emit(name), "edit")
+        _menu_action(
+            menu, "Open in the other pane", lambda: self.open_aside_requested.emit(name), "split"
+        )
+        place = _menu_action(
+            menu, f"Place in {active}", lambda: self.place_requested.emit(name), "place"
+        )
+        place.setEnabled(self._placeable(name))
+        menu.addSeparator()
+        if name in project.components:
+            _menu_action(menu, "New private component…", lambda: self._new(owner=name), "component")
+            self._ownership_actions(menu, name)
+            menu.addSeparator()
+            _menu_action(menu, "Rename…", lambda: self._rename(name), "edit")
+            _menu_action(
+                menu,
+                "Duplicate",
+                lambda: self._guard(lambda: self.document.components.copy(name)),
+                "duplicate",
+            )
+            _menu_action(menu, "Delete", lambda: self._delete(name), "delete")
+            menu.addSeparator()
+            if name == project.top:
+                _menu_action(menu, "Make the project a library (no top component)", self._no_top)
+            elif "/" not in name:
+                _menu_action(
+                    menu,
+                    "Set as top component",
+                    lambda: self._guard(lambda: self.document.components.set_top(name)),
+                    "top",
+                )
+        elif "." in name:
+            _menu_action(
+                menu,
+                "Copy into the project",
+                lambda: self._guard(lambda: self.document.components.copy(name)),
+                "duplicate",
+            )
+
+    def _ownership_actions(self, menu: QMenu, name: str) -> None:
+        """Make a component shared, or private to another one."""
+        project = self.document.project
+        if "/" in name:
+            _menu_action(
+                menu,
+                "Make shared",
+                lambda: self._guard(lambda: self.document.components.move(name, None)),
+            )
+        owners = [
+            other
+            for other in project.components
+            if other != name
+            and not other.startswith(f"{name}/")
+            and other != name.rpartition("/")[0]
+            and name != project.top
+        ]
+        if owners:
+            sub = menu.addMenu("Make private to")
+            sub.setToolTip("It can then be placed only inside that component")
+            for owner in owners:
+                _menu_action(
+                    sub,
+                    owner,
+                    lambda _=False, o=owner: self._guard(
+                        lambda: self.document.components.move(name, o)
+                    ),
+                )
+
+    def _new(self, owner: str | None = None) -> None:
+        title = f"New component private to {owner}" if owner else "New component"
+        name, ok = QInputDialog.getText(self, title, "Component name:")
+        if ok and name.strip():
+            self._guard(lambda: self.document.components.new(name.strip(), owner))
+
+    def add_library(self, folder: str | None = None) -> None:
+        """Load a folder of components (a library or another project) as a library."""
+        if folder is None:
+            folder = QFileDialog.getExistingDirectory(self, "Add library: choose its folder")
+        if folder:
+            self._guard(lambda: self.document.components.add_library(folder))
+
+    def _no_top(self) -> None:
+        self._guard(lambda: self.document.components.set_top(None))
+
+    def _rename(self, old: str | None = None) -> None:
+        old = old or self.selected()
         if not self._is_local(old):
             self.error.emit("select a project component to rename")
             return
-        new, ok = QInputDialog.getText(self, "Rename component", "New name:", text=old)
-        if ok and new.strip() and new.strip() != old:
-            self._guard(lambda: self.document.rename_component(old, new.strip()))
+        short = old.rpartition("/")[2]
+        new, ok = QInputDialog.getText(self, "Rename component", "New name:", text=short)
+        if ok and new.strip() and new.strip() != short:
+            self._guard(lambda: self.document.components.rename(old, new.strip()))
 
-    def _delete(self) -> None:
-        name = self.selected()
+    def _delete(self, name: str | None = None) -> None:
+        name = name or self.selected()
         if self._is_local(name):
-            self._guard(lambda: self.document.delete_component(name))
+            self._guard(lambda: self.document.components.delete(name))
 
     def _set_top(self) -> None:
         name = self.selected()
         if self._is_local(name):
-            self._guard(lambda: self.document.set_top(name))
+            self._guard(lambda: self.document.components.set_top(name))
 
     def _place(self) -> None:
         name = self.selected()
@@ -247,71 +541,298 @@ class ComponentsPanel(_Panel):
             self.place_requested.emit(name)
 
 
+class _ComponentTree(QTreeWidget):
+    """The explorer's tree: components can be dragged onto a canvas to place them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+
+    def mimeTypes(self) -> list[str]:
+        return [COMPONENT_MIME]
+
+    def mimeData(self, items) -> QMimeData:
+        data = QMimeData()
+        names = [i.data(0, ComponentsPanel.NAME_ROLE) for i in items]
+        names = [n for n in names if n]
+        if names:
+            data.setData(COMPONENT_MIME, names[0].encode())
+            data.setText(names[0])
+        return data
+
+
+def component_icon(project, name: str) -> str:
+    """Project, library and built-in components have their own icons."""
+    if "." in name:
+        return "component_library"
+    if name in project.components:
+        return "top" if name == project.top else "component"
+    return "component_builtin"
+
+
+def _menu_action(menu, text: str, slot, icon: str | None = None):
+    """A menu entry running ``slot()``, with no arguments: ``triggered`` would pass
+    its ``checked`` flag into the slot's first optional argument (an owner, a folder)."""
+    action = menu.addAction(text)
+    action.triggered.connect(lambda _checked=False: slot())
+    if icon is not None:
+        action.setIcon(icons.icon(icon))
+    return action
+
+
+DETAIL_ROLE = Qt.ItemDataRole.UserRole + 5  # muted text drawn after an item's name
+PLACES_ROLE = Qt.ItemDataRole.UserRole + 6  # a shape row placing a component: its name
+INSIDE_ROLE = Qt.ItemDataRole.UserRole + 7  # a row inside a placed component: (owner, path)
+
+
+class DetailDelegate(QStyledItemDelegate):
+    """Draws an item's name, then its detail (``DETAIL_ROLE``) in a muted colour."""
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+        detail = index.data(DETAIL_ROLE)
+        if not detail:
+            return
+        style_option = QStyleOptionViewItem(option)
+        self.initStyleOption(style_option, index)
+        style = style_option.widget.style() if style_option.widget else QApplication.style()
+        text_rect = style.subElementRect(
+            QStyle.SubElement.SE_ItemViewItemText, style_option, style_option.widget
+        )
+        metrics = style_option.fontMetrics
+        used = metrics.horizontalAdvance(style_option.text) + 8
+        rect = text_rect.adjusted(used, 0, 0, 0)
+        if rect.width() <= 10:
+            return
+        painter.save()
+        font = QFont(style_option.font)
+        font.setBold(False)
+        painter.setFont(font)
+        painter.setPen(option.palette.placeholderText().color())
+        text = QFontMetrics(font).elidedText(detail, Qt.TextElideMode.ElideRight, rect.width())
+        painter.drawText(
+            rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text
+        )
+        painter.restore()
+
+
 # -- shape tree ----------------------------------------------------------------
 
 
 class ShapeTree(QTreeWidget):
-    """The active component's shape tree. Emits the selected node paths."""
+    """The active component's shapes, as an outliner. Emits the selected node paths.
+
+    The component's own shapes can be selected and edited. A placed component
+    expands to show what is inside it: greyed and read-only, because it
+    belongs to that component's definition and changing it changes every
+    copy. Double-clicking such a row opens the component that owns it, with
+    that shape selected.
+    """
 
     selection_changed_paths = Signal(list)
     enabled_toggled = Signal(tuple, bool)
     collapse_changed = Signal()
 
-    def __init__(self, document: ProjectDocument) -> None:
+    STATUS = 1  # the narrow column with the alignment icon
+    MODIFIERS = 2  # ... and the one with the modifier icon
+
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.setHeaderLabels(["Shape", "Type"])
+        self.setColumnCount(3)
+        self.setHeaderHidden(True)
+        self.setItemDelegateForColumn(0, DetailDelegate(self))
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header = self.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (self.STATUS, self.MODIFIERS):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            self.setColumnWidth(column, 24)
         self.itemSelectionChanged.connect(self._emit_selection)
         self.itemChanged.connect(self._item_changed)
         self._rebuilding = False
-        # Collapsed nodes per component (everything else is expanded).
+        self.hide_implementation = False  # a read-only component: its interface only
+        self.show_implementation = False  # the setting: what placed library parts hold
+        # Per component: collapsed operations (others are open) and opened
+        # placed components (others are closed).
         self.collapsed: dict[str, set[NodePath]] = {}
+        self.opened: dict[str, set[NodePath]] = {}
         self.itemCollapsed.connect(lambda item: self._set_collapsed(item, True))
-        self.itemExpanded.connect(lambda item: self._set_collapsed(item, False))
+        self.itemExpanded.connect(self._expanded)
+
+    def _expanded(self, item: QTreeWidgetItem) -> None:
+        self._fill_placed(item)
+        self._set_collapsed(item, False)
 
     def _set_collapsed(self, item: QTreeWidgetItem, collapsed: bool) -> None:
         path = item.data(0, PATH_ROLE)
         if self._rebuilding or path is None:
             return
-        paths = self.collapsed.setdefault(self.document.active, set())
-        (paths.add if collapsed else paths.discard)(path)
+        if item.data(0, PLACES_ROLE) is not None:
+            paths = self.opened.setdefault(self.document.active, set())
+            (paths.discard if collapsed else paths.add)(path)
+        else:
+            paths = self.collapsed.setdefault(self.document.active, set())
+            (paths.add if collapsed else paths.discard)(path)
         self.collapse_changed.emit()
 
     def rebuild(self, keep: list[NodePath] | None = None) -> None:
         keep = self.selected_paths() if keep is None else keep
         self._rebuilding = True
         self.clear()
+        if self.hide_implementation:
+            self._interface_note()
+            self._rebuilding = False
+            self.select_paths([])
+            return
         for index, shape in enumerate(self.document.shapes):
             self._add(self.invisibleRootItem(), shape, ((0, index),))
-        self.expandAll()
         collapsed = self.collapsed.get(self.document.active, set())
+        opened = self.opened.get(self.document.active, set())
         pending = [self.topLevelItem(i) for i in range(self.topLevelItemCount())]
-        while pending:
+        while pending:  # the component's own nodes only: placed contents load when opened
             item = pending.pop()
-            if item.data(0, PATH_ROLE) in collapsed:
-                item.setExpanded(False)
-            pending.extend(item.child(i) for i in range(item.childCount()))
+            path = item.data(0, PATH_ROLE)
+            if item.data(0, PLACES_ROLE) is not None:
+                item.setExpanded(path in opened)
+            elif item.childCount():
+                item.setExpanded(path not in collapsed)
+            if item.data(0, INSIDE_ROLE) is None:
+                pending.extend(item.child(i) for i in range(item.childCount()))
         self._rebuilding = False
         self.select_paths(keep)
 
+    def _show_pieces(self, item: QTreeWidgetItem, shape: Shape, path: NodePath) -> None:
+        """Say when a cut splits a shape, e.g. "2 pieces · subtract" (copies made by
+        modifiers are meant to be separate, so those are not counted)."""
+        if not shape.cuts or shape.modifiers or not shape.enabled:
+            return
+        try:
+            pieces = self.document.results.pieces(path)
+        except Exception:  # noqa: BLE001 - it does not build: the messages panel says why
+            return
+        if pieces > 1:
+            item.setData(0, DETAIL_ROLE, f"{pieces} pieces · {detail(shape)}")
+            item.setToolTip(
+                0,
+                f"{describe(shape)}\nIts result is {pieces} separate pieces; its points "
+                "(center, left, …) come from the box around all of them",
+            )
+
+    def _interface_note(self) -> None:
+        """Instead of the shapes of a component that cannot be edited."""
+        library = "." in self.document.active
+        item = QTreeWidgetItem(self, ["Library component" if library else "Built-in component"])
+        item.setData(0, DETAIL_ROLE, "interface only")
+        item.setIcon(0, icons.icon("lock"))
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setForeground(0, QBrush(QColor("#8c8f99")))
+        item.setToolTip(
+            0,
+            "Its shapes are how it is built: they are hidden, like the internals of a "
+            "library in code. View › Show implementation of read-only components shows "
+            "them; copy it into the project to change it.",
+        )
+
     def _add(self, parent: QTreeWidgetItem, shape: Shape, path: NodePath) -> None:
-        item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})", describe(shape)])
+        item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})"])
         item.setData(0, PATH_ROLE, path)
+        item.setData(0, DETAIL_ROLE, detail(shape))
+        item.setToolTip(0, describe(shape))
+        item.setIcon(0, shape_icon(shape))
+        self._show_pieces(item, shape, path)
+        if shape.align is not None:
+            item.setIcon(self.STATUS, icons.icon("link"))
+            item.setToolTip(self.STATUS, f"Aligned: {alignment(shape)}")
+        if shape.modifiers:
+            first = shape.modifiers[0]
+            glyph = type(first).icon if len(shape.modifiers) == 1 else "modifier"
+            item.setIcon(self.MODIFIERS, icons.icon(glyph))
+            item.setToolTip(self.MODIFIERS, f"Modifiers: {modifier_stack(shape)}")
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(0, Qt.CheckState.Checked if shape.enabled else Qt.CheckState.Unchecked)
         if not shape.enabled:
-            for column in (0, 1):
-                item.setForeground(column, QBrush(QColor("#808080")))
+            item.setForeground(0, QBrush(QColor("#8c8f99")))
+        self._placeholder(item, shape, self.document.active)
         labels = SLOT_LABELS.get(shape.kind)
         for slot, children in enumerate(child_lists(shape)):
             holder = item
             if labels:
-                holder = QTreeWidgetItem(item, [labels[slot], "operand"])
+                holder = QTreeWidgetItem(item, [labels[slot]])
+                holder.setData(0, DETAIL_ROLE, "operand")
                 holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
             for index, child in enumerate(children):
                 self._add(holder, child, (*path, (slot, index)))
+
+    # -- what is inside placed components (read-only) -------------------------
+
+    def _placeholder(self, item: QTreeWidgetItem, shape: Shape, context: str) -> None:
+        """Let a placed component's row expand into its shapes (loaded when opened);
+        ``context``: the component holding ``shape``, for the name it uses."""
+        if not isinstance(shape, RefShape):
+            return
+        project = self.document.project
+        try:
+            target = project.qualify(shape.component, context)
+        except KeyError:
+            return
+        found = project.definition(target)
+        if found is None or not found[0].shapes:
+            return  # a built-in (or empty) component has nothing to show
+        if target not in project.components and not self.show_implementation:
+            return  # a library component: how it is built is not shown
+        item.setData(0, PLACES_ROLE, target)
+        QTreeWidgetItem(item, ["…"])
+
+    def _fill_placed(self, item: QTreeWidgetItem) -> None:
+        target = item.data(0, PLACES_ROLE)
+        if target is None or item.childCount() != 1 or item.child(0).data(0, INSIDE_ROLE):
+            return
+        item.takeChild(0)
+        found = self.document.project.definition(target)
+        if found is None:
+            return
+        definition, context = found
+        for index, shape in enumerate(definition.shapes):
+            self._add_inside(item, shape, target, context, ((0, index),))
+
+    def _add_inside(self, parent, shape: Shape, owner: str, context: str, path: NodePath) -> None:
+        item = QTreeWidgetItem(parent, [shape.name or f"({shape.kind})"])
+        item.setData(0, INSIDE_ROLE, (owner, path))
+        item.setData(0, DETAIL_ROLE, detail(shape))
+        item.setIcon(0, shape_icon(shape))
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # not selectable: it belongs to ``owner``
+        item.setForeground(0, QBrush(QColor("#8c8f99")))
+        font = QFont()
+        font.setItalic(True)
+        item.setFont(0, font)
+        item.setToolTip(
+            0,
+            f"{describe(shape)}\nPart of {owner}: double-click to edit it there "
+            "(changes every copy)",
+        )
+        if shape.align is not None:
+            item.setIcon(self.STATUS, icons.icon("link"))
+            item.setToolTip(self.STATUS, f"Aligned: {alignment(shape)}")
+        if shape.modifiers:
+            first = shape.modifiers[0]
+            glyph = type(first).icon if len(shape.modifiers) == 1 else "modifier"
+            item.setIcon(self.MODIFIERS, icons.icon(glyph))
+            item.setToolTip(self.MODIFIERS, f"Modifiers: {modifier_stack(shape)}")
+        self._placeholder(item, shape, context)
+        labels = SLOT_LABELS.get(shape.kind)
+        for slot, children in enumerate(child_lists(shape)):
+            holder = item
+            if labels:
+                holder = QTreeWidgetItem(item, [labels[slot]])
+                holder.setData(0, DETAIL_ROLE, "operand")
+                holder.setData(0, INSIDE_ROLE, (owner, path))
+                holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            for index, child in enumerate(children):
+                self._add_inside(holder, child, owner, context, (*path, (slot, index)))
+            holder.setExpanded(True)
 
     def selected_paths(self) -> list[NodePath]:
         return [p for item in self.selectedItems() if (p := item.data(0, PATH_ROLE)) is not None]
@@ -339,7 +860,9 @@ class ShapeTree(QTreeWidget):
             return
         enabled = item.checkState(0) == Qt.CheckState.Checked
         if enabled != self.document.node(path).enabled:
-            self.enabled_toggled.emit(path, enabled)
+            # Later: the change rebuilds this tree, which would delete the item Qt is
+            # still setting the check state of (a crash).
+            QTimer.singleShot(0, lambda: self.enabled_toggled.emit(path, enabled))
 
 
 # -- parameters ----------------------------------------------------------------
@@ -350,40 +873,63 @@ class ParametersPanel(_Panel):
 
     A trial value overrides the default for viewing only; it is not saved.
     Library and built-in components are read-only, but trial values work.
+    A lock marks an internal parameter: one only the component itself uses,
+    not offered where it is placed.
+
+    A number in Default or Trial can be dragged left or right (as in Properties):
+    the design follows live, and a dragged default is applied when the mouse is
+    released, as one step to undo.
     """
 
     COLUMNS = ("Name", "Default", "Min", "Max", "Trial", "Value")
     TRIAL = 4
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.title = QLabel()
         self.table = _table(self.COLUMNS)
         self.table.itemChanged.connect(self._changed)
-        add, remove = QPushButton("Add"), QPushButton("Remove")
-        add.clicked.connect(lambda: self._guard(self.document.add_parameter))
-        remove.clicked.connect(self._remove)
-        clear = QPushButton("Clear trials")
-        clear.clicked.connect(self._clear_trials)
+        self.table.viewport().installEventFilter(self)
+        self.table.setMouseTracking(True)  # for the drag cursor
+        self._drag: dict | None = None  # the cell being dragged, see eventFilter
+        self.hide_implementation = False  # a read-only component: public parameters only
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.title)
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            self.title,
+            ("add", "Add parameter", lambda: self._guard(self.document.parameters.add)),
+            ("remove", "Remove the selected parameters", self._remove),
+            ("lock", "Make the selected parameters internal (or public)", self._toggle_internal),
+            ("clear", "Clear trial values", self._clear_trials),
+        )
+        layout.addLayout(self.actions)
         layout.addWidget(self.table)
-        layout.addLayout(_button_row(add, remove, clear))
         self._names: list[str] = []
 
     def _clear_trials(self) -> None:
         for name in list(self.document.trials.get(self.document.active, {})):
             self._guard(lambda n=name: self.document.set_trial(n, None))
 
+    def select(self, name: str) -> None:
+        """Select the row of the parameter ``name``."""
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 0)
+            if cell is not None and cell.text() == name:
+                self.table.selectRow(row)
+                self.table.scrollToItem(cell)
+                return
+
     def refresh(self) -> None:
         parameters = self.document.active_definition.parameters
+        if self.hide_implementation:  # its interface: public ones only
+            parameters = [p for p in parameters if not p.internal]
         read_only = self.document.read_only
         suffix = " (read-only; trial values work)" if read_only else ""
-        self.title.setText(f" Parameters of <b>{self.document.active}</b>{suffix}")
+        self.title.setText(f"Parameters of <b>{self.document.active}</b>{suffix}")
         try:
-            values = self.document.scope()
+            values = self.document.results.scope()
         except Exception:  # noqa: BLE001 - shown as "error" per row
             values = {}
         trials = self.document.trials.get(self.document.active, {})
@@ -401,7 +947,13 @@ class ParametersPanel(_Panel):
                 QTableWidgetItem(_format(trials.get(p.name))),
                 _readonly("error" if value is None else f"{value:g}"),
             ]
-            cells[0].setToolTip(p.description)
+            cells[0].setIcon(icons.icon("lock") if p.internal else _blank_icon())  # aligned
+            access = (
+                "Internal: only this component uses it"
+                if p.internal
+                else "Public: can be set where the component is placed"
+            )
+            cells[0].setToolTip("\n".join(t for t in (p.description, access) if t))
             cells[self.TRIAL].setToolTip("Try a value without changing the design (not saved)")
             if p.name in trials:
                 cells[-1].setForeground(QBrush(QColor("#e0a000")))
@@ -417,126 +969,125 @@ class ParametersPanel(_Panel):
             match item.column():
                 case 0:
                     if text != name:
-                        self.document.update_parameter(name, name=text)
+                        self.document.parameters.update(name, name=text)
                 case 1:
-                    self.document.update_parameter(name, default=parse_value(text))
+                    self.document.parameters.update(name, default=parse_value(text))
                 case 2:
-                    self.document.update_parameter(name, min=float(text) if text else None)
+                    self.document.parameters.update(name, min=float(text) if text else None)
                 case 3:
-                    self.document.update_parameter(name, max=float(text) if text else None)
+                    self.document.parameters.update(name, max=float(text) if text else None)
                 case self.TRIAL:
                     self.document.set_trial(name, parse_value(text) if text else None)
 
         if not self._guard(apply):
             self.refresh()
 
+    # -- dragging a value ------------------------------------------------------------
+
+    def _draggable(self, position) -> dict | None:
+        """The parameter and start value of a number cell that can be dragged."""
+        item = self.table.itemAt(position)
+        if (
+            item is None
+            or item.column() not in (1, self.TRIAL)
+            or self.table.state() == (QAbstractItemView.State.EditingState)
+        ):
+            return None
+        column, row = item.column(), item.row()
+        if column == 1 and self.document.read_only:
+            return None
+        definitions = {p.name: p for p in self.document.active_definition.parameters}
+        parameter = definitions.get(self._names[row] if row < len(self._names) else "")
+        if parameter is None:
+            return None
+        text = item.text().strip()
+        if column == self.TRIAL and not text:  # no trial yet: start from the value
+            text = self.table.item(row, len(self.COLUMNS) - 1).text()
+        if not is_number(text):
+            return None
+        return {"name": parameter.name, "column": column, "start": float(text), "p": parameter}
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is not self.table.viewport():
+            return super().eventFilter(watched, event)
+        kind = event.type()
+        if kind == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            self._drag = self._draggable(event.position().toPoint())
+            if self._drag is not None:
+                self._drag |= {"x": event.position().x(), "dragging": False}
+        elif kind == QEvent.Type.MouseMove:
+            if self._drag is None or not event.buttons() & Qt.MouseButton.LeftButton:
+                hover = self._draggable(event.position().toPoint())
+                shape = Qt.CursorShape.SizeHorCursor if hover else Qt.CursorShape.ArrowCursor
+                self.table.viewport().setCursor(shape)
+                return False
+            dx = event.position().x() - self._drag["x"]
+            if not self._drag["dragging"] and abs(dx) < DRAG_START_PX:
+                return True
+            self._drag["dragging"] = True
+            p = self._drag["p"]
+            value = dragged_value(
+                self._drag["start"], dx, event.modifiers(), p.integer, p.min, p.max
+            )
+            self._drag["value"] = value
+            self._guard(lambda: self.document.set_trial(p.name, value))  # shown live
+            return True
+        elif kind == QEvent.Type.MouseButtonRelease and self._drag is not None:
+            drag, self._drag = self._drag, None
+            if not drag["dragging"]:
+                return False
+            if drag["column"] == 1 and "value" in drag:  # the default: applied now
+                name, value = drag["name"], drag["value"]
+                self._guard(lambda: self.document.set_trial(name, None))
+                self._guard(lambda: self.document.parameters.update(name, default=value))
+            return True
+        return False
+
+    def _toggle_internal(self) -> None:
+        """Make the selected parameters internal, or public if they all are already."""
+        rows = sorted({i.row() for i in self.table.selectedItems()})
+        if not rows:
+            self.error.emit("select the parameters to make internal or public")
+            return
+        definitions = {p.name: p for p in self.document.active_definition.parameters}
+        names = [self._names[row] for row in rows]
+        internal = not all(definitions[n].internal for n in names)
+        self._guard(lambda: self.document.parameters.set_internal(names, internal))
+
     def _remove(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
         for row in rows:
-            self._guard(lambda n=self._names[row]: self.document.remove_parameter(n))
+            self._guard(lambda n=self._names[row]: self.document.parameters.remove(n))
 
 
 # -- points ------------------------------------------------------------------
-
-
-class PointsPanel(_Panel):
-    """Alignment points the edited component declares, for whoever places it.
-
-    ``At`` is an optional ``shape.point`` the position is measured from; ``X``
-    and ``Y`` may be expressions over the component's parameters.
-    """
-
-    COLUMNS = ("Name", "At", "X", "Y", "Position")
-    FIELDS = ("name", "at", "x", "y")
-
-    def __init__(self, document: ProjectDocument) -> None:
-        super().__init__()
-        self.document = document
-        self.title = QLabel()
-        self.table = _table(self.COLUMNS)
-        self.table.itemChanged.connect(self._changed)
-        add, remove = QPushButton("Add"), QPushButton("Remove")
-        add.clicked.connect(lambda: self._guard(self.document.add_point))
-        remove.clicked.connect(self._remove)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.title)
-        layout.addWidget(self.table)
-        layout.addLayout(_button_row(add, remove))
-        self._names: list[str] = []
-
-    def refresh(self) -> None:
-        points = self.document.active_definition.points
-        self.title.setText(f" Points of <b>{self.document.active}</b> (besides center, top, …)")
-        try:
-            positions = self.document.declared_points()
-        except Exception:  # noqa: BLE001 - shown as "error" per row
-            positions = {}
-        self.table.blockSignals(True)
-        self.table.setRowCount(len(points))
-        self._names = [p.name for p in points]
-        for row, point in enumerate(points):
-            position = positions.get(point.name)
-            make = _readonly if self.document.read_only else QTableWidgetItem
-            cells = [
-                make(point.name),
-                make(point.at or ""),
-                make(_format(point.x)),
-                make(_format(point.y)),
-                _readonly("error" if position is None else "{:g}, {:g}".format(*position)),
-            ]
-            cells[0].setToolTip(point.description)
-            for column, cell in enumerate(cells):
-                self.table.setItem(row, column, cell)
-        self.table.blockSignals(False)
-
-    def _changed(self, item: QTableWidgetItem) -> None:
-        name = self._names[item.row()]
-        text = item.text().strip()
-        field = self.FIELDS[item.column()] if item.column() < len(self.FIELDS) else None
-
-        def apply() -> None:
-            match field:
-                case "name":
-                    if text != name:
-                        self.document.update_point(name, name=text)
-                case "at":
-                    self.document.update_point(name, at=text or None)
-                case "x" | "y":
-                    self.document.update_point(name, **{field: parse_value(text or "0")})
-
-        if field is not None and not self._guard(apply):
-            self.refresh()
-
-    def _remove(self) -> None:
-        rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
-        for row in rows:
-            self._guard(lambda n=self._names[row]: self.document.remove_point(n))
 
 
 # -- process -------------------------------------------------------------------
 
 
 class LayersPanel(_Panel):
-    """Process layers: visibility, colour, GDS mapping, etch loss and rules."""
+    """The layers as shown: visibility and colour. Click a layer to draw on it.
+
+    Their definitions (GDS numbers, etch loss, rules) are part of the process
+    and edited in the Process tab (:class:`LayerDefinitionsPanel`).
+    """
 
     visibility_changed = Signal(str, bool)
-    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm")
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.visible: dict[str, bool] = {}
         self.colors: dict[str, QColor] = {}
-        self.layers = _table(self.LAYER_COLUMNS)
+        self.layers = _table(("Layer", "GDS"))
         self.layers.itemChanged.connect(self._layer_changed)
-        add_layer, remove_layer = QPushButton("Add layer"), QPushButton("Remove")
-        add_layer.clicked.connect(lambda: self._guard(self.document.add_layer))
-        remove_layer.clicked.connect(self._remove_layers)
+        self.layers.setToolTip("Tick to show a layer; click a layer to draw on it")
+        self.layers.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(self.layers)
-        layout.addLayout(_button_row(add_layer, remove_layer))
         self._layer_names: list[str] = []
 
     def refresh(self) -> None:
@@ -545,6 +1096,57 @@ class LayersPanel(_Panel):
         layers = self.document.project.layers
         self._layer_names = list(layers)
         self.colors = {name: layer_color(i) for i, name in enumerate(layers)}
+        self.layers.blockSignals(True)
+        self.layers.setRowCount(len(layers))
+        for row, layer in enumerate(layers.values()):
+            name_cell = QTableWidgetItem(layer.name)
+            name_cell.setFlags(name_cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            shown = self.visible.get(layer.name, True)
+            name_cell.setCheckState(Qt.CheckState.Checked if shown else Qt.CheckState.Unchecked)
+            name_cell.setIcon(swatch_icon(self.colors[layer.name]))
+            self.layers.setItem(row, 0, name_cell)
+            self.layers.setItem(row, 1, _readonly(f"{layer.gds_layer}/{layer.gds_datatype}"))
+        self.layers.blockSignals(False)
+
+    def _layer_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() != 0:
+            return
+        name = self._layer_names[item.row()]
+        shown = item.checkState() == Qt.CheckState.Checked
+        if shown != self.visible.get(name, True):
+            self.visible[name] = shown
+            self.visibility_changed.emit(name, shown)
+
+
+class LayerDefinitionsPanel(_Panel):
+    """The process's layers: name, GDS mapping, etch loss and rules (in the Process tab)."""
+
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Undercut µm", "Min width µm", "Min space µm")
+
+    def __init__(self, document: EditSession) -> None:
+        super().__init__()
+        self.document = document
+        self.layers = _table(self.LAYER_COLUMNS)
+        self.layers.itemChanged.connect(self._layer_changed)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            QLabel("Layers"),
+            ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
+            ("remove", "Remove the selected layers", self._remove_layers),
+            help="The mask layers: their *GDS* layer and datatype for export, the "
+            "*undercut* the etch removes from each edge (for the as-etched and "
+            "etch-compensated views), and the *minimum width and spacing* the rule "
+            "checks use.",
+        )
+        layout.addLayout(self.actions)
+        layout.addWidget(self.layers)
+        self._layer_names: list[str] = []
+
+    def refresh(self) -> None:
+        layers = self.document.project.layers
+        self._layer_names = list(layers)
         self.layers.blockSignals(True)
         self.layers.setRowCount(len(layers))
         for row, layer in enumerate(layers.values()):
@@ -558,25 +1160,16 @@ class LayersPanel(_Panel):
             ]
             for column, value in enumerate(values):
                 self.layers.setItem(row, column, QTableWidgetItem(_format(value)))
-            name_cell = self.layers.item(row, 0)
-            name_cell.setFlags(name_cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            shown = self.visible.get(layer.name, True)
-            name_cell.setCheckState(Qt.CheckState.Checked if shown else Qt.CheckState.Unchecked)
-            swatch = QPixmap(12, 12)
-            swatch.fill(self.colors[layer.name])
-            name_cell.setIcon(QIcon(swatch))
         self.layers.blockSignals(False)
+        # the name column also holds the check box and the colour swatch
+        header = self.layers.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        metrics = self.layers.fontMetrics()
+        widest = max((metrics.horizontalAdvance(n) for n in layers), default=40)
+        self.layers.setColumnWidth(0, max(widest, metrics.horizontalAdvance("Layer")) + 64)
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:
         name = self._layer_names[item.row()]
-        if item.column() == 0:
-            shown = item.checkState() == Qt.CheckState.Checked
-            if shown != self.visible.get(name, True):
-                self.visible[name] = shown
-                self.visibility_changed.emit(name, shown)
-                return
-            if item.text().strip() == name:
-                return
         row = item.row()
         texts = [self.layers.item(row, c).text().strip() for c in range(len(self.LAYER_COLUMNS))]
 
@@ -592,9 +1185,7 @@ class LayersPanel(_Panel):
                 optional(texts[4]),
                 optional(texts[5]),
             )
-            self.document.set_layer(name, layer)
-            if layer.name != name:
-                self.visible[layer.name] = self.visible.pop(name, True)
+            self.document.process.set_layer(name, layer)
 
         if not self._guard(apply):
             self.refresh()
@@ -602,25 +1193,30 @@ class LayersPanel(_Panel):
     def _remove_layers(self) -> None:
         rows = sorted({i.row() for i in self.layers.selectedItems()}, reverse=True)
         for row in rows:
-            self._guard(lambda n=self._layer_names[row]: self.document.remove_layer(n))
+            self._guard(lambda n=self._layer_names[row]: self.document.process.remove_layer(n))
 
 
 class ConstantsPanel(_Panel):
     """Process constants, available in every expression as ``process.<name>``."""
 
-    def __init__(self, document: ProjectDocument) -> None:
+    def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
         self.constants = _table(["Constant", "Expression", "Value"])
         self.constants.itemChanged.connect(self._constant_changed)
-        add_const, remove_const = QPushButton("Add constant"), QPushButton("Remove")
-        add_const.clicked.connect(lambda: self._guard(self.document.add_constant))
-        remove_const.clicked.connect(self._remove_constants)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel(" Use in expressions as process.<name>"))
+        layout.setSpacing(0)
+        self.actions = _action_bar(
+            QLabel("Constants"),
+            ("add", "Add constant", lambda: self._guard(self.document.process.add_constant)),
+            ("remove", "Remove the selected constants", self._remove_constants),
+            help="Numbers of the process, such as the device layer thickness. Every "
+            "expression in every component can use them as *process.<name>*, e.g. "
+            "*process.min_gap*.",
+        )
+        layout.addLayout(self.actions)
         layout.addWidget(self.constants)
-        layout.addLayout(_button_row(add_const, remove_const))
         self._constant_names: list[str] = []
 
     def refresh(self) -> None:
@@ -646,9 +1242,9 @@ class ConstantsPanel(_Panel):
 
         def apply() -> None:
             if item.column() == 0 and text != name:
-                self.document.rename_constant(name, text)
+                self.document.process.rename_constant(name, text)
             elif item.column() == 1:
-                self.document.set_constant(name, parse_value(text))
+                self.document.process.set_constant(name, parse_value(text))
 
         if not self._guard(apply):
             self.refresh()
@@ -656,7 +1252,9 @@ class ConstantsPanel(_Panel):
     def _remove_constants(self) -> None:
         rows = sorted({i.row() for i in self.constants.selectedItems()}, reverse=True)
         for row in rows:
-            self._guard(lambda n=self._constant_names[row]: self.document.remove_constant(n))
+            self._guard(
+                lambda n=self._constant_names[row]: self.document.process.remove_constant(n)
+            )
 
 
 # -- messages ------------------------------------------------------------------
@@ -672,27 +1270,33 @@ class MessagesPanel(QListWidget):
         self.itemActivated.connect(self._activated)
         self.itemClicked.connect(self._activated)
 
+    counts_changed = Signal(int, int)  # errors, violations
+
     def show_messages(self, errors: list[str], violations) -> None:
         self.clear()
         for text in errors:
-            item = QListWidgetItem(f"Error: {text}")
-            item.setForeground(QBrush(QColor("#ff6b6b")))
+            item = QListWidgetItem(icons.icon("error"), text)
+            item.setToolTip(text)
             self.addItem(item)
         if violations:
             summary = QListWidgetItem(
                 f"{len(violations)} rule violation(s) — click one to zoom to it"
             )
-            summary.setForeground(QBrush(QColor("#ffb347")))
+            font = QFont()
+            font.setBold(True)
+            summary.setFont(font)
             self.addItem(summary)
         for v in violations:
             x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
             where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
-            item = QListWidgetItem(f"    [{v.rule}] {v.layer}: {v.message}{where}")
+            item = QListWidgetItem(
+                icons.icon("warning"), f"[{v.rule}] {v.layer}: {v.message}{where}"
+            )
             item.setData(PATH_ROLE, v.bbox_um)
-            item.setForeground(QBrush(QColor("#ffb347")))
             self.addItem(item)
         if not errors and not violations:
-            self.addItem(QListWidgetItem("No rule violations."))
+            self.addItem(QListWidgetItem(icons.icon("ok"), "No rule violations."))
+        self.counts_changed.emit(len(errors), len(violations))
 
     def _activated(self, item: QListWidgetItem) -> None:
         bbox = item.data(PATH_ROLE)

@@ -1,0 +1,355 @@
+"""The Properties panel: title, paired fields, expression fields and parameters."""
+
+import pytest
+
+pytest.importorskip("PySide6")
+
+from PySide6.QtWidgets import QComboBox, QInputDialog, QLabel, QMessageBox, QToolButton
+
+from mems_sketch import ArrayModifier, RectShape
+from mems_sketch.gui.app import MainWindow
+from mems_sketch.gui.properties import ElidedLabel
+from mems_sketch.gui.value_edit import ValueEdit
+
+
+@pytest.fixture
+def window(qtbot, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Discard)
+    w = MainWindow()
+    qtbot.addWidget(w)
+    w.resize(1200, 800)
+    w.show()
+    qtbot.waitExposed(w)
+    w.document.parameters.set("pitch", 13.0)
+    w.document.nodes.add(RectShape(name="bar", layer="device", x0=0, y0=0, x1="pitch * 2", y1=4))
+    w.tree.select_paths([((0, 0),)])
+    return w
+
+
+def fields(window) -> dict[str, ValueEdit]:
+    """The value fields by prefix and row: e.g. 'From x', 'To y'."""
+    editor = window.properties
+    result = {}
+    for edit in editor.findChildren(ValueEdit):
+        row = edit.parentWidget()
+        form_label = None
+        for label in editor.findChildren(QLabel):
+            if label.buddy() is row or label.buddy() is edit:
+                form_label = label.text()
+        result[f"{form_label} {edit.prefix}".strip()] = edit
+    return result
+
+
+def test_the_name_is_the_title_and_no_values_sit_beside_fields(window):
+    editor = window.properties
+    assert editor.name_edit.text() == "bar"
+    assert not [lab for lab in editor.findChildren(QLabel) if lab.text().startswith("= ")]
+    editor.name_edit.setText("beam")
+    editor.name_edit.returnPressed.emit()
+    assert window.document.shapes[0].name == "beam"
+
+
+def test_x_and_y_share_a_row(window):
+    edits = fields(window)
+    assert {"From x", "From y", "To x", "To y"} <= set(edits)
+    assert edits["From x"].parentWidget() is edits["From y"].parentWidget()
+
+
+def test_expressions_are_marked_and_show_their_value(window):
+    to_x, from_x = fields(window)["To x"], fields(window)["From x"]
+    assert to_x.property("expression") and to_x._hint == "26"
+    assert not from_x.property("expression") and from_x._hint == ""
+    to_x.setText("pitch + nothing")
+    assert to_x.property("invalid") and "cannot evaluate" in to_x.toolTip()
+
+
+def test_names_are_completed(window):
+    edit = fields(window)["From y"]
+    edit.setText("pi")
+    edit.setCursorPosition(2)
+    edit._suggest()
+    assert edit._completer.completionCount() >= 1
+    assert edit._completer.currentCompletion() == "pitch"
+    edit._complete("pitch")
+    assert edit.text() == "pitch"
+    edit.setText("2*mass")
+    assert "i" in edit._names() and "pitch" in edit._names()
+
+
+def test_the_parameter_button_uses_or_makes_parameters(window, monkeypatch):
+    edit = fields(window)["To y"]
+    menu = edit.parameter_menu()
+    texts = [a.text() for a in menu.actions()]
+    assert "pitch  = 13" in texts and "Make a parameter from this value…" in texts
+    next(a for a in menu.actions() if a.text() == "pitch  = 13").trigger()  # applies it
+    assert window.document.shapes[0].y1 == "pitch"
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("height", True))
+    edit = fields(window)["From x"]
+    edit.setText("7")
+    edit.parameter_menu()  # the menu offers it; the action calls this
+    edit._make_parameter()
+    assert window.document.shapes[0].x0 == "height"
+    assert window.document.active_definition.parameter("height").default == 7
+
+
+def test_use_the_value_replaces_an_expression_by_its_number(window):
+    edit = fields(window)["To x"]
+    edit._use(edit._hint)
+    assert window.document.shapes[0].x1 == 26
+
+
+def test_enabled_is_an_eye_in_the_title_row_and_acts_at_once(window):
+    editor = window.properties
+    assert not [lab for lab in editor.findChildren(QLabel) if lab.text() == "Enabled"]
+    assert editor.enabled_toggle.isChecked()
+    editor.enabled_toggle.click()
+    assert window.document.shapes[0].enabled is False
+    assert not window.properties.enabled_toggle.isChecked()  # the panel was rebuilt
+    window.document.undo()
+    assert window.document.shapes[0].enabled is True
+
+
+def test_long_names_are_cut_and_do_not_widen_the_panel(window):
+    long = "comb_finger_overlap_length_of_the_left_rotor"
+    window.document.parameters.set(long, 12.0)
+    bar = window.document.shapes[0]
+    window.document.nodes.replace(
+        ((0, 0),),
+        bar.model_copy(
+            update={
+                "name": "interdigitated_comb_finger_left_side",
+                "x0": f"{long} + {long}",
+                "modifiers": [ArrayModifier(rows=long, dy=long)],
+            }
+        ),
+    )
+    window.tree.select_paths([((0, 0),)])
+    body = window.properties.widget()
+    assert body.minimumSizeHint().width() < 320
+    name = window.properties.name_edit
+    assert name._elided() and name.toolTip().startswith("interdigitated_comb_finger_left_side")
+    assert not [lab for lab in body.findChildren(QLabel) if lab.text() == "Extent"]
+    from_x = fields(window)["From x"]
+    assert from_x._elided() and from_x.toolTip().startswith(f"{long} + {long}")
+    summary = next(lab for lab in body.findChildren(ElidedLabel) if long in lab.text())
+    assert QLabel.text(summary).endswith("…")  # shown cut; text() is all of it
+    from_x.setFocus()
+    assert not from_x._elided()  # all of it while editing
+
+
+def test_internal_parameters_are_locked_and_not_offered_where_placed(window):
+    doc = window.document
+    doc.components.new("pad")
+    doc.parameters.set("size", 20.0)
+    doc.parameters.set("inner", "size / 2")
+    doc.nodes.add(RectShape(layer="device", x0=0, y0=0, x1="size", y1="inner"))
+    panel = window.parameters
+    panel.refresh()
+    panel.table.selectRow(1)
+    panel.actions.buttons["Make the selected parameters internal (or public)"].click()
+    assert doc.active_definition.parameter("inner").internal
+    panel.refresh()
+    assert panel.table.item(1, 0).toolTip().startswith("Internal")  # and a lock
+    assert panel.table.item(0, 0).toolTip().startswith("Public")
+    doc.set_active("top")
+    path = doc.nodes.add_component("pad")
+    window.tree.select_paths([path])
+    labels = [lab.text() for lab in window.properties.findChildren(QLabel)]
+    assert "size" in labels and "inner" not in labels
+
+
+def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window, qtbot):
+    """Enter in a field, or a click on the eye or a card button, rebuilds the panel
+    from inside that widget's own event: the old widgets must outlive the event."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QToolButton
+
+    from mems_sketch import ArrayModifier
+
+    editor = window.properties
+    for text, field in (("3", "From x"), ("pitch", "To y")):
+        edit = fields(window)[field]
+        window.activateWindow()
+        qtbot.mouseClick(edit, Qt.MouseButton.LeftButton)  # focus, as a user gives it
+        edit.selectAll()
+        qtbot.keyClicks(edit, text)
+        qtbot.keyClick(edit, Qt.Key.Key_Return)
+        qtbot.wait(1)
+    bar = window.document.shapes[0]
+    assert (bar.x0, bar.y1) == (3, "pitch")
+    qtbot.keyClicks(editor.name_edit, "_2")
+    qtbot.keyClick(editor.name_edit, Qt.Key.Key_Return)
+    qtbot.wait(1)
+    assert window.document.shapes[0].name.endswith("_2")
+    qtbot.mouseClick(editor.enabled_toggle, Qt.MouseButton.LeftButton)
+    qtbot.wait(1)
+    assert window.document.shapes[0].enabled is False
+    window.document.nodes.replace(
+        ((0, 0),), window.document.shapes[0].model_copy(update={"modifiers": [ArrayModifier()]})
+    )
+    window.tree.select_paths([((0, 0),)])
+    remove = next(b for b in window.properties.findChildren(QToolButton) if b.toolTip() == "Remove")
+    qtbot.mouseClick(remove, Qt.MouseButton.LeftButton)
+    qtbot.wait(1)
+    assert window.document.shapes[0].modifiers == []
+
+
+# -- dragging values ------------------------------------------------------------------
+
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWidgets import QApplication
+
+from mems_sketch.gui.value_edit import dragged_value
+
+SHIFT, CTRL = Qt.KeyboardModifier.ShiftModifier, Qt.KeyboardModifier.ControlModifier
+
+
+def test_how_far_a_drag_moves_a_value():
+    assert dragged_value(10, 8, integer=True) == 11  # one whole step per 8 px
+    assert dragged_value(10, -800, integer=True, minimum=1) == 1
+    assert dragged_value(100, 10) == pytest.approx(120)  # 2 per px at this size
+    assert dragged_value(100, 10, SHIFT) == pytest.approx(102)  # ten times finer
+    assert dragged_value(100, 10, CTRL) == pytest.approx(100)  # round steps of 100
+    assert dragged_value(0.5, 10) == pytest.approx(0.52)
+
+
+def mouse(widget, kind, x, buttons=Qt.MouseButton.LeftButton):
+    pos = QPointF(x, 8)
+    event = QMouseEvent(
+        kind,
+        pos,
+        widget.mapToGlobal(pos),
+        Qt.MouseButton.LeftButton,
+        buttons,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    QApplication.sendEvent(widget, event)
+
+
+def drag(widget, xs):
+    mouse(widget, QEvent.Type.MouseButtonPress, xs[0])
+    for x in xs[1:]:
+        mouse(widget, QEvent.Type.MouseMove, x)
+    mouse(widget, QEvent.Type.MouseButtonRelease, xs[-1], Qt.MouseButton.NoButton)
+
+
+def test_dragging_a_count_previews_live_and_applies_once(window):
+    doc = window.document
+    path = doc.nodes.add_component("comb_drive")
+    window.tree.select_paths([path])
+    fingers = next(e for e in window.properties.findChildren(ValueEdit) if e.integer)
+    shown = []
+    window.properties.previewed.connect(lambda node: shown.append(node.params["fingers"]))
+    undo_steps = len(doc._undo)
+    mouse(fingers, QEvent.Type.MouseButtonPress, 20)
+    for x in range(22, 70, 8):
+        mouse(fingers, QEvent.Type.MouseMove, x)
+    assert shown and shown[-1] > 10  # previewed, from the default (10)
+    assert doc.node(path).params == {}  # nothing applied yet
+    mouse(fingers, QEvent.Type.MouseButtonRelease, 70, Qt.MouseButton.NoButton)
+    assert doc.node(path).params["fingers"] == shown[-1]
+    assert len(doc._undo) == undo_steps + 1
+
+
+def test_a_click_without_dragging_edits_the_text(window):
+    edit = fields(window)["From x"]
+    drag(edit, [20, 21])
+    assert edit.hasFocus() and edit.selectedText() == "0"
+    assert window.document.shapes[0].x0 == 0
+
+
+def test_an_expression_is_not_dragged(window):
+    edit = fields(window)["To x"]  # pitch * 2
+    drag(edit, [20, 60])
+    assert window.document.shapes[0].x1 == "pitch * 2"
+
+
+def test_dragging_a_default_in_the_parameters_panel(window):
+    panel = window.parameters
+    panel.refresh()
+    table = panel.table
+    rect = table.visualItemRect(table.item(0, 1))  # pitch's default: 13
+    viewport = table.viewport()
+    y = rect.center().y()
+
+    def at(kind, x, buttons=Qt.MouseButton.LeftButton):
+        pos = QPointF(rect.left() + x, y)
+        event = QMouseEvent(
+            kind,
+            pos,
+            viewport.mapToGlobal(pos),
+            Qt.MouseButton.LeftButton,
+            buttons,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        QApplication.sendEvent(viewport, event)
+
+    at(QEvent.Type.MouseButtonPress, 5)
+    at(QEvent.Type.MouseMove, 30)
+    assert window.document.trials.get("top", {}).get("pitch") not in (None, 13)  # live
+    assert window.document.active_definition.parameter("pitch").default == 13
+    at(QEvent.Type.MouseButtonRelease, 30, Qt.MouseButton.NoButton)
+    assert window.document.active_definition.parameter("pitch").default != 13
+    assert "pitch" not in window.document.trials.get("top", {})
+
+
+def test_dragging_with_a_real_mouse(window, qtbot):
+    # Through the window, as a user's mouse: Qt focuses the field on the press,
+    # before the field sees it, which must not turn the drag into a click.
+    edit = fields(window)["From x"]
+    y = edit.height() // 2
+    qtbot.mousePress(edit, Qt.MouseButton.LeftButton, pos=QPoint(20, y))
+    for x in range(24, 80, 6):
+        qtbot.mouseMove(edit, QPoint(x, y))
+    qtbot.mouseRelease(edit, Qt.MouseButton.LeftButton, pos=QPoint(80, y))
+    assert window.document.shapes[0].x0 > 0
+    assert not edit.hasFocus()
+
+
+def test_a_real_click_edits_the_text(window, qtbot):
+    edit = fields(window)["From x"]
+    qtbot.mouseClick(edit, Qt.MouseButton.LeftButton, pos=QPoint(20, edit.height() // 2))
+    assert edit.hasFocus() and edit.selectedText() == "0"
+
+
+def test_dragging_a_default_with_a_real_mouse(window, qtbot):
+    panel = window.parameters
+    panel.refresh()
+    table = panel.table
+    rect = table.visualItemRect(table.item(0, 1))  # pitch's default: 13
+    viewport, y = table.viewport(), rect.center().y()
+    qtbot.mousePress(viewport, Qt.MouseButton.LeftButton, pos=QPoint(rect.left() + 5, y))
+    for x in range(10, 40, 5):
+        qtbot.mouseMove(viewport, QPoint(rect.left() + x, y))
+    qtbot.mouseRelease(viewport, Qt.MouseButton.LeftButton, pos=QPoint(rect.left() + 40, y))
+    assert window.document.active_definition.parameter("pitch").default != 13
+
+
+def test_apply_sits_beside_add_modifier_and_only_when_needed(window):
+    assert window.properties.apply_button is None  # a rectangle without modifiers
+    bar = window.document.shapes[0]
+    window.document.nodes.replace(
+        ((0, 0),), bar.model_copy(update={"modifiers": [ArrayModifier()]})
+    )
+    window.tree.select_paths([((0, 0),)])
+    apply = window.properties.apply_button
+    add = next(b for b in window.properties.findChildren(QToolButton) if b.text() == "Add modifier")
+    assert apply is not None and apply.parentWidget() is add.parentWidget()
+    assert abs(apply.geometry().center().y() - add.geometry().center().y()) <= 2
+
+
+def test_choosing_from_a_list_applies_at_once(window):
+    layer = next(
+        c for c in window.properties.findChildren(QComboBox) if c.currentText() == "device"
+    )
+    layer.addItem("oxide")
+    layer.setCurrentText("oxide")
+    layer.activated.emit(layer.currentIndex())
+    assert window.document.shapes[0].layer == "oxide"
+
+
+def test_the_empty_panel_has_the_islands_colour(window):
+    window.tree.select_paths([])
+    assert window.properties.widget().objectName() == "properties-body"

@@ -77,13 +77,7 @@ class Results:
     def preview(self, path: NodePath, node: Shape, mode: str = "drawn") -> Geometry:
         """The active component as it would be with ``node`` at ``path``, without
         changing anything (e.g. while a value is dragged). Raises if it does not build."""
-        project, component = self.session.project, self.session.active
-        definition = project.components[component].model_copy(deep=True)
-        container, index = container_of(definition.shapes, path)
-        container[index] = node
-        trial = dataclasses.replace(
-            project, components={**project.components, component: definition}
-        )
+        trial, component = self._trial(path, node), self.session.active
         drawn = self.session.compiler.session(trial).render(
             component, self.session.trials_for(component)
         )
@@ -92,6 +86,22 @@ class Results:
         if mode == "compensated":
             return etch.compensated(trial, drawn)
         return drawn
+
+    def inspect_with(self, path: NodePath, node: Shape) -> dict[NodePath, NodeRecord]:
+        """Every node of the active component as it would be with ``node`` at ``path``."""
+        component = self.session.active
+        return self.session.compiler.session(self._trial(path, node)).inspect(
+            component, self.session.trials_for(component)
+        )
+
+    def _trial(self, path: NodePath, node: Shape):
+        project, component = self.session.project, self.session.active
+        definition = project.components[component].model_copy(deep=True)
+        container, index = container_of(definition.shapes, path)
+        container[index] = node
+        return dataclasses.replace(
+            project, components={**project.components, component: definition}
+        )
 
     def check(
         self, drawn: Geometry | None = None, component: str | None = None

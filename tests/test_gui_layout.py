@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QToolButton, 
 
 from mems_sketch.core.shapes import RectShape
 from mems_sketch.gui.app import MainWindow
-from mems_sketch.gui.find_action import menu_actions
+from mems_sketch.gui.search import menu_actions
 
 
 @pytest.fixture

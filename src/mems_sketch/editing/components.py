@@ -122,9 +122,7 @@ class ComponentEdits(Commands):
     def add_library(self, folder: str | Path, name: str | None = None) -> str:
         """Load the components in ``folder`` (a project or library folder) as ``name.*``."""
         folder = Path(folder)
-        name = name or re.sub(r"\W+", "_", folder.name).strip("_").lower() or "lib"
-        if not name.isidentifier():
-            name = f"lib_{name}"
+        name = name or library_name(folder)
         if name in self.session.project.libraries:
             raise ValueError(f"a library named '{name}' is already loaded")
         library = load_library(name, folder)
@@ -376,3 +374,9 @@ def _names_used(nodes: list[Shape]) -> set[str]:
     for node in nodes:
         visit(node.model_dump())
     return found
+
+
+def library_name(folder: str | Path) -> str:
+    """The name a library folder is loaded under by default: ``mems-std-lib`` → ``mems_std_lib``."""
+    name = re.sub(r"\W+", "_", Path(folder).name).strip("_").lower() or "lib"
+    return name if name.isidentifier() else f"lib_{name}"

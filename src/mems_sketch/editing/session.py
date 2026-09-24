@@ -24,7 +24,7 @@ themselves; they go through a session, which uses the rest of the backend
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,7 @@ from mems_sketch.core.shapes import (
     walk,
 )
 from mems_sketch.core.user_component import ComponentDef, ParamDef
-from mems_sketch.editing.components import ComponentEdits
+from mems_sketch.editing.components import ComponentEdits, library_name
 from mems_sketch.editing.corners import CornerEdits
 from mems_sketch.editing.events import Event
 from mems_sketch.editing.modifiers import ModifierEdits
@@ -53,7 +53,7 @@ from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
 from mems_sketch.export.base import export
 from mems_sketch.storage import load, save
-from mems_sketch.storage.project_files import project_folder
+from mems_sketch.storage.project_files import PROJECT_FILE, load_library, project_folder
 
 UNDO_LIMIT = 200
 
@@ -181,6 +181,38 @@ class EditSession:
     def new(self, library: bool = False) -> None:
         """Start a new design, or a new library (no top component)."""
         self._reset(new_project(library=library), None)
+
+    def create(
+        self,
+        folder: str | Path,
+        name: str,
+        *,
+        library: bool = False,
+        libraries: Sequence[str | Path] = (),
+        process_from: str | Path | None = None,
+    ) -> Path:
+        """Start a new project (or library) called ``name`` and save it in ``folder``
+        at once: with the ``libraries`` loaded, and the process copied from the
+        project at ``process_from`` (else the default layers)."""
+        folder = Path(folder)
+        if not name.strip():
+            raise ValueError("the project needs a name")
+        if (folder / PROJECT_FILE).exists():
+            raise ValueError(f"{folder} already holds a project")
+        if folder.exists() and not folder.is_dir():
+            raise ValueError(f"{folder} is a file, not a folder")
+        project = new_project(name.strip(), library=library)
+        if process_from is not None:
+            project.process = load(process_from).process
+        for path in libraries:
+            key = library_name(path)
+            if key in project.libraries:
+                raise ValueError(f"two libraries would both be called '{key}'")
+            project.libraries[key] = load_library(key, Path(path))
+            if not project.libraries[key].components:
+                raise ValueError(f"{path} has no components")
+        self._reset(project, None)
+        return self.save(folder)
 
     def open(self, path: str | Path) -> None:
         """Open a project folder, its project.yaml, or a legacy .mems file."""

@@ -11,9 +11,9 @@ the [user guide](../user/README.md).
    documents, geometry documents, and how formats are kept in step.
 4. **[Extending](extending.md)**: new components, shape kinds, edit commands,
    tool windows, exporters and file formats.
-5. **[Geometry core architecture](core-architecture.md)**: the C++ core on
-   Open CASCADE that the geometry backend is moving to; target architecture,
-   with the migration plan.
+5. **[Geometry core architecture](core-architecture.md)**: the C++ core the
+   geometry backend is moving to, a geometry library on Open CASCADE with the
+   mems-sketch engine on top; target architecture, with the migration plan.
 
 ## Working on the code
 

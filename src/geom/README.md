@@ -34,6 +34,7 @@ headers include.
 | `mgeom/types.hpp` | `Point`, `Box`, `Polygon` (a hull with holes), `GeometryError` |
 | `mgeom/transform.hpp` | `Transform`: mirror, scale, rotate, move; composes with `*` |
 | `mgeom/region.hpp` | `Region`: rect, polygon, circle, arc; union, subtract, intersect, xor; transformed; area, bounding box, outlines at a chord tolerance, the largest Open CASCADE tolerance it carries |
+| `Region` editing | `offset(distance, join)` (miter, round, bevel; grows, shrinks, splits and merges), `filleted(convex, concave)`, `rounded(corners)` (chosen corners rounded or chamfered), `corners()` |
 | `mgeom/cell.hpp` | `Cell`: regions per layer plus placed cells, arrays and polar arrays; placing never copies geometry; `flat(layer)` merges and caches |
 | `mgeom/measure.hpp` | `properties` (area, perimeter, centroid, second moments of area), `mass_properties` (volume, mass, rotational inertia for a thickness and density), `distance` (exact minimum, with the closest points), `overlap_area`, `projected_overlap`, `edges` (kind, length, ends, midpoint; centre and radius of arcs) |
 

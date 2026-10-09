@@ -76,6 +76,12 @@ for hull, holes in plate.flat("etch").outlines(chord=0.005):
     ...
 ```
 
+A cell's `references` are its placements as they were made, arrays kept
+as arrays. `mems_sketch.export.cells.write_cell(cell, path, layers)` writes a
+cell to GDS, OASIS or DXF on a grid, keeping cells and array references, and
+returns the snapping report; `tests/test_cells_export.py` runs when the
+module is on `PYTHONPATH`.
+
 It is built in `build/geom/` for now. Packaging it as `mems_sketch._geom`
 (scikit-build-core, wheels) is a later step of the migration.
 

@@ -410,6 +410,21 @@ NB_MODULE(_geom, m) {
                 return out;
             },
             "(cell, transform) per copy, arrays expanded.")
+        .def_prop_ro(
+            "references",
+            [](const PyCell& c) {
+                nb::list out;
+                for (const auto& r : c.ref->references()) {
+                    out.append(nb::make_tuple(
+                        PyCell{r.cell}, r.transform,
+                        nb::make_tuple(r.array.columns, r.array.rows, r.array.dx, r.array.dy)));
+                }
+                return out;
+            },
+            nb::sig("def references(self) -> list[tuple[Cell, Transform, tuple[int, int, float, "
+                    "float]]]"),
+            "The placements as they were made: (cell, transform, (columns, rows, dx, dy)), "
+            "1 x 1 for a single copy; a polar array is one per copy.")
         .def(
             "flat",
             [](const PyCell& c, const std::string& layer) {

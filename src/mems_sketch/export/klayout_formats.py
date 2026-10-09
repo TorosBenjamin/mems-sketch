@@ -40,6 +40,19 @@ class _KLayoutExporter:
         grid_um: float = DBU_UM,
         top_cell: str = "",
     ) -> None:
+        if hasattr(geometry, "references"):  # a cell of the geometry library (_geom)
+            from mems_sketch.export.cells import write_cell
+
+            mapping = {n: (x.gds_layer, x.gds_datatype) for n, x in project.layers.items()}
+            write_cell(
+                geometry,
+                path,
+                mapping,
+                grid_um=grid_um,
+                top_cell=top_cell or None,
+                file_format=self.klayout_format,
+            )
+            return
         steps = round(grid_um / DBU_UM)  # the grid in the geometry's 1 nm units
         if steps < 1 or abs(steps * DBU_UM - grid_um) > 1e-9 * DBU_UM:
             raise ValueError(f"the grid must be a whole multiple of 1 nm, not {grid_um:g} µm")

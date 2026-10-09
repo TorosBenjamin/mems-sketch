@@ -113,6 +113,31 @@ TEST_CASE("arrays") {
                     GeometryError);
 }
 
+TEST_CASE("references keep placements as they were made") {
+    const CellRef one = square(1);
+    const CellRef top = Cell::Builder("top")
+                            .place(one, Transform::translation(-5, 0))
+                            .place_array(one, Transform::translation(1, 2), ArraySpec{3, 2, 4, 5})
+                            .place_polar(one, {}, PolarSpec{4, {0, 0}, 0, true})
+                            .build();
+    CHECK(top->placements().size() == 1 + 6 + 4);
+    const auto& refs = top->references();
+    REQUIRE(refs.size() == 1 + 1 + 4);  // a polar array is a reference per copy
+    CHECK_FALSE(refs[0].is_array());
+    CHECK(refs[0].transform.dx == -5);
+    CHECK(refs[1].is_array());
+    CHECK(refs[1].array.columns == 3);
+    CHECK(refs[1].array.rows == 2);
+    CHECK(refs[1].array.dy == 5);
+    CHECK(refs[1].cell == one);
+    // The last copy of the array is where the array says it is.
+    const Transform& last = top->placements()[6].transform;
+    CHECK(last.dx == doctest::Approx(1 + 2 * 4));
+    CHECK(last.dy == doctest::Approx(2 + 1 * 5));
+    CHECK_FALSE(refs[5].is_array());
+    CHECK(refs[5].transform.angle_deg == doctest::Approx(270));
+}
+
 TEST_CASE("polar arrays") {
     const CellRef bar = Cell::Builder("bar").add("device", Region::rect(10, -0.5, 14, 0.5)).build();
 

@@ -330,6 +330,15 @@ OCC's own BREP and STEP. This is how export already works, and it stays:
   into flags, so neither has code for a particular format.
 - **Every export to a grid returns the snapping report** (requirements
   OUT-3), which the GUI shows and the CLI prints.
+- **Layouts keep the hierarchy** (OUT-4). `export/cells.py` writes a
+  library cell to GDS, OASIS or DXF: each cell once, arrays as array
+  references, each cell's geometry snapped in its own frame. A placement
+  stays a reference only if it maps the grid onto itself (no scaling, a
+  quarter turn, an offset and array steps on the grid); otherwise it is
+  flattened into its parent before snapping, so its geometry is snapped where
+  it ends up. Writing with the hierarchy gives the same geometry as snapping
+  the flat layout. Snapping cell by cell does not see gaps closing between
+  separately placed cells; writing flat does.
 
 Keeping the C++ side free of file formats also keeps KLayout's C++ library
 out of the build; mems-sketch already depends on its Python package.

@@ -17,6 +17,7 @@ from mems_sketch.core.shapes import (
     node_at,
     visible_from,
 )
+from mems_sketch.engine import Build
 from mems_sketch.process import rules
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ class Results:
         there can use, in its own frame, e.g. to preview expressions.
         """
         component = component or self.session.active
-        variables = self.session.compiled().variables(component, self.session.trials_for(component))
+        variables = self.session.engine.variables(component, self.session.trials_for(component))
         if path is None:
             return variables
         record = self.inspection(component)
@@ -56,29 +57,28 @@ class Results:
         """Every node of a component as evaluated (cached until the next change)."""
         component = component or self.session.active
         if component not in self._inspection:
-            self._inspection[component] = self.session.compiled().inspect(
-                component, self.session.trials_for(component)
-            )
+            self._inspection[component] = self._build(component).records()
         return self._inspection[component]
 
     def geometry(self, component: str | None = None) -> Geometry:
         component = component or self.session.active
-        return self.session.compiled().render(component, self.session.trials_for(component))
+        return self._build(component).geometry
 
     def preview(self, path: NodePath, node: Shape) -> Geometry:
         """The active component as it would be with ``node`` at ``path``, without
         changing anything (e.g. while a value is dragged). Raises if it does not build."""
         component = self.session.active
-        return self.session.compiler.session(self._trial(path, node)).render(
-            component, self.session.trials_for(component)
-        )
+        engine = self.session.engine.trial(self._trial(path, node))
+        return engine.build(component, self.session.trials_for(component)).geometry
 
     def inspect_with(self, path: NodePath, node: Shape) -> dict[NodePath, NodeRecord]:
         """Every node of the active component as it would be with ``node`` at ``path``."""
         component = self.session.active
-        return self.session.compiler.session(self._trial(path, node)).inspect(
-            component, self.session.trials_for(component)
-        )
+        engine = self.session.engine.trial(self._trial(path, node))
+        return engine.build(component, self.session.trials_for(component)).records()
+
+    def _build(self, component: str) -> Build:
+        return self.session.engine.build(component, self.session.trials_for(component))
 
     def _trial(self, path: NodePath, node: Shape):
         project, component = self.session.project, self.session.active
@@ -206,7 +206,7 @@ class Results:
     def declared_points(self, component: str | None = None) -> dict[str, tuple[float, float]]:
         """Positions of a component's declared points (trial values included)."""
         component = component or self.session.active
-        return self.session.compiled().points(component, self.session.trials_for(component))
+        return self._build(component).points()
 
     def selection_center(self, paths: list[NodePath]) -> tuple[float, float] | None:
         """Centre of the bounding box of the given shapes, in the component's frame."""

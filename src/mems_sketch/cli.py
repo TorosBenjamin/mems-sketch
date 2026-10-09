@@ -19,9 +19,11 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.project import Project, new_project
+from mems_sketch.engine import Build, Engine
 from mems_sketch.export.base import (
     available_exporters,
     export,
@@ -124,8 +126,16 @@ def _parameters(assignments: list[str]) -> dict[str, float | str]:
     return params
 
 
+def _build(project: Project, component: str | None, params: dict[str, Any]) -> Build:
+    """``component``, or the top component when none is named."""
+    component = component or project.top
+    if component is None:
+        raise ValueError("this project has no top component: name the component")
+    return Engine().load(project).build(component, params)
+
+
 def _geometry(project: Project, args: argparse.Namespace) -> Geometry:
-    return project.render(args.component, _parameters(args.set))
+    return _build(project, args.component, _parameters(args.set)).geometry
 
 
 def _new(args: argparse.Namespace) -> int:
@@ -246,7 +256,7 @@ def _export(args: argparse.Namespace) -> int:
         project,
         args.output,
         format_name=format_name,
-        geometry=project.render(args.component, params),
+        geometry=_build(project, args.component, params).geometry,
         component=args.component,
         params=params,
         options=options,

@@ -42,7 +42,6 @@ from PySide6.QtCore import Qt
 from mems_sketch.core.shapes import (
     Align,
     CircleShape,
-    Evaluator,
     GuideShape,
     NodePath,
     PathShape,
@@ -50,6 +49,7 @@ from mems_sketch.core.shapes import (
     RectShape,
     Shape,
 )
+from mems_sketch.engine import build_shapes
 from mems_sketch.gui.canvas import angle_between
 
 if TYPE_CHECKING:
@@ -1015,7 +1015,7 @@ class DrawTool(Tool):
             self.canvas.clear_drag_preview()
             return
         try:
-            geometry = Evaluator(_no_components).render_shape(shape, {})
+            geometry = build_shapes([shape])
         except Exception:  # noqa: BLE001 - e.g. a degenerate shape: just no fill
             self.canvas.clear_drag_preview()
             return
@@ -1309,7 +1309,3 @@ TOOLS: tuple[type[Tool], ...] = (
 def _um(value: float) -> float:
     """A coordinate without floating-point noise (grid steps like 0.1 add up badly)."""
     return round(value, 6) + 0.0  # + 0.0 turns -0.0 into 0.0
-
-
-def _no_components(name: str):
-    raise KeyError(name)  # drawn primitives never refer to components

@@ -45,10 +45,13 @@ def test_importing_the_backend_loads_no_gui():
 # Geometry's methods and plain values (Transform, µm tuples), so that the C++
 # engine can replace the backend underneath it (core-architecture.md, step 1).
 GEOMETRY_LIBRARIES = ("klayout",)
+# What builds geometry is reached only through mems_sketch.engine.
+BUILDERS = ("mems_sketch.core.compiler", "mems_sketch.core.shapes.render")
+BUILDER_NAMES = {"Compiler", "Session", "Evaluator"}
 OUTSIDE_THE_BACKEND = ("gui", "editing", "storage", "cli.py")
 
 
-def test_only_the_backend_uses_a_geometry_library():
+def test_only_the_backend_uses_a_geometry_library_or_the_compiler():
     offenders = []
     for path in PACKAGE.rglob("*.py"):
         if path.relative_to(PACKAGE).parts[0] not in OUTSIDE_THE_BACKEND:
@@ -58,11 +61,12 @@ def test_only_the_backend_uses_a_geometry_library():
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
+                names = [f"{node.module}.{alias.name}" for alias in node.names]
             offenders += [
                 f"{path.relative_to(PACKAGE)}: {n}"
                 for n in names
-                if n.startswith(GEOMETRY_LIBRARIES)
+                if n.startswith(GEOMETRY_LIBRARIES + BUILDERS)
+                or n.rsplit(".", 1)[-1] in BUILDER_NAMES
             ]
     assert offenders == []
 

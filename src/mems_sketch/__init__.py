@@ -36,6 +36,7 @@ from mems_sketch.core.shapes import (
     TransformShape,
 )
 from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef
+from mems_sketch.engine import Build, Engine
 from mems_sketch.export.base import export, register_exporter
 from mems_sketch.storage import load, load_library, save
 
@@ -44,12 +45,14 @@ __all__ = [
     "ArcShape",
     "ArrayModifier",
     "BooleanShape",
+    "Build",
     "CircleShape",
     "Compiler",
     "Component",
     "ComponentDef",
     "Corner",
     "CornersModifier",
+    "Engine",
     "FilletShape",
     "Geometry",
     "GroupShape",

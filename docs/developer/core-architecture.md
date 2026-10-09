@@ -513,12 +513,14 @@ test passing and updates this document.
 
 1. **Interface first, in Python.** Put the `Engine`/`build` interface in front
    of the current compiler, and move the GUI, editing and exports onto it, so
-   nothing outside the backend uses KLayout types. *Done for the types:*
-   placements are plain `Transform` values (`core/transform.py`), and the GUI,
-   editing, storage and the command line use `Geometry`'s methods (polygons
-   as µm rings, bounding box, hit test, pieces, difference) instead of its
-   regions; `tests/test_architecture.py` keeps KLayout out of them. Next: the
-   `Engine`/`build` facade in front of the compiler.
+   nothing outside the backend uses KLayout types. *Done:* placements are
+   plain `Transform` values (`core/transform.py`); the GUI, editing, storage
+   and the command line use `Geometry`'s methods (polygons as µm rings,
+   bounding box, hit test, pieces, difference) instead of its regions, and
+   build through `mems_sketch.engine` (`Engine.load`, `Engine.build`,
+   `Build.geometry`, `points`, `records`, `outlines`), never the compiler
+   or the shape evaluator. `tests/test_architecture.py` keeps it that way.
+   Swapping the backend now means implementing `Engine` and `Build`.
 2. **Build setup.** CMake, scikit-build-core, nanobind, the OCC build and CI
    caching, the two targets and the dependency check. *Done for the
    library:* `mems_sketch._geom` is built into the package, and wheels for

@@ -113,6 +113,10 @@ can be tested and used without a GUI.
 
 ## The geometry library
 
+Every shape is a face bounded by line, arc and spline segments, made by one
+constructor; the shapes users see are factories on top of it, and the shape
+kinds that name them live in the engine (requirements decision G-1).
+
 ### API
 
 Public API lengths are in µm, as doubles. The library works in nm inside (see
@@ -133,7 +137,10 @@ class Region {
   static Region circle(Point centre, double r);
   static Region arc(Point centre, double r_in, double r_out, double from_deg, double to_deg);
   static Region path(const Wire& centreline, const Width& width, PathEnds ends);
-  static Region polygon(const Wire& outline);  // lines, arcs and splines
+  static Region polygon(const Wire& outline);  // lines, arcs and splines: the one constructor
+  static Region text(std::string_view text, const Font& font, const TextStyle& style);
+  static Region perforate(const Region& area, const Region& hole, const Grid& grid,
+                          double margin, const Region& keep_out);
 
   Region operator|(const Region&) const;  // union
   Region operator-(const Region&) const;  // subtract
@@ -210,6 +217,12 @@ during the migration.
 - **Tolerance growth is checked.** OCC can loosen the tolerance of edges and
   vertices after many operations. Tests assert that the tolerance of results
   stays below the 10⁻⁸ µm goal, and an operation that exceeds it says so.
+- **Text from fonts, not rasterized.** Outline fonts are read with FreeType:
+  each letter's lines and Bézier curves become the segments of the one
+  constructor, so letters are exact. Stroke fonts (Hershey) give
+  centrelines, thickened by the path factory. Fonts ship with the library;
+  OCC's own text builder is not used, as it would bring in the
+  visualization module.
 - **Only the OCC modules needed**, linked statically: Foundation, Modeling
   Data, Modeling Algorithms, and the STEP part of Data Exchange. No
   Visualization, application framework (OCAF) or Draw.

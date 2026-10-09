@@ -6,6 +6,7 @@
 
 #include "mgeom/transform.hpp"
 #include "mgeom/types.hpp"
+#include "mgeom/wire.hpp"
 
 namespace mgeom {
 
@@ -19,12 +20,28 @@ class Region {
 public:
     Region();  // empty
 
+    // The one constructor: the face inside a closed outline of straight and
+    // arc segments (closed with a straight segment if it ends elsewhere).
+    // Throws if the outline crosses itself. Every other shape is a factory
+    // on top of it.
+    static Region polygon(const Wire& outline);
+
     static Region rect(double x0, double y0, double x1, double y1);
-    static Region polygon(std::span<const Point> points);
+    static Region polygon(std::span<const Point> points);  // straight segments
     static Region circle(Point centre, double radius);
     // An annular sector from from_deg to to_deg, counter-clockwise; a ring
     // when it spans 360°. r_in may be 0 (a pie slice, or a disc).
     static Region arc(Point centre, double r_in, double r_out, double from_deg, double to_deg);
+    // A band of the given width along a centreline of straight and arc
+    // segments. Where segments meet at an angle, the corner is joined:
+    //  - miter: sharp up to a 90° turn; beyond, the outer edges run on by
+    //    half the width and are cut straight, so sharp turns do not spike;
+    //  - round: an arc around the corner;
+    //  - bevel: cut straight across.
+    // A corner at an arc is rounded for miter. Throws if an arc's radius is
+    // not more than half the width.
+    static Region path(const Wire& centreline, double width, PathEnds ends = PathEnds::flush,
+                       Join join = Join::miter);
 
     Region operator|(const Region& other) const;  // union
     Region operator-(const Region& other) const;  // subtract

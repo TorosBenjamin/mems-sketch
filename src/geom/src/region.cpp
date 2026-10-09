@@ -188,19 +188,9 @@ Region Region::rect(double x0, double y0, double x1, double y1) {
 
 Region Region::polygon(std::span<const Point> points) {
     if (points.size() < 3) throw GeometryError("a polygon needs at least 3 points");
-    BRepBuilderAPI_MakePolygon make;
-    for (const Point& p : points) {
-        check_finite(p.x, "a polygon x");
-        check_finite(p.y, "a polygon y");
-        make.Add(to_occ(p));
-    }
-    make.Close();
-    if (!make.IsDone()) throw GeometryError("cannot make a polygon of these points");
-    const TopoDS_Face face = face_of_wire(make.Wire(), "polygon");
-    if (!BRepCheck_Analyzer(face).IsValid()) {
-        throw GeometryError("the polygon is not valid (its edges cross or overlap)");
-    }
-    return Region(make_impl(compound_of({face})));
+    Wire outline(points[0]);
+    for (size_t i = 1; i < points.size(); ++i) outline.line_to(points[i]);
+    return polygon(outline);
 }
 
 Region Region::circle(Point centre, double radius) {

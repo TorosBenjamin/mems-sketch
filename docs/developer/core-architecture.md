@@ -470,6 +470,11 @@ src/
   `BUILD_MODULE_Draw=OFF`), linked statically into `mgeom`. KLayout is used
   only through its Python package, by the exporters and rule checks. The
   engine links no third-party geometry library.
+- **The geometry module is optional in a source install.** The package's
+  build (the top `CMakeLists.txt`) makes `mems_sketch._geom` when OCC is
+  found and is pure Python otherwise; release wheels require it
+  (`MEMS_SKETCH_REQUIRE_GEOMETRY=ON`). Until the engine replaces the
+  Python compiler nothing but the exporters' library path needs the module.
 - **Prebuilt dependencies in CI.** OCC takes a long time to compile, so CI
   builds it once per version and platform and caches it. A contributor runs
   a script that downloads the same build. Nobody compiles OCC to change a
@@ -511,8 +516,9 @@ test passing and updates this document.
    nothing outside the backend uses KLayout types (today `gui/canvas.py`,
    `gui/tools.py`, `editing/results.py` and others do).
 2. **Build setup.** CMake, scikit-build-core, nanobind, the OCC build and CI
-   caching, the two targets and the dependency check, with modules that only
-   report their version.
+   caching, the two targets and the dependency check. *Done for the
+   library:* `mems_sketch._geom` is built into the package, and wheels for
+   Linux, Windows and macOS (`wheels.yml`); the engine's module joins it.
 3. **The library's regions and cells:** `Region` primitives, transforms,
    `Cell` with instances and arrays, `flat`, outlines, the Python bindings,
    and snapping with its report. Tested alone, and usable from scripts

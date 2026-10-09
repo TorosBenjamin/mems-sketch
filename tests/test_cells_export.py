@@ -132,7 +132,8 @@ def test_cells_with_the_same_name_get_distinct_names(tmp_path):
 @pytest.mark.parametrize("suffix, magic", [(".oas", b"%SEMI-OASIS"), (".dxf", b"0\nSECTION")])
 def test_other_formats(tmp_path, suffix, magic):
     write_cell(plate(columns=2, rows=2), tmp_path / f"plate{suffix}", LAYERS)
-    assert (tmp_path / f"plate{suffix}").read_bytes().startswith(magic)
+    written = (tmp_path / f"plate{suffix}").read_bytes()
+    assert written.replace(b"\r\n", b"\n").startswith(magic)  # DXF is text: CRLF on Windows
 
 
 def test_errors(tmp_path):

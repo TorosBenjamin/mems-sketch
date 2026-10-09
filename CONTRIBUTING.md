@@ -45,6 +45,10 @@ tested against the latest `development`.
    cmake --build build/geom && ctest --test-dir build/geom --output-on-failure
    ```
 
+   With Open CASCADE in `build/deps/`, `pip install -e .` also builds the
+   library into the package as `mems_sketch._geom`; without it the package
+   is pure Python and needs no compiler.
+
 4. **Push and open a pull request into `development`:**
 
    ```bash

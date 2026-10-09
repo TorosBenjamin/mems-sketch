@@ -56,7 +56,8 @@ jobs:
             -DMGEOM_BUILD_PYTHON=ON -DPython_EXECUTABLE="$(which python)"
           cmake --build build/geom
           ctest --test-dir build/geom --output-on-failure
-      - name: Layouts written from the library's cells
+      - name: The package with its geometry module, and layouts written from it
         run: |
-          python -m pip install -e .
-          MGEOM_REQUIRED=1 PYTHONPATH=build/geom python -m pytest -q tests/test_cells_export.py
+          SKBUILD_CMAKE_DEFINE="MEMS_SKETCH_REQUIRE_GEOMETRY=ON" python -m pip install -e .
+          python -c "from mems_sketch import _geom; print('mems_sketch._geom', _geom.__version__)"
+          MGEOM_REQUIRED=1 python -m pytest -q tests/test_cells_export.py

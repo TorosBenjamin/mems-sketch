@@ -102,16 +102,27 @@ TopoDS_Shape unified(const TopoDS_Shape& shape) {
     return compound_of(faces_of(unify.Shape()));
 }
 
-// Each face is its own argument: Open CASCADE intersects separate arguments
-// with each other, but not the faces inside one compound.
+// Open CASCADE intersects separate arguments with each other, but not the
+// faces inside one compound. So faces that may overlap (a union) go in one
+// by one; a region's own faces never overlap, and as one compound they are
+// several times faster (subtract, intersect).
+NCollection_List<TopoDS_Shape> each(const std::vector<TopoDS_Face>& faces) {
+    NCollection_List<TopoDS_Shape> list;
+    for (const auto& f : faces) list.Append(f);
+    return list;
+}
+
+NCollection_List<TopoDS_Shape> one(const TopoDS_Shape& shape) {
+    NCollection_List<TopoDS_Shape> list;
+    list.Append(shape);
+    return list;
+}
+
 template <class Op>
-TopoDS_Shape run_boolean(const std::vector<TopoDS_Face>& a, const std::vector<TopoDS_Face>& b,
-                         const char* name) {
+TopoDS_Shape run_boolean(const NCollection_List<TopoDS_Shape>& args,
+                         const NCollection_List<TopoDS_Shape>& tools, const char* name) {
     try {
         Op op;
-        NCollection_List<TopoDS_Shape> args, tools;
-        for (const auto& f : a) args.Append(f);
-        for (const auto& f : b) tools.Append(f);
         op.SetArguments(args);
         op.SetTools(tools);
         op.SetRunParallel(true);
@@ -304,7 +315,7 @@ Region Region::unite(std::span<const Region> regions) {
         std::vector<TopoDS_Face> rest;
         for (size_t k = 1; k < members.size(); ++k) rest.push_back(faces[members[k]]);
         const TopoDS_Shape merged =
-            run_boolean<BRepAlgoAPI_Fuse>(first, rest, "union");
+            run_boolean<BRepAlgoAPI_Fuse>(each(first), each(rest), "union");
         for (const TopoDS_Face& f : faces_of(merged)) result.push_back(f);
     }
     return Region(make_impl(compound_of(result)));
@@ -312,12 +323,12 @@ Region Region::unite(std::span<const Region> regions) {
 
 Region Region::operator-(const Region& other) const {
     if (empty() || other.empty()) return *this;
-    return Region(make_impl(run_boolean<BRepAlgoAPI_Cut>(impl_->faces, other.impl_->faces, "subtract")));
+    return Region(make_impl(run_boolean<BRepAlgoAPI_Cut>(one(impl_->shape), one(other.impl_->shape), "subtract")));
 }
 
 Region Region::operator&(const Region& other) const {
     if (empty() || other.empty()) return Region();
-    return Region(make_impl(run_boolean<BRepAlgoAPI_Common>(impl_->faces, other.impl_->faces, "intersect")));
+    return Region(make_impl(run_boolean<BRepAlgoAPI_Common>(one(impl_->shape), one(other.impl_->shape), "intersect")));
 }
 
 Region Region::operator^(const Region& other) const {

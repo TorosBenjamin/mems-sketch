@@ -127,16 +127,37 @@ def check(project: Project, geometry: Geometry | None = None) -> list[Violation]
         scope_error = None
     for rule in project.process.rules.values():
         if rule.enabled:
-            violations += _check_rule(rule, kinds, geometry, project, scope, scope_error)
+            violations += _check_rule(rule.name, rule, kinds, geometry, project, scope, scope_error)
+    for deck_name, use in project.process.decks.items():
+        violations += _check_deck(deck_name, use, kinds, geometry, project, scope, scope_error)
     return violations
 
 
-def _check_rule(rule, kinds, geometry, project, scope, scope_error) -> list[Violation]:
+def _check_deck(deck_name, use, kinds, geometry, project, scope, scope_error) -> list[Violation]:
+    if use.error:  # a deck that cannot be read never passes (requirement DRC-10)
+        return [Violation(deck_name, "", f"rule deck '{deck_name}': {use.error}: not checked")]
+    deck_scope, deck_error = dict(scope), scope_error
+    if deck_error is None:
+        try:
+            deck_scope.update(use.variables(scope))
+        except Exception as exc:  # noqa: BLE001 - reported as a violation of every rule
+            deck_error = f"the parameters of rule deck '{deck_name}' have an error: {exc}"
+    violations: list[Violation] = []
+    for name in use.deck.rules:
+        rule = use.rule(name)
+        if rule.enabled:
+            violations += _check_rule(
+                f"{deck_name}.{name}", rule, kinds, geometry, project, deck_scope, deck_error
+            )
+    return violations
+
+
+def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> list[Violation]:
     layers = ", ".join(rule.layers)
 
     def problem(message: str) -> list[Violation]:
         # A rule that cannot be checked never passes (requirement DRC-10).
-        return [Violation(rule.name, layers, message, kind=rule.kind, severity=ERROR)]
+        return [Violation(name, layers, message, kind=rule.kind, severity=ERROR)]
 
     kind = kinds.get(rule.kind)
     if kind is None:
@@ -149,6 +170,8 @@ def _check_rule(rule, kinds, geometry, project, scope, scope_error) -> list[Viol
     undefined = [n for n in rule.layers if n not in project.layers]
     if undefined:
         return problem(f"layer '{undefined[0]}' is not defined: not checked")
+    if isinstance(scope_error, str):
+        return problem(scope_error)
     if scope_error is not None:
         return problem(f"the process constants have an error: {scope_error}")
     try:
@@ -159,7 +182,7 @@ def _check_rule(rule, kinds, geometry, project, scope, scope_error) -> list[Viol
     findings = kind().check(regions, DBU_UM, **values)
     return [
         Violation(
-            rule.name,
+            name,
             layers,
             f"{f.message}{' (' + rule.message + ')' if rule.message else ''}",
             f.bbox_um,

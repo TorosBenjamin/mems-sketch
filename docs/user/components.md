@@ -143,3 +143,25 @@ violations, e.g. why the rule exists.
 Rules are checked on the final geometry after every change; **Messages**
 lists the violations and the canvas boxes them in red. More kinds can be
 installed as plugins (`mems-sketch-cli rules` lists them).
+
+### Rule decks
+
+A **rule deck** is a set of rules with parameters of its own, in a file of
+its own, shared between projects: typically one per fab process, kept by
+whoever looks after the process. Its rules use its parameters by name
+(`value: min_feature`), and the parameters can use the process constants.
+
+- **Use** a deck with **+** under *Rule decks*; its rules are listed under
+  *Rules* as `deck.rule` and checked like the project's own.
+- **Set a deck parameter** for this project in the deck's *Parameters*
+  (`min_feature=1.5`); the others keep the deck's values. Writing the deck's
+  value again goes back to it.
+- **Change a deck rule** for this project by editing it like any other: the
+  change is an *override*, marked *(changed)*, with a **reason** of its own.
+  Untick it to turn it off. **Reset** takes the deck's rule again.
+- When the deck's file changes, **Reload** reads it again; the project keeps
+  its parameters and overrides, and follows the deck everywhere else.
+- **Save** writes the project's own rules as a new deck, to start one.
+
+A deck file that cannot be read does not stop the project from opening, but
+its rules are reported as not checked: an error, never a pass.

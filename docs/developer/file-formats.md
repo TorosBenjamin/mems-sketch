@@ -31,6 +31,36 @@ rules:
 Earlier files set `min_width` and `min_space` on a layer; they are read as
 rules named `<layer>_min_width` and `<layer>_min_space`.
 
+The rule decks a project uses are listed with their file, relative to the
+project, and what the project sets: deck parameters, and overrides of deck
+rules (rule fields and values by name, and a reason):
+
+```yaml
+decks:
+  fab:
+    path: ../decks/fab.yaml
+    parameters: {min_feature: 1.5}
+    overrides:
+      device_width: {value: 1, reason: test structures}
+```
+
+A deck file has its own format, name, description, parameters and rules
+(as in `process.yaml`); rule values can use the parameters by name:
+
+```yaml
+format: mems-sketch-rules/1
+name: fab
+description: The fab's rules
+parameters:
+  min_feature: 2
+  space: min_feature + 1
+rules:
+  device_width:
+    kind: min_width
+    layers: [device]
+    value: min_feature
+```
+
 The YAML is **canonical** (`storage/yaml_format.py`), so saving the same model
 twice gives byte-identical files and a change shows as a small diff:
 

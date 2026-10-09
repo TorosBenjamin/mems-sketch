@@ -114,8 +114,7 @@ class MinAngle:
     roles = ("layer",)
     parameters: ClassVar = (Option("value", 30.0, "Angle", minimum=0, suffix="°"),)
 
-    def check(self, regions, dbu, value):
-        ...
+    def check(self, regions, dbu, value): ...
 ```
 
 Rules then use it like a built-in kind (`kind: min_angle`), with values that

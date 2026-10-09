@@ -42,16 +42,19 @@ class DocumentExporter:
 
 class JsonExporter(DocumentExporter):
     format_name = "json"
+    title = "Geometry as JSON"
     file_extension = ".json"
 
 
 class XmlExporter(DocumentExporter):
     format_name = "xml"
+    title = "Geometry as XML"
     file_extension = ".xml"
 
 
 class MatExporter(DocumentExporter):
     format_name = "mat"
+    title = "Geometry for MATLAB"
     file_extension = ".mat"
 
 

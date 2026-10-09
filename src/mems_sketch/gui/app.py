@@ -29,11 +29,12 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.component import component_types, to_dbu
 from mems_sketch.core.shapes import NodePath, paths
 from mems_sketch.editing import EditSession
-from mems_sketch.export.base import available_exporters
+from mems_sketch.export.base import available_exporters, options_of, title_of
 from mems_sketch.gui import icons, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
+from mems_sketch.gui.export_dialog import ExportOptionsDialog, remember, remembered
 from mems_sketch.gui.history_panel import HistoryPanel
 from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
@@ -113,14 +114,6 @@ OPEN_FILTER = (
     "MEMS projects (project.yaml);;One-file projects (*.json *.xml *.mat *.yaml *.yml);;"
     "Legacy designs (*.mems)"
 )
-EXPORT_NAMES = {  # in File › Export…; others show their format name
-    "gds": "GDSII",
-    "oasis": "OASIS",
-    "dxf": "DXF",
-    "json": "Geometry as JSON",
-    "xml": "Geometry as XML",
-    "mat": "Geometry for MATLAB",
-}
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
 DEFAULT_TOOL_WINDOWS = ("components", "shapes", "properties", "messages")
 CANVAS_MODES = (  # on the canvas
@@ -1469,17 +1462,33 @@ class MainWindow(QMainWindow):
 
     def export_file(self) -> None:
         exporters = available_exporters()
-        filters = ";;".join(
-            f"{EXPORT_NAMES.get(name, name.upper())} (*{cls.file_extension})"
-            for name, cls in exporters.items()
+        filters = {
+            f"{title_of(cls)} (*{cls.file_extension})": name for name, cls in exporters.items()
+        }
+        path, chosen = QFileDialog.getSaveFileName(
+            self, "Export", self._last_dir(), ";;".join(filters)
         )
-        path, chosen = QFileDialog.getSaveFileName(self, "Export", self._last_dir(), filters)
         if not path:
             return
-        extension = chosen[chosen.find("*") + 1 : chosen.find(")")]
-        if not Path(path).suffix:
-            path += extension
-        if self._run(lambda: self.document.export(path))[0]:
+        # A known extension decides the format; otherwise the chosen filter's
+        # is added.
+        by_extension = {c.file_extension: n for n, c in exporters.items()}
+        format_name = by_extension.get(Path(path).suffix.lower())
+        if format_name is None:
+            format_name = filters.get(chosen) or next(iter(exporters))
+            path += exporters[format_name].file_extension
+        cls = exporters[format_name]
+        options = options_of(cls)
+        values: dict = {}
+        if options:
+            dialog = ExportOptionsDialog(
+                title_of(cls), options, remembered(self.settings, format_name, options), self
+            )
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            values = dialog.values()
+            remember(self.settings, format_name, options, values)
+        if self._run(lambda: self.document.export(path, format_name, values))[0]:
             self._remember_dir(path)
             self.statusBar().showMessage(f"Exported {path}", 5000)
 

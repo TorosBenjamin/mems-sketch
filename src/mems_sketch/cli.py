@@ -3,7 +3,8 @@
     mems-sketch-cli new     my_project
     mems-sketch-cli info    my_project
     mems-sketch-cli check   my_project [--component plate] [--set pitch=15] [--json]
-    mems-sketch-cli export  my_project out.gds [--set pitch=15]   (also .oas .dxf .json .xml .mat)
+    mems-sketch-cli export  my_project out.gds [--set pitch=15] [--option grid_um=0.005]
+    mems-sketch-cli formats                                         (export formats, their options)
     mems-sketch-cli convert my_project design.json                  (and back; .xml .mat .yaml)
 
 ``check`` exits with status 1 when there are rule violations, so it can gate
@@ -20,7 +21,14 @@ from pathlib import Path
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.project import Project, new_project
-from mems_sketch.export.base import available_exporters, export
+from mems_sketch.export.base import (
+    available_exporters,
+    export,
+    exporter_class,
+    format_for,
+    options_of,
+    title_of,
+)
 from mems_sketch.process import rules
 from mems_sketch.storage import is_document, load, save
 
@@ -60,7 +68,18 @@ def _parser() -> argparse.ArgumentParser:
     _geometry_arguments(exp)
     exp.add_argument("output", type=Path)
     exp.add_argument("--format", choices=sorted(available_exporters()), help="override format")
+    exp.add_argument(
+        "-O",
+        "--option",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="a setting of the format (see 'formats'); may be repeated",
+    )
     exp.set_defaults(handler=_export)
+
+    fmt = commands.add_parser("formats", help="list the export formats and their options")
+    fmt.set_defaults(handler=_formats)
 
     convert = commands.add_parser(
         "convert",
@@ -172,17 +191,47 @@ def _check(args: argparse.Namespace) -> int:
 
 
 def _export(args: argparse.Namespace) -> int:
+    format_name = args.format or format_for(args.output)
+    options = _options(format_name, args.option)
     project = load(args.project)
     params = _parameters(args.set)
     path = export(
         project,
         args.output,
-        format_name=args.format,
+        format_name=format_name,
         geometry=project.render(args.component, params),
         component=args.component,
         params=params,
+        options=options,
     )
     print(f"wrote {path}")
+    return 0
+
+
+def _options(format_name: str, assignments: list[str]) -> dict[str, object]:
+    declared = {o.name: o for o in options_of(exporter_class(format_name))}
+    options: dict[str, object] = {}
+    for assignment in assignments:
+        name, sep, value = assignment.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            raise ValueError(f"--option expects NAME=VALUE, got '{assignment}'")
+        if name not in declared:
+            known = ", ".join(declared) or "none"
+            raise ValueError(f"'{format_name}' has no option '{name}' (its options: {known})")
+        options[name] = declared[name].parse(value.strip())
+    return options
+
+
+def _formats(args: argparse.Namespace) -> int:
+    for name, cls in sorted(available_exporters().items()):
+        print(f"{name:8} {cls.file_extension:6} {title_of(cls)}")
+        for option in options_of(cls):
+            default = option.default if option.default != "" else '""'
+            unit = f" {option.suffix.strip()}" if option.suffix.strip() else ""
+            print(f"    {option.name}={default}{unit}")
+            if option.help:
+                print(f"        {option.help}")
     return 0
 
 

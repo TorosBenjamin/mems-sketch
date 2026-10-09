@@ -231,6 +231,13 @@ during the migration.
 - **Only the OCC modules needed**, linked statically: Foundation, Modeling
   Data, Modeling Algorithms, and the STEP part of Data Exchange. No
   Visualization, application framework (OCAF) or Draw.
+- **Snapping uses integers.** Once outlines are rounded to an output's grid
+  they are integer polygons, and cleaning them up (rounding can make an
+  outline cross itself, or pieces touch) is integer polygon work.
+  [Clipper2](https://github.com/AngusJohnson/Clipper2) (Boost licence) does
+  it, exactly and deterministically. Points are scaled by 1 / grid and
+  rounded as KLayout does, so a point exactly halfway rounds the same way in
+  both.
 
 ### Transforms and instances
 
@@ -289,7 +296,7 @@ Every output chooses its own tolerance.
 |---|---|
 | Outlines | Per prototype at a chord tolerance (for the canvas, by zoom level, and for exporters), with the transforms of its instances. |
 | Snapped outlines | Curves split at a chord tolerance (default 5 nm), then snapped to a grid (default 1 nm) as integer coordinates, per prototype so the hierarchy survives. Used by every grid-based exporter (GDS, OASIS, DXF) and by rule checks. |
-| Snapping report | Comes with the snapped outlines: what snapping removed or changed, such as features collapsed below the grid, gaps opened or closed, widths changed by more than half a grid step. Computed once in the library, so no exporter has to get it right itself. |
+| Snapping report | Comes with the snapped outlines: pieces that vanished, split or merged and holes that closed, joined or formed, each with where, and the area before and after. Computed once in the library, so no exporter has to get it right itself. |
 | Rule checks | On the snapped outlines, since that is what the fab checks. Run in Python with KLayout's package, per layer. |
 | STEP, BREP | Layers extruded through the layer stack into solids, exact curves kept. Writing STEP is slow for large designs (see [Measurements](#measurements)), so it is an export, never an interactive step. BREP is fast and is what the mesher reads. |
 | Mesh | gmsh, from the solids or the 2D faces. `MeshSettings` holds global and per-layer sizes, refinement regions and distances, and names for physical groups. Optional, because of gmsh's licence. |
@@ -458,7 +465,8 @@ src/
   builds it once per version and platform and caches it. A contributor runs
   a script that downloads the same build. Nobody compiles OCC to change a
   shape kind.
-- **Wheels** for Linux, macOS and Windows with cibuildwheel. `pip install
+- **Wheels** for Linux and Windows (x86-64), and macOS (ARM) when its build
+  succeeds, with cibuildwheel (requirements QC-4). `pip install
   mems-sketch` stays the whole installation.
 - **Local checks.** The commands in `CONTRIBUTING.md` stay the commands to
   run: `pip install -e ".[dev]"` builds the core incrementally, and `pytest`

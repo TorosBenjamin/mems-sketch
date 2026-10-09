@@ -75,7 +75,7 @@ jobs:
           CIBW_TEST_REQUIRES: pytest
           CIBW_TEST_ENVIRONMENT: MGEOM_REQUIRED=1
           CIBW_TEST_COMMAND: >
-            python -c "from mems_sketch import _geom; assert _geom.Region.rect(0, 0, 2, 3).area == 6" &&
+            python -c "from mems_sketch import _geom; assert abs(_geom.Region.rect(0, 0, 2, 3).area - 6) < 1e-9" &&
             pytest -q -p no:cacheprovider {project}/tests/test_cells_export.py
 
       - uses: actions/upload-artifact@v4

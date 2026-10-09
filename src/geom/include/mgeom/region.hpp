@@ -63,6 +63,7 @@ public:
     struct Impl;
 
 private:
+    friend struct RegionAccess;
     explicit Region(std::shared_ptr<const Impl> impl);
     std::shared_ptr<const Impl> impl_;
 };

@@ -22,6 +22,7 @@ auto timed(const char* label, F&& f) {
 }  // namespace
 
 int main() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);  // show each timing as it comes
     for (int side : {32, 71, 100}) {  // about 1,000, 5,000 and 10,000 holes
         std::printf("\nPlate with %d release holes (4 um on a 10 um pitch)\n", side * side);
         for (bool round : {false, true}) {

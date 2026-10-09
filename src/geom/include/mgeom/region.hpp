@@ -31,6 +31,13 @@ public:
     Region operator&(const Region& other) const;  // intersect
     Region operator^(const Region& other) const;  // xor
 
+    // The union of many regions at once. Regions whose bounding boxes do not
+    // touch are only collected, without a boolean; only groups that touch
+    // are merged by Open CASCADE. An array of separate shapes is cheap.
+    static Region unite(std::span<const Region> regions);
+
+    // Moves and rotations share the geometry (an Open CASCADE location);
+    // mirrors and scaling copy it, which Open CASCADE requires.
     Region transformed(const Transform& t) const;
 
     bool empty() const;

@@ -21,7 +21,8 @@ set(MGEOM_OCC_LIBRARIES
 
 add_library(mgeom
     src/transform.cpp
-    src/region.cpp)
+    src/region.cpp
+    src/cell.cpp)
 add_library(mgeom::mgeom ALIAS mgeom)
 target_include_directories(mgeom
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -38,7 +39,12 @@ if(MGEOM_BUILD_TESTS)
     add_executable(mgeom_tests
         tests/main.cpp
         tests/test_transform.cpp
-        tests/test_region.cpp)
+        tests/test_region.cpp
+        tests/test_cell.cpp)
     target_link_libraries(mgeom_tests PRIVATE mgeom doctest::doctest)
     add_test(NAME mgeom_tests COMMAND mgeom_tests)
+
+    # Timings of the reference designs; run by hand, not by ctest.
+    add_executable(mgeom_bench tests/bench.cpp)
+    target_link_libraries(mgeom_bench PRIVATE mgeom)
 endif()

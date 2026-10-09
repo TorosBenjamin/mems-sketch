@@ -17,6 +17,7 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <TopLoc_Location.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GProp_GProps.hxx>
@@ -36,6 +37,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <numeric>
 
 namespace mgeom {
 
@@ -100,13 +102,16 @@ TopoDS_Shape unified(const TopoDS_Shape& shape) {
     return compound_of(faces_of(unify.Shape()));
 }
 
+// Each face is its own argument: Open CASCADE intersects separate arguments
+// with each other, but not the faces inside one compound.
 template <class Op>
-TopoDS_Shape run_boolean(const TopoDS_Shape& a, const TopoDS_Shape& b, const char* name) {
+TopoDS_Shape run_boolean(const std::vector<TopoDS_Face>& a, const std::vector<TopoDS_Face>& b,
+                         const char* name) {
     try {
         Op op;
         NCollection_List<TopoDS_Shape> args, tools;
-        args.Append(a);
-        tools.Append(b);
+        for (const auto& f : a) args.Append(f);
+        for (const auto& f : b) tools.Append(f);
         op.SetArguments(args);
         op.SetTools(tools);
         op.SetRunParallel(true);
@@ -236,17 +241,83 @@ Region Region::arc(Point centre, double r_in, double r_out, double from_deg, dou
 Region Region::operator|(const Region& other) const {
     if (empty()) return other;
     if (other.empty()) return *this;
-    return Region(make_impl(run_boolean<BRepAlgoAPI_Fuse>(impl_->shape, other.impl_->shape, "union")));
+    const Region both[] = {*this, other};
+    return unite(both);
+}
+
+Region Region::unite(std::span<const Region> regions) {
+    // Every face with its bounding box (enlarged by its tolerance, so faces
+    // that touch count as overlapping).
+    std::vector<TopoDS_Face> faces;
+    std::vector<Bnd_Box> boxes;
+    for (const Region& r : regions) {
+        for (const TopoDS_Face& f : r.impl_->faces) {
+            Bnd_Box box;
+            BRepBndLib::Add(f, box, /*useTriangulation=*/false);
+            faces.push_back(f);
+            boxes.push_back(box);
+        }
+    }
+    const size_t n = faces.size();
+    if (n == 0) return Region();
+
+    // Groups of faces whose boxes touch, found by a sweep along x.
+    std::vector<size_t> parent(n);
+    std::iota(parent.begin(), parent.end(), size_t{0});
+    auto root = [&](size_t i) {
+        while (parent[i] != i) i = parent[i] = parent[parent[i]];
+        return i;
+    };
+    std::vector<size_t> order(n);
+    std::iota(order.begin(), order.end(), size_t{0});
+    auto xmin = [&](size_t i) { return boxes[i].CornerMin().X(); };
+    auto xmax = [&](size_t i) { return boxes[i].CornerMax().X(); };
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return xmin(a) != xmin(b) ? xmin(a) < xmin(b) : a < b;
+    });
+    std::vector<size_t> active;
+    for (size_t i : order) {
+        std::erase_if(active, [&](size_t j) { return xmax(j) < xmin(i); });
+        for (size_t j : active) {
+            if (!boxes[i].IsOut(boxes[j])) parent[root(i)] = root(j);
+        }
+        active.push_back(i);
+    }
+
+    // Faces alone in their group are kept as they are; each group of more is
+    // merged by one boolean. Groups are taken in the order of their first
+    // face, so the result does not depend on the sort.
+    std::vector<std::vector<size_t>> groups(n);
+    for (size_t i = 0; i < n; ++i) groups[root(i)].push_back(i);
+    std::vector<TopoDS_Face> result;
+    std::vector<bool> done(n, false);
+    for (size_t i = 0; i < n; ++i) {
+        const size_t g = root(i);
+        if (done[g]) continue;
+        done[g] = true;
+        const auto& members = groups[g];
+        if (members.size() == 1) {
+            result.push_back(faces[members[0]]);
+            continue;
+        }
+        std::vector<TopoDS_Face> first = {faces[members[0]]};
+        std::vector<TopoDS_Face> rest;
+        for (size_t k = 1; k < members.size(); ++k) rest.push_back(faces[members[k]]);
+        const TopoDS_Shape merged =
+            run_boolean<BRepAlgoAPI_Fuse>(first, rest, "union");
+        for (const TopoDS_Face& f : faces_of(merged)) result.push_back(f);
+    }
+    return Region(make_impl(compound_of(result)));
 }
 
 Region Region::operator-(const Region& other) const {
     if (empty() || other.empty()) return *this;
-    return Region(make_impl(run_boolean<BRepAlgoAPI_Cut>(impl_->shape, other.impl_->shape, "subtract")));
+    return Region(make_impl(run_boolean<BRepAlgoAPI_Cut>(impl_->faces, other.impl_->faces, "subtract")));
 }
 
 Region Region::operator&(const Region& other) const {
     if (empty() || other.empty()) return Region();
-    return Region(make_impl(run_boolean<BRepAlgoAPI_Common>(impl_->shape, other.impl_->shape, "intersect")));
+    return Region(make_impl(run_boolean<BRepAlgoAPI_Common>(impl_->faces, other.impl_->faces, "intersect")));
 }
 
 Region Region::operator^(const Region& other) const {
@@ -275,8 +346,11 @@ Region Region::transformed(const Transform& t) const {
         m.SetTranslation(gp_Vec(t.dx * kNmPerUm, t.dy * kNmPerUm, 0.0));
         trsf.PreMultiply(m);
     }
-    // A copy, not a location: Open CASCADE does not allow scaling in a
-    // location, and a mirror flips the faces' orientation.
+    if (t.scale == 1.0 && !t.mirror_x) {
+        // A rigid motion: a location, which shares the geometry.
+        return Region(make_impl(impl_->shape.Moved(TopLoc_Location(trsf))));
+    }
+    // A copy: Open CASCADE allows neither scaling nor mirroring in a location.
     BRepBuilderAPI_Transform apply(impl_->shape, trsf, /*Copy=*/true);
     if (!apply.IsDone()) throw GeometryError("cannot transform the region");
     return Region(make_impl(compound_of(faces_of(apply.Shape()))));

@@ -40,6 +40,7 @@ from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
+VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message
 SLOT_LABELS = {"boolean": ("A", "B")}
 IMPORT_FILTER = (
     "Layouts (*.gds *.gds2 *.gdsii *.oas *.json *.xml *.mat);;"
@@ -1304,16 +1305,21 @@ class ConstantsPanel(_Panel):
 
 
 class MessagesPanel(QListWidget):
-    """Errors and rule violations. Clicking a violation zooms to it."""
+    """Errors and rule violations. Clicking a violation zooms to it; its context
+    menu waives it (accepts it, with a reason) or removes its waiver."""
 
     zoom_requested = Signal(tuple)
+    waive_requested = Signal(object)  # a Violation
+    unwaive_requested = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
         self.itemActivated.connect(self._activated)
         self.itemClicked.connect(self._activated)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._context_menu)
 
-    counts_changed = Signal(int, int)  # errors, violations
+    counts_changed = Signal(int, int)  # errors, violations not waived
 
     def show_messages(self, errors: list[str], violations) -> None:
         self.clear()
@@ -1321,26 +1327,53 @@ class MessagesPanel(QListWidget):
             item = QListWidgetItem(icons.icon("error"), text)
             item.setToolTip(text)
             self.addItem(item)
+        open_ = [v for v in violations if not v.waived]
+        waived = len(violations) - len(open_)
         if violations:
-            summary = QListWidgetItem(
-                f"{len(violations)} rule violation(s) — click one to zoom to it"
-            )
+            text = f"{len(open_)} rule violation(s) — click one to zoom to it"
+            if waived:
+                text += f"; {waived} waived"
+            summary = QListWidgetItem(text)
             font = QFont()
             font.setBold(True)
             summary.setFont(font)
             self.addItem(summary)
-        for v in violations:
+        for v in sorted(violations, key=lambda v: bool(v.waived)):  # waived ones last
             x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
             where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
-            item = QListWidgetItem(
-                icons.icon("warning"),
-                f"{'' if v.is_error else 'Warning: '}[{v.rule}] {v.layer}: {v.message}{where}",
-            )
+            if v.waived:
+                label = f"Waived: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
+                item = QListWidgetItem(icons.icon("ok"), label)
+                item.setForeground(QBrush(QColor("#8c8f99")))
+            else:
+                prefix = "" if v.is_error else "Warning: "
+                label = f"{prefix}[{v.rule}] {v.layer}: {v.message}{where}"
+                item = QListWidgetItem(icons.icon("warning"), label)
             item.setData(PATH_ROLE, v.bbox_um)
+            item.setData(VIOLATION_ROLE, v)
             self.addItem(item)
         if not errors and not violations:
             self.addItem(QListWidgetItem(icons.icon("ok"), "No rule violations."))
-        self.counts_changed.emit(len(errors), len(violations))
+        self.counts_changed.emit(len(errors), len(open_))
+
+    def context_menu(self, item: QListWidgetItem | None) -> QMenu | None:
+        violation = item.data(VIOLATION_ROLE) if item is not None else None
+        if violation is None or violation.bbox_um is None:
+            return None
+        menu = QMenu(self)
+        if violation.waived or violation.stale_waiver:
+            action = menu.addAction("Remove the waiver")
+            action.triggered.connect(lambda: self.unwaive_requested.emit(violation))
+        else:
+            action = menu.addAction("Waive…")
+            action.setToolTip("Accept this violation, with a reason")
+            action.triggered.connect(lambda: self.waive_requested.emit(violation))
+        return menu
+
+    def _context_menu(self, position) -> None:
+        menu = self.context_menu(self.itemAt(position))
+        if menu is not None:
+            menu.exec(self.viewport().mapToGlobal(position))
 
     def _activated(self, item: QListWidgetItem) -> None:
         bbox = item.data(PATH_ROLE)

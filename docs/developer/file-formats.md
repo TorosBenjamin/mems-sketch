@@ -99,6 +99,18 @@ shapes:
     dy: -1
 ```
 
+A component's accepted rule violations are listed under `waivers`: the rule,
+the violation's box (µm), the reason, and a fingerprint of the geometry around
+it, which tells when the waiver has lapsed:
+
+```yaml
+waivers:
+- rule: device_min_width
+  box: [100, 0, 101, 30]
+  reason: test structure
+  fingerprint: 3f1c0e9b2a7d4c55
+```
+
 Older files still load: `repeat:` is read as an array modifier, `group` as
 `transform`, and a layer's old `undercut` is ignored.
 

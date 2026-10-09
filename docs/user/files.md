@@ -98,7 +98,7 @@ mems-sketch-cli convert old_design.mems my_project           # the earlier forma
 
 - `check` exits with status 1 when a rule with severity *error* is violated
   (with `--strict`, a *warning* too), so it can gate CI; errors exit with
-  status 2.
+  status 2. Waived violations are listed but never fail it.
 - `--set` takes numbers or expressions and can be repeated: convenient for
   parameter sweeps.
 - `convert` does not overwrite a folder that already holds a project.

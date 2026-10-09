@@ -214,3 +214,55 @@ class ProcessEdits(Commands):
 
         rules = {n: dataclasses.replace(r) for n, r in self.session.project.process.rules.items()}
         return save_deck(RuleDeck(name=name, parameters=dict(parameters or {}), rules=rules), path)
+
+    # -- waivers -------------------------------------------------------------
+
+    def waive(self, violation, reason: str, component: str | None = None) -> None:
+        """Accept one violation of the active (or given) component, for ``reason``
+        (requirement DRC-13). It is kept with the component and lapses when the
+        geometry around it changes."""
+        from mems_sketch.core.user_component import Waiver
+        from mems_sketch.process.rules import fingerprint
+
+        component = component or self.session.active
+        if not reason.strip():
+            raise ValueError("a waiver needs a reason")
+        if violation.bbox_um is None:
+            raise ValueError("only a violation with a place can be waived")
+        geometry = self.session.results.geometry(component=component)
+        waiver = Waiver(
+            rule=violation.rule,
+            box=tuple(violation.bbox_um),
+            reason=reason.strip(),
+            fingerprint=fingerprint(violation, geometry),
+        )
+
+        def change(project) -> None:
+            definition = project.components.get(component)
+            if definition is None:
+                raise ValueError(f"'{component}' is read-only: its violations cannot be waived")
+            definition.waivers = [
+                w for w in definition.waivers if (w.rule, w.box) != (waiver.rule, waiver.box)
+            ] + [waiver]
+
+        self.session.edit(f"Waive {violation.rule}", change)
+
+    def unwaive(self, rule: str, box, component: str | None = None) -> None:
+        """Remove the waiver of ``rule`` at ``box``."""
+        from mems_sketch.process.rules import BOX_TOLERANCE_UM
+
+        component = component or self.session.active
+
+        def matches(waiver) -> bool:
+            return waiver.rule == rule and all(
+                abs(p - q) <= BOX_TOLERANCE_UM for p, q in zip(waiver.box, box, strict=True)
+            )
+
+        def change(project) -> None:
+            definition = project.components[component]
+            kept = [w for w in definition.waivers if not matches(w)]
+            if len(kept) == len(definition.waivers):
+                raise ValueError(f"no waiver of {rule} there")
+            definition.waivers = kept
+
+        self.session.edit(f"Remove the waiver of {rule}", change)

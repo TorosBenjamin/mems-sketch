@@ -29,3 +29,24 @@ jobs:
           QT_QPA_PLATFORM: offscreen
       - name: Design-rule check of the example project
         run: mems-sketch-cli check examples/resonator
+
+  geometry-library:
+    name: geometry library (C++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build doctest-dev
+      - name: Open CASCADE from the cache
+        uses: actions/cache@v4
+        with:
+          path: build/deps
+          key: occt-${{ runner.os }}-${{ hashFiles('src/geom/scripts/build-occt.sh') }}
+      - name: Build Open CASCADE (only when not cached)
+        run: src/geom/scripts/build-occt.sh
+      - name: Build and test mgeom
+        run: |
+          cmake -S src/geom -B build/geom -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/build/deps/occt-8_0_1"
+          cmake --build build/geom
+          ctest --test-dir build/geom --output-on-failure

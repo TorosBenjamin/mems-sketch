@@ -48,6 +48,8 @@ class ProcessView(QWidget):
         split.addWidget(self.constants)
         split.addWidget(self.layers)
         split.addWidget(self.rules)
+        for index, stretch in enumerate((2, 2, 3)):  # the rules need the most room
+            split.setStretchFactor(index, stretch)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(top)

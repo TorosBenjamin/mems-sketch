@@ -34,12 +34,22 @@ from pathlib import Path
 from typing import Any
 
 from mems_sketch.core.imports import ImportedCell
-from mems_sketch.core.process import RULE_FIELDS, Layer, Process, Rule, layer_rules
+from mems_sketch.core.process import (
+    RULE_FIELDS,
+    DeckUse,
+    Layer,
+    Process,
+    Rule,
+    RuleDeck,
+    RuleOverride,
+    layer_rules,
+)
 from mems_sketch.core.project import Library, Project
 from mems_sketch.core.user_component import ComponentDef
 from mems_sketch.storage import yaml_format
 
 FORMAT = "mems-sketch/1"
+DECK_FORMAT = "mems-sketch-rules/1"
 PROJECT_FILE = "project.yaml"
 PROCESS_FILE = "process.yaml"
 COMPONENTS_DIR = "components"
@@ -66,7 +76,7 @@ def save_project(project: Project, folder: str | Path) -> Path:
         header["imports"] = imports_data(project)
     _write(folder / PROJECT_FILE, yaml_format.dump(header))
     _save_imports(project, folder / IMPORTS_DIR)
-    _write(folder / PROCESS_FILE, yaml_format.dump(process_data(project.process)))
+    _write(folder / PROCESS_FILE, yaml_format.dump(process_data(project.process, folder)))
     for name, definition in project.components.items():
         path = components_dir / f"{name}.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,7 +133,8 @@ def imported_from_data(name: str, entry: dict[str, Any], data: bytes) -> Importe
     )
 
 
-def process_data(process: Process) -> dict[str, Any]:
+def process_data(process: Process, folder: str | Path | None = None) -> dict[str, Any]:
+    """The process as written; rule deck paths relative to ``folder``."""
     layers = {
         layer.name: {"gds": [layer.gds_layer, layer.gds_datatype]}
         for layer in process.layers.values()
@@ -134,7 +145,92 @@ def process_data(process: Process) -> dict[str, Any]:
     data["layers"] = layers
     if process.rules:
         data["rules"] = {rule.name: _rule_data(rule) for rule in process.rules.values()}
+    if process.decks:
+        data["decks"] = {name: _deck_use_data(use, folder) for name, use in process.decks.items()}
     return data
+
+
+def _deck_use_data(use: DeckUse, folder: str | Path | None) -> dict[str, Any]:
+    path = use.deck.path
+    if path is None:
+        raise ValueError(f"rule deck '{use.deck.name}' has no file")
+    entry: dict[str, Any] = {
+        "path": _relative(path, Path(folder)) if folder is not None else str(path)
+    }
+    if use.parameters:
+        entry["parameters"] = yaml_format.to_data(use.parameters)
+    if use.overrides:
+        entry["overrides"] = {
+            name: {**yaml_format.to_data(o.changes), **({"reason": o.reason} if o.reason else {})}
+            for name, o in use.overrides.items()
+        }
+    return entry
+
+
+def _deck_use_from_data(name: str, entry: dict[str, Any], base: Path) -> DeckUse:
+    path = Path(str(entry.get("path", "")))
+    path = Path(os.path.normpath(path if path.is_absolute() else base / path))
+    try:
+        deck, error = load_deck(path), ""
+    except (OSError, ValueError) as exc:  # the project still opens; check reports it
+        deck, error = RuleDeck(name=name, path=path), str(exc)
+    overrides = {}
+    for rule, changes in (entry.get("overrides") or {}).items():
+        changes = dict(changes or {})
+        reason = str(changes.pop("reason", ""))
+        overrides[str(rule)] = RuleOverride({str(k): _value(v) for k, v in changes.items()}, reason)
+    return DeckUse(
+        deck=deck,
+        parameters={str(k): _value(v) for k, v in (entry.get("parameters") or {}).items()},
+        overrides=overrides,
+        error=error,
+    )
+
+
+def _value(value: Any) -> Any:
+    """A value as read: numbers as floats; text, yes/no and lists as they are."""
+    if isinstance(value, bool | str | list):
+        return value
+    return float(value)
+
+
+# -- rule decks --------------------------------------------------------------
+
+
+def deck_data(deck: RuleDeck) -> dict[str, Any]:
+    data: dict[str, Any] = {"format": DECK_FORMAT, "name": deck.name}
+    if deck.description:
+        data["description"] = deck.description
+    if deck.parameters:
+        data["parameters"] = yaml_format.to_data(deck.parameters)
+    data["rules"] = {rule.name: _rule_data(rule) for rule in deck.rules.values()}
+    return data
+
+
+def save_deck(deck: RuleDeck, path: str | Path) -> Path:
+    """Write a rule deck file (YAML)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write(path, yaml_format.dump(deck_data(deck)))
+    deck.path = path
+    return path
+
+
+def load_deck(path: str | Path) -> RuleDeck:
+    """Read a rule deck file."""
+    path = Path(path)
+    if not path.is_file():
+        raise ProjectFormatError(f"no rule deck at {path}")
+    data = _read(path)
+    if not isinstance(data, dict) or data.get("format") != DECK_FORMAT:
+        raise ProjectFormatError(f"{path} is not a {DECK_FORMAT} rule deck")
+    return RuleDeck(
+        name=str(data.get("name", path.stem)),
+        parameters={str(k): _value(v) for k, v in (data.get("parameters") or {}).items()},
+        rules={str(n): _rule_from_data(n, e or {}) for n, e in (data.get("rules") or {}).items()},
+        description=str(data.get("description", "")),
+        path=path,
+    )
 
 
 def _rule_data(rule: Rule) -> dict[str, Any]:
@@ -152,11 +248,7 @@ def _rule_data(rule: Rule) -> dict[str, Any]:
 
 
 def _rule_from_data(name: str, entry: dict[str, Any]) -> Rule:
-    values = {}
-    for key, value in entry.items():
-        if key in RULE_FIELDS:
-            continue
-        values[str(key)] = value if isinstance(value, bool | str) else float(value)
+    values = {str(k): _value(v) for k, v in entry.items() if k not in RULE_FIELDS}
     return Rule(
         name=str(name),
         kind=str(entry.get("kind", "")),
@@ -197,7 +289,7 @@ def _write(path: Path, text: str) -> None:
 
 def _relative(path: Path | None, folder: Path) -> str:
     if path is None:
-        raise ValueError("a library without a folder cannot be saved in a project")
+        raise ValueError("a library or deck without a file cannot be saved in a project")
     try:
         return os.path.relpath(path.resolve(), folder.resolve()).replace(os.sep, "/")
     except ValueError:  # different drive on Windows
@@ -222,7 +314,7 @@ def load_project(path: str | Path, libraries_from: str | Path | None = None) -> 
     header = _read(folder / PROJECT_FILE)
     if not isinstance(header, dict) or header.get("format") != FORMAT:
         raise ProjectFormatError(f"{folder / PROJECT_FILE} is not a {FORMAT} project file")
-    process = _load_process(folder / PROCESS_FILE)
+    process = _load_process(folder / PROCESS_FILE, base)
     components = _load_components(folder / COMPONENTS_DIR)
     libraries = {
         name: load_library(name, (base / rel) if not Path(rel).is_absolute() else Path(rel))
@@ -259,13 +351,14 @@ def load_library(name: str, folder: str | Path) -> Library:
     return Library(name=name, components=_load_components(source), path=folder)
 
 
-def _load_process(path: Path) -> Process:
+def _load_process(path: Path, base: Path) -> Process:
     if not path.is_file():
         return Process()
-    return process_from_data(_read(path) or {})
+    return process_from_data(_read(path) or {}, base)
 
 
-def process_from_data(data: dict[str, Any]) -> Process:
+def process_from_data(data: dict[str, Any], folder: str | Path | None = None) -> Process:
+    """A process as read; rule deck paths are relative to ``folder``."""
     layers = {}
     rules: dict[str, Rule] = {}
     for name, entry in (data.get("layers") or {}).items():
@@ -286,7 +379,12 @@ def process_from_data(data: dict[str, Any]) -> Process:
         k: (float(v) if isinstance(v, int | float) else str(v))
         for k, v in (data.get("constants") or {}).items()
     }
-    return Process(layers=layers, constants=constants, rules=rules)
+    base = Path(folder) if folder is not None else Path.cwd()
+    decks = {
+        str(name): _deck_use_from_data(str(name), entry or {}, base)
+        for name, entry in (data.get("decks") or {}).items()
+    }
+    return Process(layers=layers, constants=constants, rules=rules, decks=decks)
 
 
 def _load_components(folder: Path) -> dict[str, ComponentDef]:

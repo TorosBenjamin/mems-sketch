@@ -79,7 +79,7 @@ def project_data(project: Project, folder: str | Path | None = None) -> dict[str
         data["libraries"] = {
             n: _library_path(lib.path, folder) for n, lib in project.libraries.items()
         }
-    data["process"] = process_data(project.process)
+    data["process"] = process_data(project.process, folder)
     if project.imports:
         entries = imports_data(project)
         data["imports"] = {
@@ -101,7 +101,7 @@ def project_from_data(data: Any, folder: str | Path | None = None) -> Project:
     try:
         return Project(
             name=str(data.get("name", "untitled")),
-            process=process_from_data(data.get("process") or {}),
+            process=process_from_data(data.get("process") or {}, base),
             components={
                 str(n): component_from_data(str(n), d or {})
                 for n, d in (data.get("components") or {}).items()

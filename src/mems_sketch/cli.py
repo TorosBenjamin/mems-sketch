@@ -147,12 +147,19 @@ def _info(args: argparse.Namespace) -> int:
     if project.process.rules:
         print("rules:")
     for rule in project.process.rules.values():
-        values = ", ".join(f"{k}={_number(v)}" for k, v in rule.values.items())
-        state = "" if rule.enabled else "  (off)"
-        print(
-            f"  {rule.name:<20} {rule.kind}({', '.join(rule.layers)}) {values}"
-            f"  {rule.severity}{state}"
-        )
+        _print_rule(rule.name, rule)
+    for deck_name, use in project.process.decks.items():
+        print(f"rule deck {deck_name}: {use.deck.path}{'  ' + use.error if use.error else ''}")
+        for name, value in use.parameters.items():
+            print(
+                f"  {name} = {_number(value)}  (the deck's: {_number(use.deck.parameters[name])})"
+            )
+        for name in use.deck.rules:
+            override = use.overrides.get(name)
+            reason = f": {override.reason}" if override and override.reason else ""
+            _print_rule(
+                f"{deck_name}.{name}", use.rule(name), "  changed" + reason if override else ""
+            )
     if project.process.constants:
         print("process constants:")
         for name, value in project.process.constants.items():
@@ -168,6 +175,14 @@ def _info(args: argparse.Namespace) -> int:
     for problem in problems:
         print(f"problem: {problem}")
     return 1 if problems else 0
+
+
+def _print_rule(name: str, rule, note: str = "") -> None:
+    values = ", ".join(f"{k}={_number(v)}" for k, v in rule.values.items())
+    state = "" if rule.enabled else "  (off)"
+    print(
+        f"  {name:<20} {rule.kind}({', '.join(rule.layers)}) {values}  {rule.severity}{state}{note}"
+    )
 
 
 def _number(value: float | str) -> str:

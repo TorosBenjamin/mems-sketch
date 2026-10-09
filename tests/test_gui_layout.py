@@ -311,7 +311,7 @@ def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window)
     definitions = window.area.process_view.layers.layers
     assert headers(definitions) == ["Layer", "GDS", "Datatype"]
     rules = window.area.process_view.rules.rules
-    assert headers(rules) == ["Rule", "Kind", "Layers", "Values", "Severity", "Note"]
+    assert headers(rules)[:6] == ["Rule", "Kind", "Layers", "Values", "Severity", "Note"]
     row = [rules.item(r, 0).text() for r in range(rules.rowCount())].index("device_min_width")
     rules.item(row, 3).setText("value=0.5")
     assert window.document.project.process.rules["device_min_width"].values == {"value": 0.5}

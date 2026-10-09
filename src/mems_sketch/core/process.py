@@ -8,11 +8,19 @@ Constants may reference each other by their bare names.
 Design rules are data: each names a rule *kind* (a plugin that knows how to
 check, see :mod:`mems_sketch.process.rules`), the layers it applies to and its
 values, which are numbers or expressions over the process constants.
+
+A *rule deck* is a set of rules with parameters of its own, in a file of its
+own, shared between projects (requirement DRC-8). A project uses decks: it can
+set a deck parameter for itself, override fields of a deck rule (with a
+reason) and turn deck rules off; everything else follows the deck file.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 from mems_sketch.core.expressions import resolve_variables
 
@@ -67,10 +75,59 @@ def layer_rules(layer: str, min_width: float | None, min_space: float | None) ->
 
 
 @dataclass
+class RuleDeck:
+    """A shared set of rules with parameters of its own. Its rules' values can
+    use the parameters by their bare names (``value: min_feature``), and the
+    parameters can use the process constants (``process.undercut``)."""
+
+    name: str
+    parameters: dict[str, Value] = field(default_factory=dict)
+    rules: dict[str, Rule] = field(default_factory=dict)
+    description: str = ""
+    path: Path | None = None
+
+
+@dataclass
+class RuleOverride:
+    """A project's change to one deck rule: rule fields (``layers``,
+    ``severity``, ``enabled``, ``message``) and parameter values, by name."""
+
+    changes: dict[str, Any] = field(default_factory=dict)
+    reason: str = ""
+
+
+@dataclass
+class DeckUse:
+    """A deck as a project uses it. ``error`` says why its file could not be
+    read; its rules are then reported as not checked, never passed."""
+
+    deck: RuleDeck
+    parameters: dict[str, Value] = field(default_factory=dict)  # set by the project
+    overrides: dict[str, RuleOverride] = field(default_factory=dict)
+    error: str = ""
+
+    def rule(self, name: str) -> Rule:
+        """The deck's rule ``name`` with the project's override applied."""
+        rule = self.deck.rules[name]
+        override = self.overrides.get(name)
+        if override is None:
+            return rule
+        fields = {k: v for k, v in override.changes.items() if k in RULE_FIELDS}
+        values = {k: v for k, v in override.changes.items() if k not in RULE_FIELDS}
+        return dataclasses.replace(rule, **fields, values={**rule.values, **values})
+
+    def variables(self, scope: dict[str, float]) -> dict[str, float]:
+        """The deck's parameters, resolved: the deck's values, those the project
+        sets instead, over the process constants in ``scope``."""
+        return resolve_variables({**self.deck.parameters, **self.parameters}, scope)
+
+
+@dataclass
 class Process:
     layers: dict[str, Layer] = field(default_factory=dict)
     constants: dict[str, Value] = field(default_factory=dict)
     rules: dict[str, Rule] = field(default_factory=dict)
+    decks: dict[str, DeckUse] = field(default_factory=dict)
 
     def add_rule(self, rule: Rule) -> Rule:
         if rule.name in self.rules:

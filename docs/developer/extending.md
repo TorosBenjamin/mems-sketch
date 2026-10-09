@@ -48,16 +48,50 @@ the session and emits `error(str)` for problems.
 ## An export format
 
 A class with `format_name`, `file_extension` and
-`export(project, geometry, path)`; set `wants_context = True` to also receive
-`component=` and `params=`. Register it with `@register_exporter`, or from a
-separate package under the `mems_sketch.exporters` entry-point group:
+`export(project, geometry, path)`. Optionally:
+
+- `title`: its name in **File → Export…** (default: the format name);
+- `options`: the settings it takes, as `ExportOption`s. Each value is passed to
+  `export` as a keyword argument; values not given take their defaults;
+- `wants_context = True`: it also receives `component=` and `params=`.
+
+```python
+from typing import ClassVar
+
+from mems_sketch.export.base import ExportOption, register_exporter
+
+
+@register_exporter
+class SvgExporter:
+    format_name = "svg"
+    title = "SVG drawing"
+    file_extension = ".svg"
+    options: ClassVar = (
+        ExportOption("stroke_um", 0.0, "Outline width", minimum=0, suffix=" µm"),
+        ExportOption("filled", True, "Filled"),
+    )
+
+    def export(self, project, geometry, path, stroke_um=0.0, filled=True): ...
+```
+
+An option's type is its default's: `bool`, `int`, `float` or `str` (with
+`choices`, one of them). `minimum`, `maximum`, `suffix` and `help` go into the
+export dialog, which is built from the options, as are
+`mems-sketch-cli export --option NAME=VALUE` and the list
+`mems-sketch-cli formats` prints. Values are checked against the
+declaration before `export` is called, and the dialog remembers the last ones
+per format.
+
+Register the class with `@register_exporter`, or from a separate package
+under the `mems_sketch.exporters` entry-point group:
 
 ```toml
 [project.entry-points."mems_sketch.exporters"]
 svg = "my_package.svg:SvgExporter"
 ```
 
-It then appears in **File → Export…** and `mems-sketch-cli export`.
+It then appears in **File → Export…**, `mems-sketch-cli export` and
+`mems-sketch-cli formats`.
 
 ## A file format for documents
 

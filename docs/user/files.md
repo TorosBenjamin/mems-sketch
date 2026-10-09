@@ -89,6 +89,8 @@ mems-sketch-cli new     my_project [--library]
 mems-sketch-cli info    my_project                           # components, parameters, layers
 mems-sketch-cli check   my_project [--component NAME] [--set pitch=15] [--json]
 mems-sketch-cli export  my_project out.gds [--set pitch=15]  # also .oas .dxf .json .xml .mat
+                [-O grid_um=0.005]                         # a setting of the format
+mems-sketch-cli formats                                      # the formats and their settings
 mems-sketch-cli convert my_project design.json               # and back; .xml .mat .yaml
 mems-sketch-cli convert old_design.mems my_project           # the earlier format
 ```
@@ -98,3 +100,8 @@ mems-sketch-cli convert old_design.mems my_project           # the earlier forma
 - `--set` takes numbers or expressions and can be repeated: convenient for
   parameter sweeps.
 - `convert` does not overwrite a folder that already holds a project.
+- `-O NAME=VALUE` (or `--option`) sets one of the format's settings and can
+  be repeated; `formats` lists them. GDSII, OASIS and DXF take `grid_um`, the
+  file's grid (default 0.001, a whole multiple of 1 nm), and `top_cell`, the
+  top cell's name. **File → Export…** asks for the same settings and
+  remembers them per format.

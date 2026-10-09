@@ -239,14 +239,18 @@ class EditSession:
         self.changed.emit()  # tabs drop their "modified" marks
         return target
 
-    def export(self, path: str | Path) -> Path:
+    def export(
+        self, path: str | Path, format_name: str | None = None, options: dict | None = None
+    ) -> Path:
         component = self.active
         return export(
             self.project,
             path,
+            format_name=format_name,
             geometry=self.results.geometry(),
             component=component,
             params=self.trials_for(component),
+            options=options,
         )
 
     def _reset(self, project: Project, path: Path | None) -> None:

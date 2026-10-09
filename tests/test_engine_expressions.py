@@ -24,7 +24,7 @@ def _engine():
         except ImportError:
             if os.environ.get("MGEOM_REQUIRED"):
                 raise
-            pytest.skip("the engine (mems_sketch._core) is not built")
+            pytest.skip("the engine (mems_sketch._core) is not built", allow_module_level=True)
     return _core
 
 

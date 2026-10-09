@@ -465,9 +465,13 @@ behaviours every frontend must keep.
 
 ### Meshing
 
-- **MSH-1** (Should, new) Export a **mesh** of a component for simulation:
+Most users have no licence for a commercial mesher or solver, so a mesh
+from mems-sketch is their way into simulation; those who have one (e.g.
+Ansys) can mesh the STEP export themselves (OUT-6).
+
+- **MSH-1** (Must, new) Export a **mesh** of a component for simulation:
   2D (the layers' faces) or 3D (the layers extruded through the stack).
-- **MSH-2** (Should, new) **Mesh settings are project data**, as expressions:
+- **MSH-2** (Must, new) **Mesh settings are project data**, as expressions:
   a global size, sizes per layer, and refinement regions (areas, points,
   edges, distances from edges) drawn on the canvas. They are saved, diffed
   and parametric like everything else.
@@ -476,12 +480,35 @@ behaviours every frontend must keep.
 - **MSH-4** (Should, new) Mesh regions and boundaries are **named** after
   layers and named shapes (physical groups), so a solver finds anchors and
   electrodes by name.
-- **MSH-5** (Should, new) Mesh formats for **Ansys** first, the main solver
-  of the teams: formats Ansys Mechanical imports as an external model, such
-  as Abaqus `.inp` and Nastran `.bdf`, which gmsh writes. Other solvers'
-  formats are further exporter plugins (OUT-7).
-- **MSH-6** (Could, new) A **preview** of the mesh on the canvas, with element
+- **MSH-5** (Must, new) Mesh formats for **free solvers** first: Elmer
+  (good MEMS support: electrostatics, structures, modes), CalculiX (Abaqus
+  `.inp`), and FEniCS or scikit-fem (through meshio, e.g. XDMF); gmsh's
+  `.msh` itself. Abaqus `.inp` and Nastran `.bdf` also go into commercial
+  tools such as Ansys Mechanical. Further formats are exporter plugins
+  (OUT-7).
+- **MSH-6** (Should, new) A **preview** of the mesh on the canvas, with element
   count and quality.
+- **MSH-7** (Must, new) **Graded sizes, no seams:** where regions of
+  different sizes meet (a finely meshed spring on a coarse frame), the
+  element size changes gradually, by at most a growth rate per element
+  (a project setting, e.g. 1.2), never in one step. The mesh is conforming
+  everywhere: neighbouring regions share their nodes. A sudden jump in size
+  makes distorted elements and unreliable results along the seam.
+- **MSH-8** (Should, new) An **automatic size map** from the geometry:
+  smaller elements in narrow beams, small gaps (between comb fingers),
+  tight curves and sharp corners. It is what gmsh's own sizing makes
+  (curvature, distance between edges), shown on the canvas as a colour
+  scale so the user sees where the mesh will be fine before meshing.
+- **MSH-9** (Could, new) **Editing the size map with a brush,** where the
+  automatic map does not know enough, such as the stress at a spring's
+  root. Only the edits are saved, as project data, not the whole map: when
+  the design changes, the automatic map follows the new geometry and the
+  edits stay where they were painted. Grading (MSH-7) applies on top, so a
+  rough painting cannot make a seam.
+- **MSH-10** (Could, new) **Refinement from a solution:** solve on a
+  coarse mesh with a free solver, estimate the error, refine where it is
+  large and mesh again. It needs a solver in the loop, so it comes after
+  the rest.
 
 ### 3D view
 
@@ -673,8 +700,9 @@ ten times larger than that, so the numbers hold with room to spare.
 
 - **X-1: STEP is a Should, not a Must.** Production needs GDS or OASIS, and
   a simulation that takes a mesh from mems-sketch does not need STEP. But
-  the teams mainly use Ansys, which usually imports CAD geometry and meshes
-  it itself, so STEP is the most direct way into it. It was a Could while
+  commercial tools such as Ansys import CAD geometry and mesh it
+  themselves, with meshers better than any we could offer, so STEP is the
+  most direct way into them. It was a Could while
   STEP export looked slow (41 s for a 5,000-hole plate in the benchmark);
   real designs have a few hundred holes, where it should take seconds at
   most (it grew faster than the number of holes in the benchmark). The
@@ -729,9 +757,11 @@ ten times larger than that, so the numbers hold with room to spare.
    the reference designs stay about ten times larger than that.
 2. **Interactive budget** (QS-1): dragging should feel smooth, but the
    correct result may take a moment to follow.
-3. **Solvers** (MSH-5, X-1): several teams with different tools, mainly
-   Ansys. Ansys comes first: STEP for its own meshing, and mesh formats it
-   imports.
+3. **Solvers** (MSH-5, X-1): mems-sketch is an open project for anyone
+   interested, and most of them have no licence for commercial tools.
+   Meshing is therefore its own feature, with formats for free solvers
+   first. People with Ansys, whose mesher is hard to beat, mesh the STEP
+   export there.
 4. **Default export grid and chord tolerance** (OUT-2): 1 nm and 5 nm. Each
    export can change them, so the defaults only need to be sensible.
 5. **Platforms** (QC-4): Windows and Linux; macOS if it costs little, which

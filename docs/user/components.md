@@ -165,3 +165,16 @@ whoever looks after the process. Its rules use its parameters by name
 
 A deck file that cannot be read does not stop the project from opening, but
 its rules are reported as not checked: an error, never a pass.
+
+### Waivers
+
+Sometimes a violation is meant: a test structure narrower than the minimum
+width, say. Right-click it in **Messages** and choose **Waive…** to accept it,
+with a reason. It stays listed, greyed and marked *Waived* with the reason,
+but no longer counts as a problem, is not boxed on the canvas, and does not
+fail `check`. The waiver is saved with the component.
+
+A waiver covers that violation as it is: when the geometry around it changes,
+the waiver lapses and the violation shows again, marked *waiver lapsed*. A
+waiver that no longer matches any violation is listed as a warning to remove
+(right-click, **Remove the waiver**).

@@ -191,7 +191,7 @@ def _number(value: float | str) -> str:
 
 def _check(args: argparse.Namespace) -> int:
     project = load(args.project)
-    violations = rules.check(project, _geometry(project, args))
+    violations = rules.check(project, _geometry(project, args), args.component)
     if args.json:
         print(
             json.dumps(
@@ -204,6 +204,7 @@ def _check(args: argparse.Namespace) -> int:
                         "message": v.message,
                         "bbox_um": v.bbox_um,
                         "values": v.values,
+                        "waived": v.waived or None,
                     }
                     for v in violations
                 ],
@@ -216,10 +217,12 @@ def _check(args: argparse.Namespace) -> int:
             if v.bbox_um:
                 x0, y0, x1, y1 = v.bbox_um
                 where = f" at ({(x0 + x1) / 2:.3f}, {(y0 + y1) / 2:.3f}) µm"
-            print(f"{v.severity}: {v.rule} {v.layer}: {v.message}{where}")
-        errors = len(rules.errors(violations))
-        print(f"{errors} error(s), {len(violations) - errors} warning(s)", file=sys.stderr)
-    failing = violations if args.strict else rules.errors(violations)
+            state = f"waived ({v.waived})" if v.waived else v.severity
+            print(f"{state}: {v.rule} {v.layer}: {v.message}{where}")
+        errors, warnings = len(rules.errors(violations)), len(rules.warnings(violations))
+        waived = len(violations) - len(rules.open_violations(violations))
+        print(f"{errors} error(s), {warnings} warning(s), {waived} waived", file=sys.stderr)
+    failing = rules.open_violations(violations) if args.strict else rules.errors(violations)
     return 1 if failing else 0
 
 

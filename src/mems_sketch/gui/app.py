@@ -206,6 +206,8 @@ class MainWindow(QMainWindow):
         self.document.changed.connect(self.state_changed)  # e.g. trial values
         self.messages.zoom_requested.connect(self._zoom_to_bbox)
         self.messages.counts_changed.connect(self._show_problem_count)
+        self.messages.waive_requested.connect(self.waive)
+        self.messages.unwaive_requested.connect(self.unwaive)
         self.settings.changed.connect(self._setting_changed)
         for panel in (
             self.properties,
@@ -832,6 +834,21 @@ class MainWindow(QMainWindow):
         self.grid_label.setText(f"grid {canvas.grid_step():g} µm")
         self.zoom_label.setText(f"{canvas.pixels_per_um():.3g} px/µm")
 
+    def waive(self, violation) -> None:
+        """Accept a rule violation of the shown component, asking why."""
+        reason, ok = QInputDialog.getText(
+            self, "Waive a violation", f"Why is this {violation.rule} violation accepted?"
+        )
+        if ok:
+            self._run(lambda: self.document.process.waive(violation, reason, self.view.component))
+
+    def unwaive(self, violation) -> None:
+        self._run(
+            lambda: self.document.process.unwaive(
+                violation.rule, violation.bbox_um, self.view.component
+            )
+        )
+
     def _show_problem_count(self, errors: int, violations: int) -> None:
         if errors:
             icons.bind(self.problems_button, "error")
@@ -964,7 +981,7 @@ class MainWindow(QMainWindow):
 
     def update_overlay(self) -> None:
         view = self.view
-        markers = [v.bbox_um for v in view.violations if v.bbox_um]
+        markers = [v.bbox_um for v in view.violations if v.bbox_um and not v.waived]
         results = self.document.results
         single = view.selection[0] if len(view.selection) == 1 else None
         shown = self.points_shown()

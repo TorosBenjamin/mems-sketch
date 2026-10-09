@@ -96,8 +96,9 @@ class Results:
     def check(
         self, drawn: Geometry | None = None, component: str | None = None
     ) -> list[rules.Violation]:
+        component = component or self.session.active
         geometry = self.geometry(component=component) if drawn is None else drawn
-        return rules.check(self.session.project, geometry)
+        return rules.check(self.session.project, geometry, component)
 
     def node_regions(
         self, visible: dict[str, bool], component: str | None = None

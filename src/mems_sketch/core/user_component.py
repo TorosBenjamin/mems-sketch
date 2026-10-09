@@ -136,6 +136,18 @@ class PointDef(_Model):
         return check_point_reference(at)
 
 
+class Waiver(_Model):
+    """An accepted rule violation (requirement DRC-13): the rule, where its
+    violation is (a box in µm), why it is accepted, and a fingerprint of the
+    geometry there. When that geometry changes, the waiver lapses and the
+    violation shows again."""
+
+    rule: str
+    box: tuple[float, float, float, float]
+    reason: str
+    fingerprint: str
+
+
 class ComponentDef(_Model):
     """A user component.
 
@@ -149,6 +161,7 @@ class ComponentDef(_Model):
     parameters: list[ParamDef] = Field(default_factory=list)
     points: list[PointDef] = Field(default_factory=list)
     shapes: list[Shape] = Field(default_factory=list)
+    waivers: list[Waiver] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod

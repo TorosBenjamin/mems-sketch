@@ -20,6 +20,8 @@ declaration once evaluated.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import entry_points
@@ -62,10 +64,13 @@ class Violation:
     kind: str = ""
     severity: str = ERROR
     values: dict[str, Any] = field(default_factory=dict)  # as the rule was checked
+    waived: str = ""  # the reason, when a waiver accepts this violation
+    stale_waiver: bool = False  # a waiver that matches no violation any more
 
     @property
     def is_error(self) -> bool:
-        return self.severity == ERROR
+        """An error that is not waived: what fails a check."""
+        return self.severity == ERROR and not self.waived
 
 
 _runtime: dict[str, type[RuleKind]] = {}
@@ -111,9 +116,14 @@ def rule_values(
     return values
 
 
-def check(project: Project, geometry: Geometry | None = None) -> list[Violation]:
-    """Check ``geometry`` (default: the drawn project) against the project's rules."""
-    geometry = project.render() if geometry is None else geometry
+def check(
+    project: Project, geometry: Geometry | None = None, component: str | None = None
+) -> list[Violation]:
+    """Check ``geometry`` (default: the drawn project) against the project's rules.
+    ``component`` is what the geometry is (default: the project's default
+    component); its waivers mark the violations they accept."""
+    component = component or project.default_component()
+    geometry = project.render(component) if geometry is None else geometry
     violations: list[Violation] = []
     for name in geometry.layers:
         if name not in project.layers:
@@ -130,7 +140,76 @@ def check(project: Project, geometry: Geometry | None = None) -> list[Violation]
             violations += _check_rule(rule.name, rule, kinds, geometry, project, scope, scope_error)
     for deck_name, use in project.process.decks.items():
         violations += _check_deck(deck_name, use, kinds, geometry, project, scope, scope_error)
+    definition = project.components.get(component) if component else None
+    if definition is not None and definition.waivers:
+        violations = _apply_waivers(violations, definition.waivers, geometry)
     return violations
+
+
+# -- waivers -------------------------------------------------------------------
+
+BOX_TOLERANCE_UM = 0.0005  # a waiver's box matches a violation's to within this
+
+
+def fingerprint(violation: Violation, geometry: Geometry) -> str:
+    """A hash of the geometry around a violation, on its rule's layers: its box,
+    grown by the largest distance the rule checks with, so that what the rule
+    looked at is covered."""
+    if violation.bbox_um is None:
+        return ""
+    reach = max(
+        (abs(v) for v in violation.values.values() if isinstance(v, int | float)), default=0.0
+    )
+    x0, y0, x1, y1 = (round(c / DBU_UM) for c in violation.bbox_um)
+    grow = round(reach / DBU_UM) + 1
+    window = kdb.Region(kdb.Box(x0 - grow, y0 - grow, x1 + grow, y1 + grow))
+    digest = hashlib.sha256()
+    for layer in violation.layer.split(", "):
+        region = geometry.layers.get(layer, kdb.Region())
+        shapes = sorted(str(p) for p in (region & window).merged().each())
+        digest.update(f"{layer}:{';'.join(shapes)}|".encode())
+    return digest.hexdigest()[:16]
+
+
+def _same_box(a, b) -> bool:
+    return all(abs(p - q) <= BOX_TOLERANCE_UM for p, q in zip(a, b, strict=True))
+
+
+def _apply_waivers(violations: list[Violation], waivers, geometry: Geometry) -> list[Violation]:
+    result: list[Violation] = []
+    used: set[int] = set()
+    for violation in violations:
+        found = None
+        if violation.bbox_um is not None:
+            for index, waiver in enumerate(waivers):
+                if waiver.rule == violation.rule and _same_box(waiver.box, violation.bbox_um):
+                    found = index
+                    break
+        if found is None:
+            result.append(violation)
+            continue
+        used.add(found)
+        waiver = waivers[found]
+        if waiver.fingerprint == fingerprint(violation, geometry):
+            result.append(dataclasses.replace(violation, waived=waiver.reason))
+        else:  # the geometry changed: the waiver no longer covers it
+            lapsed = f"{violation.message} (waiver lapsed: the geometry changed)"
+            result.append(dataclasses.replace(violation, message=lapsed))
+    for index, waiver in enumerate(waivers):
+        if index not in used:
+            x0, y0, x1, y1 = waiver.box
+            result.append(
+                Violation(
+                    waiver.rule,
+                    "",
+                    f"a waiver ({waiver.reason}) at ({(x0 + x1) / 2:.3f}, {(y0 + y1) / 2:.3f}) "
+                    "µm matches no violation any more: remove it",
+                    waiver.box,
+                    severity=WARNING,
+                    stale_waiver=True,
+                )
+            )
+    return result
 
 
 def _check_deck(deck_name, use, kinds, geometry, project, scope, scope_error) -> list[Violation]:
@@ -199,4 +278,9 @@ def errors(violations: Sequence[Violation]) -> list[Violation]:
 
 
 def warnings(violations: Sequence[Violation]) -> list[Violation]:
-    return [v for v in violations if v.severity == WARNING]
+    return [v for v in violations if v.severity == WARNING and not v.waived]
+
+
+def open_violations(violations: Sequence[Violation]) -> list[Violation]:
+    """The violations no waiver accepts."""
+    return [v for v in violations if not v.waived]

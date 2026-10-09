@@ -124,7 +124,7 @@ class ComponentView(QWidget):
         if self.canvas.isVisible():
             self.canvas.viewport().repaint()
         try:
-            self.violations = self.document.results.check(drawn)
+            self.violations = self.document.results.check(drawn, self.component)
         except Exception as exc:  # noqa: BLE001 - shown in the messages panel
             self.errors.append(str(exc))
 

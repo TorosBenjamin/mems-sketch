@@ -40,6 +40,22 @@ public:
     // mirrors and scaling copy it, which Open CASCADE requires.
     Region transformed(const Transform& t) const;
 
+    // Grow (distance > 0) or shrink (< 0) every boundary by distance (µm).
+    // Pieces that shrink away disappear; pieces that grow into each other
+    // merge; a shape may split or close into a ring.
+    Region offset(double distance, Join join = Join::miter) const;
+
+    // Every corner rounded: convex ones with convex_radius, concave ones with
+    // concave_radius (0 leaves them sharp). Throws if a radius does not fit.
+    Region filleted(double convex_radius, double concave_radius) const;
+
+    // Chosen corners rounded or chamfered, each found by its position (within
+    // 2 nm). Throws if a position is not a corner or a radius does not fit.
+    Region rounded(std::span<const CornerRounding> corners) const;
+
+    // The corners of the boundary, in boundary order, face by face.
+    std::vector<Corner> corners() const;
+
     bool empty() const;
     // Connected pieces (faces).
     int pieces() const;

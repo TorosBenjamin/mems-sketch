@@ -69,7 +69,8 @@ Cell::Builder& Cell::Builder::add(const std::string& layer, const Region& region
 
 Cell::Builder& Cell::Builder::place(CellRef cell, const Transform& transform) {
     check_child(cell);
-    placements_.push_back({std::move(cell), transform});
+    placements_.push_back({cell, transform});
+    references_.push_back({std::move(cell), transform, {}});
     return *this;
 }
 
@@ -85,6 +86,7 @@ Cell::Builder& Cell::Builder::place_array(CellRef cell, const Transform& transfo
                 {cell, Transform::translation(i * array.dx, j * array.dy) * transform});
         }
     }
+    references_.push_back({std::move(cell), transform, array});
     return *this;
 }
 
@@ -110,6 +112,7 @@ Cell::Builder& Cell::Builder::place_polar(CellRef cell, const Transform& transfo
                                             c.y + turned.y - own_centre.y);
         }
         placements_.push_back({cell, around * transform});
+        references_.push_back({cell, around * transform, {}});
     }
     return *this;
 }
@@ -126,9 +129,11 @@ CellRef Cell::Builder::build() {
         layers.insert(p.cell->layers().begin(), p.cell->layers().end());
     }
     cell->placements_ = std::move(placements_);
+    cell->references_ = std::move(references_);
     cell->layers_.assign(layers.begin(), layers.end());
     pending_.clear();
     placements_.clear();
+    references_.clear();
     return cell;
 }
 

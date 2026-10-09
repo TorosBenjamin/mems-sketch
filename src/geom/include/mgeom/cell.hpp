@@ -49,6 +49,18 @@ public:
         Transform transform;
     };
 
+    // A placement as it was made: one copy, or a whole array of copies
+    // (columns x rows, each moved by (i dx, j dy) after the transform). For
+    // outputs that keep arrays as arrays, such as GDS array references. A
+    // polar array is one reference per copy.
+    struct Reference {
+        CellRef cell;
+        Transform transform;
+        ArraySpec array;  // 1 x 1 for a single copy
+
+        bool is_array() const { return array.columns > 1 || array.rows > 1; }
+    };
+
     const std::string& name() const { return name_; }
 
     // The layers with geometry, its own or its placed cells', sorted.
@@ -60,6 +72,9 @@ public:
     // The cells placed directly in this one, one entry per copy (arrays
     // expanded), in the order they were placed.
     const std::vector<Placement>& placements() const { return placements_; }
+
+    // The same copies, grouped as they were placed.
+    const std::vector<Reference>& references() const { return references_; }
 
     // Everything on a layer, placed cells included, merged into one region.
     // Computed once and cached.
@@ -74,6 +89,7 @@ private:
     std::string name_;
     std::map<std::string, Region> own_;
     std::vector<Placement> placements_;
+    std::vector<Reference> references_;
     std::vector<std::string> layers_;
 
     mutable std::mutex cache_mutex_;
@@ -97,6 +113,7 @@ private:
     std::string name_;
     std::map<std::string, std::vector<Region>> pending_;
     std::vector<Placement> placements_;
+    std::vector<Reference> references_;
 };
 
 }  // namespace mgeom

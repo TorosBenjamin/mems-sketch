@@ -348,8 +348,11 @@ behaviours every frontend must keep.
 
 ### Rule checks
 
-- **DRC-1** (Must, exists) Minimum **width** and **spacing** per layer, as set
-  in the process.
+- **DRC-1** (Must, changes) **Rules are project data:** a list of rules,
+  each naming a rule kind, the layers it applies to, its values, a severity
+  (error or warning) and an optional message. Minimum width and spacing per
+  layer, set in the process today, become rules of the built-in kinds;
+  existing projects open with them as such rules.
 - **DRC-2** (Must, exists) The check runs on the final geometry **after every
   change**. Violations are listed and marked on the canvas, and each can be
   clicked to go there.
@@ -361,6 +364,54 @@ behaviours every frontend must keep.
 - **DRC-5** (Could, new) **Pattern density** per layer: the fraction of area
   covered, overall and as a map over a grid, with optional minimum and
   maximum limits as a rule. Etch rates (e.g. in DRIE) depend on it.
+- **DRC-6** (Must, new) **Rules are parametric:** every value in a rule is an
+  expression over the process constants and the parameters of its rule set
+  (DRC-8), evaluated like any other expression (EXP). Changing a constant
+  such as `undercut` re-checks every rule that reads it.
+- **DRC-7** (Must, new) **Default rules:** a new project starts with a
+  default rule set: minimum width and spacing per layer, `anchored` and
+  `release` (DRC-11). Every rule and value can be changed, and any rule can
+  be turned off. A rule turned off stays listed as off, so a check never
+  passes because a rule silently went away.
+- **DRC-8** (Should, new) **Rule decks:** a set of rules with parameters of
+  its own (e.g. `min_feature`, `undercut`) in a file of its own, shared
+  between projects the way libraries are (PRJ), typically one per fab
+  process. A project uses decks, and can:
+  - set a deck parameter for itself (a different `undercut` for a different
+    etch);
+  - override or turn off one of a deck's rules;
+  - add rules of its own.
+
+  Overrides are listed with an optional reason. When a deck changes, a
+  project follows it everywhere except where it overrides it.
+- **DRC-9** (Must, new) **Rule kinds are plugins**, like exporters (OUT-7): a
+  kind declares its parameters (as exporters declare their options, OUT-8)
+  and checks the geometry as exported (DRC-3), returning violations with
+  their locations. Kinds are found through the `mems_sketch.rules`
+  entry-point group, so a team can install its own; the built-in kinds are
+  plugins too. The rules editor and the command line are built from the
+  declarations.
+- **DRC-10** (Must, new) **No code in project files:** projects and decks
+  only name rule kinds and give them values. A rule whose kind is not
+  installed is reported as not checked, an error, and never passes.
+- **DRC-11** (Should, new) **Built-in rule kinds:**
+  - per layer: minimum width, minimum spacing, minimum area, minimum hole
+    area, maximum width, minimum angle (no sharp spikes), density (DRC-5);
+  - between layers: enclosure, separation, overlap, inside, not
+    overlapping;
+  - MEMS topology:
+    - `anchored`: every piece of a structural layer touches an anchor, so
+      nothing floats away at release;
+    - `release`: released parts are narrow enough for the etch to undercut
+      them (at most twice the undercut wide), and anchors are wide enough to
+      survive it, which catches a plate missing its release holes;
+    - `connected`: a layer is one piece, or a given number of pieces.
+- **DRC-12** (Must, new) A violation names its **rule, layers, location** and
+  the values it was checked with. Errors make `check` exit with status 1
+  (DRC-4); warnings are listed and do so only with `--strict`.
+- **DRC-13** (Could, new) **Waivers:** a single violation can be accepted
+  with a reason, saved with the component and listed in the check's
+  results. A waiver lapses when the geometry it covers changes.
 
 ### Import
 
@@ -662,6 +713,14 @@ ten times larger than that, so the numbers hold with room to spare.
   triangles, and OCC's own BREP and STEP writers. Snapping is done once, in
   the library, so every grid-based format reports the same changes. Adding
   a format then needs no C++, and the backend does not link KLayout.
+
+- **R-1: Rules are data; rule kinds are code in plugins.** A project or a
+  deck only names rule kinds and gives them values (DRC-10). Allowing code in
+  project files (`check: "region.area() > 5"`) would mean that opening
+  someone's project runs their code, and rules would stop being plain data
+  that diffs and merges like the rest of the project. New kinds of check are
+  written once, as a plugin with declared parameters (DRC-9), and then used
+  in any project like the built-in ones.
 
 ## Answered questions
 

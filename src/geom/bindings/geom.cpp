@@ -19,6 +19,7 @@
 #include "mgeom/cell.hpp"
 #include "mgeom/measure.hpp"
 #include "mgeom/region.hpp"
+#include "mgeom/snap.hpp"
 #include "mgeom/transform.hpp"
 #include "mgeom/wire.hpp"
 
@@ -80,6 +81,19 @@ Points to_array(const Ring& ring) {
     return Points(data, {ring.size(), 2}, owner);
 }
 
+using GridPoints = nb::ndarray<nb::numpy, std::int64_t, nb::shape<-1, 2>>;
+
+// A grid ring as an (n, 2) int64 array that owns its data.
+GridPoints to_array(const GridRing& ring) {
+    auto* data = new std::int64_t[ring.size() * 2];
+    for (size_t k = 0; k < ring.size(); ++k) {
+        data[2 * k] = ring[k].x;
+        data[2 * k + 1] = ring[k].y;
+    }
+    nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<std::int64_t*>(p); });
+    return GridPoints(data, {ring.size(), 2}, owner);
+}
+
 std::vector<Point> from_array(const PointsIn& a) {
     std::vector<Point> points(a.shape(0));
     auto v = a.view();
@@ -88,11 +102,12 @@ std::vector<Point> from_array(const PointsIn& a) {
 }
 
 // The faces as (hull, [holes]) tuples of (n, 2) arrays.
-nb::list to_python(const std::vector<Polygon>& polygons) {
+template <typename P>
+nb::list to_python(const std::vector<P>& polygons) {
     nb::list out;
-    for (const Polygon& p : polygons) {
+    for (const P& p : polygons) {
         nb::list holes;
-        for (const Ring& h : p.holes) holes.append(to_array(h));
+        for (const auto& h : p.holes) holes.append(to_array(h));
         out.append(nb::make_tuple(to_array(p.hull), holes));
     }
     return out;
@@ -338,6 +353,45 @@ NB_MODULE(_geom, m) {
         .def_ro("centre", &Edge::centre)
         .def_ro("radius", &Edge::radius);
     m.def("edges", &edges, "region"_a, "The boundary's edges, in the order it runs.");
+
+    // Snapping to an output's grid.
+    nb::enum_<SnapChange>(m, "SnapChange", "A change snapping made to the shape of the geometry.")
+        .value("vanished", SnapChange::vanished, "A piece smaller than the grid disappeared.")
+        .value("split", SnapChange::split, "A piece came apart at a neck narrower than the grid.")
+        .value("merged", SnapChange::merged, "Pieces joined across a gap narrower than the grid.")
+        .value("hole_closed", SnapChange::hole_closed, "A hole smaller than the grid filled up.")
+        .value("hole_joined", SnapChange::hole_joined,
+               "A hole joined another, or opened to the outside.")
+        .value("hole_formed", SnapChange::hole_formed, "A notch's mouth closed into a hole.");
+
+    nb::class_<SnapEvent>(m, "SnapEvent")
+        .def_ro("change", &SnapEvent::change)
+        .def_ro("where", &SnapEvent::where, "The box of the feature, µm.")
+        .def("__repr__", [](const SnapEvent& e) {
+            return "<SnapEvent " + std::string(nb::str(nb::cast(e.change)).c_str()) + " at " +
+                   box_repr(e.where) + ">";
+        });
+
+    nb::class_<SnapReport>(m, "SnapReport")
+        .def_ro("area_exact", &SnapReport::area_exact)
+        .def_ro("area_snapped", &SnapReport::area_snapped)
+        .def_ro("events", &SnapReport::events)
+        .def_prop_ro("changed_shape", &SnapReport::changed_shape);
+
+    nb::class_<Snapped>(m, "Snapped")
+        .def_ro("grid", &Snapped::grid, "µm per grid unit.")
+        .def_prop_ro(
+            "polygons", [](const Snapped& s) { return to_python(s.polygons); },
+            nb::sig("def polygons(self) -> list[tuple[numpy.typing.NDArray[numpy.int64], "
+                    "list[numpy.typing.NDArray[numpy.int64]]]]"),
+            "(hull, [holes]) tuples of (n, 2) int64 arrays in grid units; hulls "
+            "counter-clockwise, holes clockwise.")
+        .def_ro("report", &Snapped::report);
+
+    m.def("snap", &snap, "region"_a, "grid"_a = 0.001, "chord"_a = 0.005,
+          nb::call_guard<nb::gil_scoped_release>(),
+          "The region on a grid (µm): curves split at chord, points rounded to the grid, "
+          "cleaned up, with a report of what the rounding changed.");
 
     // Cells.
     nb::class_<PyCell>(m, "Cell",

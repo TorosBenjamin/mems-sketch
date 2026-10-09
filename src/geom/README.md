@@ -12,7 +12,9 @@ projects, parameters or shape kinds, and never includes the engine.
 ## Building
 
 Needs a C++20 compiler, CMake 3.24 or later, Ninja and doctest
-(`apt install ninja-build doctest-dev` on Ubuntu).
+(`apt install ninja-build doctest-dev` on Ubuntu). CMake fetches
+[Clipper2](https://github.com/AngusJohnson/Clipper2) at a fixed commit when
+configuring.
 
 ```bash
 src/geom/scripts/build-occt.sh          # once: Open CASCADE into build/deps/ (~13 min on 4 cores)
@@ -46,6 +48,7 @@ headers include.
 | `Region` from wires | `polygon(wire)`, the one constructor every shape is made by; `path(centreline, width, ends, join)` with miter, round or bevel corners and flush, square or round ends |
 | `Region` editing | `offset(distance, join)` (miter, round, bevel; grows, shrinks, splits and merges), `filleted(convex, concave)`, `rounded(corners)` (chosen corners rounded or chamfered), `corners()` |
 | `mgeom/cell.hpp` | `Cell`: regions per layer plus placed cells, arrays and polar arrays; placing never copies geometry; `flat(layer)` merges and caches |
+| `mgeom/snap.hpp` | `snap(region, grid, chord)`: the region on an output's grid as integer polygons, cleaned up, with a report of what the rounding changed (pieces vanished, split or merged; holes closed, joined or formed; area before and after) |
 | `mgeom/measure.hpp` | `properties` (area, perimeter, centroid, second moments of area), `mass_properties` (volume, mass, rotational inertia for a thickness and density), `distance` (exact minimum, with the closest points), `overlap_area`, `projected_overlap`, `edges` (kind, length, ends, midpoint; centre and radius of arcs) |
 
 ## From Python

@@ -164,3 +164,30 @@ def test_long_operations_release_the_gil():
     for t in threads:
         t.join()
     assert results == [500, 500]
+
+
+def test_snapping():
+    plate = g.Region.rect(0, 0, 10, 10) - g.Region.circle((5, 5), 2)
+    s = g.snap(plate)  # defaults: 1 nm grid, 5 nm chord
+    assert s.grid == 0.001
+    [(hull, holes)] = s.polygons
+    assert hull.dtype == np.int64
+    assert sorted(hull.tolist()) == [[0, 0], [0, 10000], [10000, 0], [10000, 10000]]
+    assert len(holes) == 1
+    # The hole's circle, split at a 5 nm chord, is smaller by about 2/3 of
+    # the chord times its circumference.
+    expected = s.report.area_exact + 2 / 3 * 0.005 * 2 * math.pi * 2
+    assert s.report.area_snapped == pytest.approx(expected, abs=2e-3)
+    assert not s.report.changed_shape
+    assert s.report.events == []
+
+    gap = g.Region.rect(0, 0, 1, 1) | g.Region.rect(1.0004, 0, 2, 1)
+    report = g.snap(gap, grid=0.001, chord=0.005).report
+    [event] = report.events
+    assert event.change == g.SnapChange.merged
+    assert event.where.x1 == pytest.approx(2)
+    assert "merged" in repr(event)
+    assert g.snap(gap, grid=0.0001).report.events == []  # a finer grid keeps the gap
+
+    with pytest.raises(g.GeometryError):
+        g.snap(plate, grid=0)

@@ -20,6 +20,20 @@ set(MGEOM_OCC_LIBRARIES
     TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo TKTopAlgo
     TKPrim TKBO TKBool TKShHealing TKOffset TKFillet TKMesh)
 
+# Clipper2 (Boost licence): integer polygon booleans for snapping to a
+# grid. Fetched at a fixed commit and built static.
+include(FetchContent)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CLIPPER2_UTILS OFF CACHE BOOL "" FORCE)
+set(CLIPPER2_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CLIPPER2_TESTS OFF CACHE BOOL "" FORCE)
+set(CLIPPER2_USINGZ OFF CACHE STRING "" FORCE)
+FetchContent_Declare(Clipper2
+    GIT_REPOSITORY https://github.com/AngusJohnson/Clipper2.git
+    GIT_TAG 21ebba05db8894f0c7217ad35ea518080f324946  # Clipper2_2.0.1
+    SOURCE_SUBDIR CPP)
+FetchContent_MakeAvailable(Clipper2)
+
 add_library(mgeom
     src/transform.cpp
     src/region.cpp
@@ -27,12 +41,13 @@ add_library(mgeom
     src/measure.cpp
     src/modify.cpp
     src/wire.cpp
-    src/construct.cpp)
+    src/construct.cpp
+    src/snap.cpp)
 add_library(mgeom::mgeom ALIAS mgeom)
 target_include_directories(mgeom
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE ${OpenCASCADE_INCLUDE_DIR})
-target_link_libraries(mgeom PRIVATE ${MGEOM_OCC_LIBRARIES})
+target_link_libraries(mgeom PRIVATE ${MGEOM_OCC_LIBRARIES} Clipper2)
 set_target_properties(mgeom PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(mgeom PRIVATE -Wall -Wextra -Wpedantic)
@@ -74,7 +89,8 @@ if(MGEOM_BUILD_TESTS)
         tests/test_cell.cpp
         tests/test_measure.cpp
         tests/test_modify.cpp
-        tests/test_wire.cpp)
+        tests/test_wire.cpp
+        tests/test_snap.cpp)
     target_link_libraries(mgeom_tests PRIVATE mgeom doctest::doctest)
     add_test(NAME mgeom_tests COMMAND mgeom_tests)
 

@@ -16,8 +16,8 @@ to satisfy every requirement here. A rewrite that drops one has a bug.
   (exists, but the requirement asks for something different).
 
 Requirements are written to be testable: each one should map to a test.
-Numbers still to be decided are marked **TBD** and listed under
-[Open questions](#open-questions).
+Answers to the questions that set numbers here are listed under
+[Answered questions](#answered-questions).
 
 ## Scope
 
@@ -389,8 +389,12 @@ behaviours every frontend must keep.
   (default 1 nm) and **chord tolerance** for curves (default 5 nm).
   Neither changes the design.
 - **OUT-3** (Must, new) An export to a grid **reports what snapping
-  changed**: features that collapsed, gaps that opened or closed, widths
-  that changed by more than half a grid step.
+  changed** in the shape of the geometry, with where: pieces that vanished,
+  split or merged (a neck or gap narrower than the grid), and holes that
+  closed, joined another or the outside, or formed (a notch's mouth
+  closing). It also gives the area before and after. Every edge moves by up
+  to half a grid step, so a width can change by up to one step anywhere off
+  the grid; that is what a grid means, and is not reported edge by edge.
 - **OUT-4** (Should, new) GDS and OASIS exports **keep the hierarchy**:
   components as cells, arrays as array references.
 - **OUT-5** (Must, exists) Export a component's **geometry as data** (JSON,
@@ -572,8 +576,9 @@ ten times larger than that, so the numbers hold with room to spare.
 - **QC-3** (Must, exists) Installation is `pip install mems-sketch` (with
   extras for the GUI and MATLAB). No separate compiler or system library is
   needed by users.
-- **QC-4** (Must) **Platforms:** TBD (proposal: Linux, Windows and macOS, on
-  x86-64 and ARM where wheels are available). Python 3.11 and later.
+- **QC-4** (Must) **Platforms:** Linux and Windows on x86-64, Python 3.11
+  and later. macOS (ARM) is a Should: its wheels are built in the same
+  release job, and a release does not wait for them if they fail.
 
 ### Maintainability
 
@@ -670,9 +675,5 @@ ten times larger than that, so the numbers hold with room to spare.
    imports.
 4. **Default export grid and chord tolerance** (OUT-2): 1 nm and 5 nm. Each
    export can change them, so the defaults only need to be sensible.
-
-## Open questions
-
-These set the TBD numbers above.
-
-1. **Platforms** to support (QC-4).
+5. **Platforms** (QC-4): Windows and Linux; macOS if it costs little, which
+   it does (the same build on another CI runner).

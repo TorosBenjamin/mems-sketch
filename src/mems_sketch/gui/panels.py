@@ -1181,9 +1181,9 @@ class LayersPanel(_Panel):
 
 
 class LayerDefinitionsPanel(_Panel):
-    """The process's layers: name, GDS mapping and rules (in the Process tab)."""
+    """The process's layers: name and GDS mapping (in the Process tab)."""
 
-    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Min width µm", "Min space µm")
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype")
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -1197,8 +1197,8 @@ class LayerDefinitionsPanel(_Panel):
             QLabel("Layers"),
             ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
             ("remove", "Remove the selected layers", self._remove_layers),
-            help="The mask layers: their *GDS* layer and datatype for export, and the "
-            "*minimum width and spacing* the rule checks use.",
+            help="The mask layers and their *GDS* layer and datatype for export. "
+            "What they are checked with is in *Rules*.",
         )
         layout.addLayout(self.actions)
         layout.addWidget(self.layers)
@@ -1210,13 +1210,7 @@ class LayerDefinitionsPanel(_Panel):
         self.layers.blockSignals(True)
         self.layers.setRowCount(len(layers))
         for row, layer in enumerate(layers.values()):
-            values = [
-                layer.name,
-                layer.gds_layer,
-                layer.gds_datatype,
-                layer.min_width,
-                layer.min_space,
-            ]
+            values = [layer.name, layer.gds_layer, layer.gds_datatype]
             for column, value in enumerate(values):
                 self.layers.setItem(row, column, QTableWidgetItem(_format(value)))
         self.layers.blockSignals(False)
@@ -1232,17 +1226,8 @@ class LayerDefinitionsPanel(_Panel):
         row = item.row()
         texts = [self.layers.item(row, c).text().strip() for c in range(len(self.LAYER_COLUMNS))]
 
-        def optional(text: str) -> float | None:
-            return float(text) if text else None
-
         def apply() -> None:
-            layer = Layer(
-                texts[0],
-                int(texts[1]),
-                int(texts[2]),
-                optional(texts[3]),
-                optional(texts[4]),
-            )
+            layer = Layer(texts[0], int(texts[1]), int(texts[2]))
             self.document.process.set_layer(name, layer)
 
         if not self._guard(apply):
@@ -1348,7 +1333,8 @@ class MessagesPanel(QListWidget):
             x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
             where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
             item = QListWidgetItem(
-                icons.icon("warning"), f"[{v.rule}] {v.layer}: {v.message}{where}"
+                icons.icon("warning"),
+                f"{'' if v.is_error else 'Warning: '}[{v.rule}] {v.layer}: {v.message}{where}",
             )
             item.setData(PATH_ROLE, v.bbox_um)
             self.addItem(item)

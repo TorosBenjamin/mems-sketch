@@ -5,13 +5,16 @@ from pydantic import ValidationError
 from mems_sketch import Instance, Layer, Project, export, load, save
 from mems_sketch.core.component import resolve_params, to_dbu
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
+from mems_sketch.core.process import layer_rules
 from mems_sketch.export.base import available_exporters
 from mems_sketch.process import rules
 
 
 def make_design() -> Project:
     design = Project(name="accel")
-    design.add_layer(Layer("device", 1, 0, min_width=1.5, min_space=1.5))
+    design.add_layer(Layer("device", 1, 0))
+    for rule in layer_rules("device", min_width=1.5, min_space=1.5):
+        design.process.add_rule(rule)
     design.add_layer(Layer("anchor", 2, 0))
     design.set_variable("w", 2.0)
     design.set_variable("gap", "w * 1.5")
@@ -58,7 +61,7 @@ def test_rules_flag_narrow_features_and_unknown_layers():
     design = make_design()
     assert rules.check(design) == []
     design.set_variable("w", 1.0)  # fingers now narrower than min_width
-    found = {v.rule for v in rules.check(design)}
+    found = {v.kind for v in rules.check(design)}
     assert "min_width" in found
     design.add(Instance("m", "rectangle", {"layer": "metal"}))
     assert any(v.rule == "layer" and v.layer == "metal" for v in rules.check(design))

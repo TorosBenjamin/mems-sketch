@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from mems_sketch.core.process import Layer
+from mems_sketch.core.process import Layer, layer_rules
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import RefShape, Shape
 from mems_sketch.core.user_component import ComponentDef, ParamDef
@@ -37,7 +37,12 @@ def load_legacy(path: str | Path) -> Project:
         columns = [c[0] for c in rows.description]
         known = set(Layer.__dataclass_fields__)
         for row in rows:  # columns Layer no longer has (e.g. undercut) are left out
-            project.add_layer(Layer(**{k: v for k, v in zip(columns, row) if k in known}))
+            values = dict(zip(columns, row))
+            project.add_layer(Layer(**{k: v for k, v in values.items() if k in known}))
+            for rule in layer_rules(
+                values["name"], values.get("min_width"), values.get("min_space")
+            ):
+                project.process.add_rule(rule)
         if version >= 2:
             for (definition,) in conn.execute(
                 "SELECT definition FROM components ORDER BY position"

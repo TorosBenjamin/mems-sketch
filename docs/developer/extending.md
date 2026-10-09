@@ -93,6 +93,37 @@ svg = "my_package.svg:SvgExporter"
 It then appears in **File → Export…**, `mems-sketch-cli export` and
 `mems-sketch-cli formats`.
 
+## A rule kind
+
+A class with `name`, `title`, `roles` (the layers it takes, e.g.
+`("outer", "inner")`), `parameters` (`Option`s, as an exporter's options) and
+`check(regions, dbu, **values)`, which gets one KLayout region per role in
+database units of `dbu` µm and returns `Finding(message, bbox_um)`s:
+
+```python
+from typing import ClassVar
+
+from mems_sketch.options import Option
+from mems_sketch.process.rules import Finding, register_rule_kind
+
+
+@register_rule_kind
+class MinAngle:
+    name = "min_angle"
+    title = "Minimum angle"
+    roles = ("layer",)
+    parameters: ClassVar = (Option("value", 30.0, "Angle", minimum=0, suffix="°"),)
+
+    def check(self, regions, dbu, value): ...
+```
+
+Rules then use it like a built-in kind (`kind: min_angle`), with values that
+may be expressions over the process constants; values are evaluated and
+checked against the declaration before `check` is called. Register it with
+`@register_rule_kind`, or from a package under the `mems_sketch.rules`
+entry-point group. A project never contains code: a rule whose kind is not
+installed is reported as not checked, an error.
+
 ## A file format for documents
 
 A codec in `storage/formats/`: a module with `dump(tree) -> bytes`,

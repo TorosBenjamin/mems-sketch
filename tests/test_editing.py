@@ -160,8 +160,27 @@ def test_process_constants_and_layers(doc):
     with pytest.raises(ValueError):
         doc.process.remove_constant("gap")  # still used
     name = doc.process.add_layer()
-    doc.process.set_layer(name, Layer("oxide", 9, 0, 1.0, None))
+    doc.process.set_layer(name, Layer("oxide", 9, 0))
     assert "oxide" in doc.project.layers and name not in doc.project.layers
+
+
+def test_rules_are_edited_with_undo(doc):
+    rules = doc.project.process.rules
+    assert {"device_min_width", "device_anchored"} <= set(rules)  # the defaults
+    name = doc.process.add_rule("enclosure")
+    assert rules[name].layers == ["device", "anchor"] and rules[name].values == {"value": 1.0}
+    doc.process.enable_rule(name, False)
+    assert not doc.project.process.rules[name].enabled
+    doc.undo()
+    assert doc.project.process.rules[name].enabled
+    doc.process.set_layer("anchor", Layer("pad", 2, 0))  # the rules follow a renamed layer
+    assert doc.project.process.rules[name].layers == ["device", "pad"]
+    assert doc.project.process.rules["device_anchored"].layers == ["device", "pad"]
+    doc.process.remove_rule(name)
+    assert name not in doc.project.process.rules
+    with pytest.raises(ValueError, match="already exists"):
+        rule = doc.project.process.rules["device_min_width"]
+        doc.process.set_rule("device_min_space", rule)
 
 
 def test_save_open_export(doc, tmp_path):

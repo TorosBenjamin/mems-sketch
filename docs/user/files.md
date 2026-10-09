@@ -7,7 +7,7 @@ A project is a folder of small text files, meant to live in git:
 ```
 my_project/
   project.yaml        name, top component, libraries, imported layouts
-  process.yaml        layers (GDS numbers, rules) and process constants
+  process.yaml        process constants, layers (GDS numbers) and design rules
   components/
     top.yaml          one file per component; the design is the top component
     comb.yaml
@@ -87,7 +87,8 @@ The same design, without the editor, e.g. in scripts, CI or from MATLAB with
 ```bash
 mems-sketch-cli new     my_project [--library]
 mems-sketch-cli info    my_project                           # components, parameters, layers
-mems-sketch-cli check   my_project [--component NAME] [--set pitch=15] [--json]
+mems-sketch-cli check   my_project [--component NAME] [--set pitch=15] [--json] [--strict]
+mems-sketch-cli rules                                        # the rule kinds and their values
 mems-sketch-cli export  my_project out.gds [--set pitch=15]  # also .oas .dxf .json .xml .mat
                 [-O grid_um=0.005]                         # a setting of the format
 mems-sketch-cli formats                                      # the formats and their settings
@@ -95,8 +96,9 @@ mems-sketch-cli convert my_project design.json               # and back; .xml .m
 mems-sketch-cli convert old_design.mems my_project           # the earlier format
 ```
 
-- `check` exits with status 1 when there are rule violations, so it can gate
-  CI; errors exit with status 2.
+- `check` exits with status 1 when a rule with severity *error* is violated
+  (with `--strict`, a *warning* too), so it can gate CI; errors exit with
+  status 2.
 - `--set` takes numbers or expressions and can be repeated: convenient for
   parameter sweeps.
 - `convert` does not overwrite a folder that already holds a project.

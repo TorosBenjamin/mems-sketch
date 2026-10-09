@@ -2,13 +2,14 @@
 
     mems-sketch-cli new     my_project
     mems-sketch-cli info    my_project
-    mems-sketch-cli check   my_project [--component plate] [--set pitch=15] [--json]
+    mems-sketch-cli check   my_project [--component plate] [--set pitch=15] [--json] [--strict]
+    mems-sketch-cli rules                                           (rule kinds, their parameters)
     mems-sketch-cli export  my_project out.gds [--set pitch=15] [--option grid_um=0.005]
     mems-sketch-cli formats                                         (export formats, their options)
     mems-sketch-cli convert my_project design.json                  (and back; .xml .mat .yaml)
 
-``check`` exits with status 1 when there are rule violations, so it can gate
-CI. Errors exit with status 2. Nothing here depends on the GUI.
+``check`` exits with status 1 when a rule is violated with severity error (or
+any rule, with ``--strict``), so it can gate CI. Errors exit with status 2. Nothing here depends on the GUI.
 """
 
 from __future__ import annotations
@@ -62,6 +63,9 @@ def _parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check", help="run design-rule checks (exit 1 on violations)")
     _geometry_arguments(check)
     check.add_argument("--json", action="store_true", help="print violations as JSON")
+    check.add_argument(
+        "--strict", action="store_true", help="fail on warnings too, not only on errors"
+    )
     check.set_defaults(handler=_check)
 
     exp = commands.add_parser("export", help="write geometry to a file (format from extension)")
@@ -80,6 +84,9 @@ def _parser() -> argparse.ArgumentParser:
 
     fmt = commands.add_parser("formats", help="list the export formats and their options")
     fmt.set_defaults(handler=_formats)
+
+    kinds = commands.add_parser("rules", help="list the rule kinds and their parameters")
+    kinds.set_defaults(handler=_rule_kinds)
 
     convert = commands.add_parser(
         "convert",
@@ -136,15 +143,16 @@ def _info(args: argparse.Namespace) -> int:
     print(f"project {project.name} ({kind})")
     print("layers:")
     for layer in project.layers.values():
-        rules_text = ", ".join(
-            f"{k} {v:g}"
-            for k, v in (
-                ("min width", layer.min_width),
-                ("min space", layer.min_space),
-            )
-            if v
+        print(f"  {layer.name:<12} gds {layer.gds_layer}/{layer.gds_datatype}")
+    if project.process.rules:
+        print("rules:")
+    for rule in project.process.rules.values():
+        values = ", ".join(f"{k}={_number(v)}" for k, v in rule.values.items())
+        state = "" if rule.enabled else "  (off)"
+        print(
+            f"  {rule.name:<20} {rule.kind}({', '.join(rule.layers)}) {values}"
+            f"  {rule.severity}{state}"
         )
-        print(f"  {layer.name:<12} gds {layer.gds_layer}/{layer.gds_datatype}  {rules_text}")
     if project.process.constants:
         print("process constants:")
         for name, value in project.process.constants.items():
@@ -173,7 +181,15 @@ def _check(args: argparse.Namespace) -> int:
         print(
             json.dumps(
                 [
-                    {"rule": v.rule, "layer": v.layer, "message": v.message, "bbox_um": v.bbox_um}
+                    {
+                        "rule": v.rule,
+                        "kind": v.kind,
+                        "severity": v.severity,
+                        "layer": v.layer,
+                        "message": v.message,
+                        "bbox_um": v.bbox_um,
+                        "values": v.values,
+                    }
                     for v in violations
                 ],
                 indent=2,
@@ -185,9 +201,22 @@ def _check(args: argparse.Namespace) -> int:
             if v.bbox_um:
                 x0, y0, x1, y1 = v.bbox_um
                 where = f" at ({(x0 + x1) / 2:.3f}, {(y0 + y1) / 2:.3f}) µm"
-            print(f"{v.rule} {v.layer}: {v.message}{where}")
-        print(f"{len(violations)} violation(s)", file=sys.stderr)
-    return 1 if violations else 0
+            print(f"{v.severity}: {v.rule} {v.layer}: {v.message}{where}")
+        errors = len(rules.errors(violations))
+        print(f"{errors} error(s), {len(violations) - errors} warning(s)", file=sys.stderr)
+    failing = violations if args.strict else rules.errors(violations)
+    return 1 if failing else 0
+
+
+def _rule_kinds(args: argparse.Namespace) -> int:
+    for name, cls in sorted(rules.available_rule_kinds().items()):
+        print(f"{name:16} {cls.title}  layers: {', '.join(cls.roles)}")
+        for option in cls.parameters:
+            unit = f" {option.suffix.strip()}" if option.suffix.strip() else ""
+            print(f"    {option.name}={option.default}{unit}")
+            if option.help:
+                print(f"        {option.help}")
+    return 0
 
 
 def _export(args: argparse.Namespace) -> int:

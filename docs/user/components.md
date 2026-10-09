@@ -110,10 +110,36 @@ library** in the Components panel).
 
 **Process** (the first item under the project in Components, or **View →
 Process**) is a tab with the process constants, available in every expression
-as `process.<name>`, and the layers: their GDS layer and datatype, and the
-minimum width and spacing that the design-rule check uses.
+as `process.<name>`, the layers with their GDS layer and datatype, and the
+design rules.
 
 ![The Process tab](../images/process.png)
 
-The rule check runs on the final geometry after every change; **Messages**
-lists what is too narrow or too close, and the canvas boxes it in red.
+### Design rules
+
+Each rule is a **kind** of check on some layers, with values. Values are
+numbers or expressions over the process constants, so a rule can follow the
+process: `undercut=process.undercut`.
+
+| Kind | Layers | Checks |
+|---|---|---|
+| Minimum width, spacing | one | nothing narrower or closer than `value` |
+| Maximum width | one | nothing wider than `value` |
+| Minimum area, hole area | one | no piece (hole) smaller than `value` µm² |
+| Number of pieces | one | the layer is `pieces` separate pieces |
+| Enclosure | outer, inner | the inner layer is inside the outer, by at least `value` |
+| Separation | first, second | the layers are at least `value` apart and do not overlap |
+| Inside, not overlapping | two | one layer inside the other; the two never overlap |
+| Anchored | layer, anchor | every piece touches an anchor, so nothing floats away at release |
+| Release | layer, anchor | away from anchors no part is wider than twice the `undercut` (or the etch cannot free it: add release holes), and anchors are wider than that (or the undercut frees them too) |
+
+A new project starts with minimum width and spacing on the device layer and
+the **anchored** and **release** rules (as warnings, with a `process.undercut`
+constant). Change any value, add rules with **+** (pick the kind), and untick a
+rule to turn it off: it stays listed, as off, so it never quietly disappears.
+**Severity** is `error` or `warning`; the note is shown with the rule's
+violations, e.g. why the rule exists.
+
+Rules are checked on the final geometry after every change; **Messages**
+lists the violations and the canvas boxes them in red. More kinds can be
+installed as plugins (`mems-sketch-cli rules` lists them).

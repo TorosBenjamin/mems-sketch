@@ -2,7 +2,7 @@
 #
 # A library on its own: it never includes or links anything of the
 # mems-sketch engine (see docs/developer/core-architecture.md).
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 project(mgeom VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -31,7 +31,8 @@ set(CLIPPER2_USINGZ OFF CACHE STRING "" FORCE)
 FetchContent_Declare(Clipper2
     GIT_REPOSITORY https://github.com/AngusJohnson/Clipper2.git
     GIT_TAG 21ebba05db8894f0c7217ad35ea518080f324946  # Clipper2_2.0.1
-    SOURCE_SUBDIR CPP)
+    SOURCE_SUBDIR CPP
+    EXCLUDE_FROM_ALL)  # linked into mgeom; none of its files are installed
 FetchContent_MakeAvailable(Clipper2)
 
 add_library(mgeom

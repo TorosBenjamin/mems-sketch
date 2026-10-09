@@ -12,6 +12,7 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepClass_FaceClassifier.hxx>
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
@@ -22,7 +23,9 @@
 #include <GCPnts_QuasiUniformDeflection.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GProp_GProps.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
+#include <Precision.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
 #include <NCollection_List.hxx>
@@ -335,9 +338,176 @@ Region Region::unite(std::span<const Region> regions) {
     return Region(make_impl(compound_of(result)));
 }
 
+namespace {
+
+Bnd_Box box_of(const TopoDS_Shape& shape) {
+    Bnd_Box box;
+    BRepBndLib::Add(shape, box, /*useTriangulation=*/false);
+    return box;
+}
+
+bool strictly_inside(const Bnd_Box& inner, const Bnd_Box& outer) {
+    return inner.CornerMin().X() > outer.CornerMin().X() &&
+           inner.CornerMin().Y() > outer.CornerMin().Y() &&
+           inner.CornerMax().X() < outer.CornerMax().X() &&
+           inner.CornerMax().Y() < outer.CornerMax().Y();
+}
+
+// Subtracting holes needs no boolean when each one lies inside a face
+// without touching its edges or another hole: it is added to the face as an
+// inner boundary. That is what release holes, slots and perforations are,
+// and the general boolean grows faster than the number of holes (18 s for
+// 10,000). Faces are cut this way where they can be; the holes that do not
+// qualify (they touch an edge, overlap each other, or have holes of their
+// own) are left for the general boolean.
+// Twice the signed area of a wire, in the frame of a plane: positive when it
+// runs counter-clockwise seen from the plane's normal. Arcs are sampled; the
+// sign is all that is needed.
+double twice_signed_area(const TopoDS_Wire& wire, const gp_Pln& plane) {
+    const gp_Ax3& frame = plane.Position();
+    const gp_XYZ origin = frame.Location().XYZ();
+    const gp_XYZ xd = frame.XDirection().XYZ(), yd = frame.YDirection().XYZ();
+    std::vector<std::pair<double, double>> points;
+    for (BRepTools_WireExplorer e(wire); e.More(); e.Next()) {
+        BRepAdaptor_Curve curve(e.Current());
+        const double a = curve.FirstParameter(), b = curve.LastParameter();
+        const int n = curve.GetType() == GeomAbs_Line ? 1 : 16;
+        const bool reversed = e.Current().Orientation() == TopAbs_REVERSED;
+        for (int k = 0; k < n; ++k) {  // the edge's start, not its end
+            const double t = reversed ? b - (b - a) * k / n : a + (b - a) * k / n;
+            const gp_XYZ p = curve.Value(t).XYZ() - origin;
+            points.emplace_back(p.Dot(xd), p.Dot(yd));
+        }
+    }
+    double twice = 0.0;
+    for (size_t i = 0, n = points.size(); i < n; ++i) {
+        const auto& [x0, y0] = points[i];
+        const auto& [x1, y1] = points[(i + 1) % n];
+        twice += x0 * y1 - x1 * y0;
+    }
+    return twice;
+}
+
+// The wire, turned to run counter-clockwise (outer) or clockwise (a hole)
+// seen from the plane's normal.
+TopoDS_Wire running(const TopoDS_Wire& wire, const gp_Pln& plane, bool counter_clockwise) {
+    const bool ccw = twice_signed_area(wire, plane) > 0.0;
+    return ccw == counter_clockwise ? wire : TopoDS::Wire(wire.Reversed());
+}
+
+struct FastCut {
+    std::vector<TopoDS_Face> faces;  // the argument's faces, holes added
+    std::vector<TopoDS_Face> rest;   // tools for the general boolean
+};
+
+FastCut cut_disjoint_holes(const std::vector<TopoDS_Face>& faces,
+                           const std::vector<TopoDS_Face>& tools) {
+    FastCut out;
+    const size_t nt = tools.size();
+    std::vector<Bnd_Box> tool_boxes(nt);
+    for (size_t i = 0; i < nt; ++i) tool_boxes[i] = box_of(tools[i]);
+
+    // Tools whose boxes touch another tool's are left to the boolean.
+    std::vector<bool> usable(nt, true);
+    {
+        std::vector<size_t> order(nt);
+        std::iota(order.begin(), order.end(), size_t{0});
+        auto xmin = [&](size_t i) { return tool_boxes[i].CornerMin().X(); };
+        auto xmax = [&](size_t i) { return tool_boxes[i].CornerMax().X(); };
+        std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            return xmin(a) != xmin(b) ? xmin(a) < xmin(b) : a < b;
+        });
+        std::vector<size_t> active;
+        for (size_t i : order) {
+            std::erase_if(active, [&](size_t j) { return xmax(j) < xmin(i); });
+            for (size_t j : active) {
+                if (!tool_boxes[i].IsOut(tool_boxes[j])) usable[i] = usable[j] = false;
+            }
+            active.push_back(i);
+        }
+    }
+    for (size_t i = 0; i < nt; ++i) {
+        // A hole with holes of its own leaves an island: the boolean does it.
+        TopExp_Explorer wires(tools[i], TopAbs_WIRE);
+        wires.Next();
+        if (wires.More()) usable[i] = false;
+    }
+
+    std::vector<std::vector<size_t>> holes_of(faces.size());
+    std::vector<bool> placed(nt, false);
+    for (size_t f = 0; f < faces.size(); ++f) {
+        const Bnd_Box face_box = box_of(faces[f]);
+        // The face's own edges, to check that a hole does not touch them.
+        std::vector<Bnd_Box> edge_boxes;
+        for (TopExp_Explorer e(faces[f], TopAbs_EDGE); e.More(); e.Next()) {
+            edge_boxes.push_back(box_of(e.Current()));
+        }
+        for (size_t i = 0; i < nt; ++i) {
+            if (!usable[i] || placed[i] || !strictly_inside(tool_boxes[i], face_box)) continue;
+            bool touches = false;
+            for (const Bnd_Box& eb : edge_boxes) {
+                if (!eb.IsOut(tool_boxes[i])) {
+                    touches = true;
+                    break;
+                }
+            }
+            if (touches) continue;
+            // Inside the face's material, not inside one of its holes.
+            TopExp_Explorer v(tools[i], TopAbs_VERTEX);
+            gp_Pnt probe;
+            if (v.More()) {
+                probe = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+            } else {
+                continue;
+            }
+            BRepClass_FaceClassifier where(faces[f], probe, Precision::Confusion());
+            if (where.State() != TopAbs_IN) continue;
+            holes_of[f].push_back(i);
+            placed[i] = true;
+        }
+    }
+
+    for (size_t f = 0; f < faces.size(); ++f) {
+        if (holes_of[f].empty()) {
+            out.faces.push_back(faces[f]);
+            continue;
+        }
+        // The face again, on its plane, with every boundary turned the way it
+        // must run: the outer one counter-clockwise, holes clockwise, however
+        // they came (a mirror reverses a face). Open CASCADE's own fix for
+        // this compares every hole with every other: 6.8 s for 10,000.
+        const gp_Pln plane = BRepAdaptor_Surface(faces[f]).Plane();
+        const TopoDS_Wire outer = BRepTools::OuterWire(faces[f]);
+        BRepBuilderAPI_MakeFace make(plane, running(outer, plane, true), /*Inside=*/true);
+        for (TopExp_Explorer w(faces[f], TopAbs_WIRE); w.More(); w.Next()) {
+            const TopoDS_Wire old_hole = TopoDS::Wire(w.Current());
+            if (!old_hole.IsSame(outer)) make.Add(running(old_hole, plane, false));
+        }
+        for (size_t i : holes_of[f]) {
+            make.Add(running(BRepTools::OuterWire(tools[i]), plane, false));
+        }
+        if (!make.IsDone()) throw GeometryError("cannot add holes to a face");
+        out.faces.push_back(make.Face());
+    }
+    for (size_t i = 0; i < nt; ++i) {
+        if (!placed[i]) out.rest.push_back(tools[i]);
+    }
+    return out;
+}
+
+}  // namespace
+
 Region Region::operator-(const Region& other) const {
     if (empty() || other.empty()) return *this;
-    return Region(make_impl(run_boolean<BRepAlgoAPI_Cut>(one(impl_->shape), one(other.impl_->shape), "subtract")));
+    // Independent copies, as for a boolean (see copied()).
+    const std::vector<TopoDS_Face> faces = faces_of(BRepBuilderAPI_Copy(impl_->shape).Shape());
+    const std::vector<TopoDS_Face> tools =
+        faces_of(BRepBuilderAPI_Copy(other.impl_->shape).Shape());
+    FastCut fast = cut_disjoint_holes(faces, tools);
+    const TopoDS_Shape cut = compound_of(fast.faces);
+    if (fast.rest.empty()) return Region(make_impl(cut));
+    return Region(make_impl(
+        run_boolean<BRepAlgoAPI_Cut>(one(cut), one(compound_of(fast.rest)), "subtract")));
 }
 
 Region Region::operator&(const Region& other) const {
@@ -431,6 +601,10 @@ double Region::max_tolerance() const {
     add_tolerances(impl_->shape, TopAbs_VERTEX, worst);
     add_tolerances(impl_->shape, TopAbs_EDGE, worst);
     return worst / kNmPerUm;
+}
+
+bool Region::valid() const {
+    return empty() || BRepCheck_Analyzer(impl_->shape).IsValid();
 }
 
 }  // namespace mgeom

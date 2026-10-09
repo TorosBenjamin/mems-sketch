@@ -38,8 +38,8 @@ int main() {
                                             : "flatten square holes (disjoint union)",
                                       [&]() -> const Region& { return holes->flat("device"); });
             const Region plate = Region::rect(0, 0, side * 10.0, side * 10.0);
-            const Region cut = timed(round ? "plate minus round holes (general boolean)"
-                                           : "plate minus square holes (general boolean)",
+            const Region cut = timed(round ? "plate minus round holes"
+                                           : "plate minus square holes",
                                      [&] { return plate - all; });
             std::printf("  -> %d piece(s), %zu holes\n", cut.pieces(),
                         cut.outlines(0.005).front().holes.size());

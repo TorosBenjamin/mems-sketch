@@ -106,6 +106,7 @@ TEST_CASE("arrays") {
         CHECK(plate.pieces() == 1);
         CHECK(plate.area() == doctest::Approx(200 * 200 - 400 * pi).epsilon(1e-12));
         CHECK(plate.outlines(0.005)[0].holes.size() == 400);
+        CHECK(plate.valid());
     }
 
     CHECK_THROWS_AS(Cell::Builder("bad").place_array(square(1), {}, ArraySpec{0, 1, 1, 1}),

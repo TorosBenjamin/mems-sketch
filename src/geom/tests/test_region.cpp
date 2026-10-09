@@ -210,3 +210,54 @@ TEST_CASE("the same operations give the same outlines") {
         CHECK(first[i].holes == second[i].holes);
     }
 }
+
+TEST_CASE("holes cut without a boolean give the same result as with one") {
+    const Region plate = Region::rect(0, 0, 100, 100);
+
+    SUBCASE("separate holes, square and round, some mirrored") {
+        std::vector<Region> holes;
+        for (int i = 0; i < 9; ++i) {
+            for (int j = 0; j < 9; ++j) {
+                const double x = 6 + 11 * i, y = 6 + 11 * j;
+                Region h = (i + j) % 2 ? Region::circle({x, y}, 2 + 0.1 * i)
+                                       : Region::rect(x - 2, y - 3, x + 2, y + 3);
+                if (i % 3 == 0) {
+                    Transform mirror;
+                    mirror.mirror_x = true;
+                    h = h.transformed(mirror).transformed(Transform::translation(0, 2 * y));
+                }
+                holes.push_back(h);
+            }
+        }
+        const Region all_holes = Region::unite(holes);
+        const Region cut = plate - all_holes;
+        CHECK(cut.pieces() == 1);
+        CHECK(cut.area() == doctest::Approx(plate.area() - all_holes.area()).epsilon(1e-12));
+        REQUIRE(cut.outlines(0.005).size() == 1);
+        CHECK(cut.outlines(0.005)[0].holes.size() == 81);
+        CHECK(cut.valid());
+        CHECK(cut.max_tolerance() < kPrecision);
+    }
+
+    SUBCASE("a hole touching the edge, one overlapping another, and a ring") {
+        const Region notch = Region::rect(-1, 40, 5, 45);              // touches the edge
+        const Region pair = Region::rect(20, 20, 30, 30) | Region::rect(28, 28, 35, 35);
+        const Region ring = Region::arc({70, 70}, 3, 6, 0, 360);         // leaves an island
+        const Region small = Region::circle({50, 80}, 2);              // the only easy one
+        const Region cut = plate - Region::unite(std::vector<Region>{notch, pair, ring, small});
+        CHECK(cut.valid());
+        CHECK(cut.pieces() == 2);  // the plate, and the island inside the ring
+        const double expected = 100 * 100 - 5 * 5 - (100 + 49 - 4) - pi * (36 - 9) - pi * 4;
+        CHECK(cut.area() == doctest::Approx(expected).epsilon(1e-12));
+    }
+
+    SUBCASE("cutting again into a plate that has holes") {
+        const Region once = plate - Region::circle({20, 20}, 5);
+        const Region inside_old_hole = Region::circle({20, 20}, 1);  // removes nothing
+        const Region twice = once - Region::unite(std::vector<Region>{
+                                        inside_old_hole, Region::circle({60, 60}, 5)});
+        CHECK(twice.area() == doctest::Approx(100 * 100 - 2 * pi * 25).epsilon(1e-12));
+        CHECK(twice.outlines(0.005)[0].holes.size() == 2);
+        CHECK(twice.valid());
+    }
+}

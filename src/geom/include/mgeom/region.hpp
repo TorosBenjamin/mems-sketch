@@ -55,6 +55,11 @@ public:
     // region, in µm: how far its geometry may be from exact.
     double max_tolerance() const;
 
+    // Whether Open CASCADE's full check finds the region's faces valid (closed
+    // boundaries, holes inside, nothing crossing). For tests and diagnostics:
+    // it is not cheap.
+    bool valid() const;
+
     struct Impl;
 
 private:

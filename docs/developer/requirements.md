@@ -400,6 +400,13 @@ behaviours every frontend must keep.
   stack into solids, with exact curves. For simulation tools that import CAD
   and mesh it themselves, and for mechanical CAD (packaging, assemblies).
   See [decision X-1](#decisions).
+- **OUT-7** (Must, exists) **Export formats are plugins:** a new format can
+  be added in its own package, in Python, without changing or rebuilding
+  mems-sketch. The built-in formats are plugins too. See
+  [decision E-1](#decisions).
+- **OUT-8** (Should, new) Each exporter **declares its options** (grid,
+  chord tolerance, hierarchy, its own settings); the export dialog and the
+  command line are built from the declaration, with no code per format.
 
 ### Meshing
 
@@ -570,7 +577,8 @@ The numbers are proposals until the open questions are answered.
 - **C-2** The geometry backend is **C++**: a geometry library on **Open
   CASCADE**, with the mems-sketch engine on top
   ([core architecture](core-architecture.md)).
-- **C-3** GDS, OASIS and DXF, and rule checks, use **KLayout**'s library.
+- **C-3** GDS, OASIS and DXF, and rule checks, use **KLayout**'s Python
+  package. The C++ backend does not link KLayout.
 - **C-4** **Licences:** a GPL dependency (gmsh) is optional, as an extra or
   a plugin. The rest of the tool does not depend on it.
 
@@ -627,6 +635,14 @@ The numbers are proposals until the open questions are answered.
   - **Device-level parts** (combs, springs, alignment marks, test
     structures) are components, built-in or in libraries, made of kinds as a
     user would make them.
+
+- **E-1: File formats live outside the C++ backend.** Exporters are Python
+  plugins (OUT-7). The geometry library provides the building blocks every
+  exporter needs: the cell hierarchy, outlines at a chord tolerance,
+  outlines snapped to a grid with the snapping report (OUT-3), solids and
+  triangles, and OCC's own BREP and STEP writers. Snapping is done once, in
+  the library, so every grid-based format reports the same changes. Adding
+  a format then needs no C++, and the backend does not link KLayout.
 
 ## Open questions
 

@@ -193,6 +193,34 @@ but should not have to program. Scripting is there for those who want it.
 - **SHP-11** (Could, new) **Splines:** a polygon or path edge can be a smooth
   curve through given points (or with control points), for free-form
   outlines such as optimised spring profiles.
+- **SHP-12** (Should, new) **One polygon, with curved segments:** a polygon's
+  boundary is a list of segments, each straight or an arc (given by a
+  radius, a bulge, or tangent to the previous segment), and later a spline
+  (SHP-11). Any outline can then be drawn exactly: rounded slots, curved
+  electrodes, cam profiles. The other primitives (rect, circle, arc, path,
+  text) are made by factories on the same construction ([decision
+  G-1](#decisions)).
+- **SHP-13** (Should, new) **Text** as geometry: letters as shapes on a layer,
+  fabricated like any other shape (die names, version numbers, orientation
+  marks, labels next to test structures). Height, alignment, and for a
+  stroke font the stroke width, are values and expressions. Text goes
+  through booleans, the rule check and every export like other shapes.
+  - **Stroke fonts** (letters as centrelines, e.g. the Hershey fonts) are
+    thickened like a path, so the stroke width can be set at or above the
+    layer's minimum width: the default for fabricated text.
+  - **Outline fonts** (TrueType, OpenType) are read as exact outlines (lines
+    and curves), never rasterized.
+  - **Fonts ship with mems-sketch** (a stroke font and an open sans-serif
+    outline font), and a project can keep its own font file as it keeps
+    imported layouts, so the same project gives the same text on every
+    machine (QP-5). System fonts are not used unless copied into the
+    project.
+- **SHP-14** (Should, new) **Perforation:** fill a region with holes (any
+  shape) on a square or hexagonal grid, keeping a margin from the region's
+  edges and from keep-out shapes (anchors, other layers mapped in). The holes
+  follow when the region changes. For release holes.
+- **SHP-15** (Could, new) More factory shapes: **regular polygon** (n sides),
+  **ellipse** (exact), **spiral** (Archimedean, with a width).
 
 ### Modifiers
 
@@ -313,6 +341,10 @@ behaviours every frontend must keep.
 - **EDT-9** (Could, new) **The change a value makes:** while a value is
   dragged or tried, the canvas can show the geometric difference from where
   it started (material added and removed, as in the History panel, HIS-2).
+- **EDT-10** (Could, new) **Annotations:** notes on the canvas, saved with
+  the component and alignable like guides, never fabricated. They can
+  optionally be exported as GDS text labels (zero-area text records) on a
+  chosen layer, which other tools read as names.
 
 ### Rule checks
 
@@ -576,6 +608,25 @@ The numbers are proposals until the open questions are answered.
   layouts need: parts placed relative to each other and sizes that follow
   parameters, evaluated in a fixed order rather than solved. If a real need
   shows up, a solver can be added later as its own component.
+
+- **G-1: One construction for every shape, factories for the user's
+  shapes.** Every shape is a face bounded by line, arc and spline segments;
+  the library has one constructor for it, and every other shape is a
+  factory on top. Geometry goes in the library, meaning in the engine:
+  - **The geometry library** has the constructor, the factories that are
+    pure geometry (circle, arc, ellipse, regular polygon, path outline from
+    a centreline and a width, spiral, text outlines from a font, perforation)
+    and the operations. Numbers in, regions out; no names, expressions or
+    files.
+  - **The engine** has the shape kinds, the user's vocabulary: a kind reads
+    its node from the project, evaluates its expressions, calls a factory,
+    names its points (`center`, `start`) and says which values the canvas
+    can drag. It decides which kinds exist and what is in the YAML.
+  - **The frontend** presents them: the Add menu, drawing tools, forms and
+    handles.
+  - **Device-level parts** (combs, springs, alignment marks, test
+    structures) are components, built-in or in libraries, made of kinds as a
+    user would make them.
 
 ## Open questions
 

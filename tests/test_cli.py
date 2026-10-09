@@ -37,7 +37,8 @@ def test_check_passes_and_fails_with_overrides(resonator, capsys):
     assert main(["check", str(resonator)]) == 0
     assert main(["check", str(resonator), "--set", "w_finger=1", "--json"]) == 1
     violations = json.loads(capsys.readouterr().out)
-    assert violations and {v["rule"] for v in violations} == {"min_width", "min_space"}
+    errors = {v["kind"] for v in violations if v["severity"] == "error"}
+    assert errors == {"min_width", "min_space"}
 
 
 def test_check_a_single_component(resonator):

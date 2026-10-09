@@ -6,10 +6,30 @@
 
 ```
 project.yaml     format: mems-sketch/1, name, top (null: a library), libraries, imports
-process.yaml     constants, layers: {name: {gds: [layer, datatype], min_width, min_space}}
+process.yaml     constants, layers: {name: {gds: [layer, datatype]}}, rules (below)
 components/      one file per component; private ones in their owner's folder
 imports/         the imported files
 ```
+
+A rule is written by its name, with its kind, its layers, then its values as
+keys of their own; `severity`, `enabled` and `message` only when they differ
+from `error`, true and empty:
+
+```yaml
+rules:
+  device_min_width:
+    kind: min_width
+    layers: [device]
+    value: 2
+  device_release:
+    kind: release
+    layers: [device, anchor]
+    undercut: process.undercut
+    severity: warning
+```
+
+Earlier files set `min_width` and `min_space` on a layer; they are read as
+rules named `<layer>_min_width` and `<layer>_min_space`.
 
 The YAML is **canonical** (`storage/yaml_format.py`), so saving the same model
 twice gives byte-identical files and a change shows as a small diff:

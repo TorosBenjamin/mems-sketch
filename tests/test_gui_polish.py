@@ -275,6 +275,8 @@ def test_tool_options_follow_the_tool(window):
 
 def test_status_bar_shows_problems_zoom_and_grid(window):
     one_rect(window)
+    for rule in ("device_anchored", "device_release"):  # a lone plate is neither
+        window.document.process.enable_rule(rule, False)
     assert window.problems_button.text() == "No problems"
     window.document.nodes.add(RectShape(name="bad", layer="device", x0=50, y0=0, x1=51, y1=5))
     assert "violation" in window.problems_button.text()

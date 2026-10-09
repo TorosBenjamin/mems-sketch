@@ -1,4 +1,4 @@
-"""The Process tab: the process's constants and layer definitions.
+"""The Process tab: the process's constants, layer definitions and design rules.
 
 They are project data like the components, but set once per process and
 rarely changed, so they open in an editor tab (from the project tree or
@@ -14,10 +14,11 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSplitter, QVBoxLayout, QWidg
 from mems_sketch.editing import EditSession
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import ConstantsPanel, LayerDefinitionsPanel
+from mems_sketch.gui.rules_panel import RulesPanel
 
 
 class ProcessView(QWidget):
-    """An editor tab with the constants and the layer definitions."""
+    """An editor tab with the constants, the layer definitions and the rules."""
 
     error = Signal(str)
     component = None  # not a component: the editor area's lookups by name skip it
@@ -27,7 +28,8 @@ class ProcessView(QWidget):
         self.document = document
         self.constants = ConstantsPanel(document)
         self.layers = LayerDefinitionsPanel(document)
-        for panel in (self.constants, self.layers):
+        self.rules = RulesPanel(document)
+        for panel in (self.constants, self.layers, self.rules):
             panel.error.connect(self.error)
         heading = QLabel("Process")
         heading.setObjectName("heading")
@@ -37,13 +39,15 @@ class ProcessView(QWidget):
         top.addWidget(
             HelpButton(
                 "What the whole project is made with: its constants, which every "
-                "expression can use, and its layers. Changes here affect every component."
+                "expression can use, its layers, and the rules they are checked with. "
+                "Changes here affect every component."
             )
         )
         top.addStretch()
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(self.constants)
         split.addWidget(self.layers)
+        split.addWidget(self.rules)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(top)
@@ -53,6 +57,7 @@ class ProcessView(QWidget):
     def refresh(self) -> None:
         self.constants.refresh()
         self.layers.refresh()
+        self.rules.refresh()
 
     # The tab's label, icon and tooltip, as for a component tab.
     def title(self) -> str:
@@ -62,4 +67,4 @@ class ProcessView(QWidget):
         return "layers"
 
     def tooltip(self) -> str:
-        return "The process: constants and layer definitions"
+        return "The process: constants, layer definitions and rules"

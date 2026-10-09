@@ -10,6 +10,7 @@ import pytest
 
 from mems_sketch import Layer, ParamDef, Project, RectShape, load, save
 from mems_sketch.cli import main as cli
+from mems_sketch.core.process import Rule
 from mems_sketch.core.shapes import BooleanShape, CircleShape
 from mems_sketch.core.user_component import PointDef
 from mems_sketch.editing import EditSession
@@ -74,7 +75,8 @@ def test_every_codec_reads_back_what_it_wrote(name):
 
 def design() -> Project:
     project = Project(name="demo")
-    project.add_layer(Layer("device", 1, min_width=2))
+    project.add_layer(Layer("device", 1))
+    project.process.add_rule(Rule("device_min_width", "min_width", ["device"], {"value": 2}))
     project.add_layer(Layer("metal", 5, 2))
     project.process.constants["undercut"] = 0.5
     project.components["top"].parameters.append(ParamDef(name="pitch", default=20, min=5))

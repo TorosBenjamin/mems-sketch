@@ -309,11 +309,21 @@ def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window)
     assert headers(window.layers.layers) == ["Layer", "GDS"]
     window.open_process()
     definitions = window.area.process_view.layers.layers
-    assert "Undercut µm" not in headers(definitions)
-    column = headers(definitions).index("Min width µm")
-    definitions.item(0, column).setText("0.5")
-    first = next(iter(window.document.project.layers.values()))
-    assert first.min_width == 0.5
+    assert headers(definitions) == ["Layer", "GDS", "Datatype"]
+    rules = window.area.process_view.rules.rules
+    assert headers(rules) == ["Rule", "Kind", "Layers", "Values", "Severity", "Note"]
+    row = [rules.item(r, 0).text() for r in range(rules.rowCount())].index("device_min_width")
+    rules.item(row, 3).setText("value=0.5")
+    assert window.document.project.process.rules["device_min_width"].values == {"value": 0.5}
+    rules.item(row, 3).setText("value=2 * process.undercut")
+    assert window.document.project.process.rules["device_min_width"].values == {
+        "value": "2 * process.undercut"
+    }
+    rules.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert not window.document.project.process.rules["device_min_width"].enabled
+    rules.item(row, 4).setText("sometimes")  # not a severity: refused, shown again
+    assert window.document.project.process.rules["device_min_width"].severity == "error"
+    assert rules.item(row, 4).text() == "error"
 
 
 def test_a_tool_window_header_carries_the_panels_own_buttons(window):

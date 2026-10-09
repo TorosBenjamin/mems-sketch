@@ -83,6 +83,10 @@ library_folder = save(library, HERE / "libraries" / "mems_std")
 
 project = Project(name="resonator", process=default_process())
 project.process.constants["min_gap"] = 2
+# The drawing does not model its anchors or the etch, so the default topology
+# rules are turned off; they stay listed, as off.
+for rule in ("device_anchored", "device_release"):
+    project.process.rules[rule].enabled = False
 project.libraries["std"] = load_library("std", library_folder)
 
 project.define_component(

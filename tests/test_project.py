@@ -18,6 +18,7 @@ from mems_sketch import (
     save,
 )
 from mems_sketch.core.component import to_dbu
+from mems_sketch.core.process import layer_rules
 from mems_sketch.core.project import new_project
 from mems_sketch.storage.project_files import ProjectFormatError
 
@@ -42,8 +43,9 @@ def make_project() -> Project:
     project = Project(
         name="demo",
         process=Process(
-            layers={"device": Layer("device", 1, 0, min_width=1.0)},
+            layers={"device": Layer("device", 1, 0)},
             constants={"min_gap": 2, "gap": "1.5 * min_gap"},
+            rules={r.name: r for r in layer_rules("device", min_width=1.0, min_space=None)},
         ),
     )
     project.define_component(bar())
@@ -210,7 +212,8 @@ def test_yaml_is_canonical_and_minimal(tmp_path):
         "  y1: w\n"
     )
     process = (folder / "process.yaml").read_text()
-    assert "gds: [1, 0]" in process and "min_width: 1" in process
+    assert "gds: [1, 0]" in process
+    assert "device_min_width:\n    kind: min_width\n    layers: [device]\n    value: 1" in process
 
 
 def test_changing_one_value_changes_one_line(tmp_path):

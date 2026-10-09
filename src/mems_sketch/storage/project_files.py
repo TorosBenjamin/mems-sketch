@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from mems_sketch.core.imports import ImportedCell
-from mems_sketch.core.process import Layer, Process
+from mems_sketch.core.process import RULE_FIELDS, Layer, Process, Rule, layer_rules
 from mems_sketch.core.project import Library, Project
 from mems_sketch.core.user_component import ComponentDef
 from mems_sketch.storage import yaml_format
@@ -124,19 +124,48 @@ def imported_from_data(name: str, entry: dict[str, Any], data: bytes) -> Importe
 
 
 def process_data(process: Process) -> dict[str, Any]:
-    layers = {}
-    for layer in process.layers.values():
-        entry: dict[str, Any] = {"gds": [layer.gds_layer, layer.gds_datatype]}
-        for key in ("min_width", "min_space"):
-            value = getattr(layer, key)
-            if value:
-                entry[key] = yaml_format.to_data(value)
-        layers[layer.name] = entry
+    layers = {
+        layer.name: {"gds": [layer.gds_layer, layer.gds_datatype]}
+        for layer in process.layers.values()
+    }
     data: dict[str, Any] = {}
     if process.constants:
         data["constants"] = yaml_format.to_data(process.constants)
     data["layers"] = layers
+    if process.rules:
+        data["rules"] = {rule.name: _rule_data(rule) for rule in process.rules.values()}
     return data
+
+
+def _rule_data(rule: Rule) -> dict[str, Any]:
+    """A rule as written: its kind and layers, then its values as keys of their
+    own; severity, enabled and message only when not the default."""
+    entry: dict[str, Any] = {"kind": rule.kind, "layers": list(rule.layers)}
+    entry.update(yaml_format.to_data(rule.values))
+    if rule.severity != "error":
+        entry["severity"] = rule.severity
+    if not rule.enabled:
+        entry["enabled"] = False
+    if rule.message:
+        entry["message"] = rule.message
+    return entry
+
+
+def _rule_from_data(name: str, entry: dict[str, Any]) -> Rule:
+    values = {}
+    for key, value in entry.items():
+        if key in RULE_FIELDS:
+            continue
+        values[str(key)] = value if isinstance(value, bool | str) else float(value)
+    return Rule(
+        name=str(name),
+        kind=str(entry.get("kind", "")),
+        layers=[str(n) for n in entry.get("layers") or []],
+        values=values,
+        severity=str(entry.get("severity", "error")),
+        enabled=bool(entry.get("enabled", True)),
+        message=str(entry.get("message", "")),
+    )
 
 
 def _save_imports(project: Project, imports_dir: Path) -> None:
@@ -238,20 +267,26 @@ def _load_process(path: Path) -> Process:
 
 def process_from_data(data: dict[str, Any]) -> Process:
     layers = {}
+    rules: dict[str, Rule] = {}
     for name, entry in (data.get("layers") or {}).items():
         gds = entry.get("gds", [0, 0])
         layers[name] = Layer(
             name=name,
             gds_layer=int(gds[0]),
             gds_datatype=int(gds[1]) if len(gds) > 1 else 0,
-            min_width=_optional_float(entry.get("min_width")),
-            min_space=_optional_float(entry.get("min_space")),
         )
+        # Earlier files set minimum width and spacing on the layer.
+        for rule in layer_rules(
+            name, _optional_float(entry.get("min_width")), _optional_float(entry.get("min_space"))
+        ):
+            rules[rule.name] = rule
+    for name, entry in (data.get("rules") or {}).items():
+        rules[str(name)] = _rule_from_data(name, entry or {})
     constants = {
         k: (float(v) if isinstance(v, int | float) else str(v))
         for k, v in (data.get("constants") or {}).items()
     }
-    return Process(layers=layers, constants=constants)
+    return Process(layers=layers, constants=constants, rules=rules)
 
 
 def _load_components(folder: Path) -> dict[str, ComponentDef]:

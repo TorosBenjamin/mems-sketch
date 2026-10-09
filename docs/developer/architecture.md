@@ -15,6 +15,11 @@
 - **Frontends:** the GUI, the CLI and scripts all work through the same
   backend API and the same files.
 
+The geometry backend is moving to a C++ core on Open CASCADE, with exact
+curves, one fine tolerance and 3D output: see
+[Geometry core architecture](core-architecture.md). This page describes the
+code as it is now.
+
 ## The model
 
 - A `Project` (`core/project.py`) holds a `Process` (layers, constants), its

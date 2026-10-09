@@ -5,6 +5,8 @@
 > as [Architecture](architecture.md) describes. Each migration step below
 > updates both documents.
 
+The requirements it has to meet are in [Requirements](requirements.md).
+
 mems-sketch is moving its geometry backend into a C++ core built on
 [Open CASCADE Technology](https://dev.opencascade.org/) (OCC). The Qt editor,
 the project model, files, history and the CLI stay in Python.
@@ -33,7 +35,7 @@ grid. That is right for masks, and wrong for the work around them:
    merge tolerance (e.g. 10⁻⁶ µm), and curves are split into segments only
    for an output that needs it, to that output's chord tolerance.
 2. **3D from the process stack.** Layers extruded by their thickness into
-   solids, for a 3D view, STEP and meshing (gmsh).
+   solids, for meshing (gmsh) and a 3D view, and optionally STEP.
 3. **Interactive speed on MEMS-sized designs**, such as plates with 10,000
    release holes and combs with 1,000 fingers, while a parameter is dragged.
 4. **The same projects.** The YAML files, expressions, shape kinds,
@@ -204,8 +206,12 @@ rotated offset. So:
   `TopLoc_Location`, which shares the geometry.
 - Nested transforms compose into **one**, applied once, with one rounding
   instead of several.
-- There is no scaling transform. If one is ever added, this rule needs
-  revisiting.
+- A `transform` may also **scale** (uniformly, scale > 0). Booleans and
+  offsets still commute with it once the distances are scaled too, so the
+  rule holds. But OCC does not allow scaling in a `TopLoc_Location`, so a
+  scaled transform is applied to the geometry (a copy, once per prototype)
+  instead of attached as a location. Mirroring through a location is to be
+  verified in the library's first step.
 
 **Instances, not copies.** A placed cell, an array or a polar array is a
 *prototype plus transforms*:

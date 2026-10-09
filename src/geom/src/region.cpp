@@ -1,5 +1,7 @@
 #include "mgeom/region.hpp"
 
+#include "region_impl.hpp"
+
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -47,27 +49,11 @@ namespace mgeom {
 
 namespace {
 
-constexpr double kNmPerUm = 1000.0;
-
-gp_Pnt to_occ(Point p) { return gp_Pnt(p.x * kNmPerUm, p.y * kNmPerUm, 0.0); }
-Point from_occ(const gp_Pnt& p) { return {p.X() / kNmPerUm, p.Y() / kNmPerUm}; }
-
-TopoDS_Compound compound_of(const std::vector<TopoDS_Face>& faces) {
-    TopoDS_Compound compound;
-    BRep_Builder builder;
-    builder.MakeCompound(compound);
-    for (const auto& face : faces) builder.Add(compound, face);
-    return compound;
-}
-
-std::vector<TopoDS_Face> faces_of(const TopoDS_Shape& shape) {
-    std::vector<TopoDS_Face> faces;
-    if (shape.IsNull()) return faces;
-    for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
-        faces.push_back(TopoDS::Face(e.Current()));
-    }
-    return faces;
-}
+using detail::compound_of;
+using detail::faces_of;
+using detail::from_occ;
+using detail::kNmPerUm;
+using detail::to_occ;
 
 TopoDS_Face face_of_wire(const TopoDS_Wire& wire, const char* what) {
     BRepBuilderAPI_MakeFace make(wire, /*OnlyPlane=*/true);
@@ -80,14 +66,6 @@ void check_finite(double v, const char* what) {
 }
 
 }  // namespace
-
-// A region is a compound of faces in the plane z = 0, in nanometres.
-struct Region::Impl {
-    TopoDS_Shape shape;  // a compound; null or without faces when empty
-    std::vector<TopoDS_Face> faces;
-
-    explicit Impl(TopoDS_Shape s) : shape(std::move(s)), faces(faces_of(shape)) {}
-};
 
 namespace {
 

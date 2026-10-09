@@ -7,7 +7,7 @@ bottom layer of mems-sketch's new geometry core
 [requirements](../../docs/developer/requirements.md)). It knows nothing of
 projects, parameters or shape kinds, and never includes the engine.
 
-**Status:** the first piece of the library. Not yet used by mems-sketch.
+**Status:** in progress. Not yet used by mems-sketch.
 
 ## Building
 
@@ -34,6 +34,8 @@ headers include.
 | `mgeom/types.hpp` | `Point`, `Box`, `Polygon` (a hull with holes), `GeometryError` |
 | `mgeom/transform.hpp` | `Transform`: mirror, scale, rotate, move; composes with `*` |
 | `mgeom/region.hpp` | `Region`: rect, polygon, circle, arc; union, subtract, intersect, xor; transformed; area, bounding box, outlines at a chord tolerance, the largest Open CASCADE tolerance it carries |
+| `mgeom/cell.hpp` | `Cell`: regions per layer plus placed cells, arrays and polar arrays; placing never copies geometry; `flat(layer)` merges and caches |
+| `mgeom/measure.hpp` | `properties` (area, perimeter, centroid, second moments of area), `mass_properties` (volume, mass, rotational inertia for a thickness and density), `distance` (exact minimum, with the closest points), `overlap_area`, `projected_overlap`, `edges` (kind, length, ends, midpoint; centre and radius of arcs) |
 
 Lengths are in µm. Inside, geometry is kept in nm, so Open CASCADE's fixed
 point tolerance (10⁻⁷ model units) is 10⁻¹⁰ µm. The tests check that a

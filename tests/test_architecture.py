@@ -1,6 +1,7 @@
 """The backend (everything outside mems_sketch.gui) must never depend on the GUI."""
 
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -135,5 +136,41 @@ def test_only_the_shape_kinds_switch_on_kinds():
         for path in PACKAGE.rglob("*.py")
         if KINDS_DIR not in path.parents
         for switch in kind_switches(path)
+    ]
+    assert offenders == []
+
+
+SOURCE = PACKAGE.parent
+INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.MULTILINE)
+
+
+def _includes(folder: Path) -> list[tuple[Path, str]]:
+    return [
+        (path, header)
+        for path in folder.rglob("*")
+        if path.suffix in (".hpp", ".cpp", ".h")
+        for header in INCLUDE.findall(path.read_text(errors="replace"))
+    ]
+
+
+def test_the_geometry_library_never_includes_the_engine():
+    """The library stands alone (core-architecture.md): no engine header in src/geom/."""
+    offenders = [
+        f"{p.relative_to(SOURCE)}: {h}"
+        for p, h in _includes(SOURCE / "geom")
+        if h.startswith("mems/")
+    ]
+    assert offenders == []
+
+
+def test_the_engine_uses_only_the_librarys_public_headers():
+    """The engine reaches Open CASCADE only through mgeom: no OCC headers, and
+    only mgeom's public ones (include/mgeom/)."""
+    occ = re.compile(r"^(Standard|gp|TopoDS|TopExp|BRep|Geom|BOP|TopTools|TColgp|Precision)")
+    offenders = [
+        f"{p.relative_to(SOURCE)}: {h}"
+        for p, h in _includes(SOURCE / "engine")
+        if occ.match(h)
+        or (h.endswith(".hpp") and "/" in h and h.split("/")[0] not in ("mems", "mgeom"))
     ]
     assert offenders == []

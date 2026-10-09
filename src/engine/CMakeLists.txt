@@ -1,0 +1,58 @@
+# The mems-sketch engine: turns a project into geometry, on the geometry
+# library (see docs/developer/core-architecture.md). It includes only mgeom's
+# public headers; nothing in src/geom/ includes the engine's.
+#
+# So far: expressions, the same language and values as
+# mems_sketch.core.expressions.
+cmake_minimum_required(VERSION 3.28)
+project(mems_engine VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(MEMS_ENGINE_BUILD_TESTS "Build the engine's unit tests" ON)
+option(MEMS_ENGINE_BUILD_PYTHON "Build the Python module _core" OFF)
+
+add_library(mems_engine
+    src/expr/expression.cpp)
+add_library(mems::engine ALIAS mems_engine)
+target_include_directories(mems_engine
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+set_target_properties(mems_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # Python does not fuse a * b + c into one rounding; neither may we.
+    target_compile_options(mems_engine PRIVATE -Wall -Wextra -Wpedantic -ffp-contract=off)
+elseif(MSVC)
+    target_compile_options(mems_engine PRIVATE /fp:precise)
+endif()
+
+if(MEMS_ENGINE_BUILD_TESTS)
+    enable_testing()
+endif()
+
+# The Python module mems_sketch._core (nanobind).
+if(MEMS_ENGINE_BUILD_PYTHON)
+    find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module)
+    if(NOT nanobind_ROOT)
+        execute_process(
+            COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+            OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT
+            COMMAND_ERROR_IS_FATAL ANY)
+    endif()
+    find_package(nanobind CONFIG REQUIRED)
+    nanobind_add_module(_core NB_STATIC bindings/core.cpp)
+    target_link_libraries(_core PRIVATE mems_engine)
+    target_compile_definitions(_core PRIVATE MEMS_ENGINE_VERSION="${PROJECT_VERSION}")
+    nanobind_add_stub(_core_stub MODULE _core OUTPUT _core.pyi
+        PYTHON_PATH $<TARGET_FILE_DIR:_core> DEPENDS _core)
+endif()
+
+if(MEMS_ENGINE_BUILD_TESTS)
+    find_package(doctest REQUIRED)
+    add_executable(mems_engine_tests
+        tests/main.cpp
+        tests/test_expression.cpp)
+    target_link_libraries(mems_engine_tests PRIVATE mems_engine doctest::doctest)
+    add_test(NAME mems_engine_tests COMMAND mems_engine_tests)
+endif()

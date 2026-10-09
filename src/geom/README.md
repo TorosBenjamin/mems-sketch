@@ -15,7 +15,7 @@ Needs a C++20 compiler, CMake 3.24 or later, Ninja and doctest
 (`apt install ninja-build doctest-dev` on Ubuntu).
 
 ```bash
-src/geom/scripts/build-occt.sh          # once: Open CASCADE into build/deps/ (~30 min)
+src/geom/scripts/build-occt.sh          # once: Open CASCADE into build/deps/ (~13 min on 4 cores)
 cmake -S src/geom -B build/geom -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$PWD/build/deps/occt-8_0_1"
 cmake --build build/geom

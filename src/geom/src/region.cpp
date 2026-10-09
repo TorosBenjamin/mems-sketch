@@ -23,7 +23,7 @@
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
-#include <TopTools_ListOfShape.hxx>
+#include <NCollection_List.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Face.hxx>
@@ -104,7 +104,7 @@ template <class Op>
 TopoDS_Shape run_boolean(const TopoDS_Shape& a, const TopoDS_Shape& b, const char* name) {
     try {
         Op op;
-        TopTools_ListOfShape args, tools;
+        NCollection_List<TopoDS_Shape> args, tools;
         args.Append(a);
         tools.Append(b);
         op.SetArguments(args);
@@ -117,7 +117,7 @@ TopoDS_Shape run_boolean(const TopoDS_Shape& a, const TopoDS_Shape& b, const cha
         return unified(op.Shape());
     } catch (const Standard_Failure& e) {
         throw GeometryError(std::string(name) + " failed in Open CASCADE: " +
-                            e.GetMessageString());
+                            e.what());
     }
 }
 

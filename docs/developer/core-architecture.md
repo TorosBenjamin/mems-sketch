@@ -297,7 +297,7 @@ Every output chooses its own tolerance.
 | Outlines | Per prototype at a chord tolerance (for the canvas, by zoom level, and for exporters), with the transforms of its instances. |
 | Snapped outlines | Curves split at a chord tolerance (default 5 nm), then snapped to a grid (default 1 nm) as integer coordinates, per prototype so the hierarchy survives. Used by every grid-based exporter (GDS, OASIS, DXF) and by rule checks. |
 | Snapping report | Comes with the snapped outlines: pieces that vanished, split or merged and holes that closed, joined or formed, each with where, and the area before and after. Computed once in the library, so no exporter has to get it right itself. |
-| Rule checks | On the snapped outlines, since that is what the fab checks. Run in Python with KLayout's package, per layer. |
+| Rule checks | On the snapped outlines, since that is what the fab checks. Run in Python with KLayout's package, per layer. Rules are project data and rule decks; rule kinds are plugins, like exporters (requirements DRC-6 to DRC-13). |
 | STEP, BREP | Layers extruded through the layer stack into solids, exact curves kept. Writing STEP is slow for large designs (see [Measurements](#measurements)), so it is an export, never an interactive step. BREP is fast and is what the mesher reads. |
 | Mesh | gmsh, from the solids or the 2D faces. `MeshSettings` holds global and per-layer sizes, refinement regions and distances, and names for physical groups. Optional, because of gmsh's licence. |
 | Triangles | For a 3D view (`BRepMesh`), or a filled 2D view. |

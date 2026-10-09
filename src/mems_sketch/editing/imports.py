@@ -12,15 +12,14 @@ import re
 from pathlib import Path
 from typing import Any
 
-import klayout.db as kdb
-
-from mems_sketch.core.component import DBU_UM, Geometry, is_builtin
+from mems_sketch.core.component import Geometry, is_builtin
 from mems_sketch.core.imports import (
     ImportedCell,
     cells,
     gds_layers,
     layer_key,
     layer_names,
+    oasis_bytes,
     parse_layer_key,
     read_layout,
 )
@@ -136,20 +135,16 @@ class ImportEdits(Commands):
         taken = {n for n in numbers.values() if n is not None}
         taken |= {(ly.gds_layer, ly.gds_datatype) for ly in self.project.layers.values()}
         free = max((number for number, _ in taken), default=0) + 1
-        layout = kdb.Layout()
-        layout.dbu = DBU_UM
-        top = layout.create_cell(DOCUMENT_CELL)
-        for name, region in geometry.layers.items():
+        layers: dict[str, tuple[int, int]] = {}
+        for name in geometry.layer_names():
             gds = numbers.get(name)
             if gds is None and name in self.project.layers:
                 layer = self.project.layers[name]
                 gds = (layer.gds_layer, layer.gds_datatype)
             if gds is None:
                 gds, free = (free, 0), free + 1
-            top.shapes(layout.layer(kdb.LayerInfo(gds[0], gds[1], name))).insert(region)
-        options = kdb.SaveLayoutOptions()
-        options.format = "OASIS"
-        return bytes(layout.write_bytes(options))
+            layers[name] = gds
+        return oasis_bytes(geometry, layers, DOCUMENT_CELL)
 
     def suggested_name(self, path: str | Path) -> str:
         """A free component name made from the file's name (``Pad frame`` -> ``pad_frame``)."""

@@ -17,7 +17,6 @@ from __future__ import annotations
 import math
 import time
 
-import klayout.db as kdb
 from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
@@ -47,7 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.core.component import DBU_UM, Geometry
+from mems_sketch.core.component import Geometry
 from mems_sketch.gui import icons
 from mems_sketch.gui.theme import ISLAND_RADIUS
 
@@ -147,28 +146,28 @@ def layer_color(index: int) -> QColor:
     return QColor(PALETTE[index % len(PALETTE)])
 
 
-def region_to_path(region: kdb.Region) -> QPainterPath:
-    """Merged polygons (with holes) as one odd-even filled painter path, in µm."""
+def geometry_path(geometry: Geometry, layer: str) -> QPainterPath:
+    """A layer's merged polygons (with holes) as one odd-even filled painter path, in µm."""
     path = QPainterPath()
     path.setFillRule(Qt.FillRule.OddEvenFill)
-    for polygon in region.each_merged():
-        _add_loop(path, polygon.each_point_hull())
-        for hole in range(polygon.holes()):
-            _add_loop(path, polygon.each_point_hole(hole))
+    for polygon in geometry.polygons(layer):
+        _add_loop(path, polygon.hull)
+        for hole in polygon.holes:
+            _add_loop(path, hole)
     return path
 
 
-def region_outline(region: kdb.Region) -> QPainterPath:
-    """The outer outlines of the merged polygons, without their holes (a light
-    outline, e.g. for hovering over a plate with thousands of holes)."""
+def geometry_outline(geometry: Geometry) -> QPainterPath:
+    """The outer outlines of the merged polygons of all layers, without their holes
+    (a light outline, e.g. for hovering over a plate with thousands of holes)."""
     path = QPainterPath()
-    for polygon in region.each_merged():
-        _add_loop(path, polygon.each_point_hull())
+    for polygon in geometry.polygons():
+        _add_loop(path, polygon.hull)
     return path
 
 
 def _add_loop(path: QPainterPath, points) -> None:
-    loop = QPolygonF([QPointF(p.x * DBU_UM, p.y * DBU_UM) for p in points])
+    loop = QPolygonF([QPointF(x, y) for x, y in points])
     if not loop.isEmpty():
         path.addPolygon(loop)  # one call per loop, not one per point
         path.closeSubpath()
@@ -386,9 +385,9 @@ class LayoutCanvas(QGraphicsView):
         self._layer_items.clear()
         alpha = round(255 * self.options["fill_opacity"] / 100)
         width = self.options["outline_width"]
-        for z, (layer, region) in enumerate(sorted(geometry.layers.items())):
+        for z, layer in enumerate(sorted(geometry.layer_names())):
             color = colors.get(layer, QColor("#888888"))
-            item = QGraphicsPathItem(region_to_path(region))
+            item = QGraphicsPathItem(geometry_path(geometry, layer))
             fill = QColor(color)
             fill.setAlpha(alpha)
             pen = QPen(color, width)
@@ -400,7 +399,7 @@ class LayoutCanvas(QGraphicsView):
             item.setVisible(visible.get(layer, True))
             self.scene().addItem(item)
             self._layer_items[layer] = item
-        if not self._has_content and geometry.layers:
+        if not self._has_content and not geometry.is_empty():
             self._has_content = True
             self.fit()
 
@@ -420,8 +419,8 @@ class LayoutCanvas(QGraphicsView):
             self.scene().removeItem(item)
         self._overlay.clear()
         if highlight is not None:
-            for region in highlight.layers.values():
-                item = QGraphicsPathItem(region_to_path(region))
+            for layer in highlight.layer_names():
+                item = QGraphicsPathItem(geometry_path(highlight, layer))
                 pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
                 pen.setCosmetic(True)
                 item.setPen(pen)
@@ -465,8 +464,8 @@ class LayoutCanvas(QGraphicsView):
             if geometry is None:
                 continue
             color = QColor(self.theme[style])
-            for region in geometry.layers.values():
-                item = QGraphicsPathItem(region_to_path(region))
+            for layer in geometry.layer_names():
+                item = QGraphicsPathItem(geometry_path(geometry, layer))
                 pen = QPen(color, OUTLINE_PX)
                 pen.setCosmetic(True)
                 item.setPen(pen)
@@ -505,9 +504,9 @@ class LayoutCanvas(QGraphicsView):
     def show_drag_preview(self, geometry: Geometry, colors: dict[str, QColor]) -> None:
         """Draw what is being dragged on top; move it with :meth:`move_drag_preview`."""
         self.clear_drag_preview()
-        for layer, region in geometry.layers.items():
+        for layer in geometry.layer_names():
             color = colors.get(layer, QColor("#888888"))
-            item = QGraphicsPathItem(region_to_path(region))
+            item = QGraphicsPathItem(geometry_path(geometry, layer))
             fill = QColor(color)
             fill.setAlpha(150)
             pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
@@ -565,17 +564,17 @@ class LayoutCanvas(QGraphicsView):
             self.scene().addItem(self._box_item)
         self._box_item.setRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)).normalized())
 
-    def show_hover(self, region: kdb.Region | None) -> None:
+    def show_hover(self, geometry: Geometry | None) -> None:
         """Outline the shape under the cursor (pre-selection), or nothing."""
         if self._hover_item is not None:
             self.scene().removeItem(self._hover_item)
             self._hover_item = None
-        if region is None or region.is_empty():
+        if geometry is None or geometry.is_empty():
             return
         pen = QPen(QColor(self.theme["hover"]), OUTLINE_PX)
         pen.setCosmetic(True)
         pen.setStyle(Qt.PenStyle.DashLine)
-        self._hover_item = QGraphicsPathItem(region_outline(region))
+        self._hover_item = QGraphicsPathItem(geometry_outline(geometry))
         self._hover_item.setPen(pen)
         self._hover_item.setZValue(990)
         self._hover_item.setCacheMode(CACHED)

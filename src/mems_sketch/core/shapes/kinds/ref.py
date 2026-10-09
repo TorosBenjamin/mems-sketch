@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal
 
-import klayout.db as kdb
 from pydantic import Field
 
 from mems_sketch.core.component import Geometry, resolve_params
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes.base import Node, Point, RenderContext, Value
-from mems_sketch.core.shapes.geometry import apply_transform, to_ictrans
+from mems_sketch.core.shapes.geometry import apply_transform
+from mems_sketch.core.transform import Transform
 
 
 class RefShape(Node):
@@ -34,19 +34,18 @@ class RefShape(Node):
         built, points = child.compile(resolve_params(child, self.params, ctx.variables))
         transform = self.placement(ctx.variables)
         geometry = Geometry()
-        geometry.merge(built, to_ictrans(transform))
+        geometry.merge(built, transform)
         return geometry, {name: apply_transform(transform, p) for name, p in points.items()}
 
     def moved(self, x, y, inner) -> dict:
         return {"x": x(self.x), "y": y(self.y)}
 
-    def placement(self, variables: dict[str, float]) -> kdb.DCplxTrans:
-        return kdb.DCplxTrans(
-            1.0,
-            evaluate(self.rotation, variables),
-            self.mirror_x,
+    def placement(self, variables: dict[str, float]) -> Transform:
+        return Transform(
             evaluate(self.x, variables),
             evaluate(self.y, variables),
+            evaluate(self.rotation, variables),
+            self.mirror_x,
         )
 
     def summary(self) -> str:

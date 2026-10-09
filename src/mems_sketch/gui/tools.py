@@ -37,10 +37,8 @@ import contextlib
 import math
 from typing import TYPE_CHECKING, ClassVar
 
-import klayout.db as kdb
 from PySide6.QtCore import Qt
 
-from mems_sketch.core.component import to_dbu
 from mems_sketch.core.shapes import (
     Align,
     CircleShape,
@@ -1315,10 +1313,3 @@ def _um(value: float) -> float:
 
 def _no_components(name: str):
     raise KeyError(name)  # drawn primitives never refer to components
-
-
-def probe(x: float, y: float, reach: float = 0.0) -> kdb.Region:
-    """A small square around a point, to test what lies under it (``reach`` in µm)."""
-    point = kdb.Point(to_dbu(x), to_dbu(y))
-    r = max(1, to_dbu(reach))
-    return kdb.Region(kdb.Box(point.x - r, point.y - r, point.x + r, point.y + r))

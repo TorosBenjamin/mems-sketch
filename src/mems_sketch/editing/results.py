@@ -5,9 +5,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
-import klayout.db as kdb
-
-from mems_sketch.core.component import DBU_UM, Geometry
+from mems_sketch.core.component import Geometry
 from mems_sketch.core.shapes import (
     BBOX_POINTS,
     NodePath,
@@ -17,7 +15,6 @@ from mems_sketch.core.shapes import (
     container_of,
     frame_of,
     node_at,
-    to_ictrans,
     visible_from,
 )
 from mems_sketch.process import rules
@@ -51,8 +48,7 @@ class Results:
         into = frame_of(record, path).inverted() if path[:-1] else None
         for name, _, x, y in self.align_targets(path, component):
             if into is not None:
-                p = into * kdb.DPoint(x, y)
-                x, y = p.x, p.y
+                x, y = into.apply(x, y)
             variables[f"{name}.x"], variables[f"{name}.y"] = x, y
         return variables
 
@@ -102,17 +98,15 @@ class Results:
 
     def node_regions(
         self, visible: dict[str, bool], component: str | None = None
-    ) -> list[tuple[NodePath, kdb.Region]]:
-        """Merged geometry of each top-level node of a component, for click selection."""
+    ) -> list[tuple[NodePath, Geometry]]:
+        """The geometry of each top-level node of a component on the visible layers,
+        for click selection."""
         result = []
         for path, record in sorted(self.inspection(component).items()):
             if len(path) != 1:
                 continue
-            region = kdb.Region()
-            for layer, r in record.geometry.layers.items():
-                if visible.get(layer, True):
-                    region.insert(r)
-            result.append((path, region))
+            shown = [n for n in record.geometry.layer_names() if visible.get(n, True)]
+            result.append((path, record.geometry.only(shown)))
         return result
 
     def highlight(self, paths: list[NodePath], component: str | None = None) -> Geometry | None:
@@ -122,8 +116,8 @@ class Results:
         for path in paths:
             if path not in record:
                 continue
-            result.merge(record[path].geometry, to_ictrans(frame_of(record, path)))
-        return result.merged() if result.layers else None
+            result.merge(record[path].geometry, frame_of(record, path))
+        return None if result.is_empty() else result.merged()
 
     def pieces(self, path: NodePath, component: str | None = None) -> int:
         """How many separate pieces a node's geometry has (all layers together), e.g.
@@ -131,10 +125,7 @@ class Results:
         record = self.inspection(component)
         if path not in record:
             return 0
-        region = kdb.Region()
-        for r in record[path].geometry.layers.values():
-            region.insert(r)
-        return region.merged().count()
+        return record[path].geometry.pieces()
 
     def node_box(
         self, path: NodePath, component: str | None = None
@@ -144,14 +135,11 @@ class Results:
         record = self.inspection(component)
         if path not in record:
             return None
-        box = kdb.Box()
-        for region in record[path].geometry.layers.values():
-            box += region.bbox()
-        if box.empty():
+        box = record[path].geometry.bbox()
+        if box is None:
             return None
-        frame, b = frame_of(record, path), box.to_dtype(DBU_UM)
-        corners = [(b.left, b.bottom), (b.right, b.bottom), (b.right, b.top), (b.left, b.top)]
-        return [(q.x, q.y) for q in (frame * kdb.DPoint(x, y) for x, y in corners)]
+        frame, (x0, y0, x1, y1) = frame_of(record, path), box
+        return [frame.apply(x, y) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
 
     def node_points(
         self, path: NodePath, component: str | None = None
@@ -167,8 +155,7 @@ class Results:
                 x, y = record[path].points.point(name)
             except ValueError:  # e.g. no geometry, so no bounding box
                 continue
-            p = frame * kdb.DPoint(x, y)
-            result.append((name, p.x, p.y))
+            result.append((name, *frame.apply(x, y)))
         return result
 
     def align_targets(
@@ -226,11 +213,11 @@ class Results:
         geometry = self.highlight(paths)
         if geometry is None:
             return None
-        box = kdb.Box()
-        for region in geometry.layers.values():
-            box += region.bbox()
-        center = box.center()
-        return center.x / 1000, center.y / 1000
+        box = geometry.bbox()
+        if box is None:
+            return None
+        x0, y0, x1, y1 = box
+        return (x0 + x1) / 2, (y0 + y1) / 2
 
     def guides(
         self, component: str | None = None
@@ -245,10 +232,7 @@ class Results:
             if node.category != "guide":
                 continue
             frame, points = frame_of(record, path), record[path].points
-            ends = []
-            for end in ("start", "end"):
-                p = frame * kdb.DPoint(*points.point(end))
-                ends.append((p.x, p.y))
+            ends = [frame.apply(*points.point(end)) for end in ("start", "end")]
             result.append((path, node.name or node.kind, ends[0], ends[1]))
         return result
 

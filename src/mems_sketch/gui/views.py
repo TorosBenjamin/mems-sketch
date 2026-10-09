@@ -8,7 +8,6 @@ of the main window follow the current tab.
 
 from __future__ import annotations
 
-import klayout.db as kdb
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QProxyStyle,
@@ -53,7 +52,7 @@ class ComponentView(QWidget):
         self.canvas = LayoutCanvas()
         self.selection: list[NodePath] = []
         self.guides: list = []  # (path, name, start, end) of its guide lines
-        self.node_regions: list[tuple[NodePath, kdb.Region]] = []
+        self.node_regions: list[tuple[NodePath, Geometry]] = []
         self.violations: list = []
         self.errors: list[str] = []
         self._fitted = False
@@ -109,7 +108,7 @@ class ComponentView(QWidget):
         self.canvas.show_guides(self.guides, set(self.selection))
         self.selection = [p for p in self.selection if self._exists(p)]
         self.canvas.show_geometry(geometry, colors, visible)
-        if not self._fitted and geometry.layers:
+        if not self._fitted and not geometry.is_empty():
             self._fitted = True
             self.canvas.fit()
         self._check(drawn)

@@ -11,7 +11,6 @@ import math
 import sys
 from pathlib import Path
 
-import klayout.db as kdb
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QColor
 from PySide6.QtWidgets import (
@@ -26,7 +25,7 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
-from mems_sketch.core.component import component_types, to_dbu
+from mems_sketch.core.component import component_types
 from mems_sketch.core.shapes import NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.export.base import available_exporters, options_of, title_of
@@ -63,7 +62,7 @@ from mems_sketch.gui.search import (
 from mems_sketch.gui.settings import PreferencesDialog, Settings
 from mems_sketch.gui.statusbar import ToolStatus
 from mems_sketch.gui.toolbar import build_toolbar
-from mems_sketch.gui.tools import TOOLS, AlignTool, Tool, probe
+from mems_sketch.gui.tools import TOOLS, AlignTool, Tool
 from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import ComponentView, EditorArea
 
@@ -108,6 +107,7 @@ PANEL_HELP = {  # the "?" in each tool window's header
 }
 STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
 GUIDE_REACH_PX = 6  # a click this close to a guide line selects it
+BOX_EPS_UM = 0.0005  # half a database unit: a box edge drawn on a shape's edge contains it
 HIT_REACH_PX = 4  # a click this close to a shape still selects it (thin fingers, small parts)
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
 OPEN_FILTER = (
@@ -1110,8 +1110,8 @@ class MainWindow(QMainWindow):
                 hovered = None
         if hovered != self._hovered:
             self._hovered = hovered
-            region = dict(self.view.node_regions).get(hovered) if hovered else None
-            self.canvas.show_hover(region)
+            geometry = dict(self.view.node_regions).get(hovered) if hovered else None
+            self.canvas.show_hover(geometry)
 
     def _view_double_clicked(self, view: ComponentView, x: float, y: float) -> None:
         """Double-clicking a placed component opens it in a tab (unless a tool uses it)."""
@@ -1155,17 +1155,17 @@ class MainWindow(QMainWindow):
     def _hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
         if self.implementation_hidden(view):
             return None  # its shapes are not shown
-        hit = self._region_hit(view, probe(x, y)) or self._guide_hit(view, x, y)
+        hit = self._region_hit(view, x, y) or self._guide_hit(view, x, y)
         if hit is None:  # nothing right under it: the nearest within a few pixels
             reach = HIT_REACH_PX / view.canvas.pixels_per_um()
-            hit = self._region_hit(view, probe(x, y, reach))
+            hit = self._region_hit(view, x, y, reach)
         return hit
 
     @staticmethod
-    def _region_hit(view: ComponentView, at: kdb.Region) -> NodePath | None:
-        """The topmost shape touching ``at``."""
+    def _region_hit(view: ComponentView, x: float, y: float, reach: float = 0.0) -> NodePath | None:
+        """The topmost shape within ``reach`` µm of ``(x, y)``."""
         return next(
-            (p for p, region in reversed(view.node_regions) if not (region & at).is_empty()),
+            (p for p, geometry in reversed(view.node_regions) if geometry.touches(x, y, reach)),
             None,
         )
 
@@ -1186,17 +1186,17 @@ class MainWindow(QMainWindow):
         """
         found = self._hit(self.view, x, y)
         if found is None and self._hovered is not None:
-            region = dict(self.view.node_regions).get(self._hovered)
-            if region is not None and region.bbox().contains(kdb.Point(to_dbu(x), to_dbu(y))):
+            geometry = dict(self.view.node_regions).get(self._hovered)
+            box = geometry.bbox() if geometry is not None else None
+            if box is not None and _box_contains(box, x, y):
                 return self._hovered
         return found
 
     def on_selection(self, x: float, y: float) -> bool:
         """Whether ``(x, y)`` lies on one of the selected shapes."""
-        at = probe(x, y)
         for path in self.selection:
             geometry = self.document.results.highlight([path])
-            if geometry and any(not (r & at).is_empty() for r in geometry.layers.values()):
+            if geometry is not None and geometry.touches(x, y):
                 return True
         return False
 
@@ -1204,21 +1204,18 @@ class MainWindow(QMainWindow):
         """Select the top-level shapes lying entirely inside a box."""
         if self.implementation_hidden():
             return
-        box = kdb.Box(
-            *(round(v * 1000) for v in (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
-        )
+        box = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
         inside = [
             p
-            for p, region in self.view.node_regions
-            if not region.is_empty()
-            and box.contains(region.bbox().p1)
-            and box.contains(region.bbox().p2)
+            for p, geometry in self.view.node_regions
+            if (b := geometry.bbox()) is not None
+            and _box_contains(box, b[0], b[1])
+            and _box_contains(box, b[2], b[3])
         ]
-        dbox = box.to_dtype(0.001)
         inside += [  # guides draw nothing: they are inside when both ends are
             path[:1]
             for path, _name, start, end in self.view.guides
-            if dbox.contains(kdb.DPoint(*start)) and dbox.contains(kdb.DPoint(*end))
+            if _box_contains(box, *start) and _box_contains(box, *end)
         ]
         paths = list(dict.fromkeys([*self.selection, *inside])) if additive else inside
         self.tree.select_paths(paths)
@@ -1522,6 +1519,13 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+
+def _box_contains(box: tuple[float, float, float, float], x: float, y: float) -> bool:
+    """``(x, y)`` lies in ``(left, bottom, right, top)``, to within half a database unit."""
+    x0, y0, x1, y1 = box
+    eps = BOX_EPS_UM
+    return x0 - eps <= x <= x1 + eps and y0 - eps <= y <= y1 + eps
 
 
 def _distance_to_segment(p, a, b) -> float:

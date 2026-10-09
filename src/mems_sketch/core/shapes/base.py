@@ -12,7 +12,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import klayout.db as kdb
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from mems_sketch.core.expressions import evaluate
@@ -22,6 +21,7 @@ if TYPE_CHECKING:
     from mems_sketch.core.component import Component, Geometry
     from mems_sketch.core.shapes.points import NodePoints
     from mems_sketch.core.shapes.registry import Shape
+    from mems_sketch.core.transform import Transform
 
 Value = float | str  # a number or an expression
 Point = tuple[float, float]
@@ -154,7 +154,7 @@ class Node(BaseModel):
         """Fields changed by a move: ``x`` and ``y`` move one coordinate, ``inner`` a child list."""
         return {field: inner(getattr(self, field)) for field in self.child_fields}
 
-    def placement(self, variables: dict[str, float]) -> kdb.DCplxTrans | None:
+    def placement(self, variables: dict[str, float]) -> Transform | None:
         """The transform a ``placed`` kind applies to its content, in µm."""
         return None
 

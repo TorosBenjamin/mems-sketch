@@ -40,6 +40,33 @@ def test_importing_the_backend_loads_no_gui():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+# The geometry backend: the only code that may use a geometry library's types.
+# Everything else (the GUI, editing, storage, the command line) goes through
+# Geometry's methods and plain values (Transform, µm tuples), so that the C++
+# engine can replace the backend underneath it (core-architecture.md, step 1).
+GEOMETRY_LIBRARIES = ("klayout",)
+OUTSIDE_THE_BACKEND = ("gui", "editing", "storage", "cli.py")
+
+
+def test_only_the_backend_uses_a_geometry_library():
+    offenders = []
+    for path in PACKAGE.rglob("*.py"):
+        if path.relative_to(PACKAGE).parts[0] not in OUTSIDE_THE_BACKEND:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(), str(path))):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module]
+            offenders += [
+                f"{path.relative_to(PACKAGE)}: {n}"
+                for n in names
+                if n.startswith(GEOMETRY_LIBRARIES)
+            ]
+    assert offenders == []
+
+
 KINDS_DIR = PACKAGE / "core" / "shapes" / "kinds"
 # Checks that are about what one kind means, not a switch over every kind:
 # "is this a component reference?" may be asked anywhere, and turning a

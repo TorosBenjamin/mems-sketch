@@ -6,15 +6,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import klayout.db as kdb
-
 from mems_sketch.core.component import DBU_UM, Geometry, to_dbu
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes.base import Point, RenderContext
-from mems_sketch.core.shapes.geometry import apply_transform, to_ictrans
+from mems_sketch.core.shapes.geometry import apply_transform
 from mems_sketch.core.shapes.modifiers import apply_stack
 from mems_sketch.core.shapes.points import NodePoints, own_strings, point_dependencies, point_values
 from mems_sketch.core.shapes.tree import NodePath
+from mems_sketch.core.transform import IDENTITY, Transform
 
 if TYPE_CHECKING:
     from mems_sketch.core.component import Component
@@ -32,8 +31,8 @@ class NodeRecord:
 
     geometry: Geometry
     points: NodePoints
-    inner: kdb.DCplxTrans
-    shift: kdb.DCplxTrans
+    inner: Transform
+    shift: Transform
 
 
 class Evaluator:
@@ -136,12 +135,10 @@ class Evaluator:
         )
         label = shape.name or shape.kind
         points = NodePoints(label, geometry, declared or {})
-        shift = kdb.DCplxTrans()
+        shift = IDENTITY
         if shape.align is not None:
             shift = self._alignment(shape, points, first, scope)
-            moved = Geometry()
-            moved.merge(geometry, to_ictrans(shift))
-            geometry = moved
+            geometry = geometry.transformed(shift)
             points = NodePoints(
                 label, geometry, {k: apply_transform(shift, p) for k, p in points.declared.items()}
             )
@@ -156,7 +153,7 @@ class Evaluator:
         own: NodePoints,
         variables: dict[str, float],
         scope: Mapping[str, NodePoints],
-    ) -> kdb.DCplxTrans:
+    ) -> Transform:
         align = shape.align
         node, _, point = align.to.partition(".")
         if node not in scope:
@@ -170,7 +167,7 @@ class Evaluator:
         # Snap the move to the database grid so geometry and points agree.
         move_x = to_dbu(target_x + dx - x) * DBU_UM
         move_y = to_dbu(target_y + dy - y) * DBU_UM
-        return kdb.DCplxTrans(move_x, move_y)
+        return Transform(move_x, move_y)
 
     def _render_once(
         self,
@@ -185,15 +182,15 @@ class Evaluator:
         return shape.render(RenderContext(v, scope, self.lookup, render_lists))
 
 
-def transform_of(shape: Shape, v: dict[str, float]) -> kdb.DCplxTrans:
+def transform_of(shape: Shape, v: dict[str, float]) -> Transform:
     """The placement a node applies to its content, in µm (identity if it has none)."""
     transform = shape.placement(v)
-    return kdb.DCplxTrans() if transform is None else transform
+    return IDENTITY if transform is None else transform
 
 
-def frame_of(record: Mapping[NodePath, NodeRecord], path: NodePath) -> kdb.DCplxTrans:
+def frame_of(record: Mapping[NodePath, NodeRecord], path: NodePath) -> Transform:
     """Maps the frame of the list holding ``path`` into the component's frame."""
-    transform = kdb.DCplxTrans()
+    transform = IDENTITY
     for depth in range(1, len(path)):
         transform = transform * record[path[:depth]].inner
     return transform

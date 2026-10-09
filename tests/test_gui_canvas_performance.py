@@ -46,7 +46,7 @@ def test_the_geometry_and_overlays_are_drawn_from_a_cache(canvas):
     geometry.layers["device"] = plate_with_holes()
     canvas.show_geometry(geometry, {"device": QColor("#4c78a8")}, {})
     canvas.show_overlay(geometry, [])
-    canvas.show_hover(geometry.layers["device"])
+    canvas.show_hover(geometry)
     canvas.show_drag_preview(geometry, {"device": QColor("#4c78a8")})
     items = [
         *canvas._layer_items.values(),
@@ -58,7 +58,9 @@ def test_the_geometry_and_overlays_are_drawn_from_a_cache(canvas):
 
 
 def test_the_hover_outline_is_the_outer_outline_only(canvas):
-    canvas.show_hover(plate_with_holes())
+    geometry = Geometry()
+    geometry.layers["device"] = plate_with_holes()
+    canvas.show_hover(geometry)
     assert subpaths(canvas._hover_item.path()) == 1  # the 100 holes are left out
 
 
@@ -178,7 +180,7 @@ def test_shape_outlines_are_one_pixel_wide(canvas):
     colors = {"device": QColor("#4c78a8")}
     canvas.show_geometry(geometry, colors, {})
     canvas.show_overlay(geometry, [])
-    canvas.show_hover(geometry.layers["device"])
+    canvas.show_hover(geometry)
     canvas.show_drag_preview(geometry, colors)
     items = [
         *canvas._layer_items.values(),

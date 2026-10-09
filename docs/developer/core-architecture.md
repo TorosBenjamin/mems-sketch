@@ -340,6 +340,36 @@ Shape kinds keep the rule `tests/test_architecture.py` enforces today:
 kind-specific behaviour lives in its own file, and nothing else switches on
 a kind.
 
+### Scheduling builds
+
+The engine, not the GUI, decides what is built and when (requirements
+QS-7 to QS-11).
+
+- **A dependency graph** from every value to what reads it: parameters and
+  process constants to expressions, expressions to shapes, shapes to the
+  points and alignments that use them, and through `layer_map` from layer
+  to layer. A change marks only its dependents as stale. The same graph
+  answers "what does this value affect?" for the editor without building
+  anything (EDT-8).
+- **A build queue with priorities:** the value actually chosen first, then a
+  drag's full result, then speculative builds. A newer request for the same
+  component supersedes older ones.
+- **Cancelling:** every build carries a cancel flag, checked between nodes
+  and passed into long OCC operations as a progress indicator
+  (`Message_ProgressRange`), so a superseded boolean stops early. A cancelled
+  build leaves the cache as it was.
+- **Threads:** one pool, sized by the settings (QS-11). Layers of one build
+  run in parallel. Speculative builds run on the lowest priority and only
+  while the machine has idle cores (system load, not just the pool's), and
+  are dropped when that changes.
+- **A cost model:** the cache records how long each node took to build.
+  Before a speculative build, the engine adds up the recorded times of the
+  nodes that would be rebuilt (the stale set from the graph) and skips the
+  build if it is above the limit. Nodes never built before count as
+  expensive.
+- **The cache** is bounded by memory, least recently used first, with
+  speculative results evicted before anything that was actually shown.
+
 ## Code layout
 
 ```

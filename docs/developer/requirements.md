@@ -305,6 +305,14 @@ behaviours every frontend must keep.
 - **EDT-7** (Must, changes) **Snapping in the editor** (to points and to a
   grid) is a convenience of the editor, set by the user. It is separate
   from the geometry's precision and from an export's grid.
+- **EDT-8** (Should, new) **What a value affects:** selecting or hovering a
+  parameter (or a process constant, or a shape's value) highlights everything
+  that depends on it: shapes, points, alignments and other parameters,
+  directly or through other values. It comes from the dependency graph
+  (QS-7), so it is shown without building anything.
+- **EDT-9** (Could, new) **The change a value makes:** while a value is
+  dragged or tried, the canvas can show the geometric difference from where
+  it started (material added and removed, as in the History panel, HIS-2).
 
 ### Rule checks
 
@@ -457,6 +465,40 @@ The numbers are proposals until the open questions are answered.
   rebuilds only what depends on it.
 - **QS-6** (Should, new) A component placed or arrayed many times is **built
   once** and instanced, unless its copies differ (MOD-2).
+- **QS-7** (Must, new) **Only what depends on a change is rebuilt,** down to
+  single shapes, not whole components: the dependencies go through
+  expressions, points, alignments, modifiers and `layer_map`. Shapes that do
+  not read the changed value, and layers it does not reach, cost nothing.
+- **QS-8** (Must, new) **The editor never waits for a build.** Builds run in
+  the background; the canvas shows the last finished result and says when a
+  newer one is on its way. A newer value cancels a build that is no longer
+  needed, inside long operations too.
+- **QS-9** (Should, new) **A cheaper result while dragging:** during a drag the
+  canvas may show instances without merging them and skip the rule check.
+  The full result, rule check included, follows when the drag ends.
+- **QS-10** (Could, new) **Speculative builds:** while a value is being
+  changed, values it is likely to take next are built ahead in the
+  background (for a whole-number parameter such as a tooth count, the
+  neighbouring values), so that moving to one of them is a cache hit. They
+  never get in the way:
+  - **Settings:** off, or how far ahead (e.g. off / 1 / 2 / 4 neighbours
+    each way), and the most threads and memory they may use (QS-11).
+  - **Only with spare capacity:** they run at the lowest priority and only
+    while cores are idle, measured on the machine as a whole, so other
+    programs are not slowed. They stop as soon as the load rises.
+  - **Only when affordable:** a speculative build is not started when its
+    expected cost is above a limit. The cost is estimated from how long the
+    same nodes took to build before (recorded with the cache) and from how
+    much depends on the value (QS-7). Large rebuilds are left to the real
+    change.
+  - **Never ahead of real work:** a build for the value actually chosen
+    always comes first and cancels speculative ones that are in its way.
+  - **Bounded memory:** speculative results are the first to be evicted
+    from the cache.
+- **QS-11** (Should, new) **Performance settings:** the number of threads
+  builds may use, the cache's memory limit, and the speculative builds'
+  settings (QS-10), in the editor's settings with sensible defaults from the
+  machine (number of cores, memory).
 
 ### Robustness
 

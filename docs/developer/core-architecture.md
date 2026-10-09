@@ -132,7 +132,8 @@ class Region {
   static Region polygon(std::span<const Point> points);
   static Region circle(Point centre, double r);
   static Region arc(Point centre, double r_in, double r_out, double from_deg, double to_deg);
-  static Region path(std::span<const Point> points, double width, PathEnds ends);
+  static Region path(const Wire& centreline, const Width& width, PathEnds ends);
+  static Region polygon(const Wire& outline);  // lines, arcs and splines
 
   Region operator|(const Region&) const;  // union
   Region operator-(const Region&) const;  // subtract
@@ -143,6 +144,17 @@ class Region {
   Region transformed(const Transform&) const;                    // shares geometry
   Box bbox() const;
   std::vector<Corner> corners() const;  // vertices where edges meet at an angle
+  Properties properties() const;        // area, perimeter, centroid, second moments
+  std::vector<Point> points(PointKind) const;  // arc centres, edge midpoints, ...
+};
+
+// A centreline or outline: straight, arc and spline segments.
+class Wire {
+ public:
+  explicit Wire(Point start);
+  Wire& line_to(Point p);
+  Wire& arc_to(Point p, double radius);      // or tangent to the previous segment
+  Wire& spline_through(std::span<const Point> points);
 };
 
 // A reusable piece of layout: regions per layer plus placed cells.
@@ -169,6 +181,12 @@ void write_step(const Layout&, CellRef top, const path&);
 void write_brep(const Layout&, CellRef top, const path&);
 std::vector<Violation> check(const Layout&, CellRef top, const RuleSet&, GridOptions);
 Mesh mesh(const Layout&, CellRef top, const MeshSettings&);     // gmsh, optional
+
+// Measurements and sections (requirements MEA, XS, DRC-5).
+Distance distance(const Region&, const Region&);   // exact minimum, with the two closest points
+double overlap_length(const Region&, const Region&);
+std::vector<Profile> section(const Layout&, CellRef top, Point from, Point to);  // through the stack
+DensityMap density(const Region&, Box area, double cell);
 
 }  // namespace mgeom
 ```

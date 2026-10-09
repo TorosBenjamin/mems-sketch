@@ -38,6 +38,13 @@ tested against the latest `development`.
    pytest -q                    # GUI tests run headless (offscreen); no windows open
    ```
 
+   If you changed the C++ geometry library (`src/geom/`), also build and run
+   its tests (setup in [`src/geom/README.md`](src/geom/README.md)):
+
+   ```bash
+   cmake --build build/geom && ctest --test-dir build/geom --output-on-failure
+   ```
+
 4. **Push and open a pull request into `development`:**
 
    ```bash

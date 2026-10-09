@@ -50,6 +50,7 @@ but should not have to program. Scripting is there for those who want it.
 | W6 | Export geometry or a mesh for simulation | [Export](#export), [Meshing](#meshing) |
 | W7 | Track changes and work together through git | [History](#history), [Projects](#projects-and-files) |
 | W8 | Automate: parameter sweeps, generated designs, CI | [Command line and scripting](#command-line-and-scripting) |
+| W9 | Evaluate a design: dimensions, gaps, mass and inertia, cross-sections | [Measurements](#measurements), [Cross-sections](#cross-sections) |
 
 ## Functional requirements
 
@@ -93,6 +94,12 @@ but should not have to program. Scripting is there for those who want it.
   It is used by 3D output ([MSH](#meshing), [VIEW](#3d-view)) and ignored by
   2D output.
 - **PRC-3** (Later, new) Rules between layers (enclosure, overlap).
+- **PRC-4** (Should, new) Each layer can have a **material density**, so
+  measurements give mass ([MEA-3](#measurements)).
+- **PRC-5** (Could, new) Each layer can have a **sidewall angle**: vertical
+  by default, e.g. 54.74° for KOH etching of (100) silicon. 3D output, cross-
+  sections and meshes use it. It describes the shape of the walls only;
+  simulating the etch stays out of scope.
 
 ### Components and parameters
 
@@ -175,6 +182,17 @@ but should not have to program. Scripting is there for those who want it.
 - **SHP-8** (Must, changes) Circles, arcs, round path ends, fillets, rounded
   corners and the round joins of offsets are **exact curves**, not polygons
   ([QP-2](#precision)). Today they are polygons within 5 nm.
+- **SHP-9** (Should, new) **Paths along curves:** a path's centreline can
+  have arc segments (a given radius, or tangent to the previous segment) as
+  well as straight ones, with an exact width. Folded springs get true round
+  turns.
+- **SHP-10** (Should, new) **Variable width:** a path's width can change
+  along it (linearly, or as an expression of the position along it), for
+  tapered beams, tapered comb fingers and stress-relief shapes at flexure
+  roots.
+- **SHP-11** (Could, new) **Splines:** a polygon or path edge can be a smooth
+  curve through given points (or with control points), for free-form
+  outlines such as optimised spring profiles.
 
 ### Modifiers
 
@@ -217,6 +235,51 @@ but should not have to program. Scripting is there for those who want it.
   own position then only matters through rotation and mirroring.
 - **PNT-4** (Must, exists) Removing an alignment leaves the shape where it
   is.
+- **PNT-5** (Could, new) **Points of the exact geometry** as well as of the
+  bounding box: the centre of an arc, the midpoint of an edge, the
+  intersection of two edges, the point where a line is tangent to a curve.
+  They can be aligned to and used in expressions, and they follow the design
+  like other points.
+
+### Measurements
+
+Measuring the design, on the exact geometry, in three places: a tool on the
+canvas, a panel, and expressions.
+
+- **MEA-1** (Must, exists) The **Measure** tool gives the distance, dx and dy
+  between two points it snaps to, and **Measure angle** the angle between
+  two lines. Rulers stay until cleared.
+- **MEA-2** (Should, new) The Measure tool also measures **between shapes**:
+  the exact minimum distance between two shapes (or two edges) on a layer,
+  the length of an edge, and the radius and centre of an arc. A measurement
+  can be kept on the canvas as a ruler that follows the design when it
+  changes.
+- **MEA-3** (Should, new) An **information panel** shows the properties of the
+  selection, per layer: area, perimeter, bounding box, centroid and second
+  moments of area; with the layers' thickness (PRC-2) and density (PRC-4),
+  also volume, mass and moments of inertia. For several selected shapes it
+  shows each and their total.
+- **MEA-4** (Should, new) **Measurements in expressions:** a shape's
+  measurements can be used like its points, e.g. `mass.area`,
+  `mass.centroid.x`, `mass.mass`, `mass.inertia_z`, and functions such as
+  `gap(finger, stator)` (minimum distance) and `overlap(rotor, stator)`
+  (length or area of overlap). A design can then be driven by them: a
+  counterweight sized so that the centroid sits on the pivot. Dependency
+  order and loop errors apply as for other values (EXP-4).
+- **MEA-5** (Could, new) Measurements are available from the command line and
+  the Python API (`mems-sketch-cli info --measure`), for sweeps and reports.
+
+### Cross-sections
+
+- **XS-1** (Could, new) **A cross-section** of the layer stack along a line
+  drawn on the canvas: the exact profile of each layer (with its thickness,
+  z position and sidewall angle), shown in a view of its own and updated as
+  the design changes.
+- **XS-2** (Could, new) A cross-section line is saved with the component and
+  can be aligned like a guide, so it stays where it matters (e.g. through a
+  comb's fingers) when the design changes.
+- **XS-3** (Could, new) Cross-sections can be exported as a drawing (SVG,
+  DXF) for documentation and reviews.
 
 ### Editing
 
@@ -255,6 +318,9 @@ behaviours every frontend must keep.
   tolerance), because that is what the fab checks.
 - **DRC-4** (Must, exists) From the command line, `check` exits with status 1
   on violations and 2 on errors, so it can gate CI.
+- **DRC-5** (Could, new) **Pattern density** per layer: the fraction of area
+  covered, overall and as a map over a grid, with optional minimum and
+  maximum limits as a rule. Etch rates (e.g. in DRIE) depend on it.
 
 ### Import
 
@@ -267,6 +333,13 @@ behaviours every frontend must keep.
 - **IMP-4** (Must, exists) The project keeps a **copy** of the imported file.
   **Re-import** replaces it and every placement follows. An imported
   component is placed, arrayed, aligned and rounded like any other.
+- **IMP-5** (Could, new) **DXF with true curves:** arcs and circles in a DXF
+  file are imported as exact curves, not polygons.
+- **IMP-6** (Later, new) **STEP and IGES import** of 3D parts (a package, a
+  mechanical part) to check how a design fits with them, in the 3D view.
+- **IMP-7** (Could, new) Imported geometry that is slightly broken (tiny
+  gaps, self-touching outlines) is **repaired** where that is unambiguous, and
+  what was repaired is reported.
 
 ### Export
 
@@ -454,6 +527,13 @@ The numbers are proposals until the open questions are answered.
   for a 5,000-hole plate in the benchmark. The 3D solids that meshing needs
   (MSH-1) make it cheap to add later. Whether it is needed depends on the
   solvers to support (open question).
+
+- **S-1: No 2D constraint solver.** Open CASCADE does not have one (CAD
+  tools that offer "parallel", "tangent", "distance 5 µm" constraints use a
+  separate solver). Alignments, points and expressions already cover what
+  layouts need: parts placed relative to each other and sizes that follow
+  parameters, evaluated in a fixed order rather than solved. If a real need
+  shows up, a solver can be added later as its own component.
 
 ## Open questions
 

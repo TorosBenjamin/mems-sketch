@@ -5,6 +5,7 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -102,10 +103,6 @@ TopoDS_Shape unified(const TopoDS_Shape& shape) {
     return compound_of(faces_of(unify.Shape()));
 }
 
-// Open CASCADE intersects separate arguments with each other, but not the
-// faces inside one compound. So faces that may overlap (a union) go in one
-// by one; a region's own faces never overlap, and as one compound they are
-// several times faster (subtract, intersect).
 NCollection_List<TopoDS_Shape> each(const std::vector<TopoDS_Face>& faces) {
     NCollection_List<TopoDS_Shape> list;
     for (const auto& f : faces) list.Append(f);
@@ -118,10 +115,27 @@ NCollection_List<TopoDS_Shape> one(const TopoDS_Shape& shape) {
     return list;
 }
 
+// Independent copies of shapes for a boolean. Placed copies share their
+// geometry (locations of one shape), which keeps instances cheap, but Open
+// CASCADE's booleans and face merging are many times slower on shared
+// geometry: cutting 1,024 placed holes took 3.1 s, and 0.4 s after copying
+// them (the copy: 0.04 s).
+NCollection_List<TopoDS_Shape> copied(const NCollection_List<TopoDS_Shape>& shapes) {
+    NCollection_List<TopoDS_Shape> result;
+    for (const TopoDS_Shape& s : shapes) result.Append(BRepBuilderAPI_Copy(s).Shape());
+    return result;
+}
+
+// Open CASCADE intersects separate arguments with each other, but not the
+// faces inside one compound. So faces that may overlap (a union) go in one
+// by one (each); a region's own faces never overlap and go in as one
+// compound (one: subtract, intersect).
 template <class Op>
-TopoDS_Shape run_boolean(const NCollection_List<TopoDS_Shape>& args,
-                         const NCollection_List<TopoDS_Shape>& tools, const char* name) {
+TopoDS_Shape run_boolean(const NCollection_List<TopoDS_Shape>& shared_args,
+                         const NCollection_List<TopoDS_Shape>& shared_tools, const char* name) {
     try {
+        const NCollection_List<TopoDS_Shape> args = copied(shared_args);
+        const NCollection_List<TopoDS_Shape> tools = copied(shared_tools);
         Op op;
         op.SetArguments(args);
         op.SetTools(tools);

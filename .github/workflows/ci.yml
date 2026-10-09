@@ -37,6 +37,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build doctest-dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python packages for the bindings
+        run: python -m pip install nanobind numpy pytest
       - name: Open CASCADE from the cache
         uses: actions/cache@v4
         with:
@@ -47,6 +52,7 @@ jobs:
       - name: Build and test mgeom
         run: |
           cmake -S src/geom -B build/geom -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$PWD/build/deps/occt-8_0_1"
+            -DCMAKE_PREFIX_PATH="$PWD/build/deps/occt-8_0_1" \
+            -DMGEOM_BUILD_PYTHON=ON -DPython_EXECUTABLE="$(which python)"
           cmake --build build/geom
           ctest --test-dir build/geom --output-on-failure

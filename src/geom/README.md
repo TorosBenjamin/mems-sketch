@@ -16,11 +16,19 @@ Needs a C++20 compiler, CMake 3.24 or later, Ninja and doctest
 
 ```bash
 src/geom/scripts/build-occt.sh          # once: Open CASCADE into build/deps/ (~13 min on 4 cores)
+python3 -m venv build/pyenv             # once: a Python for the bindings
+build/pyenv/bin/pip install nanobind numpy pytest
 cmake -S src/geom -B build/geom -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$PWD/build/deps/occt-8_0_1"
+  -DCMAKE_PREFIX_PATH="$PWD/build/deps/occt-8_0_1" \
+  -DMGEOM_BUILD_PYTHON=ON -DPython_EXECUTABLE="$PWD/build/pyenv/bin/python"
 cmake --build build/geom
 ctest --test-dir build/geom --output-on-failure
 ```
+
+Without `-DMGEOM_BUILD_PYTHON=ON` only the C++ library and its tests are
+built. With it, the build also makes the Python module `_geom` and its type
+stubs (`_geom.pyi`) in `build/geom/`, and ctest also runs the Python tests in
+`tests/python/`.
 
 Open CASCADE is built from source, as static libraries of only the modules
 the library uses. CI caches the build. Ubuntu's own packages (7.6.3) cannot
@@ -39,6 +47,34 @@ headers include.
 | `Region` editing | `offset(distance, join)` (miter, round, bevel; grows, shrinks, splits and merges), `filleted(convex, concave)`, `rounded(corners)` (chosen corners rounded or chamfered), `corners()` |
 | `mgeom/cell.hpp` | `Cell`: regions per layer plus placed cells, arrays and polar arrays; placing never copies geometry; `flat(layer)` merges and caches |
 | `mgeom/measure.hpp` | `properties` (area, perimeter, centroid, second moments of area), `mass_properties` (volume, mass, rotational inertia for a thickness and density), `distance` (exact minimum, with the closest points), `overlap_area`, `projected_overlap`, `edges` (kind, length, ends, midpoint; centre and radius of arcs) |
+
+## From Python
+
+The module `_geom` ([bindings/geom.cpp](bindings/geom.cpp)) has the same API
+as plain Python values: points are `(x, y)` tuples (lists and NumPy rows are
+accepted), polygons can be given as `(n, 2)` arrays, outlines come back as
+`(hull, [holes])` tuples of `(n, 2)` NumPy arrays, and `GeometryError` is a
+`ValueError`. Segment and builder methods return the object itself, so calls
+chain. Booleans, offsets, fillets, paths, outlines and `flat` release the GIL,
+so a GUI thread keeps running while they work.
+
+```python
+import _geom as g
+
+slot = g.Wire((0, -1)).line_to((10, -1)).arc_to((10, 1), 1).line_to((0, 1)).arc_to((0, -1), 1)
+hole = g.CellBuilder("hole").add("etch", g.Region.polygon(slot)).build()
+plate = (
+    g.CellBuilder("plate")
+    .add("device", g.Region.rect(0, 0, 200, 100))
+    .place_array(hole, 10, 20, 15, 5, g.Transform(dx=20, dy=2))
+    .build()
+)
+for hull, holes in plate.flat("etch").outlines(chord=0.005):
+    ...
+```
+
+It is built in `build/geom/` for now. Packaging it as `mems_sketch._geom`
+(scikit-build-core, wheels) is a later step of the migration.
 
 Lengths are in µm. Inside, geometry is kept in nm, so Open CASCADE's fixed
 point tolerance (10⁻⁷ model units) is 10⁻¹⁰ µm. The tests check that a

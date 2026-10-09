@@ -65,12 +65,16 @@ mems-sketch engine built on it.
                             │    offsets, fillets, layer stack, outputs
                             │       │
                             │       ▼
-                            │  Open CASCADE (OCC) · KLayout's C++ library · gmsh
+                            │  Open CASCADE (OCC) · gmsh (optional)
 ```
+
+File formats are not part of either C++ layer. They are **exporter plugins in
+Python** (see [Export modules](#export-modules)), built on what the library
+provides.
 
 | Layer | Knows about | Never knows about |
 |---|---|---|
-| **Geometry library** (`mgeom`, working name) | Layers, faces with exact lines and arcs, cells, instances and arrays, rigid transforms, a layer stack, rules, outputs | Projects, YAML, parameters, expressions, shape kinds, alignment points |
+| **Geometry library** (`mgeom`, working name) | Layers, faces with exact lines and arcs, cells, instances and arrays, rigid transforms, a layer stack, outlines, snapping, solids | Projects, YAML, parameters, expressions, shape kinds, alignment points, file formats other than OCC's own |
 | **Engine** | The project model, expressions, shape kinds, modifiers, alignments, fingerprints, what to rebuild | OCC: it only calls the library |
 | **Python** | The GUI, files, git, editing, undo/redo | OCC and the library's internals: it sees plain data |
 
@@ -104,9 +108,10 @@ boundary.
 | The project model: pydantic classes are still the one definition of the file format | Engine: shape kinds, modifiers, alignments and points (`core/shapes/`) |
 | Storage: project folders, documents, git | Engine: the compiler, fingerprints, cache, evaluation order (`core/compiler.py`) |
 | `EditSession`: commands, transactions, undo/redo | Library: geometry, booleans, offsets, fillets, extrusion |
-| History diffs in words (`core/diff.py`) | Library: rule checks (`process/rules.py`), on exported geometry |
-| The CLI and the Python scripting API | Library: exports that need geometry: GDS/OASIS/DXF, STEP, BREP, mesh |
-| Exporter plugins that only need data (JSON, XML, `.mat`) | Library: reading GDS/OASIS cells (imported layouts) |
+| History diffs in words (`core/diff.py`) | Library: outlines at a chord tolerance, snapping to a grid with its report |
+| The CLI and the Python scripting API | Library: solids, triangles, and OCC's own writers (BREP, STEP) |
+| All exporter plugins, GDS/OASIS/DXF included, and rule checks (KLayout's Python package, on the snapped outlines) | Library: meshing (gmsh, optional) |
+| Reading GDS/OASIS cells for imported layouts (KLayout's Python package) | |
 
 Neither C++ layer imports Python or Qt. Like the Python backend today, both
 can be tested and used without a GUI.
@@ -180,13 +185,13 @@ class Layout {  // cells, layers and a process stack
   void set_stack(LayerStack);   // per layer: z and thickness
 };
 
-// Outputs: none of them changes the layout.
-Outlines outlines(const Cell&, LayerId, double chord);          // rings for drawing
+// Outputs: none of them changes the layout. File formats are exporter
+// plugins built on these (see Export modules).
+Outlines outlines(const Cell&, LayerId, double chord);          // rings for drawing and exporters
+Snapped snapped(const Cell&, LayerId, Grid grid, double chord); // integer rings + SnapReport
 Triangles triangles(const Cell&, LayerId, double chord);        // 2D or extruded
-SnapReport write_gds(const Layout&, CellRef top, const path&, GridOptions);  // also OASIS, DXF
-void write_step(const Layout&, CellRef top, const path&);
+void write_step(const Layout&, CellRef top, const path&);       // OCC's own writers
 void write_brep(const Layout&, CellRef top, const path&);
-std::vector<Violation> check(const Layout&, CellRef top, const RuleSet&, GridOptions);
 Mesh mesh(const Layout&, CellRef top, const MeshSettings&);     // gmsh, optional
 
 // Measurements and sections (requirements MEA, XS, DRC-5).
@@ -282,13 +287,45 @@ Every output chooses its own tolerance.
 
 | Output | How |
 |---|---|
-| Outlines | Per prototype at a chord tolerance (for the canvas, by zoom level), with the transforms of its instances. |
-| GDS, OASIS, DXF | Curves split at the export's chord tolerance (default 5 nm), snapped to the export's grid (default 1 nm) and merged per layer by KLayout's C++ library. Hierarchy is kept as cells and array references. |
-| Snapping report | Each export to a grid reports what snapping removed or changed: features collapsed below the grid, gaps opened or closed, widths changed by more than half a grid step. |
-| Rule checks | On the geometry as exported (by default the GDS grid), since that is what the fab checks. KLayout's C++ library, per layer, in parallel. |
+| Outlines | Per prototype at a chord tolerance (for the canvas, by zoom level, and for exporters), with the transforms of its instances. |
+| Snapped outlines | Curves split at a chord tolerance (default 5 nm), then snapped to a grid (default 1 nm) as integer coordinates, per prototype so the hierarchy survives. Used by every grid-based exporter (GDS, OASIS, DXF) and by rule checks. |
+| Snapping report | Comes with the snapped outlines: what snapping removed or changed, such as features collapsed below the grid, gaps opened or closed, widths changed by more than half a grid step. Computed once in the library, so no exporter has to get it right itself. |
+| Rule checks | On the snapped outlines, since that is what the fab checks. Run in Python with KLayout's package, per layer. |
 | STEP, BREP | Layers extruded through the layer stack into solids, exact curves kept. Writing STEP is slow for large designs (see [Measurements](#measurements)), so it is an export, never an interactive step. BREP is fast and is what the mesher reads. |
 | Mesh | gmsh, from the solids or the 2D faces. `MeshSettings` holds global and per-layer sizes, refinement regions and distances, and names for physical groups. Optional, because of gmsh's licence. |
 | Triangles | For a 3D view (`BRepMesh`), or a filled 2D view. |
+
+### Export modules
+
+**Every file format is a plugin**, and the library knows none of them except
+OCC's own BREP and STEP. This is how export already works, and it stays:
+
+- An exporter is a Python class with a `format_name`, a `file_extension` and
+  an `export(...)` method, found through the `mems_sketch.exporters`
+  entry-point group in `pyproject.toml` or registered at runtime
+  (`export/base.py`). A format can live in its own package; adding one needs
+  no C++ and no rebuild.
+- The built-in exporters are plugins like any other: GDS, OASIS and DXF
+  (with KLayout's Python package), JSON, XML and `.mat`, BREP and STEP (OCC's
+  writers through the bindings), and the mesh formats (gmsh, an optional
+  extra).
+- **Exporters take building blocks, not a format-specific API.** An exporter
+  receives an export context: the build (cells, placements and arrays, the
+  layer map with GDS numbers, the layer stack, points and parameter values)
+  and functions for outlines, snapped outlines with their report, solids and
+  triangles. It picks what it needs. A GDS exporter writes each prototype's
+  snapped outlines as a cell and each placement as a reference; a JSON
+  exporter flattens.
+- **Exporters declare their options:** whether they use a grid and a chord
+  tolerance, whether they keep the hierarchy, whether they need the layer
+  stack, plus their own (e.g. a GDS text-label layer). The export dialog
+  builds its form from the declaration and `mems-sketch-cli export` turns it
+  into flags, so neither has code for a particular format.
+- **Every export to a grid returns the snapping report** (requirements
+  OUT-3), which the GUI shows and the CLI prints.
+
+Keeping the C++ side free of file formats also keeps KLayout's C++ library
+out of the build; mems-sketch already depends on its Python package.
 
 ## The engine
 
@@ -311,17 +348,16 @@ build.points()  # declared alignment points, µm
 build.records()  # per node: frame, shift, bounding box, points
 build.outlines(layer, chord_um)  # rings for drawing, as NumPy arrays
 build.instances(layer)  # (prototype, transform) pairs for drawing
-build.check()  # rule violations
-build.export("gds", path, grid_um=0.001, chord_um=0.005)
-build.export("step", path)
+build.snapped(layer, grid_um=0.001, chord_um=0.005)  # integer rings + snapping report
 build.solids(chord_um)  # triangles per layer for a 3D view
 build.layout()  # the mgeom layout, for scripts that want the library itself
 ```
 
 Values cross the boundary as plain data: JSON or dicts in, NumPy arrays and
-small records out. The existing `Geometry` (KLayout regions) stays available
-in Python, made from `outlines` or an export, for code that has not moved
-yet.
+small records out. Exports go through the plugins (`export.export(project,
+path, format_name, ...)`), which read the build. The existing `Geometry`
+(KLayout regions) stays available in Python, made from `outlines` or
+`snapped`, for code that has not moved yet.
 
 ### Evaluation
 
@@ -393,7 +429,7 @@ src/
     src/
       occ/                OCC wrappers: faces, locations, offsets, fillets
       boolean/            booleans with the fast paths
-      out/                outlines, triangles, GDS via KLayout, STEP/BREP, rules, mesh
+      out/                outlines, snapping and its report, triangles, STEP/BREP, mesh
     bindings/             nanobind module mems_sketch._geom
     tests/                C++ unit tests of the library alone
   engine/                 the mems-sketch engine; uses only include/mgeom/
@@ -415,8 +451,8 @@ src/
   (replacing hatchling), and **nanobind** makes the two Python modules.
 - **OCC built from source** with only the modules above (CMake options such
   as `BUILD_MODULE_Visualization=OFF`, `BUILD_MODULE_ApplicationFramework=OFF`,
-  `BUILD_MODULE_Draw=OFF`), linked statically into `mgeom`. KLayout's
-  database library is linked the same way for GDS and rule checks. The
+  `BUILD_MODULE_Draw=OFF`), linked statically into `mgeom`. KLayout is used
+  only through its Python package, by the exporters and rule checks. The
   engine links no third-party geometry library.
 - **Prebuilt dependencies in CI.** OCC takes a long time to compile, so CI
   builds it once per version and platform and caches it. A contributor runs
@@ -461,10 +497,12 @@ test passing and updates this document.
    caching, the two targets and the dependency check, with modules that only
    report their version.
 3. **The library's regions and cells:** `Region` primitives, transforms,
-   `Cell` with instances and arrays, `flat`, outlines, and GDS output. Tested
-   alone, and usable from scripts through `mems_sketch._geom`.
+   `Cell` with instances and arrays, `flat`, outlines, the Python bindings,
+   and snapping with its report. Tested alone, and usable from scripts
+   through `mems_sketch._geom`. The GDS/OASIS/DXF exporter moves onto the
+   snapped outlines, keeping the hierarchy.
 4. **The library's operations:** booleans with the fast paths, offsets,
-   per-corner rounding, rule checks.
+   per-corner rounding.
 5. **Expressions and the model in the engine,** tested against
    `core/expressions.py` on every expression in the tests and examples.
 6. **Shape kinds and modifiers in the engine,** on the library. The

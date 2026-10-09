@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(MGEOM_BUILD_TESTS "Build the mgeom unit tests" ON)
+option(MGEOM_BUILD_PYTHON "Build the Python module _geom" OFF)
 
 # Open CASCADE built by scripts/build-occt.sh: only the modules a 2D/2.5D
 # geometry library needs, as static libraries. Pass its prefix as
@@ -39,6 +40,32 @@ endif()
 
 if(MGEOM_BUILD_TESTS)
     enable_testing()
+endif()
+
+# The Python module mems_sketch._geom (nanobind). Needs a Python with
+# nanobind installed; its tests also need NumPy and pytest.
+if(MGEOM_BUILD_PYTHON)
+    find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module)
+    execute_process(
+        COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+        OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT
+        COMMAND_ERROR_IS_FATAL ANY)
+    find_package(nanobind CONFIG REQUIRED)
+    nanobind_add_module(_geom NB_STATIC bindings/geom.cpp)
+    target_link_libraries(_geom PRIVATE mgeom)
+    target_compile_definitions(_geom PRIVATE MGEOM_VERSION="${PROJECT_VERSION}")
+    nanobind_add_stub(_geom_stub MODULE _geom OUTPUT _geom.pyi
+        PYTHON_PATH $<TARGET_FILE_DIR:_geom> DEPENDS _geom)
+    if(MGEOM_BUILD_TESTS)
+        add_test(NAME mgeom_python
+            COMMAND "${Python_EXECUTABLE}" -m pytest -q -p no:cacheprovider
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/python")
+        set_tests_properties(mgeom_python PROPERTIES
+            ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:_geom>")
+    endif()
+endif()
+
+if(MGEOM_BUILD_TESTS)
     find_package(doctest REQUIRED)
     add_executable(mgeom_tests
         tests/main.cpp

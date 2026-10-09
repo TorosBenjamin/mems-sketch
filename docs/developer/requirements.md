@@ -396,7 +396,7 @@ behaviours every frontend must keep.
 - **OUT-5** (Must, exists) Export a component's **geometry as data** (JSON,
   XML, `.mat`): polygons per layer with their holes, in µm, plus the
   component's points and parameter values.
-- **OUT-6** (Could, new) Export **STEP**: the layers extruded through the
+- **OUT-6** (Should, new) Export **STEP**: the layers extruded through the
   stack into solids, with exact curves. For simulation tools that import CAD
   and mesh it themselves, and for mechanical CAD (packaging, assemblies).
   See [decision X-1](#decisions).
@@ -421,8 +421,10 @@ behaviours every frontend must keep.
 - **MSH-4** (Should, new) Mesh regions and boundaries are **named** after
   layers and named shapes (physical groups), so a solver finds anchors and
   electrodes by name.
-- **MSH-5** (Should, new) Mesh formats for common solvers (TBD: the solvers
-  to support decide the formats).
+- **MSH-5** (Should, new) Mesh formats for **Ansys** first, the main solver
+  of the teams: formats Ansys Mechanical imports as an external model, such
+  as Abaqus `.inp` and Nastran `.bdf`, which gmsh writes. Other solvers'
+  formats are further exporter plugins (OUT-7).
 - **MSH-6** (Could, new) A **preview** of the mesh on the canvas, with element
   count and quality.
 
@@ -484,22 +486,32 @@ behaviours every frontend must keep.
 
 ### Performance and scale
 
-The numbers are proposals until the open questions are answered.
+Real designs are a few millimetres across at most, with up to a few hundred
+holes, though every kind of sensor has its own sizes and problems (see
+[Answered questions](#answered-questions)). The reference designs are about
+ten times larger than that, so the numbers hold with room to spare.
 
-- **QS-1** (Must) **Interactive rebuild** after a parameter change, measured
-  from the change to the redrawn canvas: within **TBD** (proposal: 100 ms)
-  for the example resonator, and within **TBD** (proposal: 300 ms) for the
-  reference designs in QS-2.
+- **QS-1** (Must) **Interactive rebuild:** dragging stays smooth, and the
+  correct result may follow a moment later.
+  - The canvas follows the mouse at its frame rate (the "Frame rate limit"
+    setting) and never waits for a build (QS-8).
+  - The full, correct result, rule check included, is drawn within 100 ms
+    of a change for the example resonator, and within 1 s for the reference
+    designs (QS-2).
+  - While a build runs, the canvas shows the last finished result, or a
+    cheaper one (QS-9).
 - **QS-2** (Must) **Reference designs** that every change is measured on, and
   that the performance tests build:
   - a perforated plate with 10,000 release holes;
   - a comb drive with 1,000 fingers;
   - the example resonator;
-  - TBD: a design typical of real use.
-- **QS-3** (Must) **Largest design:** TBD (proposal: a 20 mm × 20 mm die, and
-  10⁶ shapes after arrays are expanded).
-- **QS-4** (Should) **Exports** of the reference designs to GDS within TBD
-  (proposal: 5 s), and opening a project within TBD (proposal: 2 s).
+  - a plate of a few millimetres with a few hundred holes, as a typical
+    design; replaced by a real one when a design team provides it.
+- **QS-3** (Must) **Largest design:** a 10 mm × 10 mm die and 10⁵ shapes
+  after arrays are expanded (real designs: a few millimetres, a few hundred
+  holes).
+- **QS-4** (Should) **Exports** of the reference designs to GDS within 5 s,
+  and opening a project within 2 s.
 - **QS-5** (Must, exists) An unchanged component is **never rebuilt**; an edit
   rebuilds only what depends on it.
 - **QS-6** (Should, new) A component placed or arrayed many times is **built
@@ -514,7 +526,9 @@ The numbers are proposals until the open questions are answered.
   needed, inside long operations too.
 - **QS-9** (Should, new) **A cheaper result while dragging:** during a drag the
   canvas may show instances without merging them and skip the rule check.
-  The full result, rule check included, follows when the drag ends.
+  The full result, rule check included, follows when the drag ends. A
+  setting turns it off, next to "Draft quality while zooming and resizing"
+  (which only drops smoothing when drawing, not accuracy).
 - **QS-10** (Could, new) **Speculative builds:** while a value is being
   changed, values it is likely to take next are built ahead in the
   background (for a whole-number parameter such as a tooth count, the
@@ -601,14 +615,14 @@ The numbers are proposals until the open questions are answered.
   case of almost-touching geometry, an operation can use a fuzzy tolerance
   locally, inside the library.
 
-- **X-1: STEP is a Could, not a Must.** Production needs GDS or OASIS, and a
-  simulation that takes a mesh from mems-sketch does not need STEP. STEP
-  matters only for simulation tools that import CAD geometry and mesh it
-  themselves (which many do, to use their own meshing and refinement), and
-  for mechanical CAD. Exporting STEP is also slow for large designs: 41 s
-  for a 5,000-hole plate in the benchmark. The 3D solids that meshing needs
-  (MSH-1) make it cheap to add later. Whether it is needed depends on the
-  solvers to support (open question).
+- **X-1: STEP is a Should, not a Must.** Production needs GDS or OASIS, and
+  a simulation that takes a mesh from mems-sketch does not need STEP. But
+  the teams mainly use Ansys, which usually imports CAD geometry and meshes
+  it itself, so STEP is the most direct way into it. It was a Could while
+  STEP export looked slow (41 s for a 5,000-hole plate in the benchmark);
+  real designs have a few hundred holes, where it should take seconds at
+  most (it grew faster than the number of holes in the benchmark). The
+  3D solids that meshing needs (MSH-1) are the same ones STEP writes.
 
 - **S-1: No 2D constraint solver.** Open CASCADE does not have one (CAD
   tools that offer "parallel", "tangent", "distance 5 µm" constraints use a
@@ -644,17 +658,21 @@ The numbers are proposals until the open questions are answered.
   the library, so every grid-based format reports the same changes. Adding
   a format then needs no C++, and the backend does not link KLayout.
 
+## Answered questions
+
+1. **Designs** (QS-2, QS-3): the largest are a few millimetres across, with
+   up to a few hundred holes. Sensors differ a lot in size and problems, so
+   the reference designs stay about ten times larger than that.
+2. **Interactive budget** (QS-1): dragging should feel smooth, but the
+   correct result may take a moment to follow.
+3. **Solvers** (MSH-5, X-1): several teams with different tools, mainly
+   Ansys. Ansys comes first: STEP for its own meshing, and mesh formats it
+   imports.
+4. **Default export grid and chord tolerance** (OUT-2): 1 nm and 5 nm. Each
+   export can change them, so the defaults only need to be sensible.
+
 ## Open questions
 
 These set the TBD numbers above.
 
-1. **Designs:** what is a typical design, and the largest? Number of shapes,
-   holes or fingers, and die size (QS-2, QS-3).
-2. **Interactive budget:** how long may a rebuild take while a value is
-   dragged before it feels slow (QS-1)?
-3. **Solvers:** which simulation tools must the exports work with? Do they
-   take a mesh, or import geometry and mesh it themselves? This decides the
-   mesh formats (MSH-5) and whether STEP moves up (X-1).
-4. **Platforms** to support (QC-4).
-5. **Default export grid and chord tolerance:** are 1 nm and 5 nm right for
-   the fabs in use (OUT-2)?
+1. **Platforms** to support (QC-4).

@@ -67,6 +67,22 @@ def test_dragging_moves_the_shape_snapped_to_the_grid(window):
     assert window.document.undo_text().startswith("Move base")
 
 
+def test_a_shape_off_the_grid_lands_on_it(window):
+    doc = window.document
+    doc.nodes.add(rect("base", 0, 0, 100, 20))
+    window.canvas.zoom_to(window.canvas.content_rect())
+    step = window.canvas.grid_step()
+    doc.nodes.replace(
+        ((0, 0),), rect("base", 0.37 * step, 0.21 * step, 100.37 * step, 20.21 * step)
+    )
+    drag(window, (50 * step, 10 * step), (53.1 * step, 11.9 * step))
+    base = doc.node(((0, 0),))
+    # Not moved by whole steps (which would keep it off the grid): its corner is on it.
+    assert base.x0 / step == pytest.approx(round(base.x0 / step))
+    assert base.y0 / step == pytest.approx(round(base.y0 / step))
+    assert (base.x0, base.y0) == pytest.approx((3 * step, 2 * step))
+
+
 def test_a_click_without_moving_does_not_move(window):
     setup_two(window)
     before = window.document.node(((0, 0),))

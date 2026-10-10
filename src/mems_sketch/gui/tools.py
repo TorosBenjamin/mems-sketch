@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 
 SNAP_PX = 10  # default: a point snaps to another within this many pixels
 DRAG_THRESHOLD_PX = 4  # a press moving less than this is a click, not a drag
+GRID_POINTS = 64  # a move snaps the nearest of at most this many moving points to the grid
 ANGLE_STEP = 15.0  # default: degrees the Rotate tool snaps to
 CTRL = Qt.KeyboardModifier.ControlModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
@@ -65,6 +66,28 @@ ALT = Qt.KeyboardModifier.AltModifier
 NONE = Qt.KeyboardModifier.NoModifier
 
 Candidate = tuple[str, float, float]  # label, x, y
+
+
+def grid_move(points, dx: float, dy: float, step: float, axes: str = "xy") -> tuple[float, float]:
+    """``dx, dy`` changed so that one of the moving ``points`` lands on the grid.
+
+    Of the points (``(x, y)`` before the move), the one that needs the least
+    change is put on a grid line in each of ``axes``; the others keep their
+    places relative to it. Without points, the move itself is whole grid steps.
+    """
+    if not points:
+        return (
+            round(dx / step) * step if "x" in axes else dx,
+            round(dy / step) * step if "y" in axes else dy,
+        )
+    best = None
+    for px, py in points[:GRID_POINTS]:
+        mx = round((px + dx) / step) * step - px if "x" in axes else dx
+        my = round((py + dy) / step) * step - py if "y" in axes else dy
+        change = math.hypot(mx - dx, my - dy)
+        if best is None or change < best[0]:
+            best = (change, mx, my)
+    return _um(best[1]), _um(best[2])
 
 
 class Tool:
@@ -209,8 +232,8 @@ class Tool:
                 return tx - px, ty - py, (path, name, target, tx, ty)
         if not self.setting("snapping/grid", True):
             return dx, dy, None
-        step = self.canvas.grid_step()
-        return round(dx / step) * step, round(dy / step) * step, None
+        moving = [(px, py) for _, _, px, py in plan.points]
+        return (*grid_move(moving, dx, dy, self.canvas.grid_step()), None)
 
     # -- the move gizmo (Select and Move) ---------------------------------
 
@@ -238,10 +261,11 @@ class Tool:
         dx, dy = x - x0, y - y0
         if part == "free":
             return self.snapped_move(plan, dx, dy, modifiers)[:2]
-        step = self.canvas.grid_step()
-        snap = not modifiers & CTRL and self.setting("snapping/grid", True)
         along = dx if part == "x" else dy
-        along = round(along / step) * step if snap else along
+        if not modifiers & CTRL and self.setting("snapping/grid", True):
+            moving = [(px, py) for _, _, px, py in plan.points]
+            gx, gy = grid_move(moving, dx, dy, self.canvas.grid_step(), axes=part)
+            along = gx if part == "x" else gy
         return (along, 0.0) if part == "x" else (0.0, along)
 
     def gizmo_move(self, x, y, modifiers) -> None:

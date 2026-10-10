@@ -96,7 +96,8 @@ A pull request into `main` is a release: merging it publishes one.
    must be green, as for `development`. The wheels and the app are not built
    again here: every change was built on its way into `development`.
 3. Merging it starts the release (`release.yml`): the wheels (`wheels.yml`)
-   and the app (`app.yml`) are built on every platform, each started with
+   and the app (`app.yml`) are built on every platform (pull requests into
+   `development` build them for Linux alone), each started with
    `--self-test` first: a Windows installer and portable zip, a macOS disk
    image and a Linux AppImage. Then a GitHub release `v<version>` is
    published on the merge commit with all of them and notes generated from

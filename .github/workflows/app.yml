@@ -5,8 +5,8 @@ name: App
 # installs things: a Windows installer and a portable zip, a macOS disk image,
 # a Linux AppImage. Each is started with --self-test before it is kept.
 # Built for each release (release.yml calls it when development is merged
-# into main), on demand, and for pull requests into development that change
-# the packaging. macOS does not hold a release back while its build is
+# into main) and on demand, and for Linux alone for pull requests into
+# development that change the packaging. macOS does not hold a release back while its build is
 # experimental (requirement QC-4).
 on:
   workflow_dispatch:
@@ -27,17 +27,11 @@ jobs:
     continue-on-error: ${{ matrix.optional }}
     strategy:
       fail-fast: false
+      # Pull requests build Linux alone; releases and runs on demand all three.
+      # Linux runs on the oldest supported runner: the AppImage runs on glibc
+      # 2.35 and newer. macOS is Apple silicon.
       matrix:
-        include:
-          - name: linux
-            os: ubuntu-22.04  # the oldest supported runner: the AppImage runs on glibc 2.35 and newer
-            optional: false
-          - name: windows
-            os: windows-latest
-            optional: false
-          - name: macos
-            os: macos-14  # Apple silicon
-            optional: true
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"linux","os":"ubuntu-22.04","optional":false}]' || '[{"name":"linux","os":"ubuntu-22.04","optional":false},{"name":"windows","os":"windows-latest","optional":false},{"name":"macos","os":"macos-14","optional":true}]') }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
       QT_QPA_PLATFORM: offscreen  # the self-tests open the window without a screen

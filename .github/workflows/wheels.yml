@@ -2,9 +2,9 @@ name: Wheels
 
 # Installable packages with the geometry library built in (requirement QC-3),
 # for Linux and Windows, and macOS when its build works (QC-4: a release
-# does not wait for it). Built for each release (release.yml calls it), on
-# demand, and for pull requests into development that change how the package
-# is built.
+# does not wait for it). Built for each release (release.yml calls it) and
+# on demand, and for Linux alone for pull requests into development that
+# change how the package is built.
 on:
   workflow_dispatch:
   workflow_call:
@@ -26,14 +26,10 @@ jobs:
     continue-on-error: ${{ matrix.optional }}
     strategy:
       fail-fast: false
+      # Pull requests build Linux alone; releases and runs on demand all three
+      # (macOS on Apple silicon).
       matrix:
-        include:
-          - os: ubuntu-latest
-            optional: false
-          - os: windows-latest
-            optional: false
-          - os: macos-14  # Apple silicon
-            optional: true
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","optional":false}]' || '[{"os":"ubuntu-latest","optional":false},{"os":"windows-latest","optional":false},{"os":"macos-14","optional":true}]') }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"  # Open CASCADE and the wheels alike
     steps:

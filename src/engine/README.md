@@ -18,6 +18,13 @@ is rebuilt; the Python package reaches it as **`mems_sketch._core`**, behind
   component names resolved as `mems_sketch.core.project` resolves them,
   reference checks, parameter values and fingerprints.
   `tests/test_engine_model.py` compares it with Python's.
+- **Building** (`include/mems/build.hpp`): components evaluated into the
+  geometry library's regions, per layer. So far the kinds rect, polygon,
+  circle, boolean, transform and references to user components, and the
+  array modifier; anything else raises `NotSupported`.
+  `tests/test_engine_build.py` compares the geometry with the Python
+  backend's on the examples, hand-written components and random shape
+  trees.
 
 ## Building
 
@@ -25,14 +32,16 @@ Needs a C++20 compiler, CMake 3.28 or later, Ninja and doctest, and for the
 Python module the Python with nanobind from the
 [library's setup](../geom/README.md#building). CMake fetches
 [nlohmann/json](https://github.com/nlohmann/json) at a fixed commit. The
-engine does not use Open CASCADE yet.
+engine builds the geometry library with it, so it needs Open CASCADE too
+(`CMAKE_PREFIX_PATH`, as for the library).
 
 ```bash
 cmake -S src/engine -B build/engine -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$PWD/build/deps/occt-8_0_1" \
   -DMEMS_ENGINE_BUILD_PYTHON=ON -DPython_EXECUTABLE="$PWD/build/pyenv/bin/python"
 cmake --build build/engine
 ctest --test-dir build/engine --output-on-failure
-PYTHONPATH=build/engine MGEOM_REQUIRED=1 pytest -q tests/test_engine_expressions.py tests/test_engine_model.py
+PYTHONPATH=build/engine MGEOM_REQUIRED=1 pytest -q tests/test_engine_expressions.py tests/test_engine_model.py tests/test_engine_build.py
 ```
 
 The package's build (`pip install -e .`) makes `mems_sketch._core` together

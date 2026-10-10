@@ -546,7 +546,14 @@ test passing and updates this document.
    components, libraries and imports. Built-in components' parameters stay
    with Python until the built-ins become library components.
 6. **Shape kinds and modifiers in the engine,** on the library. The
-   equivalence test runs from here on. Then switch the default backend to
+   equivalence test runs from here on. *Started:* the engine builds rect,
+   polygon, circle, boolean, transform, references to user components and
+   the array modifier (`mems::Builder`, `_core.Project.build`), and raises
+   `NotSupported` for the rest; `tests/test_engine_build.py` compares every
+   component it builds with the Python backend, within 1 nm on straight
+   edges and the chord tolerance on curves. Next: alignment and points,
+   the other kinds and modifiers, and the built-in components as a
+   library. Then switch the default backend to
    the C++ engine. The Python geometry code is removed once the C++ engine
    has been the default for one release.
 7. **New capabilities:** the layer stack, STEP/BREP, the 3D view, meshing

@@ -174,6 +174,11 @@ def test_the_engine_uses_only_the_librarys_public_headers():
         f"{p.relative_to(SOURCE)}: {h}"
         for p, h in _includes(SOURCE / "engine")
         if occ.match(h)
-        or (h.endswith(".hpp") and "/" in h and h.split("/")[0] not in ENGINE_HEADERS)
+        or (
+            h.endswith(".hpp")
+            and "/" in h
+            and not h.startswith(".")  # its own, by relative path
+            and h.split("/")[0] not in ENGINE_HEADERS
+        )
     ]
     assert offenders == []

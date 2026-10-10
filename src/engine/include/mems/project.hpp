@@ -58,11 +58,14 @@ struct ParamDef {
     bool internal = false;
 };
 
+struct ShapeTree;  // a component's shapes as read (see src/model/shape_tree.hpp)
+
 struct ComponentDef {
     std::string name;  // its path: "plate", "comb/finger"
     std::vector<ParamDef> parameters;
     std::vector<std::string> references;  // the components its ref shapes name, as written, sorted
     std::string canonical;                // its definition as canonical JSON (for the fingerprint)
+    std::shared_ptr<const ShapeTree> shapes;
 };
 
 class Project {

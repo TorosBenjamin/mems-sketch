@@ -12,8 +12,10 @@
 
 #include <nanobind/stl/optional.h>
 
+#include "mems/build.hpp"
 #include "mems/expression.hpp"
 #include "mems/project.hpp"
+#include "mgeom/snap.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -39,6 +41,22 @@ double evaluate(const nb::object& expression, const nb::object& variables) {
     return mems::Expression(text).evaluate(lookup_in(variables));
 }
 
+// A layer's region on a grid, as [(hull, [holes])] with points in grid units.
+nb::list grid_polygons(const mgeom::Region& region, double grid, double chord) {
+    nb::list polygons;
+    auto ring = [](const mgeom::GridRing& points) {
+        nb::list out;
+        for (const auto& p : points) out.append(nb::make_tuple(p.x, p.y));
+        return out;
+    };
+    for (const auto& polygon : mgeom::snap(region, grid, chord).polygons) {
+        nb::list holes;
+        for (const auto& hole : polygon.holes) holes.append(ring(hole));
+        polygons.append(nb::make_tuple(ring(polygon.hull), holes));
+    }
+    return polygons;
+}
+
 // Parameter values from a Python mapping, in its order: numbers or expressions.
 mems::Values values_in(const nb::dict& given) {
     mems::Values values;
@@ -59,6 +77,8 @@ NB_MODULE(_core, m) {
     nb::exception<mems::ModelError>(m, "ModelError", PyExc_ValueError);
     auto unknown = nb::exception<mems::UnknownComponent>(m, "UnknownComponentError", PyExc_KeyError);
     nb::exception<mems::PrivateComponent>(m, "PrivateComponentError", unknown.ptr());
+    auto build_error = nb::exception<mems::BuildError>(m, "BuildError", PyExc_ValueError);
+    nb::exception<mems::NotSupported>(m, "NotSupported", build_error.ptr());
 
     nb::class_<mems::Project>(m, "Project", "A project as the engine knows it before building it.")
         .def("__init__", [](mems::Project* p, std::string_view json) { new (p) mems::Project(mems::Project::from_json(json)); },
@@ -77,7 +97,26 @@ NB_MODULE(_core, m) {
             "component"_a, "params"_a = nb::dict(),
             "A user component's parameter values with the process constants.")
         .def("fingerprint", nb::overload_cast<std::string_view>(&mems::Project::fingerprint, nb::const_),
-             "component"_a);
+             "component"_a)
+        .def(
+            "build",
+            [](const mems::Project& p, std::string_view component, const nb::dict& params, double grid,
+               double chord) {
+                const mems::Values values = values_in(params);
+                mems::Layers layers;
+                {
+                    nb::gil_scoped_release release;  // geometry takes a while; Python may go on
+                    mems::Builder builder(p);
+                    layers = builder.build(component, values);
+                }
+                nb::dict result;
+                for (const auto& [layer, region] : layers)
+                    result[nb::str(layer.c_str())] = grid_polygons(region, grid, chord);
+                return result;
+            },
+            "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
+            "A component built by the engine: {layer: [(hull, [holes])]}, points in grid units, "
+            "curves within chord. Raises NotSupported for what the engine does not build yet.");
 
     nb::class_<mems::Expression>(m, "Expression", "A parsed expression.")
         .def(nb::init<std::string_view>(), "text"_a)

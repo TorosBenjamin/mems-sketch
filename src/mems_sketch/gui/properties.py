@@ -470,14 +470,15 @@ class PropertyEditor(QScrollArea):
         box.setChecked(node.align is not None)
         form = _form(box)
         align = node.align
+        # Lists to choose from, opened by a click anywhere on them (an editable
+        # combo box opens only from its arrow).
         own = _combo()
-        own.setEditable(True)
         own.addItems([name for name, _, _ in self.document.results.node_points(path)] or ["center"])
-        own.setCurrentText(align.point if align else "center")
+        _choose(own, align.point if align else "center")
         target = _combo()
-        target.setEditable(True)
         target.addItems([name for name, *_ in self.document.results.align_targets(path)])
-        target.setCurrentText(align.to if align else "")
+        target.setPlaceholderText("choose a point")
+        _choose(target, align.to if align else "")
         form.addRow("Point", self._applies(own))
         explain = (
             "Moves the shape so that its *Point* lands on *To* (another shape's point), "
@@ -908,6 +909,17 @@ def _combo() -> QComboBox:
     combo.setMinimumContentsLength(6)
     combo.view().setTextElideMode(Qt.TextElideMode.ElideNone)
     return combo
+
+
+def _choose(combo: QComboBox, value: str) -> None:
+    """Select ``value`` in a list, adding it if it is not there (e.g. a point that is
+    gone, so that it shows); nothing is selected for an empty value."""
+    if not value:
+        combo.setCurrentIndex(-1)
+        return
+    if combo.findText(value) < 0:
+        combo.addItem(value)
+    combo.setCurrentText(value)
 
 
 def _section(title: str) -> QGroupBox:

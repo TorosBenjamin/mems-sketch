@@ -4,7 +4,14 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QComboBox, QInputDialog, QLabel, QMessageBox, QToolButton
+from PySide6.QtWidgets import (
+    QComboBox,
+    QGroupBox,
+    QInputDialog,
+    QLabel,
+    QMessageBox,
+    QToolButton,
+)
 
 from mems_sketch import ArrayModifier, RectShape
 from mems_sketch.gui.app import MainWindow
@@ -398,3 +405,24 @@ def test_choosing_from_a_list_applies_at_once(window):
 def test_the_empty_panel_has_the_islands_colour(window):
     window.tree.select_paths([])
     assert window.properties.widget().objectName() == "properties-body"
+
+
+def test_the_alignment_points_are_lists_that_open_on_a_click(window, qtbot):
+    window.document.nodes.add(RectShape(name="anchor", layer="device", x0=50, y0=0, x1=60, y1=10))
+    window.tree.select_paths([((0, 0),)])
+    point, target = [
+        c
+        for c in window.properties.findChildren(QComboBox)
+        if c.placeholderText() or not c.isEditable()
+    ][-2:]
+    assert not point.isEditable() and not target.isEditable()  # a click anywhere opens them
+    assert point.currentText() == "center"
+    assert target.currentText() == "" and target.placeholderText() == "choose a point"
+    assert "anchor.left" in [target.itemText(i) for i in range(target.count())]
+    section = next(
+        b for b in window.properties.findChildren(QGroupBox) if b.title().startswith("Align")
+    )
+    section.setChecked(True)  # switched on: waits for the point to align to
+    target.setCurrentText("anchor.left")
+    target.activated.emit(target.currentIndex())
+    assert window.document.shapes[0].align.to == "anchor.left"

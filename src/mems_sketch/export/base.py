@@ -8,7 +8,12 @@ An exporter is any class with ``format_name``, ``file_extension`` and an
   dialog and ``mems-sketch-cli export --option`` are built from them, and
   their values are passed to ``export`` as keyword arguments;
 - ``wants_context = True``: it is also given the component and its parameter
-  values (``component=``, ``params=``), e.g. to write its points.
+  values (``component=``, ``params=``), e.g. to write its points;
+- ``wants_build = True``: it is also given the engine's build of the component
+  (``build=``, a :class:`mems_sketch.engine.Build`), to make the output it needs
+  from the exact geometry (``build.output(grid, chord)``) rather than use the
+  geometry as drawn. What ``export`` returns (e.g. that output, which says what
+  snapping changed) is handed back by :func:`export_with_report`.
 
 Exporters are found through the ``mems_sketch.exporters`` entry-point group
 (see ``pyproject.toml``), so a new format can live in its own package, or be
@@ -20,11 +25,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.project import Project
 from mems_sketch.options import Option
+
+if TYPE_CHECKING:
+    from mems_sketch.engine import Build
 
 ENTRY_POINT_GROUP = "mems_sketch.exporters"
 ExportOption = Option  # an exporter's settings are options
@@ -115,22 +123,50 @@ def export(
     component: str | None = None,
     params: dict | None = None,
     options: Mapping[str, Any] | None = None,
+    build: Build | None = None,
 ) -> Path:
     """Export ``geometry`` (default: drawn project) to ``path``.
 
     The format is taken from ``format_name`` or, failing that, the file extension.
     ``component`` and ``params`` say what the geometry is (for formats that
     record it); ``geometry`` defaults to that component rendered with them.
-    ``options`` are the format's settings (see :class:`ExportOption`); those
-    not given take their defaults.
+    ``build`` is the engine's build of it, for formats that make their own
+    output from the exact geometry (made when not given). ``options`` are the
+    format's settings (see :class:`ExportOption`); those not given take their
+    defaults.
     """
+    return export_with_report(
+        project, path, format_name, geometry, component, params, options, build
+    )[0]
+
+
+def export_with_report(
+    project: Project,
+    path: str | Path,
+    format_name: str | None = None,
+    geometry: Geometry | None = None,
+    component: str | None = None,
+    params: dict | None = None,
+    options: Mapping[str, Any] | None = None,
+    build: Build | None = None,
+) -> tuple[Path, Any]:
+    """:func:`export`, and what the exporter returned: for a layout format, the
+    :class:`mems_sketch.engine.Output` it wrote, whose ``describe()`` says what
+    snapping to its grid changed (None from formats that return nothing)."""
     path = Path(path)
     cls = exporter_class(format_name or format_for(path))
     values = resolve_options(cls, options)
     exporter = cls()
-    if geometry is None:
+    if getattr(exporter, "wants_build", False):
+        if build is None:
+            from mems_sketch.engine import Engine
+
+            build = Engine().load(project).build(project._target(component), params)
+        values["build"] = build
+        if geometry is None:
+            geometry = build.geometry
+    elif geometry is None:
         geometry = project.render(component, params)
     if getattr(exporter, "wants_context", False):
         values.update(component=component, params=params)
-    exporter.export(project, geometry, path, **values)
-    return path
+    return path, exporter.export(project, geometry, path, **values)

@@ -77,8 +77,13 @@ class Results:
         engine = self.session.engine.trial(self._trial(path, node))
         return engine.build(component, self.session.trials_for(component)).records()
 
-    def _build(self, component: str) -> Build:
+    def build(self, component: str | None = None) -> Build:
+        """The engine's build of a component (default: the active one) with its trial
+        values: what outputs (exports, rule checks) are made from."""
+        component = component or self.session.active
         return self.session.engine.build(component, self.session.trials_for(component))
+
+    _build = build
 
     def _trial(self, path: NodePath, node: Shape):
         project, component = self.session.project, self.session.active

@@ -7,11 +7,18 @@ from typing import ClassVar
 import pytest
 from helpers import flat_box, read_gds
 
+from mems_sketch import Layer, Project, RectShape
 from mems_sketch.cli import main
 from mems_sketch.export import base
-from mems_sketch.export.base import ExportOption, export, options_of, resolve_options
+from mems_sketch.export.base import (
+    ExportOption,
+    export,
+    export_with_report,
+    options_of,
+    resolve_options,
+)
 from mems_sketch.export.layout_formats import GdsExporter
-from mems_sketch.storage import load
+from mems_sketch.storage import load, save
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 SIZE = ExportOption("size", 2.5, "Size", minimum=0, maximum=10, suffix=" µm")
@@ -96,7 +103,7 @@ def test_the_grid_is_a_whole_multiple_of_1_nm(resonator, tmp_path):
 
 
 def test_builtin_formats_declare_options():
-    assert [o.name for o in options_of(GdsExporter)] == ["grid_um", "top_cell"]
+    assert [o.name for o in options_of(GdsExporter)] == ["grid_um", "chord_um", "top_cell"]
     assert base.title_of(GdsExporter) == "GDSII"
 
 
@@ -118,3 +125,58 @@ def test_the_cli_lists_formats_and_options(probe, capsys):
     assert "gds      .gds   GDSII" in out
     assert "grid_um=0.001" in out
     assert "probe" in out and "mode=fast" in out
+
+
+# -- the export's own grid and curve tolerance (OUT-2, OUT-3, QP-3, QP-4) ---------
+
+
+@pytest.fixture
+def narrow_gap():
+    """Two rectangles 0.8 µm apart, both edges rounding to 11 µm: a 1 µm grid closes the gap."""
+    project = Project()
+    project.add_layer(Layer("device", 1))
+    project.add(RectShape(layer="device", x0=0, y0=0, x1=10.6, y1=5))
+    project.add(RectShape(layer="device", x0=11.4, y0=0, x1=20, y1=5))
+    return project
+
+
+def test_an_export_rounds_the_exact_geometry_onto_its_grid_and_reports_changes(
+    narrow_gap, tmp_path
+):
+    path, written = export_with_report(
+        narrow_gap, tmp_path / "coarse.gds", options={"grid_um": 1.0, "chord_um": 0.5}
+    )
+    layout = read_gds(path)
+    assert layout.dbu == pytest.approx(1.0)  # every point a whole number of grid steps
+    assert (written.grid, written.chord) == (1.0, 0.5)
+    assert written.changed_shape
+    lines = written.describe()
+    assert any("gap narrower than the grid closed" in line for line in lines)
+    assert any(line.startswith("device: area") for line in lines)
+
+
+def test_the_default_grid_changes_nothing_in_the_example(resonator, tmp_path):
+    _, written = export_with_report(resonator, tmp_path / "fine.gds")
+    assert (written.grid, written.chord) == (0.001, 0.005)
+    assert not written.changed_shape and written.describe() == []
+
+
+def test_the_curve_tolerance_sets_how_finely_curves_are_written(resonator, tmp_path):
+    def points(chord):
+        path = export(resonator, tmp_path / f"c{chord}.gds", options={"chord_um": chord})
+        layout = read_gds(path)
+        cell = layout.cells[layout.top_cells()[0]]
+        return sum(
+            len(p.hull) + sum(len(h) for h in p.holes) for ps in cell.polygons.values() for p in ps
+        )
+
+    assert points(0.5) < points(0.005)  # the release holes: fewer, longer segments
+
+
+def test_the_cli_says_what_snapping_changed(narrow_gap, tmp_path, capsys):
+    save(narrow_gap, tmp_path / "gap")
+    out = tmp_path / "coarse.gds"
+    assert main(["export", str(tmp_path / "gap"), str(out), "--option", "grid_um=1"]) == 0
+    printed = capsys.readouterr().out
+    assert "snapping to the grid changed the shape" in printed
+    assert "gap narrower than the grid closed" in printed

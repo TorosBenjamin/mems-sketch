@@ -232,9 +232,9 @@ but should not have to program. Scripting is there for those who want it.
   deleted, and an operation can be **unwrapped**, giving back its inputs.
 - **SHP-7** (Must, exists) A shape can be **in pieces** (a slot cut through a
   beam), and says so. Its points come from the box around all the pieces.
-- **SHP-8** (Must, changes; [#63](https://github.com/TorosBenjamin/mems-sketch/issues/63)) Circles, arcs, round path ends, fillets, rounded
+- **SHP-8** (Must, exists; [#63](https://github.com/TorosBenjamin/mems-sketch/issues/63)) Circles, arcs, round path ends, fillets, rounded
   corners and the round joins of offsets are **exact curves**, not polygons
-  ([QP-2](#precision)). Today they are polygons within 5 nm.
+  ([QP-2](#precision)), unless a shape asks for a number of `segments`.
 - **SHP-9** (Should, new; [#84](https://github.com/TorosBenjamin/mems-sketch/issues/84)) **Paths along curves:** a path's centreline can
   have arc segments (a given radius, or tangent to the previous segment) as
   well as straight ones, with an exact width. Folded springs get true round
@@ -598,11 +598,12 @@ Ansys) can mesh the STEP export themselves (OUT-6).
 
 ### Precision
 
-- **QP-1** (Must, changes; [#55](https://github.com/TorosBenjamin/mems-sketch/issues/55)) The geometry has **one internal precision of
+- **QP-1** (Must, exists; [#55](https://github.com/TorosBenjamin/mems-sketch/issues/55)) The geometry has **one internal precision of
   10⁻⁸ µm or finer**, everywhere, for every design size the tool supports
   ([QS-3](#performance-and-scale)). It is fixed, not a setting
-  ([decision P-1](#decisions)). Today it is 1 nm.
-- **QP-2** (Must, changes; [#56](https://github.com/TorosBenjamin/mems-sketch/issues/56)) **Curves are exact** through every operation
+  ([decision P-1](#decisions)): the geometry library works in doubles, in
+  nanometres, with Open CASCADE's tolerance of 10⁻⁷ nm.
+- **QP-2** (Must, exists; [#56](https://github.com/TorosBenjamin/mems-sketch/issues/56)) **Curves are exact** through every operation
   (boolean, offset, fillet, corners, transforms). Curves are split into
   segments only by an output, at that output's tolerance.
 - **QP-3** (Must, exists; [#57](https://github.com/TorosBenjamin/mems-sketch/issues/57)) **Each output chooses its own tolerance**: the export
@@ -610,9 +611,10 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   tolerance and sizes for a mesh; the chord tolerance for drawing.
 - **QP-4** (Must, exists; [#58](https://github.com/TorosBenjamin/mems-sketch/issues/58)) Rounding happens **once per output**, never in between:
   nested transforms are combined before they are applied.
-- **QP-5** (Must, changes; [#59](https://github.com/TorosBenjamin/mems-sketch/issues/59)) **Deterministic:** the same project and parameters
-  give the same output, byte for byte, on every run (exists) and on every
-  supported platform (new: tested across platforms).
+- **QP-5** (Must, exists; [#59](https://github.com/TorosBenjamin/mems-sketch/issues/59)) **Deterministic:** the same project and parameters
+  give the same output, byte for byte, on every run and on every supported
+  platform (`tests/test_deterministic.py`, run by the wheels workflow on Linux,
+  Windows and macOS). GDSII files carry a fixed date, or `SOURCE_DATE_EPOCH`'s.
 
 ### Performance and scale
 

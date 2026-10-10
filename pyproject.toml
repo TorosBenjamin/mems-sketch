@@ -1,6 +1,6 @@
 [project]
 name = "mems-sketch"
-version = "0.1.0"
+version = "0.2.0"
 description = "Parametric MEMS layout design: components, rule checks and pluggable export."
 requires-python = ">=3.11"
 dependencies = [

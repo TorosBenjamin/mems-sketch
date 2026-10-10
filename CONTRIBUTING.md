@@ -86,6 +86,23 @@ Open a pull request from `development` into `main`
 request into `main` from another branch; CI must be green, as for
 `development`.
 
+A release is a version tag on `main`:
+
+1. Before the release pull request, set the version in `pyproject.toml`
+   (through a pull request into `development`, as any change).
+2. After it is merged, tag `main` with that version and push the tag:
+   `git tag v0.2.0 origin/main && git push origin v0.2.0`.
+3. The tag builds the wheels (`wheels.yml`) and the app (`app.yml`): a
+   Windows installer and portable zip, a macOS disk image and a Linux
+   AppImage, each started with `--self-test` first. The app workflow fails
+   when the tag and the package version differ.
+4. The app's files land in a draft GitHub release for the tag: write its
+   notes and publish it.
+
+`mems-sketch --self-test` checks an installed or bundled app (engine, rule
+checks in another process, GDS, the window); `packaging/` holds what builds
+the app.
+
 ## Conventions
 
 - Code follows the style around it; `ruff` settles formatting.

@@ -91,7 +91,7 @@ class _Host(QFrame):
         close.setAutoRaise(True)
         close.setToolTip("Hide")
         icons.bind(close, "minimize")
-        close.clicked.connect(hide)
+        close.clicked.connect(lambda _checked=False: hide())  # not the flag as an argument
         row.addWidget(close)
         self.stack = QStackedWidget()
         layout.addWidget(header)

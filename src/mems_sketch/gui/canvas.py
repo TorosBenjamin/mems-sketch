@@ -136,6 +136,7 @@ MENU_CARET = "▾"  # after the text of a button that opens a menu
 # room for several full-view pictures on a large, high-resolution screen.
 PIXMAP_CACHE_KB = 256 * 1024
 DRAFT_SETTLE_MS = 200  # full quality again this long after the last zoom or resize step
+DRAFT_ABOVE_MS = 25.0  # draft quality only when a full-quality frame takes longer than this
 CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
@@ -301,6 +302,7 @@ class LayoutCanvas(QGraphicsView):
         if QPixmapCache.cacheLimit() < PIXMAP_CACHE_KB:
             QPixmapCache.setCacheLimit(PIXMAP_CACHE_KB)
         self._drafting = False
+        self._full_frame_ms = 0.0  # how long the last full-quality frame took
         self._draft_timer = QTimer(self)
         self._draft_timer.setSingleShot(True)
         self._draft_timer.setInterval(DRAFT_SETTLE_MS)
@@ -405,10 +407,25 @@ class LayoutCanvas(QGraphicsView):
         super().resizeEvent(event)
         self._place_overlays()
 
+    def paintEvent(self, event) -> None:
+        if self._drafting:
+            super().paintEvent(event)
+            return
+        start = time.perf_counter()
+        super().paintEvent(event)
+        self._full_frame_ms = (time.perf_counter() - start) * 1000
+
     def _begin_draft(self) -> None:
         """Draw without antialiasing until zooming or resizing has settled: each step
-        then costs a fraction of a full-quality drawing of a big design."""
+        then costs a fraction of a full-quality drawing of a big design.
+
+        Only when full quality is slow (DRAFT_ABOVE_MS): drafting changes how
+        outlines look (a line between pixels is drawn on one, at full strength),
+        which flickers while zooming if the frames were fast enough anyway.
+        """
         if not self.options["draft_quality"]:
+            return
+        if not self._drafting and self._full_frame_ms <= DRAFT_ABOVE_MS:
             return
         if not self._drafting:
             self._drafting = True

@@ -14,6 +14,8 @@ import hashlib
 import struct
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from mems_sketch import layout as layout_files
 from mems_sketch.core.component import DBU_UM, Component, Geometry, Params
 from mems_sketch.core.region import IntPolygon, Region
@@ -122,8 +124,7 @@ def cell_geometry(imported: ImportedCell) -> Geometry:
         if scale != 1:
             polygons = [
                 IntPolygon(
-                    [(round(x * scale), round(y * scale)) for x, y in polygon.hull],
-                    [[(round(x * scale), round(y * scale)) for x, y in h] for h in polygon.holes],
+                    np.rint(polygon.hull * scale), [np.rint(h * scale) for h in polygon.holes]
                 )
                 for polygon in polygons
             ]

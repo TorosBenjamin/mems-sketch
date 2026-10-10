@@ -1455,7 +1455,9 @@ class MessagesPanel(QListWidget):
 
     counts_changed = Signal(int, int)  # errors, violations not waived
 
-    def show_messages(self, errors: list[str], violations) -> None:
+    def show_messages(self, errors: list[str], violations, checking: bool = False) -> None:
+        """Errors and rule violations; ``checking`` while the rules are still
+        being checked in the background."""
         self.clear()
         for text in errors:
             item = QListWidgetItem(icons.icon("error"), text)
@@ -1486,7 +1488,9 @@ class MessagesPanel(QListWidget):
             item.setData(PATH_ROLE, v.bbox_um)
             item.setData(VIOLATION_ROLE, v)
             self.addItem(item)
-        if not errors and not violations:
+        if checking:
+            self.addItem(QListWidgetItem("Checking the design rules…"))
+        elif not errors and not violations:
             self.addItem(QListWidgetItem(icons.icon("ok"), "No rule violations."))
         self.counts_changed.emit(len(errors), len(open_))
 

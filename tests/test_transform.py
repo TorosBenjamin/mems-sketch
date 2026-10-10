@@ -72,8 +72,10 @@ def plate() -> Geometry:
 
 def test_geometry_polygons_and_box(plate):
     [polygon] = plate.polygons("device")
-    assert sorted(polygon.hull) == [(0, 0), (0, 10), (10, 0), (10, 10)]
-    assert [sorted(h) for h in polygon.holes] == [[(4, 4), (4, 6), (6, 4), (6, 6)]]
+    assert sorted(map(tuple, polygon.hull.tolist())) == [(0, 0), (0, 10), (10, 0), (10, 10)]
+    assert [sorted(map(tuple, h.tolist())) for h in polygon.holes] == [
+        [(4, 4), (4, 6), (6, 4), (6, 6)]
+    ]
     assert plate.bbox() == (0, 0, 22, 10)
     assert plate.pieces() == 2 and len(plate.polygons()) == 2
     assert sorted(plate.layer_names()) == ["device", "metal"]

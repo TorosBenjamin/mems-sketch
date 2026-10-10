@@ -28,7 +28,8 @@ def test_a_build_is_the_component_with_its_values():
     assert build.layers() == ["device"]
     assert build.bbox() == (0, 0, 20, 5)
     [outline] = build.outlines("device")
-    assert sorted(outline.hull) == [(0, 0), (0, 5), (20, 0), (20, 5)] and outline.holes == []
+    assert sorted(map(tuple, outline.hull.tolist())) == [(0, 0), (0, 5), (20, 0), (20, 5)]
+    assert outline.holes == []
     assert build.points() == {"tip": (20, 0)}
     assert build.variables()["w"] == 20
     assert engine.build("plate").bbox() == (0, 0, 10, 5)  # the default

@@ -44,7 +44,7 @@ class CornerEdits(Commands):
         result: list[Position] = []
         for layer in geometry.layer_names():
             for polygon in geometry.polygons(layer):
-                for ring in [polygon.hull, *polygon.holes]:
+                for ring in [polygon.hull.tolist(), *(h.tolist() for h in polygon.holes)]:
                     for x, y in _turning(ring):
                         q = to_component.apply(x, y)
                         if not any(_same(q, r) for r in result):

@@ -8,6 +8,8 @@ of the main window follow the current tab.
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
+
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QProxyStyle,
@@ -25,8 +27,13 @@ from mems_sketch.core.shapes import NodePath, node_at
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import LayoutCanvas
+from mems_sketch.process import rules
 
 MAX_PANES = 2
+# Rule checks of geometry with more points than this run in the background:
+# the edit is on screen at once and the violations follow.
+BACKGROUND_CHECK_POINTS = 20_000
+_checks = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rule-check")
 
 
 class _NoSlideStyle(QProxyStyle):
@@ -44,9 +51,14 @@ class ComponentView(QWidget):
     """One tab: a component, its canvas and selection."""
 
     show_implementation = False  # the window's setting: shapes of read-only components
+    checked = Signal()  # a background rule check finished: violations changed
+    _check_done = Signal(int, object)  # generation, Future (from the worker thread)
 
     def __init__(self, document: EditSession, component: str) -> None:
         super().__init__()
+        self._generation = 0
+        self.checking = False  # a background rule check is running
+        self._check_done.connect(self._take_check)
         self.document = document
         self.component = component
         self.canvas = LayoutCanvas()
@@ -114,17 +126,43 @@ class ComponentView(QWidget):
         self._check(drawn)
 
     def _check(self, drawn: Geometry | None) -> None:
-        """The design rules, after the change is on screen: on a big design they take a
-        moment, and the edit should show at once."""
+        """The design rules, after the change is on screen. On a big design they take
+        a moment: they run in the background (``checked`` says when they are done),
+        and a newer check makes an older one's result go unused."""
         self.violations = []
+        self._generation += 1
+        self.checking = False
         if drawn is None:
             return
         if self.canvas.isVisible():
             self.canvas.viewport().repaint()
+        if drawn.point_count() <= BACKGROUND_CHECK_POINTS:
+            try:
+                self.violations = self.document.results.check(drawn, self.component)
+            except Exception as exc:  # noqa: BLE001 - shown in the messages panel
+                self.errors.append(str(exc))
+            return
+        generation, project, component = self._generation, self.document.project, self.component
+        self.checking = True
+        future = _checks.submit(rules.check, project, drawn, component)
+        future.add_done_callback(lambda f: self._report_check(generation, f))
+
+    def _report_check(self, generation: int, future: Future) -> None:
+        """In the worker thread: hand the result to the view's thread."""
         try:
-            self.violations = self.document.results.check(drawn, self.component)
+            self._check_done.emit(generation, future)
+        except RuntimeError:  # the view was closed meanwhile
+            pass
+
+    def _take_check(self, generation: int, future: Future) -> None:
+        if generation != self._generation:
+            return  # the design changed since
+        self.checking = False
+        try:
+            self.violations = future.result()
         except Exception as exc:  # noqa: BLE001 - shown in the messages panel
             self.errors.append(str(exc))
+        self.checked.emit()
 
     def _exists(self, path: NodePath) -> bool:
         """The node is still there (switched off or not: it stays selected)."""

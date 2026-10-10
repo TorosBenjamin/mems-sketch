@@ -226,10 +226,11 @@ class Build:
         return self._records
 
 
-def _geometry(layers: dict[str, list]) -> Geometry:
+def _geometry(layers: dict[str, tuple]) -> Geometry:
+    """The engine's layers: ([(hull, [holes])], box) each, in grid units."""
     geometry = Geometry()
-    for layer, polygons in layers.items():
-        geometry.layers[layer] = Region.from_polygons(polygons, merged=True)
+    for layer, (polygons, box) in layers.items():
+        geometry.layers[layer] = Region.from_polygons(polygons, merged=True, box=box)
     return geometry
 
 
@@ -284,7 +285,11 @@ def _imported_data(cell: ImportedCell) -> dict[str, Any]:
             entry["error"] = str(error)
         else:
             entry["geometry"] = {
-                layer: region.points_um() for layer, region in geometry.layers.items()
+                layer: [
+                    (hull.tolist(), [h.tolist() for h in holes])
+                    for hull, holes in region.points_um()
+                ]
+                for layer, region in geometry.layers.items()
             }
         if len(_IMPORTED) > 64:
             _IMPORTED.clear()

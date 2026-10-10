@@ -96,6 +96,11 @@ public:
     // it is not cheap.
     bool valid() const;
 
+    // The same for copies of one region and different for regions that are
+    // alive at the same time: regions are immutable, so a cache may key what
+    // it works out from a region on this (keeping the region alive with it).
+    const void* identity() const noexcept { return impl_.get(); }
+
     struct Impl;
 
 private:

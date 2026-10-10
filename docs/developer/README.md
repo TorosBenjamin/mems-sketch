@@ -24,7 +24,13 @@ pip install -e ".[dev]"
 ruff check . && ruff format --check .
 pytest -q                     # GUI tests run offscreen; no windows open
 python docs/screenshots.py    # regenerate docs/images after a visible GUI change
+python benchmarks/gui_speed.py  # how fast pan, zoom, hover, drag and edits are on big layouts
 ```
+
+`benchmarks/gui_speed.py` opens the editor offscreen on perforated plates with
+100 to 90,000 holes and times each interaction (its docstring says how to
+read the numbers). Run it before and after a change that could make the
+editor slower, on the same machine.
 
 Branches, pull requests and review are in [CONTRIBUTING](../../CONTRIBUTING.md).
 Design notes for larger changes are in

@@ -17,6 +17,8 @@ from __future__ import annotations
 import math
 import time
 
+import numpy as np
+import shiboken6
 from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
@@ -167,10 +169,21 @@ def geometry_outline(geometry: Geometry) -> QPainterPath:
 
 
 def _add_loop(path: QPainterPath, points) -> None:
-    loop = QPolygonF([QPointF(x, y) for x, y in points])
+    loop = polygon_f(points)
     if not loop.isEmpty():
         path.addPolygon(loop)  # one call per loop, not one per point
         path.closeSubpath()
+
+
+def polygon_f(points) -> QPolygonF:
+    """Points (an (n, 2) array, or pairs) as a QPolygonF, copied in one go."""
+    array = np.ascontiguousarray(points, dtype=np.float64).reshape(-1, 2)
+    loop = QPolygonF()
+    if len(array):
+        loop.resize(len(array))
+        memory = shiboken6.VoidPtr(loop.data(), array.nbytes, True)
+        np.frombuffer(memory, dtype=np.float64).reshape(-1, 2)[:] = array
+    return loop
 
 
 class LayoutCanvas(QGraphicsView):

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, ClassVar, NamedTuple
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 from mems_sketch.core.expressions import evaluate
@@ -21,11 +22,12 @@ def to_dbu(value_um: float) -> int:
     return round(value_um / DBU_UM)
 
 
-Ring = list[tuple[float, float]]  # a closed outline in µm, without repeating its first point
+Ring = np.ndarray  # a closed outline in µm, (n, 2) floats, without repeating its first point
 
 
 class Polygon(NamedTuple):
-    """A merged polygon in µm: its outline and the outlines of its holes."""
+    """A merged polygon in µm: its outline and the outlines of its holes
+    (``.tolist()`` gives plain pairs)."""
 
     hull: Ring
     holes: list[Ring]
@@ -119,9 +121,19 @@ class Geometry:
             ):
                 continue
             for polygon in region.each():
-                if _near(polygon, cx, cy, r):
+                b = polygon.bbox()
+                if (
+                    b.left - r <= cx <= b.right + r
+                    and b.bottom - r <= cy <= b.top + r
+                    and polygon.near(cx, cy, r)
+                ):
                     return True
         return False
+
+    def point_count(self) -> int:
+        """How many points the polygons have, all layers together (a measure of
+        how much work the geometry is)."""
+        return sum(p.num_points() for region in self.layers.values() for p in region.each())
 
     def pieces(self) -> int:
         """How many separate pieces the geometry has, all layers together."""
@@ -142,28 +154,6 @@ class Geometry:
 
 def _points(points_um: Iterable[tuple[float, float]]) -> list[tuple[int, int]]:
     return [(to_dbu(x), to_dbu(y)) for x, y, *_ in points_um]
-
-
-def _near(polygon: IntPolygon, x: int, y: int, reach: int) -> bool:
-    """The point is inside the polygon, or within ``reach`` of its outline."""
-    inside = False
-    for ring in (polygon.hull, *polygon.holes):
-        n = len(ring)
-        for k in range(n):
-            (x0, y0), (x1, y1) = ring[k], ring[(k + 1) % n]
-            if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
-                inside = not inside
-            dx, dy = x1 - x0, y1 - y0
-            length2 = dx * dx + dy * dy
-            t = (
-                0.0
-                if length2 == 0
-                else max(0.0, min(1.0, ((x - x0) * dx + (y - y0) * dy) / length2))
-            )
-            px, py = x0 + t * dx - x, y0 + t * dy - y
-            if px * px + py * py <= reach * reach:
-                return True
-    return inside
 
 
 class Params(BaseModel):

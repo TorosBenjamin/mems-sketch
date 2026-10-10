@@ -2,13 +2,14 @@ name: Wheels
 
 # Installable packages with the geometry library built in (requirement QC-3),
 # for Linux and Windows, and macOS when its build works (QC-4: a release
-# does not wait for it). Built for version tags and on demand, and for pull
-# requests that change how the package is built.
+# does not wait for it). Built for each release (release.yml calls it), on
+# demand, and for pull requests into development that change how the package
+# is built.
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
+  workflow_call:
   pull_request:
+    branches: [development]
     paths:
       - pyproject.toml
       - CMakeLists.txt

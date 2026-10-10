@@ -86,23 +86,21 @@ the rules (for example `gh pr merge --admin`).
 
 ## Releasing to `main`
 
-Open a pull request from `development` into `main`
-(`gh pr create --base main --head development`). A check fails any pull
-request into `main` from another branch; CI must be green, as for
-`development`.
+A pull request into `main` is a release: merging it publishes one.
 
-A release is a version tag on `main`:
-
-1. Before the release pull request, set the version in `pyproject.toml`
-   (through a pull request into `development`, as any change).
-2. After it is merged, tag `main` with that version and push the tag:
-   `git tag v0.2.0 origin/main && git push origin v0.2.0`.
-3. The tag builds the wheels (`wheels.yml`) and the app (`app.yml`): a
-   Windows installer and portable zip, a macOS disk image and a Linux
-   AppImage, each started with `--self-test` first. The app workflow fails
-   when the tag and the package version differ.
-4. The app's files land in a draft GitHub release for the tag: write its
-   notes and publish it.
+1. Set the new version in `pyproject.toml`, through a pull request into
+   `development` as any change.
+2. Open a pull request from `development` into `main`
+   (`gh pr create --base main --head development`). Its checks fail when it
+   comes from another branch or when the version is already released; CI
+   must be green, as for `development`. The wheels and the app are not built
+   again here: every change was built on its way into `development`.
+3. Merging it starts the release (`release.yml`): the wheels (`wheels.yml`)
+   and the app (`app.yml`) are built on every platform, each started with
+   `--self-test` first: a Windows installer and portable zip, a macOS disk
+   image and a Linux AppImage. Then a GitHub release `v<version>` is
+   published on the merge commit with all of them and notes generated from
+   the merged pull requests; edit the notes on the releases page if needed.
 
 `mems-sketch --self-test` checks an installed or bundled app (engine, rule
 checks in another process, GDS, the window); `packaging/` holds what builds

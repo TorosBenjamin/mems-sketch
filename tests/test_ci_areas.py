@@ -23,6 +23,7 @@ EVERYTHING = {"geom", "engine", "python", "gui"}
         (["src/engine/src/eval/evaluator.cpp"], {"engine", "python", "gui"}),
         (["src/geom/src/grid.cpp"], EVERYTHING),
         (["packaging/entry.py", ".github/workflows/app.yml"], set()),  # app.yml checks those
+        ([".github/workflows/release.yml"], set()),  # runs only on main
         ([".github/workflows/ci.yml"], EVERYTHING),  # CI itself: everything
         (["something/new.txt"], EVERYTHING),  # unknown: everything, to be safe
         (["docs/x.md", "src/engine/CMakeLists.txt"], {"engine", "python", "gui"}),

@@ -23,6 +23,7 @@ RULES = [
     (".github/workflows/wheels.yml", "none"),  # these workflows check themselves
     (".github/workflows/app.yml", "none"),
     (".github/workflows/release-source.yml", "none"),
+    (".github/workflows/release.yml", "none"),  # runs only on main
     ("packaging/*", "none"),
     ("src/geom/*", "geom"),
     ("CMakeLists.txt", "geom"),

@@ -1,6 +1,8 @@
 name: Release source
 
-# main changes only by a pull request from this repository's development branch.
+# A pull request into main is a release (release.yml makes it when the pull
+# request is merged). It must come from this repository's development
+# branch, and pyproject.toml must name a version that has not been released.
 on:
   pull_request:
     branches: [main]
@@ -21,3 +23,16 @@ jobs:
             exit 1
           fi
           echo "From $THIS_REPO:development."
+
+  new-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The version in pyproject.toml is not released yet
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "::error::Version $version is already released (tag v$version). Set a new version in pyproject.toml, through a pull request into development."
+            exit 1
+          fi
+          echo "Releases version $version."

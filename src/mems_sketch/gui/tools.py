@@ -514,22 +514,37 @@ class MoveTool(Tool):
 
 
 class RotateTool(Tool):
-    """Rotate the selection about a pivot; the angle snaps to 15° steps."""
+    """Rotate the selection: drag anywhere to turn it about its centre.
+
+    The angle follows the mouse smoothly; Ctrl snaps it to the angle step.
+    Shift+click sets another pivot (a shape's point, or the grid) for the drags
+    that follow; Esc goes back to the centre. A click without dragging selects
+    what is under it.
+    """
 
     name, label, shortcut = "rotate", "Rotate", "R"
     cursor = Qt.CursorShape.CrossCursor
     gizmo, hovers, icon = "rotate", True, "rotate"
 
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__(window)
+        self.pivot: tuple[float, float] | None = None  # Shift+click; None: the centre
+
     def reset(self) -> None:
-        self._pivot: tuple[float, float] | None = None
         self._plan: DragPlan | None = None
+        self._origin: tuple[float, float] | None = None  # the turn's centre, while dragging
+        self._press: tuple[float, float] | None = None
+        self._grab = 0.0  # the angle the drag started at, around the centre
         self._angle = 0.0
         self._candidates: list[Candidate] | None = None
-        self._ring: float | None = None  # dragging the ring: the angle it was grabbed at
+
+    def activate(self) -> None:
+        self.pivot = None
+        super().activate()
 
     @property
     def busy(self) -> bool:
-        return self._pivot is not None
+        return self._origin is not None
 
     @property
     def step(self) -> float:
@@ -538,87 +553,97 @@ class RotateTool(Tool):
     def hint(self) -> str:
         if not self.window.selection:
             return "Rotate: click a shape to rotate"
-        if self._pivot is None:
-            return "Rotate: drag the ring to rotate about the centre, or click a pivot"
+        about = "the pivot" if self.pivot is not None else "its centre"
         return (
-            f"Rotate: move to set the angle ({self.step:g}° steps; Ctrl: free), click to apply, "
-            "Esc cancels"
+            f"Rotate: drag to turn it about {about} (Ctrl: {self.step:g}° steps); "
+            "Shift+click: another pivot"
         )
+
+    def _centre(self) -> tuple[float, float] | None:
+        if self.pivot is not None:
+            return self.pivot
+        return self.document.results.selection_center(self.window.selection)
 
     def press(self, x, y, modifiers) -> None:
         if not self.window.selection:
             self.window.select_click(self.window.hit(x, y), False)
             self.window.prompt(self.hint())
             return
-        if self._pivot is None and self.canvas.gizmo_hit(x, y) == "ring":
-            if not self.editable():
-                return
-            _, cx, cy = self.canvas.gizmo
-            self._plan = self.document.moves.plan_drag(self.window.selection)
-            if not self._plan.roots:
-                return
-            self._pivot = (cx, cy)
-            self._ring = math.degrees(math.atan2(y - cy, x - cx))
-            self.canvas.set_gizmo_active("ring")
-            self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
-            return
-        if self._pivot is None:
-            if not self.editable():
-                return
+        if modifiers & SHIFT:  # another pivot
             if self._candidates is None:
                 self._candidates = self.document.results.all_points()
-            px, py, _ = self.snap(x, y, self._candidates, modifiers)
-            self._plan = self.document.moves.plan_drag(self.window.selection)
-            if not self._plan.roots:
-                return
-            self._pivot = (px, py)
-            self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
+            px, py, _ = self.snap(x, y, self._candidates, modifiers & ~SHIFT)
+            self.pivot = (px, py)
             self.window.update_overlay()
             self.window.prompt(self.hint())
             return
-        angle, pivot, roots = self._angle_at(x, y, modifiers), self._pivot, self._plan.roots
-        self.cancel()
-        if angle:
-            self.window.run(lambda: self.document.moves.rotate(roots, angle, pivot))
-        self.window.prompt(self.hint())
+        centre = self._centre()
+        if centre is None or not self.editable():
+            return
+        self._plan = self.document.moves.plan_drag(self.window.selection)
+        if not self._plan.roots:
+            self._plan = None
+            return
+        self._origin, self._press = centre, (x, y)
+        self._grab = math.degrees(math.atan2(y - centre[1], x - centre[0]))
+        self._angle = 0.0
+        self.canvas.set_gizmo_active("ring")
+        self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
 
     def _angle_at(self, x, y, modifiers) -> float:
-        px, py = self._pivot
-        if math.hypot(x - px, y - py) * self.canvas.pixels_per_um() < DRAG_THRESHOLD_PX:
-            return 0.0
-        angle = math.degrees(math.atan2(y - py, x - px))
-        if self._ring is not None:  # relative to where the ring was grabbed
-            angle = (angle - self._ring + 180) % 360 - 180
-        if not modifiers & CTRL:
+        cx, cy = self._origin
+        if math.hypot(x - cx, y - cy) * self.canvas.pixels_per_um() < DRAG_THRESHOLD_PX:
+            return self._angle  # too close to the centre to tell: as it was
+        angle = math.degrees(math.atan2(y - cy, x - cx))
+        angle = (angle - self._grab + 180) % 360 - 180
+        if modifiers & CTRL:
             angle = round(angle / self.step) * self.step
         return round(angle, 6)
 
+    def _dragged(self, x, y) -> bool:
+        px, py = self._press
+        return math.hypot(x - px, y - py) * self.canvas.pixels_per_um() >= DRAG_THRESHOLD_PX
+
     def move(self, x, y, modifiers, left) -> None:
-        if self._pivot is None:
+        if self._origin is None or not left:
             return
         self._angle = self._angle_at(x, y, modifiers)
-        self.canvas.rotate_drag_preview(self._angle, self._pivot)
-        if self._ring is not None:
-            self.canvas.set_gizmo_sweep(self._ring, self._angle)
-        finish = "release" if self._ring is not None else "click"
-        self.window.prompt(f"Rotate by {self._angle:g}°   ({finish} to apply, Esc cancels)")
+        self.canvas.rotate_drag_preview(self._angle, self._origin)
+        self.canvas.set_gizmo_sweep(self._grab, self._angle)
+        snap = "Ctrl: steps" if not modifiers & CTRL else f"{self.step:g}° steps"
+        self.window.prompt(f"Rotate by {self._angle:g}°   ({snap}; release to apply, Esc cancels)")
 
     def release(self, x, y, modifiers) -> None:
-        if self._ring is None:
+        if self._origin is None:
             return
-        angle, pivot, roots = self._angle_at(x, y, modifiers), self._pivot, self._plan.roots
+        dragged = self._dragged(x, y)
+        angle = self._angle_at(x, y, modifiers) if dragged else 0.0
+        origin, roots = self._origin, self._plan.roots
         self.cancel()
-        if angle:
-            self.window.run(lambda: self.document.moves.rotate(roots, angle, pivot))
+        if not dragged:  # a click: select what is under it
+            self.window.select_click(self.window.hit(x, y), False)
+        elif angle:
+            self.window.run(lambda: self.document.moves.rotate(roots, angle, origin))
         self.window.prompt(self.hint())
 
     def cancel(self) -> bool:
-        if self._ring is not None:
+        """Esc: stop the drag; when idle, go back to rotating about the centre."""
+        if self._origin is not None:
             self.canvas.set_gizmo_active(None)
+            return super().cancel()
+        if self.pivot is not None:
+            self.pivot = None
+            self.window.update_overlay()
+            return True
         return super().cancel()
 
+    def design_changed(self) -> None:
+        if self._origin is not None:
+            self.canvas.set_gizmo_active(None)
+        super().cancel()  # the drag stops; a chosen pivot stays
+
     def markers(self) -> dict[str, list[Candidate]]:
-        return {"anchor": [("pivot", *self._pivot)]} if self._pivot else {}
+        return {"anchor": [("pivot", *self.pivot)]} if self.pivot else {}
 
 
 class AlignTool(Tool):

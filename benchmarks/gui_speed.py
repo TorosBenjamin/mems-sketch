@@ -12,7 +12,10 @@ the example library, with more and more holes, and times what a user does:
 Run it from the repository root::
 
     uv run --extra dev python benchmarks/gui_speed.py
-    uv run --extra dev python benchmarks/gui_speed.py --cases 100 10000
+    uv run --extra dev python benchmarks/gui_speed.py --cases 40000 16x2500
+
+The default cases take a few minutes; the 40,000-hole ones much longer
+(every edit waits for its rule check, over a minute at that size).
 
 Times are in milliseconds: medians, with the 90th percentile and the
 slowest where an action repeats. They depend on the machine; compare runs on
@@ -211,9 +214,7 @@ def summary(value: float | list[float] | None) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument(
-        "--cases", nargs="+", choices=list(CASES), default=["100", "2500", "10000", "40000"]
-    )
+    parser.add_argument("--cases", nargs="+", choices=list(CASES), default=["100", "2500", "10000"])
     parser.add_argument(
         "--folder", type=Path, help="where to write the projects (default: a temporary folder)"
     )

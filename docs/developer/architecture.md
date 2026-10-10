@@ -39,10 +39,16 @@ code as it is now.
   `process.*` and point coordinates (`beam.right.x`), with dependency
   resolution.
 
-## The compiler and its cache
+## The engine, the compiler and its cache
 
-`core/compiler.py`: a `Compiler` builds components into `Geometry` (KLayout
-regions per layer, 1 nm database unit).
+Everything outside the backend builds through `mems_sketch.engine`: an
+`Engine` is loaded with a project and makes `Build`s of its components (the
+merged geometry, declared points, the nodes as evaluated). Behind it,
+`core/compiler.py`'s `Compiler` builds components into `Geometry` (KLayout
+regions per layer, 1 nm database unit); the C++ engine will replace it
+behind the same interface (see `core-architecture.md`). Placements are
+plain `Transform` values (`core/transform.py`), and code outside the backend
+uses `Geometry`'s methods, never its regions.
 
 - Every build is keyed by a **fingerprint** of everything it depends on: the
   definition, the components it places, parameter values, process constants,
@@ -92,7 +98,9 @@ wires the parts; each part only talks to the session:
 | Module | Contents |
 |---|---|
 | `core/project.py` | `Project`, `Library`, `Instance`: components, name resolution, parameters |
+| `engine.py` | `Engine` and `Build`: what everything outside the backend builds through |
 | `core/compiler.py` | `Compiler` and `Session`: fingerprints, cache, rendering |
+| `core/transform.py` | `Transform`: placements as plain values |
 | `core/shapes/` | The shape tree: one module per kind in `kinds/`, their registry, points, evaluation, modifiers, rewriting |
 | `core/user_component.py` | `ComponentDef`, `ParamDef`, `PointDef` and their adapter to `Component` |
 | `core/component.py` | `Component` base class, `Geometry`, the built-in component registry |

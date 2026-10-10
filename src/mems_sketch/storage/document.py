@@ -36,9 +36,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-import klayout.db as kdb
-
-from mems_sketch.core.component import DBU_UM, Geometry, to_dbu
+from mems_sketch.core.component import Geometry, Polygon
 from mems_sketch.core.project import Project
 from mems_sketch.storage import formats
 from mems_sketch.storage.formats import Matrix, rows
@@ -180,12 +178,12 @@ def geometry_data(
 ) -> dict[str, Any]:
     """A component's geometry as one tree (see the module docstring)."""
     layers: dict[str, Any] = {}
-    for name, region in sorted(geometry.layers.items()):
+    for name in sorted(geometry.layer_names()):
         entry: dict[str, Any] = {}
         layer = project.layers.get(name)
         if layer is not None:
             entry["gds"] = [layer.gds_layer, layer.gds_datatype]
-        entry["polygons"] = [_polygon_data(p) for p in region.each_merged()]
+        entry["polygons"] = [_polygon_data(p) for p in geometry.polygons(name)]
         layers[name] = entry
     data: dict[str, Any] = {"format": GEOMETRY_FORMAT}
     if component is not None:
@@ -197,14 +195,10 @@ def geometry_data(
     return data
 
 
-def _polygon_data(polygon: kdb.Polygon) -> dict[str, Any]:
-    def loop(points) -> Matrix:
-        return Matrix.of([(p.x * DBU_UM, p.y * DBU_UM) for p in points])
-
-    data: dict[str, Any] = {"hull": loop(polygon.each_point_hull())}
-    holes = [loop(polygon.each_point_hole(h)) for h in range(polygon.holes())]
-    if holes:
-        data["holes"] = holes
+def _polygon_data(polygon: Polygon) -> dict[str, Any]:
+    data: dict[str, Any] = {"hull": Matrix.of(polygon.hull)}
+    if polygon.holes:
+        data["holes"] = [Matrix.of(hole) for hole in polygon.holes]
     return data
 
 
@@ -225,26 +219,20 @@ def geometry_from_data(data: Any) -> tuple[Geometry, dict[str, tuple[int, int] |
             if isinstance(gds, Matrix):
                 gds = gds.rows[0]
             numbers[name] = (int(gds[0]), int(gds[1]) if len(gds) > 1 else 0) if gds else None
-            region = geometry.region(name)
+            geometry.add_layer(name)
             polygons = entry.get("polygons") or []
             if isinstance(polygons, dict):  # one polygon, as MATLAB saves a 1×1 struct array
                 polygons = [polygons]
             for polygon in polygons:
                 if not isinstance(polygon, dict):
                     polygon = {"hull": polygon}  # a bare outline, e.g. an N×2 matrix
-                shape = kdb.Polygon(_points(polygon["hull"]))
-                for hole in polygon.get("holes") or []:
-                    shape.insert_hole(_points(hole))
-                region.insert(shape)
+                holes = [rows(hole) for hole in polygon.get("holes") or []]
+                geometry.add_polygon(name, rows(polygon["hull"]), holes)
     except DocumentError:
         raise
     except Exception as exc:
         raise DocumentError(f"not a valid geometry document: {exc}") from exc
     return geometry, numbers
-
-
-def _points(value: Any) -> list[kdb.Point]:
-    return [kdb.Point(to_dbu(x), to_dbu(y)) for x, y, *_ in rows(value)]
 
 
 def read_geometry(

@@ -35,11 +35,11 @@ import math
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
-import klayout.db as kdb
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import evaluate
+from mems_sketch.core.transform import Transform
 
 if TYPE_CHECKING:
     from mems_sketch.core.shapes.base import Point, Value
@@ -139,12 +139,8 @@ def _format(value: Value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
 
 
-def _placed(geometry: Geometry, transform: kdb.DCplxTrans) -> Geometry:
-    from mems_sketch.core.shapes.geometry import to_ictrans
-
-    result = Geometry()
-    result.merge(geometry, to_ictrans(transform))
-    return result
+def _placed(geometry: Geometry, transform: Transform) -> Geometry:
+    return geometry.transformed(transform)
 
 
 class ArrayModifier(Modifier):
@@ -166,7 +162,7 @@ class ArrayModifier(Modifier):
         for j in range(rows):
             for i in range(columns):
                 copy, points = produce({**variables, "i": float(i), "j": float(j)})
-                geometry.merge(_placed(copy, kdb.DCplxTrans(i * dx, j * dy)))
+                geometry.merge(_placed(copy, Transform(i * dx, j * dy)))
                 if declared is None:
                     declared = points  # the first copy sits at the node's own place
         return geometry, declared or {}
@@ -217,13 +213,12 @@ class PolarArrayModifier(Modifier):
             copy, points = produce({**variables, "i": float(k)})
             angle = k * step
             if self.rotate:
-                around = kdb.DCplxTrans(cx, cy) * kdb.DCplxTrans(1, angle, False, 0, 0)
-                transform = around * kdb.DCplxTrans(-cx, -cy)
+                transform = Transform.rotating(angle, (cx, cy))
             else:  # move the copy's centre round the circle, keep its orientation
-                box = _bbox(copy)
-                px, py = (box.center().x, box.center().y) if box else (cx, cy)
-                turned = kdb.DCplxTrans(1, angle, False, 0, 0) * kdb.DPoint(px - cx, py - cy)
-                transform = kdb.DCplxTrans(cx + turned.x - px, cy + turned.y - py)
+                box = copy.bbox()
+                px, py = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2) if box else (cx, cy)
+                tx, ty = Transform(angle=angle).apply(px - cx, py - cy)
+                transform = Transform(cx + tx - px, cy + ty - py)
             geometry.merge(_placed(copy, transform))
             if declared is None:
                 declared = points
@@ -252,12 +247,12 @@ class PolarArrayModifier(Modifier):
         for k in range(count):
             copy, angle = _with_indices(node, {"i": k}), k * step
             if self.rotate:
-                turned = kdb.DCplxTrans(1, angle, False, 0, 0) * kdb.DPoint(cx, cy)
-                copies.append(_wrapped(copy, x=cx - turned.x, y=cy - turned.y, rotation=angle))
+                tx, ty = Transform(angle=angle).apply(cx, cy)
+                copies.append(_wrapped(copy, x=cx - tx, y=cy - ty, rotation=angle))
             else:
                 px, py = measure(copy).point("center")
-                turned = kdb.DCplxTrans(1, angle, False, 0, 0) * kdb.DPoint(px - cx, py - cy)
-                copies.append(translated(copy, _um(cx + turned.x - px), _um(cy + turned.y - py)))
+                tx, ty = Transform(angle=angle).apply(px - cx, py - cy)
+                copies.append(translated(copy, _um(cx + tx - px), _um(cy + ty - py)))
         return copies
 
 
@@ -298,12 +293,12 @@ class MirrorModifier(Modifier):
             return [f"{self.about}.x", f"{self.about}.y"]
         return [f"{self.about}.{end}.{axis}" for end in ("start", "end") for axis in "xy"]
 
-    def transforms(self, variables: dict[str, float]) -> list[kdb.DCplxTrans]:
+    def transforms(self, variables: dict[str, float]) -> list[Transform]:
         """Where the images go (the original not included)."""
         if self.about is None:
             x0, y0 = evaluate(self.x, variables), evaluate(self.y, variables)
-            flip_x = kdb.DCplxTrans(1, 180, True, 2 * x0, 0)  # x -> 2 x0 - x
-            flip_y = kdb.DCplxTrans(1, 0, True, 0, 2 * y0)  # y -> 2 y0 - y
+            flip_x = Transform(2 * x0, 0, 180, mirror=True)  # x -> 2 x0 - x
+            flip_y = Transform(0, 2 * y0, 0, mirror=True)  # y -> 2 y0 - y
             return {"x": [flip_x], "y": [flip_y], "both": [flip_x, flip_y, flip_x * flip_y]}[
                 self.axis
             ]
@@ -315,14 +310,12 @@ class MirrorModifier(Modifier):
             values.append(variables[name])
         if "." in self.about:  # point symmetry: turned 180° about the point
             px, py = values
-            return [kdb.DCplxTrans(1, 180, False, 2 * px, 2 * py)]
+            return [Transform(2 * px, 2 * py, 180)]
         sx, sy, ex, ey = values
         if (sx, sy) == (ex, ey):
             raise ValueError(f"guide '{self.about}' has no direction: its ends coincide")
         angle = math.degrees(math.atan2(ey - sy, ex - sx))
-        reflect = kdb.DCplxTrans(1, 2 * angle, True, 0, 0)  # across the line through 0 at angle
-        moved = reflect * kdb.DPoint(sx, sy)
-        return [kdb.DCplxTrans(1, 2 * angle, True, sx - moved.x, sy - moved.y)]
+        return [Transform.reflecting(angle, (sx, sy))]
 
     def apply(self, produce, variables):
         original, declared = produce(variables)
@@ -348,10 +341,10 @@ class MirrorModifier(Modifier):
             copies.append(
                 _wrapped(
                     node.model_copy(deep=True),
-                    mirror_x=transform.is_mirror(),
+                    mirror_x=transform.mirror,
                     rotation=transform.angle,
-                    x=transform.disp.x,
-                    y=transform.disp.y,
+                    x=transform.dx,
+                    y=transform.dy,
                 )
             )
         return copies
@@ -469,15 +462,6 @@ def _wrapped(node: Shape, **placement: float | bool) -> Shape:
     if "rotation" in fields:
         fields["rotation"] = _um(math.remainder(fields["rotation"], 360.0))
     return TransformShape(children=[node], **fields)
-
-
-def _bbox(geometry: Geometry) -> kdb.DBox | None:
-    from mems_sketch.core.component import DBU_UM
-
-    box = kdb.Box()
-    for region in geometry.layers.values():
-        box += region.bbox()
-    return None if box.empty() else box.to_dtype(DBU_UM)
 
 
 MODIFIER_KINDS: tuple[type[Modifier], ...] = (

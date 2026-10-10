@@ -17,8 +17,6 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
 
-import klayout.db as kdb
-
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import NodePath, Shape
@@ -63,18 +61,8 @@ def diff_projects(old: Project | None, new: Project) -> list[Change]:
 def geometry_changes(old: Geometry | None, new: Geometry | None) -> tuple[Geometry, Geometry]:
     """The material ``new`` has that ``old`` has not (added), and the reverse
     (removed), per layer; layers without a difference are left out."""
-    added, removed = Geometry(), Geometry()
-    old_layers = old.layers if old is not None else {}
-    new_layers = new.layers if new is not None else {}
-    for layer in _union(old_layers, new_layers):
-        before = old_layers.get(layer, kdb.Region())
-        after = new_layers.get(layer, kdb.Region())
-        plus, minus = after - before, before - after
-        if not plus.is_empty():
-            added.layers[layer] = plus.merged()
-        if not minus.is_empty():
-            removed.layers[layer] = minus.merged()
-    return added, removed
+    old, new = old or Geometry(), new or Geometry()
+    return new.difference(old), old.difference(new)
 
 
 # -- the project, process and imports --------------------------------------------

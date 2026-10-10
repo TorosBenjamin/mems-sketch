@@ -76,6 +76,21 @@ def read_layout(data: bytes) -> kdb.Layout:
     return _layouts[digest]
 
 
+def oasis_bytes(geometry: Geometry, layers: dict[str, tuple[int, int]], cell: str) -> bytes:
+    """``geometry`` as an OASIS file with one cell; each layer keeps its name and
+    gets its GDS numbers from ``layers``."""
+    layout = kdb.Layout()
+    layout.dbu = DBU_UM
+    top = layout.create_cell(cell)
+    for name, (number, datatype) in layers.items():
+        region = geometry.layers.get(name)
+        if region is not None:
+            top.shapes(layout.layer(kdb.LayerInfo(number, datatype, name))).insert(region)
+    options = kdb.SaveLayoutOptions()
+    options.format = "OASIS"
+    return bytes(layout.write_bytes(options))
+
+
 def cells(data: bytes) -> list[str]:
     """The file's cells, top cells first (what an import would usually pick)."""
     layout = read_layout(data)

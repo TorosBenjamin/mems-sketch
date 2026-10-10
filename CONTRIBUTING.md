@@ -38,16 +38,19 @@ tested against the latest `development`.
    pytest -q                    # GUI tests run headless (offscreen); no windows open
    ```
 
-   If you changed the C++ geometry library (`src/geom/`), also build and run
-   its tests (setup in [`src/geom/README.md`](src/geom/README.md)):
+   If you changed the C++ geometry library (`src/geom/`) or the engine
+   (`src/engine/`), also build and run their tests (setup in
+   [`src/geom/README.md`](src/geom/README.md) and
+   [`src/engine/README.md`](src/engine/README.md)):
 
    ```bash
    cmake --build build/geom && ctest --test-dir build/geom --output-on-failure
+   cmake --build build/engine && ctest --test-dir build/engine --output-on-failure
    ```
 
-   With Open CASCADE in `build/deps/`, `pip install -e .` also builds the
-   library into the package as `mems_sketch._geom`; without it the package
-   is pure Python and needs no compiler.
+   With Open CASCADE in `build/deps/`, `pip install -e .` also builds both
+   into the package, as `mems_sketch._geom` and `mems_sketch._core`; without
+   it the package is pure Python and needs no compiler.
 
 4. **Push and open a pull request into `development`:**
 

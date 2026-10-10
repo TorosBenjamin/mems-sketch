@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-import klayout.db as kdb
 from pydantic import Field, field_validator
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes.base import Operation, Point, RenderContext, Value
-from mems_sketch.core.shapes.geometry import to_ictrans
+from mems_sketch.core.transform import Transform
 
 if TYPE_CHECKING:
     from mems_sketch.core.shapes.registry import Shape
@@ -49,19 +48,19 @@ class TransformShape(Operation):
         inner_scope = {k: p.seen_through(inverse) for k, p in ctx.scope.items()}
         (inner,) = ctx.children([self.children], inner_scope)
         geometry = Geometry()
-        geometry.merge(inner, to_ictrans(transform))
+        geometry.merge(inner, transform)
         return geometry, {}
 
     def moved(self, x, y, inner) -> dict:
         return {"x": x(self.x), "y": y(self.y)}  # the children stay in their own frame
 
-    def placement(self, variables: dict[str, float]) -> kdb.DCplxTrans:
-        return kdb.DCplxTrans(
-            evaluate(self.scale, variables),
-            evaluate(self.rotation, variables),
-            self.mirror_x,
+    def placement(self, variables: dict[str, float]) -> Transform:
+        return Transform(
             evaluate(self.x, variables),
             evaluate(self.y, variables),
+            evaluate(self.rotation, variables),
+            self.mirror_x,
+            evaluate(self.scale, variables),
         )
 
     @classmethod

@@ -37,14 +37,11 @@ import contextlib
 import math
 from typing import TYPE_CHECKING, ClassVar
 
-import klayout.db as kdb
 from PySide6.QtCore import Qt
 
-from mems_sketch.core.component import to_dbu
 from mems_sketch.core.shapes import (
     Align,
     CircleShape,
-    Evaluator,
     GuideShape,
     NodePath,
     PathShape,
@@ -52,6 +49,7 @@ from mems_sketch.core.shapes import (
     RectShape,
     Shape,
 )
+from mems_sketch.engine import build_shapes
 from mems_sketch.gui.canvas import angle_between
 
 if TYPE_CHECKING:
@@ -1017,7 +1015,7 @@ class DrawTool(Tool):
             self.canvas.clear_drag_preview()
             return
         try:
-            geometry = Evaluator(_no_components).render_shape(shape, {})
+            geometry = build_shapes([shape])
         except Exception:  # noqa: BLE001 - e.g. a degenerate shape: just no fill
             self.canvas.clear_drag_preview()
             return
@@ -1311,14 +1309,3 @@ TOOLS: tuple[type[Tool], ...] = (
 def _um(value: float) -> float:
     """A coordinate without floating-point noise (grid steps like 0.1 add up badly)."""
     return round(value, 6) + 0.0  # + 0.0 turns -0.0 into 0.0
-
-
-def _no_components(name: str):
-    raise KeyError(name)  # drawn primitives never refer to components
-
-
-def probe(x: float, y: float, reach: float = 0.0) -> kdb.Region:
-    """A small square around a point, to test what lies under it (``reach`` in µm)."""
-    point = kdb.Point(to_dbu(x), to_dbu(y))
-    r = max(1, to_dbu(reach))
-    return kdb.Region(kdb.Box(point.x - r, point.y - r, point.x + r, point.y + r))

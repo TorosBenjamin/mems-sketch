@@ -116,7 +116,7 @@ class ModifierEdits(Commands):
 
     def _measure(self, node: Shape, variables: dict[str, float]) -> NodePoints:
         """The points of ``node`` (without its modifiers) where it is."""
-        geometry = self.session.project.render_shape(node, self.session.active, variables)
+        geometry = self.session.engine.shapes([node], variables, self.session.active)
         return NodePoints(node.name or node.kind, geometry, {})
 
 

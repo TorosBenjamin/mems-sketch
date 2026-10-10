@@ -17,8 +17,8 @@ themselves; they go through a session, which uses the rest of the backend
 * Undo/redo keep whole-project snapshots (libraries are read-only and shared)
   and remember which component each change was made in, so a frontend can
   go back to it, like a code editor.
-* A long-lived :class:`Compiler` caches built components by fingerprint, so
-  recompiling after an edit only rebuilds what changed.
+* A long-lived :class:`~mems_sketch.engine.Engine` caches built components by
+  fingerprint, so recompiling after an edit only rebuilds what changed.
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from mems_sketch.core.compiler import Compiler, Session
 from mems_sketch.core.component import Component
 from mems_sketch.core.project import Project, new_project
 from mems_sketch.core.shapes import (
@@ -53,6 +52,7 @@ from mems_sketch.editing.parameters import ParameterEdits
 from mems_sketch.editing.points import PointEdits
 from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
+from mems_sketch.engine import Engine
 from mems_sketch.export.base import export
 from mems_sketch.storage import is_copy, load, save
 from mems_sketch.storage.project_files import PROJECT_FILE, load_library, project_folder
@@ -72,7 +72,7 @@ class EditSession:
         self.active = self.project.default_component()
         self.path: Path | None = None
         self.dirty = False
-        self.compiler = Compiler()
+        self._engine = Engine()
         # (description, other project state, active before the change, active after it)
         self._undo: list[tuple[str, Project, str, str]] = []
         self._redo: list[tuple[str, Project, str, str]] = []
@@ -137,19 +137,7 @@ class EditSession:
 
     def problems(self, project: Project | None = None) -> list[str]:
         """Why the project does not compile (empty when it does)."""
-        project = project or self.project
-        try:
-            project.check_references()
-        except ValueError as exc:
-            return [str(exc)]
-        session = self.compiler.session(project)
-        problems = []
-        for name in project.components:
-            try:
-                session.render(name)
-            except Exception as exc:  # noqa: BLE001 - collected for the caller
-                problems.append(f"{name}: {exc}")
-        return problems
+        return self._engine.trial(project or self.project).problems()
 
     def can_undo(self) -> bool:
         return bool(self._undo)
@@ -278,8 +266,10 @@ class EditSession:
         self.dirty = dirty
         self.file_changed.emit()
 
-    def compiled(self) -> Session:
-        return self.compiler.session(self.project)
+    @property
+    def engine(self) -> Engine:
+        """The engine, with the project as it is now loaded."""
+        return self._engine.load(self.project)
 
     def exists(self, component: str) -> bool:
         """Whether ``component`` (as written at project level) can be opened."""
@@ -299,7 +289,7 @@ class EditSession:
         found = self.project.definition(self.project.qualify(component))
         if found is not None:
             return found[0]
-        schema = self.compiled().component(component).Params.model_fields
+        schema = self.engine.component(component).Params.model_fields
         return ComponentDef(
             name=component,
             parameters=[
@@ -336,7 +326,7 @@ class EditSession:
             previous = trials.get(name)
             trials[name] = value
             try:
-                self.compiled().variables(component, self.trials_for(component))
+                self.engine.variables(component, self.trials_for(component))
             except Exception:
                 if previous is None:
                     trials.pop(name)
@@ -355,7 +345,7 @@ class EditSession:
                 kept = self.trials.setdefault(component, {})
                 kept[name] = value
                 try:
-                    self.compiled().variables(component, self.trials_for(component))
+                    self.engine.variables(component, self.trials_for(component))
                 except Exception:  # noqa: BLE001 - an outdated trial value is dropped
                     kept.pop(name)
 
@@ -365,7 +355,7 @@ class EditSession:
         if not trials:
             return {}
         try:
-            schema = self.compiled().component(component).Params.model_fields
+            schema = self.engine.component(component).Params.model_fields
         except KeyError:
             return {}
         return {k: v for k, v in trials.items() if k in schema}
@@ -386,7 +376,7 @@ class EditSession:
         return self.project.qualify(name, component or self.active)
 
     def component(self, name: str) -> Component:
-        return self.compiled().component(name)
+        return self.engine.component(name)
 
     def parameter_defaults(self, component: str) -> dict[str, Any]:
         """Declared defaults (numbers or expressions) of a component's parameters."""

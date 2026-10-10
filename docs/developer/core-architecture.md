@@ -513,8 +513,14 @@ test passing and updates this document.
 
 1. **Interface first, in Python.** Put the `Engine`/`build` interface in front
    of the current compiler, and move the GUI, editing and exports onto it, so
-   nothing outside the backend uses KLayout types (today `gui/canvas.py`,
-   `gui/tools.py`, `editing/results.py` and others do).
+   nothing outside the backend uses KLayout types. *Done:* placements are
+   plain `Transform` values (`core/transform.py`); the GUI, editing, storage
+   and the command line use `Geometry`'s methods (polygons as µm rings,
+   bounding box, hit test, pieces, difference) instead of its regions, and
+   build through `mems_sketch.engine` (`Engine.load`, `Engine.build`,
+   `Build.geometry`, `points`, `records`, `outlines`), never the compiler
+   or the shape evaluator. `tests/test_architecture.py` keeps it that way.
+   Swapping the backend now means implementing `Engine` and `Build`.
 2. **Build setup.** CMake, scikit-build-core, nanobind, the OCC build and CI
    caching, the two targets and the dependency check. *Done for the
    library:* `mems_sketch._geom` is built into the package, and wheels for
@@ -528,6 +534,11 @@ test passing and updates this document.
    per-corner rounding.
 5. **Expressions and the model in the engine,** tested against
    `core/expressions.py` on every expression in the tests and examples.
+   *Done for expressions:* `src/engine/` (`mems_engine`, Python module
+   `mems_sketch._core`, in the wheels) evaluates them with Python's
+   arithmetic, and `tests/test_engine_expressions.py` finds the same values,
+   names and errors on the examples' expressions and twenty thousand
+   generated ones. Next: the project model.
 6. **Shape kinds and modifiers in the engine,** on the library. The
    equivalence test runs from here on. Then switch the default backend to
    the C++ engine. The Python geometry code is removed once the C++ engine

@@ -6,13 +6,13 @@ import functools
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
-import klayout.db as kdb
 from pydantic import BaseModel
 
-from mems_sketch.core.component import DBU_UM, Geometry
+from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import ExpressionError, names_in
 from mems_sketch.core.shapes.base import Point
 from mems_sketch.core.shapes.tree import walk
+from mems_sketch.core.transform import Transform
 
 if TYPE_CHECKING:
     from mems_sketch.core.shapes.registry import Shape
@@ -44,7 +44,7 @@ class NodePoints:
         name: str,
         geometry: Geometry,
         declared: Mapping[str, Point],
-        transform: kdb.DCplxTrans | None = None,
+        transform: Transform | None = None,
     ) -> None:
         self.name = name
         self.geometry = geometry
@@ -63,10 +63,9 @@ class NodePoints:
             raise ValueError(f"shape '{self.name}' has no point '{point}'")
         if self.transform is None:
             return x, y
-        p = self.transform * kdb.DPoint(x, y)
-        return p.x, p.y
+        return self.transform.apply(x, y)
 
-    def seen_through(self, transform: kdb.DCplxTrans) -> NodePoints:
+    def seen_through(self, transform: Transform) -> NodePoints:
         """The same points, mapped by ``transform`` (applied after any existing one)."""
         combined = transform if self.transform is None else transform * self.transform
         return NodePoints(self.name, self.geometry, self.declared, combined)
@@ -75,16 +74,14 @@ class NodePoints:
 def _bbox_point(
     geometry: Geometry, point: str, name: str, declared: Mapping[str, Point] | None = None
 ) -> Point:
-    box = kdb.Box()
-    for region in geometry.layers.values():
-        box += region.bbox()
-    if box.empty() and declared:  # nothing drawn (a guide): the box of its own points
+    box = geometry.bbox()
+    if box is None and declared:  # nothing drawn (a guide): the box of its own points
         xs_, ys_ = [p[0] for p in declared.values()], [p[1] for p in declared.values()]
         x0, y0, x1, y1 = min(xs_), min(ys_), max(xs_), max(ys_)
-    elif box.empty():
+    elif box is None:
         raise ValueError(f"shape '{name}' has no geometry to align to")
     else:
-        x0, y0, x1, y1 = (v * DBU_UM for v in (box.left, box.bottom, box.right, box.top))
+        x0, y0, x1, y1 = box
     xs = {"left": x0, "right": x1}
     ys = {"bottom": y0, "top": y1}
     vertical, _, horizontal = point.partition("_")

@@ -27,8 +27,8 @@ class NodeEdits(Commands):
         node = self.session.node(path)
         record = self.session.results.inspection().get(path)
         if align is None and node.align is not None and record is not None:
-            shift = record.shift.disp  # bake the alignment's move into the coordinates
-            node = translated(node.model_copy(update={"align": None}), shift.x, shift.y)
+            shift = record.shift  # bake the alignment's move into the coordinates
+            node = translated(node.model_copy(update={"align": None}), shift.dx, shift.dy)
             self.replace(path, node)
             return
         self.replace(path, node.model_copy(update={"align": align}))

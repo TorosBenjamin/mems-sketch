@@ -11,24 +11,14 @@ from mems_sketch.core.component import DBU_UM, Geometry, to_dbu
 
 if TYPE_CHECKING:
     from mems_sketch.core.shapes.base import Point
+    from mems_sketch.core.transform import Transform
 
 ARC_TOLERANCE_UM = 0.005  # max chord deviation for circles and arcs
 MAX_ARC_SEGMENTS = 4096
 
 
-def to_ictrans(transform: kdb.DCplxTrans) -> kdb.ICplxTrans:
-    return kdb.ICplxTrans(
-        transform.mag,
-        transform.angle,
-        transform.is_mirror(),
-        to_dbu(transform.disp.x),
-        to_dbu(transform.disp.y),
-    )
-
-
-def apply_transform(transform: kdb.DCplxTrans, point: Point) -> Point:
-    p = transform * kdb.DPoint(*point)
-    return p.x, p.y
+def apply_transform(transform: Transform, point: Point) -> Point:
+    return transform.apply(*point)
 
 
 def boolean_op(op: str, a: Geometry, b: Geometry) -> Geometry:

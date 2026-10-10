@@ -1,6 +1,6 @@
 # The Python package's build (scikit-build-core, see pyproject.toml): the
-# geometry library's Python module, mems_sketch._geom, when Open CASCADE is
-# found. Without it the package is pure Python and the rest of mems-sketch
+# geometry library's Python module, mems_sketch._geom, and the engine's,
+# mems_sketch._core, when Open CASCADE is found. Without it the package is pure Python and the rest of mems-sketch
 # works as before, so contributors who never touch the C++ need no compiler.
 #
 # Release wheels set MEMS_SKETCH_REQUIRE_GEOMETRY=ON, so a wheel can never
@@ -27,6 +27,11 @@ if(OpenCASCADE_FOUND)
     add_subdirectory(src/geom)
     install(TARGETS _geom LIBRARY DESTINATION mems_sketch)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/src/geom/_geom.pyi" DESTINATION mems_sketch)
+    set(MEMS_ENGINE_BUILD_PYTHON ON CACHE BOOL "" FORCE)
+    set(MEMS_ENGINE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    add_subdirectory(src/engine)
+    install(TARGETS _core LIBRARY DESTINATION mems_sketch)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/src/engine/_core.pyi" DESTINATION mems_sketch)
 else()
     message(STATUS "Open CASCADE not found: mems_sketch without its geometry library "
                    "(pure Python; see src/geom/README.md to build it)")

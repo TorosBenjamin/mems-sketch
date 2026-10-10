@@ -97,6 +97,14 @@ def nested_project() -> Project:
             "spring": component(
                 "spring", [ParamDef(name="k", default=0.5, min=0, max=1)], [ref("std.pad")]
             ),
+            "pad": component(  # limits that are expressions, some exclusive
+                "pad",
+                [
+                    ParamDef(name="size", default=40, min=0, min_exclusive=True),
+                    ParamDef(name="enclosure", default=5, min="process.gap", max="size / 2"),
+                    ParamDef(name="opening", default=1, min=0, max="size", max_exclusive=True),
+                ],
+            ),
         }
     )
     project.components["top"] = component(

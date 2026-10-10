@@ -99,6 +99,17 @@ shapes:
     dy: -1
 ```
 
+A parameter's `min` and `max` are numbers or expressions over the other
+parameters and process constants; `min_exclusive: true` or
+`max_exclusive: true` refuses the value equal to the limit:
+
+```yaml
+- name: enclosure
+  default: 5
+  max: size / 2
+  max_exclusive: true
+```
+
 A component's accepted rule violations are listed under `waivers`: the rule,
 the violation's box (µm), the reason, and a fingerprint of the geometry around
 it, which tells when the waiver has lapsed:

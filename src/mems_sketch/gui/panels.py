@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.core.component import component_types
-from mems_sketch.core.expressions import ExpressionError, resolve_variables
+from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.core.process import Layer
 from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
@@ -86,6 +86,21 @@ def _format(value) -> str:
     if value is None:
         return ""
     return f"{value:g}" if isinstance(value, float | int) else str(value)
+
+
+def limit_text(limit: float | str | None, exclusive: bool, mark: str) -> str:
+    """A limit as typed in its cell: ``> 0`` for an exclusive minimum (``mark``
+    is ``>`` for a minimum, ``<`` for a maximum), ``size / 2`` for an inclusive one."""
+    text = _format(limit)
+    return f"{mark} {text}" if text and exclusive else text
+
+
+def parse_limit(text: str, mark: str) -> tuple[float | str | None, bool]:
+    """A limit cell's text as (limit, exclusive): see :func:`limit_text`."""
+    text = text.strip()
+    exclusive = text.startswith(mark)
+    text = text.removeprefix(mark).strip()
+    return (parse_value(text) if text else None), exclusive and bool(text)
 
 
 def _action_bar(
@@ -1005,8 +1020,8 @@ class ParametersPanel(_Panel):
             cells = [
                 make(p.name),
                 make(_format(p.default)),
-                make(_format(p.min)),
-                make(_format(p.max)),
+                make(limit_text(p.min, p.min_exclusive, ">")),
+                make(limit_text(p.max, p.max_exclusive, "<")),
                 QTableWidgetItem(_format(trials.get(p.name))),
                 _readonly("error" if value is None else f"{value:g}"),
             ]
@@ -1018,6 +1033,14 @@ class ParametersPanel(_Panel):
             )
             cells[0].setToolTip("\n".join(t for t in (p.description, access) if t))
             cells[self.TRIAL].setToolTip("Try a value without changing the design (not saved)")
+            for column, limit in ((2, p.min), (3, p.max)):
+                tip = "A number or an expression; start with > or < to exclude the limit itself"
+                if isinstance(limit, str):
+                    try:
+                        tip = f"{limit} = {evaluate(limit, values):g}\n{tip}"
+                    except ValueError:
+                        tip = f"{limit} does not evaluate\n{tip}"
+                cells[column].setToolTip(tip)
             if p.name in trials:
                 cells[-1].setForeground(QBrush(QColor("#e0a000")))
             for column, cell in enumerate(cells):
@@ -1036,9 +1059,11 @@ class ParametersPanel(_Panel):
                 case 1:
                     self.document.parameters.update(name, default=parse_value(text))
                 case 2:
-                    self.document.parameters.update(name, min=float(text) if text else None)
+                    limit, exclusive = parse_limit(text, ">")
+                    self.document.parameters.update(name, min=limit, min_exclusive=exclusive)
                 case 3:
-                    self.document.parameters.update(name, max=float(text) if text else None)
+                    limit, exclusive = parse_limit(text, "<")
+                    self.document.parameters.update(name, max=limit, max_exclusive=exclusive)
                 case self.TRIAL:
                     self.document.set_trial(name, parse_value(text) if text else None)
 
@@ -1089,9 +1114,13 @@ class ParametersPanel(_Panel):
                 return True
             self._drag["dragging"] = True
             p = self._drag["p"]
-            value = dragged_value(
-                self._drag["start"], dx, event.modifiers(), p.integer, p.min, p.max
-            )
+            try:
+                low, high = p.limits(self.document.results.scope())
+            except Exception:  # noqa: BLE001 - a limit that does not evaluate: no clamp
+                low = high = None
+            value = dragged_value(self._drag["start"], dx, event.modifiers(), p.integer, low, high)
+            if (p.min_exclusive and value == low) or (p.max_exclusive and value == high):
+                return True  # the limit itself is excluded: stay one step inside
             self._drag["value"] = value
             self._guard(lambda: self.document.set_trial(p.name, value))  # shown live
             return True

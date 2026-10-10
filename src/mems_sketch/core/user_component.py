@@ -69,6 +69,9 @@ class ParamDef(_Model):
     parameters and ``process.*`` constants, e.g. ``gap`` defaulting to
     ``"1.5 * width"``. Defaults are resolved in dependency order, after the
     values given by the caller, and then checked against ``min``/``max``.
+    Limits may be expressions too (``max="size / 2"``), over the other
+    parameters and the process constants; an exclusive limit refuses the value
+    equal to it.
 
     An ``internal`` parameter is used only by the component itself (often a
     derived value such as ``pitch = width + gap``): where the component is
@@ -77,8 +80,10 @@ class ParamDef(_Model):
 
     name: str
     default: Value = 0.0
-    min: float | None = None
-    max: float | None = None
+    min: Value | None = None
+    max: Value | None = None
+    min_exclusive: bool = False
+    max_exclusive: bool = False
     integer: bool = False
     internal: bool = False
     description: str = ""
@@ -96,13 +101,29 @@ class ParamDef(_Model):
     def _numeric_default_in_range(self):
         if isinstance(self.default, str):
             return self  # checked when the expression is resolved
-        if self.min is not None and self.default < self.min:
-            raise ValueError(f"default of '{self.name}' is below its minimum")
-        if self.max is not None and self.default > self.max:
-            raise ValueError(f"default of '{self.name}' is above its maximum")
         if self.integer and self.default != int(self.default):
             raise ValueError(f"default of integer parameter '{self.name}' is not an integer")
+        numbers = {
+            k: v for k, v in (("min", self.min), ("max", self.max)) if not isinstance(v, str)
+        }
+        problem = self.out_of_range(self.default, numbers.get("min"), numbers.get("max"))
+        if problem:
+            raise ValueError(f"default of '{self.name}' {problem}")
         return self
+
+    def limits(self, variables: Mapping[str, float]) -> tuple[float | None, float | None]:
+        """``min`` and ``max`` evaluated with the component's values and constants."""
+        return tuple(  # type: ignore[return-value]
+            None if limit is None else evaluate(limit, variables) for limit in (self.min, self.max)
+        )
+
+    def out_of_range(self, value: float, low: float | None, high: float | None) -> str | None:
+        """What is wrong with ``value`` against these limits, or nothing."""
+        if low is not None and (value <= low if self.min_exclusive else value < low):
+            return f"must be {'more than' if self.min_exclusive else 'at least'} {low:g}, not {value:g}"
+        if high is not None and (value >= high if self.max_exclusive else value > high):
+            return f"must be {'less than' if self.max_exclusive else 'at most'} {high:g}, not {value:g}"
+        return None
 
 
 class PointDef(_Model):
@@ -306,14 +327,28 @@ def declared_points(
     return result
 
 
+def _number_limits(p: ParamDef) -> dict[str, float]:
+    """A parameter's limits that are numbers, as pydantic field constraints (which
+    the editor reads to clamp a typed value); expressions are checked later."""
+    limits = {}
+    if p.min is not None and not isinstance(p.min, str):
+        limits["gt" if p.min_exclusive else "ge"] = p.min
+    if p.max is not None and not isinstance(p.max, str):
+        limits["lt" if p.max_exclusive else "le"] = p.max
+    return limits
+
+
 def _params_model(definition: ComponentDef, scope: Mapping[str, float]) -> type[Params]:
     fields: dict[str, Any] = {
         p.name: (
             int if p.integer else float,
-            Field(ge=p.min, le=p.max, description=p.description),
+            Field(description=p.description, **_number_limits(p)),
         )
         for p in definition.parameters
     }
+    expression_limits = [
+        p for p in definition.parameters if isinstance(p.min, str) or isinstance(p.max, str)
+    ]
     base = create_model(f"{definition.name}_Params", __base__=Params, **fields)
     defaults = {p.name: p.default for p in definition.parameters}
 
@@ -326,6 +361,18 @@ def _params_model(definition: ComponentDef, scope: Mapping[str, float]) -> type[
             missing = {k: v for k, v in defaults.items() if k not in data}
             data.update(resolve_variables(missing, {**scope, **given}))
             return data
+
+        @model_validator(mode="after")
+        def _limits_hold(self):
+            if not expression_limits:
+                return self
+            variables = {**scope, **{k: float(v) for k, v in self.model_dump().items()}}
+            for p in expression_limits:
+                value = variables[p.name]
+                problem = p.out_of_range(value, *p.limits(variables))
+                if problem:
+                    raise ValueError(f"parameter '{p.name}' of '{definition.name}' {problem}")
+            return self
 
     ResolvedParams.__name__ = base.__name__
     return ResolvedParams

@@ -49,9 +49,9 @@ Value value_of(const Json& j) {
     throw ModelError("a value is neither a number nor an expression: " + j.dump());
 }
 
-std::optional<double> optional_number(const Json& j, const char* key) {
+std::optional<Value> optional_value(const Json& j, const char* key) {
     if (!j.contains(key) || j[key].is_null()) return std::nullopt;
-    return j[key].get<double>();
+    return value_of(j[key]);
 }
 
 // The components the ref shapes in ``node`` name, wherever they are nested.
@@ -76,8 +76,10 @@ ComponentDef component_from(const Json& j) {
         ParamDef param;
         param.name = p.at("name").get<std::string>();
         param.default_value = p.contains("default") ? value_of(p["default"]) : Value{0.0};
-        param.min = optional_number(p, "min");
-        param.max = optional_number(p, "max");
+        param.min = optional_value(p, "min");
+        param.max = optional_value(p, "max");
+        param.min_exclusive = p.value("min_exclusive", false);
+        param.max_exclusive = p.value("max_exclusive", false);
         param.integer = p.value("integer", false);
         param.internal = p.value("internal", false);
         def.parameters.push_back(std::move(param));
@@ -295,16 +297,25 @@ std::map<std::string, double> Project::variables(std::string_view component, con
         if (!declared.count(name))
             throw ModelError("component " + in_quotes(qualified) + " has no parameter " + in_quotes(name));
     }
+    Variables all = known;  // what limits see: the constants and every value
+    for (const auto& [name, value] : values) all[name] = value;
+    auto limit = [&](const std::optional<Value>& v) -> std::optional<double> {
+        if (!v) return std::nullopt;
+        if (const double* number = std::get_if<double>(&*v)) return *number;
+        return Expression(std::get<std::string>(*v)).evaluate(all);
+    };
     std::map<std::string, double> result(constants.begin(), constants.end());
     for (const auto& param : def->parameters) {
         const double v = values.at(param.name);
         const std::string what = "parameter " + in_quotes(param.name) + " of " + in_quotes(qualified);
         if (param.integer && !(std::isfinite(v) && v == std::trunc(v)))
             throw ModelError(what + " must be an integer, not " + format_number(v));
-        if (param.min && !(v >= *param.min))
-            throw ModelError(what + " must be at least " + format_number(*param.min) + ", not " + format_number(v));
-        if (param.max && !(v <= *param.max))
-            throw ModelError(what + " must be at most " + format_number(*param.max) + ", not " + format_number(v));
+        if (const auto low = limit(param.min); low && !(param.min_exclusive ? v > *low : v >= *low))
+            throw ModelError(what + (param.min_exclusive ? " must be more than " : " must be at least ") +
+                             format_number(*low) + ", not " + format_number(v));
+        if (const auto high = limit(param.max); high && !(param.max_exclusive ? v < *high : v <= *high))
+            throw ModelError(what + (param.max_exclusive ? " must be less than " : " must be at most ") +
+                             format_number(*high) + ", not " + format_number(v));
         result[param.name] = v + 0.0;
     }
     return result;

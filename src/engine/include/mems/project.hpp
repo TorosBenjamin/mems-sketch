@@ -53,7 +53,8 @@ using Values = std::vector<std::pair<std::string, Value>>;
 struct ParamDef {
     std::string name;
     Value default_value = 0.0;
-    std::optional<double> min, max;
+    std::optional<Value> min, max;  // numbers, or expressions over the values and constants
+    bool min_exclusive = false, max_exclusive = false;
     bool integer = false;
     bool internal = false;
 };
@@ -94,7 +95,8 @@ public:
 
     // A user component's parameter values: those given (numbers, or expressions
     // over the process constants), defaults for the rest (which may use the
-    // others), checked against min, max and integer; with the process constants.
+    // others), checked against min, max (which may use them all) and integer;
+    // with the process constants.
     std::map<std::string, double> variables(std::string_view component, const Values& given = {}) const;
 
     // A hash of everything a component's geometry depends on except its

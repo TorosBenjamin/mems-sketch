@@ -181,3 +181,25 @@ def test_process_constants_are_visible_as_dotted_names():
     assert process.scope() == {"process.min_gap": 2.0, "process.finger_gap": 3.0}
     assert names_in("2 * process.min_gap + max(w, 1)") == {"process.min_gap", "w"}
     assert resolve_variables({"g": "process.finger_gap + 1"}, process.scope()) == {"g": 4.0}
+
+
+def test_limits_can_be_expressions_and_exclusive():
+    design = make_design()
+    design.define_component(
+        ComponentDef(
+            name="pad",
+            parameters=[
+                ParamDef(name="size", default=40, min=0, min_exclusive=True),
+                ParamDef(name="enclosure", default=5, max="size / 2", max_exclusive=True),
+            ],
+            shapes=[RectShape(layer="device", x0=0, y0=0, x1="size", y1="size")],
+        )
+    )
+    design.add(Instance("a", "pad", {"size": 30, "enclosure": 14.9}))
+    with pytest.raises(ValidationError, match="must be less than 15, not 15"):
+        design.add(Instance("b", "pad", {"size": 30, "enclosure": 15}))
+    with pytest.raises(ValidationError, match="greater than 0"):
+        design.add(Instance("c", "pad", {"size": 0}))
+    with pytest.raises(ValidationError, match="must be more than 0"):
+        ParamDef(name="w", default=0, min=0, min_exclusive=True)
+    ParamDef(name="w", default=100, max="size")  # checked where the values are known

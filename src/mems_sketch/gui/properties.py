@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes import (
     MODIFIER_KINDS,
     CornersModifier,
@@ -420,11 +421,13 @@ class PropertyEditor(QScrollArea):
                 readers[field] = self._editors.pop(f"param:{field}")
                 widget.setPlaceholderText(_format(default))
                 widget.integer = info.annotation is int
-                for limit in info.metadata:  # the schema's limits (ge / le)
-                    if getattr(limit, "ge", None) is not None:
-                        widget.minimum = limit.ge
-                    if getattr(limit, "le", None) is not None:
-                        widget.maximum = limit.le
+                for limit in info.metadata:  # the schema's number limits
+                    for bound in ("ge", "gt"):
+                        if getattr(limit, bound, None) is not None:
+                            widget.minimum = getattr(limit, bound)
+                    for bound in ("le", "lt"):
+                        if getattr(limit, bound, None) is not None:
+                            widget.maximum = getattr(limit, bound)
             label = info.description or field
             if field in component.internal:
                 label = f"{field} (internal)"
@@ -779,8 +782,8 @@ class PropertyEditor(QScrollArea):
             if isinstance(parameter.default, str) and value is not None:
                 text += f"  ({value:g})"
             limits = [
-                f"≥ {parameter.min:g}" if parameter.min is not None else "",
-                f"≤ {parameter.max:g}" if parameter.max is not None else "",
+                _limit(parameter.min, ">" if parameter.min_exclusive else "≥", values),
+                _limit(parameter.max, "<" if parameter.max_exclusive else "≤", values),
                 "whole number" if parameter.integer else "",
             ]
             limits = ", ".join(t for t in limits if t)
@@ -915,6 +918,17 @@ def _numeric(model, pair) -> bool:
 
 def _format(value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
+
+
+def _limit(limit, relation: str, values: dict[str, float]) -> str:
+    """``≤ size / 2 = 20``: a parameter limit as shown, evaluated if an expression."""
+    if limit is None:
+        return ""
+    text = f"{relation} {_format(limit)}"
+    if isinstance(limit, str):
+        with contextlib.suppress(ValueError):
+            text += f" = {evaluate(limit, values):g}"
+    return text
 
 
 def _message(exc: Exception) -> str:

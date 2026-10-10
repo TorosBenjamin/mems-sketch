@@ -159,6 +159,25 @@ def test_internal_parameters_are_locked_and_not_offered_where_placed(window):
     assert "size" in labels and "inner" not in labels
 
 
+def test_limits_are_typed_as_expressions_and_exclusive_with_a_mark(window):
+    doc = window.document
+    doc.components.new("pad")
+    doc.parameters.set("size", 20.0)
+    doc.parameters.set("enclosure", 2.0)
+    panel = window.parameters
+    panel.refresh()
+    panel.table.item(0, 2).setText("> 0")
+    panel.table.item(1, 3).setText("< size / 2")
+    size, enclosure = doc.active_definition.parameters
+    assert (size.min, size.min_exclusive) == (0, True)
+    assert (enclosure.max, enclosure.max_exclusive) == ("size / 2", True)
+    panel.refresh()
+    assert panel.table.item(1, 3).text() == "< size / 2"
+    assert panel.table.item(1, 3).toolTip().startswith("size / 2 = 10")
+    panel.table.item(1, 3).setText("")
+    assert doc.active_definition.parameter("enclosure").max is None
+
+
 def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window, qtbot):
     """Enter in a field, or a click on the eye or a card button, rebuilds the panel
     from inside that widget's own event: the old widgets must outlive the event."""

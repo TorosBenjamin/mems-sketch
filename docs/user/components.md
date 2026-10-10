@@ -44,7 +44,10 @@ min, max, a trial value and the resolved value.
 - A **default** is a number or an expression over other parameters
   (`hole_r` defaulting to `pitch / 6`) and process constants
   (`process.min_gap`).
-- **Min**, **max** and *integer* limit what can be passed in.
+- **Min**, **max** and *integer* limit what can be passed in. A limit can be
+  an expression over the other parameters (an anchor's enclosure with max
+  `size / 2`). Start it with `>` or `<` to exclude the limit itself
+  (`> 0`: more than zero). The component's card shows each limit evaluated.
 - A parameter is **public** (whoever places the component can set it) or
   **internal** (the lock button): used only inside, typically a derived value.
   Where the component is placed, internal parameters are not offered.

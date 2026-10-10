@@ -29,6 +29,12 @@ from mems_sketch import (
 from mems_sketch.core.compiler import Compiler
 from mems_sketch.core.project import Project, new_project
 from mems_sketch.core.shapes import ArrayModifier
+from mems_sketch.core.shapes.kinds.arc import ArcShape
+from mems_sketch.core.shapes.kinds.fillet import FilletShape
+from mems_sketch.core.shapes.kinds.guide import GuideShape
+from mems_sketch.core.shapes.kinds.layer_map import LayerMapShape
+from mems_sketch.core.shapes.kinds.offset import OffsetShape
+from mems_sketch.core.shapes.kinds.path import PathShape
 from mems_sketch.core.user_component import PointDef
 from mems_sketch.engine import project_data
 from mems_sketch.storage import load
@@ -45,6 +51,9 @@ except ImportError:
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 STRAIGHT_NM, CURVED_NM = 1, 3  # sliver half-widths: 2 nm, and 6 nm (chord 5 nm + rounding)
+# Curves the Python backend has made from segments before an operation (an
+# offset of a circle, KLayout's rounded corners): its 5 nm grow with them.
+SEGMENTED_NM = 6
 
 
 def engine_regions(project: Project, component: str, params=None) -> dict[str, kdb.Region]:
@@ -480,4 +489,167 @@ def test_point_errors_alike():
         points=[PointDef(name="p", at="ghost.top")],
     )
     for name in ("loop", "nowhere", "no_point", "bad_at"):
+        assert assert_same(project, name).startswith("both fail"), name
+
+
+# -- the other kinds ----------------------------------------------------------------
+
+CROSS = [rect(x0=0, y0=0, x1=10, y1=5), rect(x0=4, y0=0, x1=6, y1=20)]
+TRIANGLE = PolygonShape(layer="device", points=[(0, 0), (20, 0), (10, 5)])
+STAR = PolygonShape(
+    layer="device",
+    points=[(0, 10), (3, 3), (10, 0), (3, -3), (0, -10), (-3, -3), (-10, 0), (-3, 3)],
+)
+FRAME = BooleanShape(
+    op="subtract", a=[rect(x0=0, y0=0, x1=20, y1=20)], b=[rect(x0=5, y0=5, x1=15, y1=15)]
+)
+
+# (name, shapes, tolerance in nm)
+KIND_CASES = [
+    (
+        "arc",
+        [
+            ArcShape(
+                layer="device",
+                x=1,
+                y=2,
+                inner_radius=5,
+                outer_radius=9,
+                start_angle=10,
+                end_angle=200,
+            )
+        ],
+        CURVED_NM,
+    ),
+    ("ring", [ArcShape(layer="device", inner_radius=5, outer_radius=9)], CURVED_NM),
+    ("pie", [ArcShape(layer="device", outer_radius=9, start_angle=-30, end_angle=45)], CURVED_NM),
+    (
+        "arc_segments",
+        [ArcShape(layer="device", inner_radius=5, outer_radius=9, end_angle=90, segments=12)],
+        STRAIGHT_NM,
+    ),
+    (
+        "path",
+        [PathShape(layer="device", points=[(0, 0), (50, 0), (50, 30), (80, 40)], width=4)],
+        STRAIGHT_NM,
+    ),
+    (
+        "path_square",
+        [PathShape(layer="device", points=[(0, 0), (50, 0), (50, 30)], width=4, ends="square")],
+        STRAIGHT_NM,
+    ),
+    (
+        "path_sharp_turn",
+        [PathShape(layer="device", points=[(0, 0), (50, 0), (0, 10)], width=4)],
+        STRAIGHT_NM,
+    ),
+    # KLayout draws round ends with its own, coarser segments.
+    (
+        "path_round",
+        [PathShape(layer="device", points=[(0, 0), (50, 0), (50, 30)], width=4, ends="round")],
+        10,
+    ),
+    ("offset", [OffsetShape(distance=2, children=[rect(x0=0, y0=0, x1=10, y1=5)])], STRAIGHT_NM),
+    ("offset_shrink", [OffsetShape(distance=-1, children=CROSS)], STRAIGHT_NM),
+    (
+        "offset_bevel",
+        [OffsetShape(distance=2, corners="bevel", children=[rect(x0=0, y0=0, x1=10, y1=5)])],
+        STRAIGHT_NM,
+    ),
+    (
+        "offset_shrink_bevel",
+        [OffsetShape(distance=-1, corners="bevel", children=CROSS)],
+        STRAIGHT_NM,
+    ),
+    ("offset_sharp_corners", [OffsetShape(distance=1, children=[TRIANGLE])], STRAIGHT_NM),
+    ("offset_star", [OffsetShape(distance=0.8, children=[STAR])], STRAIGHT_NM),
+    ("offset_star_shrink", [OffsetShape(distance=-0.5, children=[STAR])], STRAIGHT_NM),
+    ("offset_holed", [OffsetShape(distance=1, children=[FRAME])], STRAIGHT_NM),
+    ("offset_holed_shrink", [OffsetShape(distance=-1.5, children=[FRAME])], STRAIGHT_NM),
+    (
+        "offset_circle",
+        [OffsetShape(distance=1.5, children=[CircleShape(layer="device", radius=4)])],
+        SEGMENTED_NM,
+    ),
+    (
+        "offset_pie",
+        [
+            OffsetShape(
+                distance=1,
+                children=[ArcShape(layer="device", outer_radius=9, start_angle=-30, end_angle=45)],
+            )
+        ],
+        # Where the arc meets a straight edge, KLayout's miter follows its last
+        # segment, a little off the arc's tangent the engine follows.
+        20,
+    ),
+    ("fillet", [FilletShape(radius=2, children=[rect(x0=0, y0=0, x1=10, y1=8)])], SEGMENTED_NM),
+    (
+        "fillet_inner",
+        [
+            FilletShape(
+                radius=1,
+                inner_radius=0.5,
+                children=[rect(x0=0, y0=0, x1=10, y1=3), rect(x0=0, y0=0, x1=3, y1=10)],
+            )
+        ],
+        SEGMENTED_NM,
+    ),
+    (
+        "layer_map",
+        [
+            LayerMapShape(
+                mapping={"device": "metal"},
+                children=[
+                    rect(x0=0, y0=0, x1=3, y1=3),
+                    rect(layer="anchor", x0=5, y0=0, x1=6, y1=1),
+                ],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "layer_map_keep",
+        [
+            LayerMapShape(
+                mapping={"device": "metal", "anchor": "metal"},
+                keep_unmapped=True,
+                children=[
+                    rect(x0=0, y0=0, x1=3, y1=3),
+                    rect(layer="anchor", x0=2, y0=0, x1=6, y1=1),
+                    rect(layer="device_2", x0=0, y0=9, x1=1, y1=10),
+                ],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "guide",
+        [
+            GuideShape(name="axis", x0=10, y0=0, x1=10, y1=20),
+            rect(x0=0, y0=0, x1=2, y1=2, align=Align(point="center", to="axis.center")),
+        ],
+        STRAIGHT_NM,
+    ),
+]
+
+
+@pytest.mark.parametrize("name, shapes, tolerance", KIND_CASES, ids=[c[0] for c in KIND_CASES])
+def test_the_other_kinds(name, shapes, tolerance):
+    project = new_project("kinds")
+    project.components[name] = ComponentDef(name=name, shapes=shapes)
+    assert assert_same(project, name, tolerance=tolerance) == "same"
+
+
+def test_kind_errors_alike():
+    project = new_project("kind errors")
+    cases = {
+        "arc_radii": [ArcShape(layer="device", inner_radius=9, outer_radius=5)],
+        "arc_angles": [ArcShape(layer="device", outer_radius=5, start_angle=90, end_angle=10)],
+        "path_width": [PathShape(layer="device", points=[(0, 0), (5, 0)], width=0)],
+        "guide_point": [GuideShape(x0=1, y0=1, x1=1, y1=1)],
+        "fillet_negative": [FilletShape(radius=-1, children=[rect(x0=0, y0=0, x1=4, y1=4)])],
+    }
+    for name, shapes in cases.items():
+        project.components[name] = ComponentDef(name=name, shapes=shapes)
         assert assert_same(project, name).startswith("both fail"), name

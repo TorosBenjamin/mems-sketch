@@ -20,5 +20,11 @@ Result render_circle(const Json& node, const Context& ctx);
 Result render_boolean(const Json& node, const Context& ctx);
 Result render_transform(const Json& node, const Context& ctx);
 Result render_ref(const Json& node, const Context& ctx);
+Result render_arc(const Json& node, const Context& ctx);
+Result render_path(const Json& node, const Context& ctx);
+Result render_guide(const Json& node, const Context& ctx);
+Result render_offset(const Json& node, const Context& ctx);
+Result render_fillet(const Json& node, const Context& ctx);
+Result render_layer_map(const Json& node, const Context& ctx);
 
 }  // namespace mems

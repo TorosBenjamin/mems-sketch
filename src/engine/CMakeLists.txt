@@ -44,7 +44,14 @@ add_library(mems_engine
     src/shapes/circle.cpp
     src/shapes/boolean.cpp
     src/shapes/transform.cpp
-    src/shapes/ref.cpp)
+    src/shapes/ref.cpp
+    src/shapes/arcs.cpp
+    src/shapes/arc.cpp
+    src/shapes/path.cpp
+    src/shapes/guide.cpp
+    src/shapes/offset.cpp
+    src/shapes/fillet.cpp
+    src/shapes/layer_map.cpp)
 add_library(mems::engine ALIAS mems_engine)
 target_include_directories(mems_engine
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

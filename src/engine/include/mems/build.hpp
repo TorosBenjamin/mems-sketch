@@ -2,11 +2,12 @@
 // geometry library, per layer, the way mems_sketch.core.shapes evaluates
 // them (the equivalence test, tests/test_engine_build.py, checks it).
 //
-// The kinds come one at a time (core-architecture.md, step 6). So far: rect,
-// polygon, circle, boolean, transform (and group), references to user
-// components, the array modifier, alignment, point coordinates in
-// expressions and components' declared points. Anything else raises
-// NotSupported, so callers can fall back to the Python backend.
+// The kinds come one at a time (core-architecture.md, step 6). So far every
+// shape kind (rect, polygon, circle, arc, path, guide, boolean, transform,
+// offset, fillet, layer_map, references to user components), the array
+// modifier, alignment, point coordinates in expressions and components'
+// declared points. Anything else (the other modifiers, built-in components)
+// raises NotSupported, so callers can fall back to the Python backend.
 #pragma once
 
 #include <map>

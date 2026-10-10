@@ -15,8 +15,7 @@ on:
       - src/geom/CMakeLists.txt
       - src/geom/scripts/**
       - src/geom/bindings/**
-      - src/engine/CMakeLists.txt
-      - src/engine/bindings/**
+      - src/engine/**  # the engine changes often: compile it on every platform
       - .github/workflows/wheels.yml
 
 jobs:
@@ -78,7 +77,7 @@ jobs:
           CIBW_TEST_ENVIRONMENT: MGEOM_REQUIRED=1
           CIBW_TEST_COMMAND: >
             python -c "from mems_sketch import _geom, _core; assert abs(_geom.Region.rect(0, 0, 2, 3).area - 6) < 1e-9" &&
-            pytest -q -p no:cacheprovider {project}/tests/test_cells_export.py {project}/tests/test_engine_expressions.py
+            pytest -q -p no:cacheprovider {project}/tests/test_cells_export.py {project}/tests/test_engine_expressions.py {project}/tests/test_engine_model.py {project}/tests/test_engine_build.py
 
       - uses: actions/upload-artifact@v4
         with:

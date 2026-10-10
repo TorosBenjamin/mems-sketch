@@ -163,6 +163,9 @@ def test_the_geometry_library_never_includes_the_engine():
     assert offenders == []
 
 
+ENGINE_HEADERS = ("mems", "mgeom", "nlohmann")  # its own, the library's, JSON
+
+
 def test_the_engine_uses_only_the_librarys_public_headers():
     """The engine reaches Open CASCADE only through mgeom: no OCC headers, and
     only mgeom's public ones (include/mgeom/)."""
@@ -171,6 +174,11 @@ def test_the_engine_uses_only_the_librarys_public_headers():
         f"{p.relative_to(SOURCE)}: {h}"
         for p, h in _includes(SOURCE / "engine")
         if occ.match(h)
-        or (h.endswith(".hpp") and "/" in h and h.split("/")[0] not in ("mems", "mgeom"))
+        or (
+            h.endswith(".hpp")
+            and "/" in h
+            and not h.startswith(".")  # its own, by relative path
+            and h.split("/")[0] not in ENGINE_HEADERS
+        )
     ]
     assert offenders == []

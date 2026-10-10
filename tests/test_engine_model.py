@@ -274,8 +274,13 @@ def test_fingerprints_change_on_the_same_edits(project):
             assert python_changed == core_changed, (description, name)
 
 
-def test_built_in_components_stay_with_python():
-    core = engine(nested_project())
+def test_built_in_components_are_components_like_any_other():
+    project = nested_project()
+    core, session = engine(project), Compiler().session(project)
     assert core.qualify("comb_drive", "") == "comb_drive"
-    with pytest.raises(_core.ModelError, match="built-in"):
-        core.variables("comb_drive")
+    for name in ("anchor", "comb_drive", "serpentine_spring"):
+        for params in ({}, {"size": 10, "enclosure": 5}, {"fingers": 0}, {"pitch": 3}):
+            known = {k: v for k, v in params.items() if k in core.variables(name)}
+            python = outcome(lambda n=name, p=known: session.variables(n, p))
+            cpp = outcome(lambda n=name, p=known: core.variables(n, p))
+            assert same(python, cpp), (name, known, python, cpp)

@@ -38,7 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from mems_sketch.core.component import Component, Geometry, Params
 from mems_sketch.core.expressions import RESERVED_NAMES, evaluate, resolve_variables
-from mems_sketch.core.levels import NO_STACK, Stack
+from mems_sketch.core.levels import DEFAULT_STACK, Stack
 from mems_sketch.core.shapes import (
     BBOX_POINTS,
     INDEX_NAMES,
@@ -311,7 +311,7 @@ class UserComponent(Component):
         definition: ComponentDef,
         lookup: Callable[[str], Component],
         scope: Mapping[str, float] | None = None,
-        stack: Stack = NO_STACK,
+        stack: Stack = DEFAULT_STACK,
     ) -> None:
         self.definition = definition
         self.type_name = definition.name

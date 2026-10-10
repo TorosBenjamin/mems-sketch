@@ -205,11 +205,11 @@ def test_boolean_between_placed_instances(design):
         BooleanShape(
             name="cut",
             op="subtract",
-            a=[Instance("pad", "rectangle", {"width": 40, "height": 40})],
-            b=[Instance("slot", "rectangle", {"width": 10, "height": 40}, x=15)],
+            a=[Instance("pad", "anchor", {"size": 40})],
+            b=[Instance("slot", "anchor", {"size": 40}, x=15)],
         )
     )
-    assert area(design) == pytest.approx(40 * 40 - 10 * 40)  # slot spans x 10..20
+    assert area(design) == pytest.approx(15 * 40)  # what the second pad leaves of the first
     assert design.find("slot").x == 15
 
 
@@ -291,5 +291,5 @@ def test_version_2_files_load_as_references(tmp_path):
     conn.commit()
     conn.close()
     loaded = load(path)
-    assert loaded.find("r").component == "rectangle"
+    assert loaded.find("r").kind == "transform"  # the retired rectangle, as a rect
     assert area(loaded) == pytest.approx(20)

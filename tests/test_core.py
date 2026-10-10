@@ -2,7 +2,7 @@ import klayout.db as kdb
 import pytest
 from pydantic import ValidationError
 
-from mems_sketch import Instance, Layer, Project, export, load, save
+from mems_sketch import Instance, Layer, Project, RectShape, TransformShape, export, load, save
 from mems_sketch.core.component import resolve_params, to_dbu
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.core.process import layer_rules
@@ -52,7 +52,8 @@ def test_render_and_variable_change_updates_geometry():
 
 def test_rotation_and_placement():
     design = Project()
-    design.add(Instance("r", "rectangle", {"width": 100, "height": 10}, x=50, y=0, rotation=90))
+    bar = RectShape(layer="device", x0=-50, y0=-5, x1=50, y1=5)
+    design.add(TransformShape(name="r", children=[bar], x=50, y=0, rotation=90))
     box = design.render().layers["device"].bbox()
     assert box == kdb.Box(to_dbu(45), to_dbu(-50), to_dbu(55), to_dbu(50))
 
@@ -63,7 +64,7 @@ def test_rules_flag_narrow_features_and_unknown_layers():
     design.set_variable("w", 1.0)  # fingers now narrower than min_width
     found = {v.kind for v in rules.check(design)}
     assert "min_width" in found
-    design.add(Instance("m", "rectangle", {"layer": "metal"}))
+    design.add(RectShape(name="m", layer="metal", x0=0, y0=0, x1=10, y1=10))
     assert any(v.rule == "layer" and v.layer == "metal" for v in rules.check(design))
 
 

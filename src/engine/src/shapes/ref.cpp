@@ -13,7 +13,7 @@ Result render_ref(const Json& node, const Context& ctx) {
     const std::string target = project.qualify(node.at("component").get<std::string>(), ctx.component);
     const ComponentDef* definition = project.definition(target);
     if (!definition)
-        throw NotSupported("'" + target + "' is a built-in or imported component: Python builds those for now");
+        throw NotSupported("'" + target + "' is an imported component: Python builds those for now");
     // Values a placement may not set: the component's internal parameters.
     Values values;
     std::vector<std::string> hidden;

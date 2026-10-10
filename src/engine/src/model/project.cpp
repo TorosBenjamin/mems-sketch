@@ -139,8 +139,11 @@ Project Project::from_json(std::string_view text) {
         for (const auto& [role, layer] : roles.items()) level.roles[role] = layer.get<std::string>();
         p.levels_.push_back(std::move(level));
     }
-    if (process.contains("default_level") && !process["default_level"].is_null())
+    if (p.levels_.empty()) {  // the default stack (mems_sketch.core.process.DEFAULT_LEVELS)
+        p.levels_ = {Level{"device", {{"anchor", "anchor"}}}, Level{"metal", {}}};
+    } else if (process.contains("default_level") && !process["default_level"].is_null()) {
         p.default_level_ = process["default_level"].get<std::string>();
+    }
     const Json components = j.value("components", Json::object());
     for (const auto& [name, def] : components.items()) {
         p.local_.order.push_back(name);
@@ -162,8 +165,10 @@ Project Project::from_json(std::string_view text) {
         p.imports_[name] = {cell.value("digest", ""), cell.value("cell", ""), Json(layers).dump()};
     }
     const Json builtins = j.value("builtins", Json::object());
-    for (const auto& [name, version] : builtins.items())
-        p.builtins_[name] = version.get<std::string>();
+    for (const auto& [name, def] : builtins.items()) {
+        p.builtins_.order.push_back(name);
+        p.builtins_.components[name] = component_from(def);
+    }
     return p;
 }
 
@@ -219,15 +224,17 @@ std::string Project::qualify(std::string_view name, const std::optional<std::str
         if (scope.empty()) break;
         scope = owner_of(scope);
     }
-    if (imports_.count(name) || builtins_.count(name)) return std::string(name);
+    if (imports_.count(name) || builtins_.components.count(name)) return std::string(name);
     throw UnknownComponent("unknown component " + in_quotes(name));
 }
 
 const ComponentDef* Project::definition(std::string_view qualified) const {
     const auto [library, path] = split(qualified);
     const Library& here = pool(library);
-    const auto found = here.components.find(path);
-    return found == here.components.end() ? nullptr : &found->second;
+    if (const auto found = here.components.find(path); found != here.components.end()) return &found->second;
+    if (library || imports_.count(path)) return nullptr;
+    const auto builtin = builtins_.components.find(path);  // a component like any other
+    return builtin == builtins_.components.end() ? nullptr : &builtin->second;
 }
 
 void Project::check_references() const {
@@ -241,7 +248,7 @@ void Project::check_references() const {
                 throw ModelError("circular component reference: " + cycle + qualified);
             }
             const ComponentDef* def = definition(qualified);
-            if (!def) return;  // built-in or imported
+            if (!def) return;  // imported
             state[qualified] = 1;
             path.push_back(qualified);
             for (const auto& reference : def->references) {
@@ -279,7 +286,7 @@ void Project::check_references() const {
 std::map<std::string, double> Project::variables(std::string_view component, const Values& given) const {
     const std::string qualified = qualify(component);
     const ComponentDef* def = definition(qualified);
-    if (!def) throw ModelError(in_quotes(qualified) + " is not built by the engine yet: built-in and imported components are Python's");
+    if (!def) throw ModelError(in_quotes(qualified) + " is not built by the engine yet: imported components are Python's");
     const auto& constants = scope();
     Variables known(constants.begin(), constants.end());
 
@@ -354,8 +361,6 @@ std::string Project::fingerprint(const std::string& qualified, std::vector<std::
         visiting.pop_back();
         std::sort(children.begin(), children.end());
         digest = hash_of({"user", def->canonical}, children);
-    } else if (const auto builtin = builtins_.find(qualified); builtin != builtins_.end()) {
-        digest = hash_of({"builtin", qualified, builtin->second});
     } else {
         throw UnknownComponent("unknown component " + in_quotes(qualified));
     }

@@ -20,12 +20,11 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import inspect
 import json
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
-from mems_sketch.core.component import Component, Geometry, Params, get_component, resolve_params
+from mems_sketch.core.component import Component, Geometry, Params, resolve_params
 from mems_sketch.core.imports import ImportedComponent
 from mems_sketch.core.levels import Stack
 from mems_sketch.core.shapes import Evaluator, NodePath, NodeRecord, Point, Shape
@@ -36,7 +35,6 @@ if TYPE_CHECKING:
 
 DEFAULT_CACHE_ENTRIES = 4096
 Compiled = tuple[Geometry, dict[str, Point]]  # geometry and declared alignment points
-_builtin_fingerprints: dict[type, str] = {}
 
 
 class Compiler:
@@ -90,7 +88,7 @@ class Session:
             if qualified in self.project.imports:
                 inner = ImportedComponent(self.project.imports[qualified])
             elif found is None:
-                inner = get_component(qualified)
+                raise KeyError(f"unknown component '{qualified}'")
             else:
                 definition, inside = found
                 inner = UserComponent(
@@ -111,7 +109,7 @@ class Session:
             layers = sorted(imported.layers.items())
             digest = _hash("import", imported.digest, imported.cell, repr(layers))
         elif found is None:
-            digest = _builtin_fingerprint(type(get_component(qualified)))
+            raise KeyError(f"unknown component '{qualified}'")
         else:
             definition, context = found
             children = sorted(
@@ -217,16 +215,6 @@ class _CachedComponent(Component):
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.inner, name)
-
-
-def _builtin_fingerprint(cls: type) -> str:
-    if cls not in _builtin_fingerprints:
-        try:
-            source = inspect.getsource(cls)
-        except (OSError, TypeError):
-            source = cls.__qualname__
-        _builtin_fingerprints[cls] = _hash("builtin", cls.__module__, cls.__qualname__, source)
-    return _builtin_fingerprints[cls]
 
 
 def _hash(*parts: str) -> str:

@@ -22,7 +22,8 @@ is rebuilt; the Python package reaches it as **`mems_sketch._core`**, behind
   geometry library's regions, per layer: every shape kind and modifier,
   alignment, point coordinates in expressions, components' declared
   points, and components on levels of the layer stack (`src/model/levels.cpp`).
-  Built-in components are still Python's (`NotSupported`).
+  Built-in components too, from their definitions; imported cells are still
+  Python's (`NotSupported`).
   `tests/test_engine_build.py` compares the geometry with the Python
   backend's on the examples, hand-written components and random shape
   trees.

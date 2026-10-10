@@ -15,8 +15,11 @@ The **Components** panel lists every component once:
   first;
 - **each library's** (blue), read-only;
 - **Imported** layouts, if any (see [files](files.md#importing-layouts));
-- **Built-in** ones (orange): `rectangle`, `anchor`, `comb_drive`,
-  `serpentine_spring`.
+- **Built-in** ones (orange): `anchor`, `comb_drive`, `serpentine_spring`.
+  They are ordinary components that ship with the tool: they draw on the
+  level they are placed on (an anchor's opening on that level's anchor
+  layer), their limits are shown like any other, and **Copy into the
+  project** makes an editable copy. A plain rectangle is the `rect` shape.
 
 Double-click opens a component in a tab. Drag one onto the canvas, or use
 **Place**, to put it into the component you are editing. Right-click for the

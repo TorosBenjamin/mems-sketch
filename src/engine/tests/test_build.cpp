@@ -8,7 +8,6 @@
 #include "mems/build.hpp"
 
 using mems::Builder;
-using mems::NotSupported;
 using mems::Project;
 
 namespace {
@@ -33,7 +32,8 @@ const char* PROJECT = R"({
                 "x1": 1, "y1": 1, "align": {"point": "center", "to": "x.center"}}]},
     "spring": {"name": "spring", "shapes": [{"kind": "ref", "component": "comb_drive"}]}
   },
-  "builtins": {"comb_drive": "v1"}
+  "builtins": {"comb_drive": {"name": "comb_drive",
+                 "shapes": [{"kind": "rect", "layer": "level", "x0": 0, "y0": 0, "x1": 4, "y1": 2}]}}
 })";
 
 }  // namespace
@@ -61,10 +61,11 @@ TEST_CASE("built once per fingerprint and values") {
     CHECK(&builder.build("pad", {{"w", 5.0}}) != first);
 }
 
-TEST_CASE("what the engine does not build yet") {
+TEST_CASE("built-in components, and errors") {
     const Project project = Project::from_json(PROJECT);
     Builder builder(project);
     CHECK_THROWS_AS(builder.build("aligned"), mems::BuildError);  // aligned to a shape that is not there
-    CHECK_THROWS_AS(builder.build("spring"), NotSupported);
-    CHECK_THROWS_AS(builder.build("comb_drive"), NotSupported);
+    // A built-in is built like any other component, on the default layer stack's first level.
+    CHECK(builder.build("spring").layers.at("device").area() == doctest::Approx(8.0));
+    CHECK(builder.build("comb_drive").layers.count("device") == 1);
 }

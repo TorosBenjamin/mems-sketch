@@ -325,14 +325,14 @@ const Built& Builder::build(std::string_view component, const Values& params) {
     const std::string qualified = project_.qualify(component);
     const ComponentDef* definition = project_.definition(qualified);
     if (!definition)
-        throw NotSupported("'" + qualified + "' is a built-in or imported component: Python builds those for now");
+        throw NotSupported("'" + qualified + "' is an imported component: Python builds those for now");
     return build_on(qualified, params, project_.top_level(definition->level));
 }
 
 const Built& Builder::build_on(const std::string& qualified, const Values& params, const OptionalLevel& level) {
     const ComponentDef* definition = project_.definition(qualified);
     if (!definition)
-        throw NotSupported("'" + qualified + "' is a built-in or imported component: Python builds those for now");
+        throw NotSupported("'" + qualified + "' is an imported component: Python builds those for now");
     const auto values = project_.variables(qualified, params);
     std::string key = project_.fingerprint(qualified) + "@" + (level ? *level : std::string("-"));
     for (const auto& [name, value] : values) {

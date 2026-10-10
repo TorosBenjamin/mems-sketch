@@ -6,7 +6,8 @@
 // transform, offset, fillet, layer_map, references to user components), every
 // modifier (array, polar_array, mirror, corners), alignment, point
 // coordinates in expressions, components' declared points and levels of the
-// layer stack (core-architecture.md, step 6). Built-in components are still Python's:
+// layer stack (core-architecture.md, step 6). Built-in components are built
+// from their definitions like any other. Imported cells are still Python's:
 // placing one raises NotSupported, so callers can fall back to the Python
 // backend.
 #pragma once

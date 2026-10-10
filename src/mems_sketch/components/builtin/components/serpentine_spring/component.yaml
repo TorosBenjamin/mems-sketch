@@ -1,0 +1,40 @@
+description: >-
+  Meandering beam spring running along +y from the origin. Points: start and
+  end, the middle of the outer edge of the first and the last beam.
+parameters:
+  turns: {default: 3, min: 1, integer: true, description: Number of meanders}
+  beam_width: {default: 3, min: 0, min_exclusive: true, description: Beam width (µm)}
+  span: {default: 80, min: 0, min_exclusive: true, description: "Meander span, x (µm)"}
+  pitch:
+    default: 15
+    min: beam_width
+    min_exclusive: true
+    description: "Meander pitch, y (µm)"
+points:
+  start: {}
+  end: {y: 2 * turns * pitch + beam_width}
+shapes:
+  beams:
+    kind: rect
+    x0: -span/2
+    y0: 0
+    x1: span/2
+    y1: beam_width
+    modifiers:
+    - {kind: array, rows: 2 * turns + 1, dy: pitch}
+  right_bends:
+    kind: rect
+    x0: span/2 - beam_width
+    y0: 0
+    x1: span/2
+    y1: pitch + beam_width
+    modifiers:
+    - {kind: array, rows: turns, dy: 2 * pitch}
+  left_bends:
+    kind: rect
+    x0: -span/2
+    y0: pitch
+    x1: -span/2 + beam_width
+    y1: 2 * pitch + beam_width
+    modifiers:
+    - {kind: array, rows: turns, dy: 2 * pitch}

@@ -115,16 +115,31 @@ def all_components(project: Project) -> list[str]:
 def test_the_examples(folder):
     """Every example component the engine builds matches; the others say why not."""
     project = load(EXAMPLES / folder)
-    built = 0
     for name in all_components(project):
-        try:
-            engine_regions(project, name)
-        except _core.NotSupported:
-            continue
-        assert_same(project, name)
-        built += 1
-    if folder == "libraries/mems_std":
-        assert built >= 1  # the perforated plate: boolean, circle, array
+        assert assert_same(project, name) == "same", name
+
+
+BUILT_IN_CASES = [  # (component, parameters, built: else both refuse)
+    ("anchor", {}, True),
+    ("anchor", {"size": 10, "enclosure": 4.9}, True),
+    ("anchor", {"size": 10, "enclosure": 5}, False),  # an exclusive limit
+    ("comb_drive", {}, True),
+    (
+        "comb_drive",
+        {"fingers": 7, "finger_width": 1.5, "gap": 0.7, "finger_length": 13, "overlap": 5},
+        True,
+    ),
+    ("comb_drive", {"overlap": 40}, False),
+    ("serpentine_spring", {}, True),
+    ("serpentine_spring", {"turns": 5, "beam_width": 2.2, "span": 31, "pitch": 7.3}, True),
+    ("serpentine_spring", {"pitch": 3}, False),  # not more than the beam width
+]
+
+
+@pytest.mark.parametrize("name, params, built", BUILT_IN_CASES)
+def test_built_in_components(name, params, built):
+    result = assert_same(new_project("built-ins"), name, params, tolerance=STRAIGHT_NM)
+    assert (result == "same") == built, result
 
 
 def rect(layer="device", **corners):
@@ -928,5 +943,5 @@ def test_levels(default):
             assert assert_same(project, name) == "same", name
     for name in ("too_high", "no_role", "on_a_role"):
         assert assert_same(project, name).startswith("both fail"), name
-    project.process.levels = []
-    assert assert_same(project, "post").startswith("both fail")
+    project.process.levels = []  # the default stack: device (anchor), metal
+    assert assert_same(project, "post") == "same"

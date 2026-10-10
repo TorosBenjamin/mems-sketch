@@ -103,6 +103,10 @@ class Process:
         return {PROCESS_PREFIX + k: v for k, v in resolve_variables(self.constants).items()}
 
 
+# The layer stack of a process that declares none (and of a new project's).
+DEFAULT_LEVELS = (Level("device", {"anchor": "anchor"}), Level("metal"))
+
+
 def changed_rule(rule: Rule, changes: dict[str, Any]) -> Rule:
     """``rule`` with some of its fields (``layers``, ``severity``...) and values changed."""
     if "kind" in changes:
@@ -216,5 +220,5 @@ def default_process() -> Process:
         },
         constants={"undercut": 2.0},
         rules={rule.name: rule for rule in rules},
-        levels=[Level("device", {"anchor": "anchor"}), Level("metal")],
+        levels=[dataclasses.replace(level, roles=dict(level.roles)) for level in DEFAULT_LEVELS],
     )

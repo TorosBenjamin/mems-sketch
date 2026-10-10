@@ -8,7 +8,7 @@ import klayout.db as kdb
 import pytest
 import yaml
 
-from mems_sketch.core.component import get_component
+from mems_sketch.core.project import new_project
 from mems_sketch.core.shapes import (
     KINDS,
     SHAPE_ADAPTER,
@@ -36,7 +36,7 @@ def samples():
     """One node of every kind: the primitives' defaults, every wrap, a reference."""
     shapes = [kind.default(LAYER) for kind in KINDS if kind.category in ("primitive", "guide")]
     shapes += [wrap_shapes(op, f"w_{op}", two_rects()) for kind in KINDS for op in kind.wraps]
-    shapes.append(RefShape(component="rectangle", x=5))
+    shapes.append(RefShape(component="anchor", x=5))
     return shapes
 
 
@@ -51,7 +51,8 @@ def bbox(shape):
     """The box around what the shape draws, or around its points if it draws nothing."""
     record = {}
     box = kdb.Box()
-    for region in Evaluator(get_component, record).render([shape], {}).layers.values():
+    lookup = new_project().component
+    for region in Evaluator(lookup, record, level="device").render([shape], {}).layers.values():
         box += region.bbox()
     if box.empty():  # a guide: measure its points
         for x, y in record[((0, 0),)].points.declared.values():

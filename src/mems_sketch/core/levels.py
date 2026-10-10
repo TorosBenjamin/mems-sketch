@@ -12,6 +12,11 @@ else the level of the component placing it. Inside, a shape's ``layer`` is:
 A placement's ``level`` is ``level``, ``level+1``... (relative to the placing
 component's level) or a level by name (``poly2``). Counting levels, not
 layers, means adding a layer to a level never moves anything.
+
+A process that declares no layer stack has the default one
+(:data:`~mems_sketch.core.process.DEFAULT_LEVELS`: device, with anchor as its
+anchor layer, then metal), so components drawn relative to their level work
+in any project.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from mems_sketch.core.process import Level
+from mems_sketch.core.process import DEFAULT_LEVELS, Level
 
 LEVEL = "level"
 _RELATIVE = re.compile(r"level(?:([+-])(\d+))?(?:\.([A-Za-z_]\w*))?")
@@ -40,7 +45,8 @@ class Stack:
 
     @classmethod
     def of(cls, levels: Sequence[Level], default: str | None = None) -> Stack:
-        return cls(tuple(levels), default)
+        """The stack of a process; the default one when it declares none."""
+        return cls(tuple(levels), default) if levels else cls(DEFAULT_LEVELS)
 
     def key(self) -> str:
         """A text that changes whenever the stack does (for cache keys)."""
@@ -83,8 +89,6 @@ class Stack:
 
     def _offset(self, spec: str, match: re.Match[str], current: str | None) -> int:
         if current is None:
-            if not self.levels:
-                raise ValueError(f"'{spec}' needs a layer stack, and the process has none")
             raise ValueError(f"'{spec}' needs the component to be on a level of the layer stack")
         index = self._index(current)
         sign, count = match.group(1), int(match.group(2) or 0)
@@ -106,4 +110,4 @@ class Stack:
         return level
 
 
-NO_STACK = Stack()
+DEFAULT_STACK = Stack(DEFAULT_LEVELS)

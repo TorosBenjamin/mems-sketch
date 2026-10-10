@@ -299,8 +299,8 @@ def test_unpack_restores_the_shapes_with_values_filled_in(doc):
     assert inner.name == "rect2"  # renamed: rect1 is taken
     assert inner.x1 == "10 * width" and inner.y1 == "width"
     assert area(doc) == pytest.approx(before)
-    with pytest.raises(ValueError, match="built-in"):
-        doc.components.unpack(doc.nodes.add_component("anchor"))
+    pad = doc.components.unpack(doc.nodes.add_component("anchor"))  # a built-in too
+    assert [s.name for s in doc.node(pad).children] == ["pad", "opening"]
 
 
 def test_parameters_can_be_renamed(doc):
@@ -512,8 +512,9 @@ def test_a_library_component_can_be_copied_into_the_project(resonator):
     assert name == "perforated_plate" and resonator.active == name
     assert not resonator.read_only
     assert resonator.components.copy("std.perforated_plate") == "perforated_plate_copy1"
-    with pytest.raises(ValueError, match="built in"):
-        resonator.components.copy("anchor")
+    assert resonator.components.copy("anchor") == "anchor_copy1"  # a built-in too
+    assert resonator.project.components["anchor_copy1"].shapes
+    resonator.undo()
     resonator.undo()
     resonator.undo()
     assert "perforated_plate" not in resonator.project.components

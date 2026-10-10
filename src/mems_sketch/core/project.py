@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mems_sketch.core.component import Component, Geometry, is_builtin
+from mems_sketch.core.component import Component, Geometry, builtin_definitions, is_builtin
 from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.process import Layer, Process, Value, default_process
 from mems_sketch.core.shapes import RefShape, Shape, child_lists, find, walk
@@ -238,14 +238,17 @@ class Project:
         return path
 
     def definition(self, qualified: str) -> tuple[ComponentDef, str] | None:
-        """The definition of a user component and the context its references are
-        written in (its unique name), or None for a built-in."""
+        """The definition of a component and the context its references are
+        written in (its unique name), or None for an imported cell. A built-in
+        is a component like any other (it places nothing)."""
         library, path = _split(qualified)
         pool = self._pool(library)
         if library is not None and library not in self.libraries:
             raise KeyError(f"unknown component '{qualified}'")
         if path in pool:
             return pool[path], qualified
+        if library is None and path not in self.imports and is_builtin(path):
+            return builtin_definitions()[path], path
         return None
 
     def references_of(self, qualified: str) -> list[tuple[Shape, str]]:
@@ -401,8 +404,8 @@ class Project:
             if state.get(qualified) == "visiting":
                 raise ValueError(f"circular component reference: {' -> '.join([*path, qualified])}")
             found = self.definition(qualified)
-            if found is None:
-                return  # built-in
+            if found is None or (qualified not in self.components and is_builtin(qualified)):
+                return  # imported, or built-in
             definition, context = found
             state[qualified] = "visiting"
             for ref in definition.references():

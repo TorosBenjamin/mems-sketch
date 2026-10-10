@@ -128,7 +128,7 @@ but should not have to program. Scripting is there for those who want it.
   project's top component, so any project can be placed in another. A
   component has parameters, points and a shape tree. It never stores
   geometry: it is evaluated from its parameters.
-- **CMP-2** (Must, changes) **Built-in components** are an ordinary
+- **CMP-2** (Must, exists) **Built-in components** are an ordinary
   component library that ships with the tool: `anchor`, `comb_drive`,
   `serpentine_spring`, with their parameters and points
   (`serpentine_spring`: `start`, `end`; `comb_drive`: `moving`, `fixed`).

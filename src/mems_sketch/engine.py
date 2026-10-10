@@ -26,9 +26,8 @@ from mems_sketch.core.compiler import (
     DEFAULT_CACHE_ENTRIES,
     Compiler,
     Session,
-    _builtin_fingerprint,
 )
-from mems_sketch.core.component import component_types, get_component
+from mems_sketch.core.component import builtin_definitions
 from mems_sketch.core.shapes.render import Evaluator
 
 if TYPE_CHECKING:
@@ -185,9 +184,7 @@ def project_data(project: Project) -> dict[str, Any]:
             name: {"digest": cell.digest, "cell": cell.cell, "layers": dict(cell.layers)}
             for name, cell in project.imports.items()
         },
-        "builtins": {
-            name: _builtin_fingerprint(type(get_component(name))) for name in component_types()
-        },
+        "builtins": {name: component(d) for name, d in builtin_definitions().items()},
     }
 
 

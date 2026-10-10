@@ -2,10 +2,14 @@
 
 ## A built-in component
 
-Subclass `Component` (`core/component.py`), define a nested `Params` model and
-`build(params) -> Geometry`, and decorate the class with
-`@register_component`. Override `points()` to offer alignment points (as
-`serpentine_spring` offers `start` and `end`). See `components/library.py`.
+Built-in components are ordinary components in a library that ships with the
+tool, `components/builtin/` (a project folder without a top component, see
+[File formats](file-formats.md)). Add a component folder there and list it in
+its `project.yaml`; draw on `level` and `level.anchor` rather than named
+layers, so it works on any level of any project's layer stack. Both backends
+build it like any other component, and its parameters' limits are its checks.
+There is no Python API for components that compute their own geometry: a
+component is always data, so the C++ engine can build it.
 
 ## A shape kind
 

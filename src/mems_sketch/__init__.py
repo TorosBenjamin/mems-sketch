@@ -9,7 +9,7 @@ it into geometry, which can be checked and exported.
 """
 
 from mems_sketch.core.compiler import Compiler
-from mems_sketch.core.component import Component, Geometry, Params, register_component
+from mems_sketch.core.component import Component, Geometry, Params
 from mems_sketch.core.process import Layer, Process
 from mems_sketch.core.project import Instance, Library, Project
 from mems_sketch.core.shapes import (
@@ -79,7 +79,6 @@ __all__ = [
     "export",
     "load",
     "load_library",
-    "register_component",
     "register_exporter",
     "save",
 ]

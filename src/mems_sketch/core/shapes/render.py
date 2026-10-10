@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from mems_sketch.core.component import DBU_UM, Geometry, to_dbu
 from mems_sketch.core.expressions import evaluate
-from mems_sketch.core.levels import NO_STACK, Stack
+from mems_sketch.core.levels import DEFAULT_STACK, Stack
 from mems_sketch.core.shapes.base import Point, RenderContext
 from mems_sketch.core.shapes.geometry import apply_transform
 from mems_sketch.core.shapes.modifiers import apply_stack
@@ -49,7 +49,7 @@ class Evaluator:
         lookup: Callable[[str], Component],
         record: dict[NodePath, NodeRecord] | None = None,
         level: str | None = None,
-        stack: Stack = NO_STACK,
+        stack: Stack = DEFAULT_STACK,
     ) -> None:
         self.lookup = lookup
         self.record = record

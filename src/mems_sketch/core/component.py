@@ -172,7 +172,8 @@ class Params(BaseModel):
 
 
 class Component:
-    """Subclass, set ``type_name`` and ``Params``, implement :meth:`build`, then register."""
+    """Something a ``ref`` can place: set ``type_name`` and ``Params``, implement
+    :meth:`build` (user components, imported cells)."""
 
     type_name: ClassVar[str]
     Params: ClassVar[type[Params]]
@@ -233,33 +234,17 @@ def resolve_params(
     return component.Params(**values)
 
 
-_REGISTRY: dict[str, type[Component]] = {}
+def builtin_definitions() -> dict:
+    """The built-in components' definitions by name (mems_sketch.components)."""
+    from mems_sketch.components import builtin_components
+
+    return builtin_components()
 
 
-def register_component(cls: type[Component]) -> type[Component]:
-    if cls.type_name in _REGISTRY:
-        raise ValueError(f"component type '{cls.type_name}' is already registered")
-    _REGISTRY[cls.type_name] = cls
-    return cls
-
-
-def is_builtin(type_name: str) -> bool:
-    _ensure_builtin_components()
-    return type_name in _REGISTRY
-
-
-def get_component(type_name: str) -> Component:
-    _ensure_builtin_components()
-    try:
-        return _REGISTRY[type_name]()
-    except KeyError:
-        raise KeyError(f"unknown component type '{type_name}'") from None
+def is_builtin(name: str) -> bool:
+    return "/" not in name and name in builtin_definitions()
 
 
 def component_types() -> list[str]:
-    _ensure_builtin_components()
-    return sorted(_REGISTRY)
-
-
-def _ensure_builtin_components() -> None:
-    import mems_sketch.components.library  # noqa: F401  (registers on import)
+    """The built-in components' names."""
+    return sorted(n for n in builtin_definitions() if "/" not in n)

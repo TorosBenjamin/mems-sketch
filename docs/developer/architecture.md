@@ -103,13 +103,13 @@ wires the parts; each part only talks to the session:
 | `core/transform.py` | `Transform`: placements as plain values |
 | `core/shapes/` | The shape tree: one module per kind in `kinds/`, their registry, points, evaluation, modifiers, rewriting |
 | `core/user_component.py` | `ComponentDef`, `ParamDef`, `PointDef` and their adapter to `Component` |
-| `core/component.py` | `Component` base class, `Geometry`, the built-in component registry |
+| `core/component.py` | `Component` base class, `Geometry`, the built-in components by name |
 | `core/process.py` | `Process`, `Layer`, `Level` (the layer stack), process constants |
 | `core/levels.py` | Components on levels: layers relative to a component's level (`level-1`, `level.anchor`) |
 | `core/expressions.py` | Safe arithmetic expressions with dependency resolution |
 | `core/imports.py` | Imported layouts (GDS/OASIS cells) as components |
 | `core/diff.py` | What changed between two versions of a project, in words and in geometry |
-| `components/library.py` | Built-ins: `rectangle`, `anchor`, `comb_drive`, `serpentine_spring` |
+| `components/builtin/` | The built-in components as a library folder: `anchor`, `comb_drive`, `serpentine_spring` |
 | `process/rules.py` | Design-rule checks: the project's rules checked by rule kinds, which are plugins (`mems_sketch.rules` entry points) |
 | `process/rule_kinds.py` | The built-in rule kinds: widths, spacing, areas, pieces, enclosure, separation, anchored, release |
 | `storage/` | Project folders (`project_files.py`: the manifest, processes, component folders), component files (`component_format.py`), one-file documents (`document.py`) in every format (`formats/`), git (`git.py`), the legacy SQLite importer |

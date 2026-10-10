@@ -14,7 +14,7 @@
 //    "components": {"top": <ComponentDef>, "comb/finger": <ComponentDef>},
 //    "libraries": {"std": {"anchor": <ComponentDef>}},
 //    "imports": {"pads": {"digest": ..., "cell": ..., "layers": {...}}},
-//    "builtins": {"comb_drive": "<a hash of its code>"}}
+//    "builtins": {"comb_drive": <ComponentDef>}}
 //
 // where a ComponentDef is its model_dump(mode="json") without waivers.
 #pragma once
@@ -97,8 +97,8 @@ public:
     // outside every component, where any component can be named).
     std::string qualify(std::string_view name, const std::optional<std::string>& context = std::nullopt) const;
 
-    // A user component's definition by unique name ("plate", "comb/finger",
-    // "std.anchor"), or nothing for a built-in or imported one.
+    // A component's definition by unique name ("plate", "comb/finger",
+    // "std.anchor", a built-in "anchor"), or nothing for an imported one.
     const ComponentDef* definition(std::string_view qualified) const;
 
     // Every reference resolves and sees what it places, private components have
@@ -146,7 +146,7 @@ private:
     std::vector<std::string> library_order_;
     std::map<std::string, Library, std::less<>> libraries_;
     std::map<std::string, Import, std::less<>> imports_;
-    std::map<std::string, std::string, std::less<>> builtins_;
+    Library builtins_;  // placed by bare name where no local component has it
 
     mutable std::shared_ptr<std::map<std::string, double>> scope_;
     mutable std::shared_ptr<std::map<std::string, std::string>> fingerprints_;

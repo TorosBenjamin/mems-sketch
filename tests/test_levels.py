@@ -59,8 +59,9 @@ def test_relative_layers():
         stack.place("level.anchor", None, "poly1")
     with pytest.raises(ValueError, match="not a level"):
         stack.place("metal", None, "poly1")
-    with pytest.raises(ValueError, match="has none"):
-        Stack().layer("level", None)
+    with pytest.raises(ValueError, match="on a level of the layer stack"):
+        stack.layer("level", None)
+    assert Stack.of([]).layer("level.anchor", "device") == "anchor"  # the default stack
 
 
 def test_a_component_is_on_its_placement_its_default_or_its_parents_level():
@@ -105,14 +106,11 @@ def test_layer_map_sides_may_be_relative():
     assert top_layers(project) == {"anchor1"}
 
 
-def test_relative_layers_need_a_stack():
+def test_a_process_without_a_stack_has_the_default_one():
     project = Project(name="flat")
-    project.add_layer(Layer("device", 1))
-    project.top_component.shapes = [square()]
-    with pytest.raises(ValueError, match="layer stack"):
-        project.render()
-    project.top_component.shapes = [square(layer="device")]  # layers by name still work
-    assert top_layers(project) == {"device"}
+    project.add_layer(Layer("poly", 1))
+    project.top_component.shapes = [square(), square(layer="level.anchor"), square(layer="poly")]
+    assert top_layers(project) == {"device", "anchor", "poly"}
 
 
 def test_the_stack_is_saved_and_checked_on_load(tmp_path):

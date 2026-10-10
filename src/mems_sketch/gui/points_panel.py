@@ -9,7 +9,7 @@ click it to pan there and edit it in the form below the list.
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtGui import QBrush, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -29,14 +29,13 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.shapes import BBOX_POINTS
 from mems_sketch.editing import EditSession
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import _action_bar, _Panel
 from mems_sketch.gui.value_edit import ValueEdit
 
 KEY_ROLE = Qt.ItemDataRole.UserRole + 20  # ("declared", name) / ("default", name) / (shape, name)
 GROUP_ROLE = Qt.ItemDataRole.UserRole + 21  # a group row: "default" or the shape's name
-MUTED = QColor("#8c8f99")
 
 Key = tuple[str, str]
 Marker = tuple[str, float, float]  # label, x, y
@@ -143,7 +142,7 @@ class PointsPanel(_Panel):
             holder.setIcon(0, icons.icon("shapes" if group != "default" else "component"))
             points = defaults if group == "default" else shapes[group]
             for name, xy in points.items():
-                self._item(holder, (group, name), xy).setForeground(0, QBrush(MUTED))
+                self._item(holder, (group, name), xy).setForeground(0, QBrush(theme.color("muted")))
             holder.setExpanded(group in opened)
         self.tree.resizeColumnToContents(0)
         self._rebuilding = False
@@ -154,7 +153,7 @@ class PointsPanel(_Panel):
     def _item(self, parent, key: Key, xy) -> QTreeWidgetItem:
         item = QTreeWidgetItem(parent, [key[1], _position(xy)])
         item.setData(0, KEY_ROLE, key)
-        item.setForeground(1, QBrush(MUTED))
+        item.setForeground(1, QBrush(theme.color("muted")))
         self._positions[key] = xy
         return item
 

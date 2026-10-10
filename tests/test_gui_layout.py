@@ -364,7 +364,7 @@ def test_the_bottom_panel_spans_the_full_width(window):
 
 @pytest.mark.parametrize("name", ["light", "dark"])
 def test_frame_and_islands_have_their_own_colours(window, name, qtbot):
-    from mems_sketch.gui.theme import TOKENS
+    from mems_sketch.gui.theme import tokens
 
     window.settings.set("appearance/ui_theme", name)
     qtbot.wait(20)
@@ -373,13 +373,13 @@ def test_frame_and_islands_have_their_own_colours(window, name, qtbot):
     in_stripe = stripe.mapTo(window, QPoint(stripe.width() // 2, stripe.height() // 2))
     viewport = window.components.tree.viewport()
     in_island = viewport.mapTo(window, QPoint(viewport.width() // 2, viewport.height() - 6))
-    assert image.pixelColor(in_stripe).name() == TOKENS[name]["frame"]
-    assert image.pixelColor(in_island).name() == TOKENS[name]["island"]
+    assert image.pixelColor(in_stripe).name() == tokens(name)["frame"]
+    assert image.pixelColor(in_island).name() == tokens(name)["island"]
 
 
 @pytest.mark.parametrize("name", ["light", "dark"])
 def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, qtbot):
-    from mems_sketch.gui.theme import TOKENS
+    from mems_sketch.gui.theme import tokens
 
     window.settings.set("appearance/ui_theme", name)
     qtbot.wait(20)
@@ -388,7 +388,7 @@ def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, q
     assert corner.x() == 0 and corner.y() == island.height()  # no border around it
     image = window.grab().toImage()
     bottom_left = canvas.mapTo(window, QPoint(0, canvas.height() - 1))
-    assert image.pixelColor(bottom_left).name() == TOKENS[name]["frame"]  # rounded off
+    assert image.pixelColor(bottom_left).name() == tokens(name)["frame"]  # rounded off
     inside = canvas.mapTo(window, QPoint(12, canvas.height() - 12))
     assert image.pixelColor(inside).name() == canvas.theme["background"]
 
@@ -396,7 +396,7 @@ def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, q
 @pytest.mark.parametrize("name", ["light", "dark"])
 def test_the_editor_island_has_all_four_corners_rounded(window, name, qtbot):
     # The tab row spans the island's top: it must not paint a square over the top corners.
-    from mems_sketch.gui.theme import TOKENS
+    from mems_sketch.gui.theme import tokens
 
     window.settings.set("appearance/ui_theme", name)
     qtbot.wait(20)
@@ -405,7 +405,7 @@ def test_the_editor_island_has_all_four_corners_rounded(window, name, qtbot):
     right, bottom = island.width() - 1, island.height() - 1
     for x, y in ((0, 0), (right, 0), (0, bottom), (right, bottom)):
         pixel = island.mapTo(window, QPoint(x, y))
-        assert image.pixelColor(pixel).name() == TOKENS[name]["frame"], (x, y)
+        assert image.pixelColor(pixel).name() == tokens(name)["frame"], (x, y)
 
 
 def test_the_layer_stack_is_edited_in_the_level_column(window):

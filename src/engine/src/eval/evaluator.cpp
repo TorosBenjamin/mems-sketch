@@ -127,7 +127,16 @@ mgeom::Transform alignment(const Json& node, const Points& own, const Variables&
 struct NodeResult {
     Layers layers;
     Points points;
+    mgeom::Transform shift, inner;  // its alignment's move; the frame of its children
 };
+
+// The placement a transform or a reference applies to what it holds.
+mgeom::Transform placement_of(const Json& node, const Context& ctx) {
+    const std::string kind = node.value("kind", std::string());
+    if (kind != "transform" && kind != "group" && kind != "ref") return {};
+    return mgeom::Transform{ctx.number(node, "x", 0.0), ctx.number(node, "y", 0.0), ctx.number(node, "rotation", 0.0),
+                            node.value("mirror_x", false), kind == "ref" ? 1.0 : ctx.number(node, "scale", 1.0)};
+}
 
 NodeResult render_node(const Json& node, Builder& builder, const std::string& component, const Variables& variables,
                        const Scope& scope) {
@@ -150,14 +159,15 @@ NodeResult render_node(const Json& node, Builder& builder, const std::string& co
     first["i"] = 0.0;
     first["j"] = 0.0;
     Result made = produce(first);
-    NodeResult result{std::move(made.layers), Points{label_of(node), {}, std::move(made.points), {}}};
+    NodeResult result{std::move(made.layers), Points{label_of(node), {}, std::move(made.points), {}}, {}, {}};
     result.points.box = bbox_of(result.layers);
     if (node.contains("align") && !node["align"].is_null()) {
-        const mgeom::Transform shift = alignment(node, result.points, first, scope, builder, component);
-        for (auto& [layer, region] : result.layers) region = region.transformed(shift);
-        for (auto& [name, point] : result.points.declared) point = shift.apply(point);
+        result.shift = alignment(node, result.points, first, scope, builder, component);
+        for (auto& [layer, region] : result.layers) region = region.transformed(result.shift);
+        for (auto& [name, point] : result.points.declared) point = result.shift.apply(point);
         result.points.box = bbox_of(result.layers);
     }
+    if (builder.recording()) result.inner = result.shift * placement_of(node, Context{builder, component, first, scope});
     return result;
 }
 
@@ -274,16 +284,18 @@ Layers LayerSet::merged() const {
 Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, const std::string& component,
                       const Variables& variables, const Scope& scope) {
     struct Entry {
-        size_t slot;
+        size_t slot, index;  // its list, and its index there (disabled nodes count)
         const Json* node;
     };
     std::vector<Entry> entries;
     std::map<std::string, size_t> named;
     for (size_t slot = 0; slot < lists.size(); ++slot) {
+        size_t index = 0;
         for (const auto& node : *lists[slot]) {
+            const size_t at = index++;
             if (!node.value("enabled", true)) continue;
             if (const std::string name = name_of(node); !name.empty()) named[name] = entries.size();
-            entries.push_back({slot, &node});
+            entries.push_back({slot, at, &node});
         }
     }
     std::vector<std::optional<Layers>> results(entries.size());
@@ -302,11 +314,20 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
         Scope visible = scope;
         for (const auto& [name, points] : rendered.local) visible.insert_or_assign(name, points);
         NodeResult result;
+        NodePath& path = builder.path();
+        path.emplace_back(int(entries[k].slot), int(entries[k].index));
+        struct Pop {
+            NodePath& path;
+            ~Pop() { path.pop_back(); }
+        } pop{path};
         try {
             result = render_node(node, builder, component, variables, visible);
         } catch (const mgeom::GeometryError& error) {
             throw BuildError("'" + label_of(node) + "': " + error.what());
         }
+        if (Records* records = builder.recording(); records && !records->count(path))
+            records->emplace(path, NodeRecord{result.layers, result.points.name, result.points.declared, result.inner,
+                                              result.shift});
         visiting[k] = false;
         results[k] = std::move(result.layers);
         if (const std::string name = name_of(node); !name.empty()) rendered.local.insert_or_assign(name, std::move(result.points));
@@ -324,23 +345,54 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
 const Built& Builder::build(std::string_view component, const Values& params) {
     const std::string qualified = project_.qualify(component);
     const ComponentDef* definition = project_.definition(qualified);
-    if (!definition)
-        throw NotSupported("'" + qualified + "' is an imported component: Python builds those for now");
-    return build_on(qualified, params, project_.top_level(definition->level));
+    return build_on(qualified, params, project_.top_level(definition ? definition->level : std::nullopt));
 }
+
+namespace {
+
+mgeom::Region region_of(const ImportedPolygon& polygon) {
+    auto points = [](const Ring& ring) {
+        std::vector<mgeom::Point> result;
+        for (const auto& [x, y] : ring) result.push_back({x, y});
+        return result;
+    };
+    mgeom::Region region = mgeom::Region::polygon(points(polygon.hull));
+    for (const auto& hole : polygon.holes) region = region - mgeom::Region::polygon(points(hole));
+    return region;
+}
+
+}  // namespace
 
 const Built& Builder::build_on(const std::string& qualified, const Values& params, const OptionalLevel& level) {
     const ComponentDef* definition = project_.definition(qualified);
-    if (!definition)
-        throw NotSupported("'" + qualified + "' is an imported component: Python builds those for now");
+    if (!definition) {
+        const ImportedGeometry* geometry = project_.imported(qualified);
+        if (!geometry) throw UnknownComponent("unknown component '" + qualified + "'");
+        if (!params.empty()) throw BuildError("'" + qualified + "' is an imported cell: it has no parameters");
+        if (const auto found = imported_.find(qualified); found != imported_.end()) return found->second;
+        LayerSet layers;
+        for (const auto& [layer, polygons] : *geometry)
+            for (const auto& polygon : polygons) layers.add(layer, region_of(polygon));
+        return imported_.emplace(qualified, Built{layers.merged(), {}}).first->second;
+    }
+    // What it places is never recorded: records are of one component's own nodes.
+    struct Nested {
+        Builder& builder;
+        Records* recording;
+        NodePath path;
+        ~Nested() { builder.recording_ = recording, builder.path_ = std::move(path); }
+    } nested{*this, recording_, std::move(path_)};
+    recording_ = nullptr;
+    path_.clear();
     const auto values = project_.variables(qualified, params);
-    std::string key = project_.fingerprint(qualified) + "@" + (level ? *level : std::string("-"));
+    std::string key = project_.fingerprint(qualified) + "@" + (level ? *level : std::string("-")) + "@" +
+                      project_.stack_key();
     for (const auto& [name, value] : values) {
         char buffer[40];
         std::snprintf(buffer, sizeof buffer, "%.17g", value);
         key += "|" + name + "=" + buffer;
     }
-    if (const auto found = cache_.find(key); found != cache_.end()) return found->second;
+    if (const Built* found = cache_->find(key)) return *found;
     struct Restore {  // the level of the component that placed this one, after it
         OptionalLevel& level;
         OptionalLevel saved;
@@ -374,7 +426,43 @@ const Built& Builder::build_on(const std::string& qualified, const Values& param
         }
         built.points[name] = {base.x + ctx.number(point, "x", 0.0), base.y + ctx.number(point, "y", 0.0)};
     }
-    return cache_.emplace(key, std::move(built)).first->second;
+    return cache_->put(key, std::move(built));
+}
+
+const Built* BuildCache::find(const std::string& key) const {
+    const auto found = built_.find(key);
+    return found == built_.end() ? nullptr : &found->second;
+}
+
+const Built& BuildCache::put(const std::string& key, Built built) {
+    // Past the limit, start again: what is in use is built again as it is asked for.
+    // (Only between builds: what a build in progress holds stays.)
+    if (built_.size() >= max_entries_) built_.clear();
+    return built_.insert_or_assign(key, std::move(built)).first->second;
+}
+
+Records Builder::records(std::string_view component, const Values& params, std::string* error) {
+    const std::string qualified = project_.qualify(component);
+    const ComponentDef* definition = project_.definition(qualified);
+    Records records;
+    if (!definition || project_.is_imported(qualified)) return records;  // an imported cell has no nodes
+    struct Restore {
+        Builder& builder;
+        OptionalLevel level;
+        ~Restore() { builder.recording_ = nullptr, builder.path_.clear(), builder.level_ = std::move(level); }
+    } restore{*this, level_};
+    try {
+        const auto values = project_.variables(qualified, params);
+        level_ = project_.top_level(definition->level);
+        recording_ = &records;
+        path_.clear();
+        const Variables variables(values.begin(), values.end());
+        render_lists({&definition->shapes->json}, *this, qualified, variables, Scope{});
+    } catch (const std::exception& e) {
+        if (!error) throw;
+        *error = e.what();
+    }
+    return records;
 }
 
 }  // namespace mems

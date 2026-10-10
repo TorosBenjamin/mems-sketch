@@ -4,7 +4,6 @@ A new kind in core/shapes/kinds is checked here without adding tests: it must
 survive a YAML round trip, render, move exactly, and describe itself.
 """
 
-import klayout.db as kdb
 import pytest
 import yaml
 
@@ -12,7 +11,6 @@ from mems_sketch.core.project import new_project
 from mems_sketch.core.shapes import (
     KINDS,
     SHAPE_ADAPTER,
-    Evaluator,
     RectShape,
     RefShape,
     TransformShape,
@@ -21,6 +19,7 @@ from mems_sketch.core.shapes import (
     translated,
     wrap_shapes,
 )
+from mems_sketch.engine import Engine
 
 LAYER = "device"
 
@@ -48,16 +47,17 @@ def label(shape):
 
 
 def bbox(shape):
-    """The box around what the shape draws, or around its points if it draws nothing."""
-    record = {}
-    box = kdb.Box()
-    lookup = new_project().component
-    for region in Evaluator(lookup, record, level="device").render([shape], {}).layers.values():
-        box += region.bbox()
-    if box.empty():  # a guide: measure its points
-        for x, y in record[((0, 0),)].points.declared.values():
-            box += kdb.Point(round(x * 1000), round(y * 1000))
-    return box
+    """The box around what the shape draws, or around its points if it draws nothing:
+    (left, bottom, right, top) in nm, or None."""
+    project = new_project()
+    project.top_component.shapes = [shape.model_copy(deep=True)]
+    record = Engine().load(project).build("top").records()[((0, 0),)]
+    box = record.geometry.bbox()
+    if box is None:  # a guide: measure its points
+        xs = [x for x, _ in record.points.declared.values()]
+        ys = [y for _, y in record.points.declared.values()]
+        box = (min(xs), min(ys), max(xs), max(ys)) if xs else None
+    return None if box is None else tuple(round(v * 1000) for v in box)
 
 
 def test_every_kind_has_a_sample():
@@ -79,14 +79,14 @@ def test_a_yaml_round_trip_keeps_the_shape(shape):
 
 @pytest.mark.parametrize("shape", SAMPLES, ids=label)
 def test_the_shape_renders(shape):
-    assert not bbox(shape).empty()
+    assert bbox(shape) is not None
 
 
 @pytest.mark.parametrize("shape", SAMPLES, ids=label)
 def test_moving_shifts_the_geometry_exactly(shape):
-    before, after = bbox(shape), bbox(translated(shape, 3, -2))
-    assert (after.left - before.left, after.bottom - before.bottom) == (3000, -2000)
-    assert (after.width(), after.height()) == (before.width(), before.height())
+    (l0, b0, r0, t0), (l1, b1, r1, t1) = bbox(shape), bbox(translated(shape, 3, -2))
+    assert (l1 - l0, b1 - b0) == (3000, -2000)
+    assert (r1 - l1, t1 - b1) == (r0 - l0, t0 - b0)
 
 
 @pytest.mark.parametrize("shape", SAMPLES, ids=label)

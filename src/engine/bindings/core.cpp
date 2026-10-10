@@ -57,6 +57,35 @@ nb::list grid_polygons(const mgeom::Region& region, double grid, double chord) {
     return polygons;
 }
 
+nb::tuple transform_tuple(const mgeom::Transform& t) {
+    return nb::make_tuple(t.dx, t.dy, t.angle_deg, t.mirror_x, t.scale);
+}
+
+nb::dict layers_dict(const mems::Layers& layers, double grid, double chord) {
+    nb::dict result;
+    for (const auto& [layer, region] : layers) result[nb::str(layer.c_str())] = grid_polygons(region, grid, chord);
+    return result;
+}
+
+nb::dict points_dict(const mems::PointMap& points) {
+    nb::dict result;
+    for (const auto& [name, point] : points) result[nb::str(name.c_str())] = nb::make_tuple(point.x, point.y);
+    return result;
+}
+
+// A project loaded for building, with a build cache it may share with other
+// versions of the project (mems_sketch.engine.Engine).
+struct Engine {
+    std::shared_ptr<mems::BuildCache> cache;
+    std::shared_ptr<const mems::Project> project;
+    std::unique_ptr<mems::Builder> builder;
+
+    Engine(std::shared_ptr<mems::BuildCache> c, std::string_view json)
+        : cache(std::move(c)),
+          project(std::make_shared<const mems::Project>(mems::Project::from_json(json))),
+          builder(std::make_unique<mems::Builder>(*project, cache)) {}
+};
+
 // Parameter values from a Python mapping, in its order: numbers or expressions.
 mems::Values values_in(const nb::dict& given) {
     mems::Values values;
@@ -73,6 +102,9 @@ mems::Values values_in(const nb::dict& given) {
 NB_MODULE(_core, m) {
     m.doc() = "The mems-sketch engine.";
     m.attr("__version__") = MEMS_ENGINE_VERSION;
+    // Edit sessions held by Qt objects can keep an engine until the
+    // interpreter has gone; that is not a leak worth reporting at exit.
+    nb::set_leak_warnings(false);
     nb::exception<mems::ExpressionError>(m, "ExpressionError", PyExc_ValueError);
     nb::exception<mems::ModelError>(m, "ModelError", PyExc_ValueError);
     auto unknown = nb::exception<mems::UnknownComponent>(m, "UnknownComponentError", PyExc_KeyError);
@@ -132,6 +164,58 @@ NB_MODULE(_core, m) {
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
             "A component built by the engine: {layer: [(hull, [holes])]}, points in grid units, "
             "curves within chord. Raises NotSupported for what the engine does not build yet.");
+
+    nb::class_<Engine>(m, "Engine",
+                       "A project loaded for building. Builds are cached by everything they depend on, "
+                       "and the cache is shared by the engines made with trial().")
+        .def("__init__",
+             [](Engine* e, std::string_view json) { new (e) Engine(std::make_shared<mems::BuildCache>(), json); },
+             "json"_a)
+        .def(
+            "trial", [](const Engine& e, std::string_view json) { return Engine(e.cache, json); }, "json"_a,
+            "Another version of the project, sharing this engine's cache.")
+        .def_prop_ro("project", [](const Engine& e) { return *e.project; }, "The model it builds from.")
+        .def(
+            "build",
+            [](Engine& e, std::string_view component, const nb::dict& params, double grid, double chord) {
+                const mems::Values values = values_in(params);
+                mems::Built built;
+                {
+                    nb::gil_scoped_release release;  // geometry takes a while; Python may go on
+                    built = e.builder->build(component, values);
+                }
+                return nb::make_tuple(layers_dict(built.layers, grid, chord), points_dict(built.points));
+            },
+            "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
+            "(layers, points): {layer: [(hull, [holes])]} with points in grid units, curves within "
+            "chord; and the declared points, µm.")
+        .def(
+            "records",
+            [](Engine& e, std::string_view component, const nb::dict& params, double grid, double chord) {
+                const mems::Values values = values_in(params);
+                mems::Records records;
+                std::string error;
+                {
+                    nb::gil_scoped_release release;
+                    records = e.builder->records(component, values, &error);
+                }
+                nb::dict result;
+                for (const auto& [path, record] : records) {
+                    nb::list steps;
+                    for (const auto& [slot, index] : path) steps.append(nb::make_tuple(slot, index));
+                    result[nb::tuple(steps)] =
+                        nb::make_tuple(layers_dict(record.layers, grid, chord), nb::str(record.name.c_str()),
+                                       points_dict(record.declared), transform_tuple(record.inner),
+                                       transform_tuple(record.shift));
+                }
+                return nb::make_tuple(result, error.empty() ? nb::none() : nb::object(nb::str(error.c_str())));
+            },
+            "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
+            "({path: (layers, name, declared points, inner, shift)}, error or None): every node of the "
+            "component's own shape tree as evaluated; transforms as (dx, dy, angle, mirror_x, scale).")
+        .def("clear", [](Engine& e) { e.cache->clear(); }, "Forget every cached build.")
+        .def_prop_ro("cached", [](const Engine& e) { return e.cache->size(); },
+                     "How many component builds the cache holds.");
 
     nb::class_<mems::Expression>(m, "Expression", "A parsed expression.")
         .def(nb::init<std::string_view>(), "text"_a)

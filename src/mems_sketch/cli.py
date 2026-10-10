@@ -1,4 +1,4 @@
-"""Command-line interface to the compiler: project files in, results out.
+"""Command-line interface to the engine: project files in, results out.
 
     mems-sketch-cli new     my_project
     mems-sketch-cli info    my_project

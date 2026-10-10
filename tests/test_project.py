@@ -1,9 +1,9 @@
 import difflib
+import json
 
 import pytest
 
 from mems_sketch import (
-    Compiler,
     ComponentDef,
     Instance,
     Layer,
@@ -13,6 +13,7 @@ from mems_sketch import (
     RectShape,
     RefShape,
     Repeat,
+    _core,
     load,
     load_library,
     save,
@@ -20,6 +21,7 @@ from mems_sketch import (
 from mems_sketch.core.component import to_dbu
 from mems_sketch.core.process import layer_rules
 from mems_sketch.core.project import new_project
+from mems_sketch.engine import Engine, project_data
 from mems_sketch.storage.project_files import ProjectFormatError
 
 
@@ -140,14 +142,13 @@ def test_a_whole_project_can_be_used_as_a_component(tmp_path):
     assert area(wafer) == pytest.approx(3 * 20 * 2)
 
 
-def test_compiler_builds_identical_instances_once():
+def test_the_engine_builds_identical_instances_once():
     project = make_project()
     project.add(Instance("many", "bar", {"w": 1}, repeat=Repeat(columns=50, dx=30)))
-    compiler = Compiler()
-    project.render(compiler=compiler)
-    # top + one "bar" with w_top + one "bar" with w=1 are built; the other 49 copies are hits.
-    assert compiler.misses == 3
-    assert compiler.hits == 49
+    engine = Engine()
+    project.render(engine=engine)
+    # top + one "bar" with w_top + one "bar" with w=1 are built; the other 49 copies are kept.
+    assert engine.cached == 3
 
 
 def test_fingerprints_change_only_with_dependencies():
@@ -164,16 +165,16 @@ def test_fingerprints_change_only_with_dependencies():
 
 
 def project_fingerprints(project: Project) -> dict[str, str]:
-    session = Compiler().session(project)
-    return {name: session.fingerprint(name) for name in project.components}
+    core = _core.Project(json.dumps(project_data(project)))
+    return {name: core.fingerprint(name) for name in project.components}
 
 
 def test_cache_stays_correct_across_edits():
     project = make_project()
-    compiler = Compiler()
-    assert project.render(compiler=compiler).layers["device"].area() / 1e6 == pytest.approx(90)
+    engine = Engine()
+    assert project.render(engine=engine).layers["device"].area() / 1e6 == pytest.approx(90)
     project.components["bar"].parameters[1] = ParamDef(name="length", default="20 * w")
-    assert project.render(compiler=compiler).layers["device"].area() / 1e6 == pytest.approx(180)
+    assert project.render(engine=engine).layers["device"].area() / 1e6 == pytest.approx(180)
 
 
 def test_validate_reports_broken_components():

@@ -113,4 +113,4 @@ def test_a_geometry_document_imports_like_a_layout(window, tmp_path, monkeypatch
     assert targets == ["device", "trench"]  # a new layer keeps the document's name
     accept(monkeypatch)
     assert window.components.import_gds(str(path)) == "from_script"
-    assert window.document.project.imports["from_script"].file == "from_script.oas"
+    assert window.document.project.imports["from_script"].file == "from_script.gds"

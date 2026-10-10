@@ -13,7 +13,7 @@ the project model, files, history and the CLI stay in Python.
 
 ## Why
 
-The current backend builds everything as KLayout regions on a 1 nm integer
+The Python backend built everything as KLayout regions on a 1 nm integer
 grid. That is right for masks, and wrong for the work around them:
 
 - **One grid for everything.** Every shape is snapped to 1 nm as soon as it
@@ -110,8 +110,8 @@ boundary.
 | `EditSession`: commands, transactions, undo/redo | Library: geometry, booleans, offsets, fillets, extrusion |
 | History diffs in words (`core/diff.py`) | Library: outlines at a chord tolerance, snapping to a grid with its report |
 | The CLI and the Python scripting API | Library: solids, triangles, and OCC's own writers (BREP, STEP) |
-| All exporter plugins, GDS/OASIS/DXF included, and rule checks (KLayout's Python package, on the snapped outlines) | Library: meshing (gmsh, optional) |
-| Reading GDS/OASIS cells for imported layouts (KLayout's Python package) | |
+| All exporter plugins, GDS/OASIS/DXF included (`mems_sketch.layout`, plain Python), and rule checks (on the snapped outlines, booleans and offsets through the library) | Library: meshing (gmsh, optional) |
+| Reading GDS cells for imported layouts (`mems_sketch.layout`) | |
 
 Neither C++ layer imports Python or Qt. Like the Python backend today, both
 can be tested and used without a GUI.
@@ -297,7 +297,7 @@ Every output chooses its own tolerance.
 | Outlines | Per prototype at a chord tolerance (for the canvas, by zoom level, and for exporters), with the transforms of its instances. |
 | Snapped outlines | Curves split at a chord tolerance (default 5 nm), then snapped to a grid (default 1 nm) as integer coordinates, per prototype so the hierarchy survives. Used by every grid-based exporter (GDS, OASIS, DXF) and by rule checks. |
 | Snapping report | Comes with the snapped outlines: pieces that vanished, split or merged and holes that closed, joined or formed, each with where, and the area before and after. Computed once in the library, so no exporter has to get it right itself. |
-| Rule checks | On the snapped outlines, since that is what the fab checks. Run in Python with KLayout's package, per layer. Rules are project data, shared with processes in libraries; rule kinds are plugins, like exporters (requirements DRC-6 to DRC-13). |
+| Rule checks | On the snapped outlines, since that is what the fab checks. Run in Python per layer, with the library's booleans and offsets. Rules are project data, shared with processes in libraries; rule kinds are plugins, like exporters (requirements DRC-6 to DRC-13). |
 | STEP, BREP | Layers extruded through the layer stack into solids, exact curves kept. Writing STEP is slow for large designs (see [Measurements](#measurements)), so it is an export, never an interactive step. BREP is fast and is what the mesher reads. |
 | Mesh | gmsh, from the solids or the 2D faces. `MeshSettings` holds global and per-layer sizes, refinement regions and distances, and names for physical groups. Optional, because of gmsh's licence. |
 | Triangles | For a 3D view (`BRepMesh`), or a filled 2D view. |
@@ -313,7 +313,7 @@ OCC's own BREP and STEP. This is how export already works, and it stays:
   (`export/base.py`). A format can live in its own package; adding one needs
   no C++ and no rebuild.
 - The built-in exporters are plugins like any other: GDS, OASIS and DXF
-  (with KLayout's Python package), JSON, XML and `.mat`, BREP and STEP (OCC's
+  (`mems_sketch.layout`, plain Python), JSON, XML and `.mat`, BREP and STEP (OCC's
   writers through the bindings), and the mesh formats (gmsh, an optional
   extra).
 - **Exporters take building blocks, not a format-specific API.** An exporter
@@ -340,8 +340,8 @@ OCC's own BREP and STEP. This is how export already works, and it stays:
   the flat layout. Snapping cell by cell does not see gaps closing between
   separately placed cells; writing flat does.
 
-Keeping the C++ side free of file formats also keeps KLayout's C++ library
-out of the build; mems-sketch already depends on its Python package.
+Keeping the C++ side free of file formats keeps it small: the formats are
+plain Python (`mems_sketch.layout`), with no layout library at all.
 
 ## The engine
 
@@ -371,9 +371,9 @@ build.layout()  # the mgeom layout, for scripts that want the library itself
 
 Values cross the boundary as plain data: JSON or dicts in, NumPy arrays and
 small records out. Exports go through the plugins (`export.export(project,
-path, format_name, ...)`), which read the build. The existing `Geometry`
-(KLayout regions) stays available in Python, made from `outlines` or
-`snapped`, for code that has not moved yet.
+path, format_name, ...)`), which read the build. `Geometry` holds the
+snapped polygons per layer (`core/region.py`), for drawing, checking and the
+flat exports.
 
 ### Evaluation
 
@@ -467,9 +467,8 @@ src/
   (replacing hatchling), and **nanobind** makes the two Python modules.
 - **OCC built from source** with only the modules above (CMake options such
   as `BUILD_MODULE_Visualization=OFF`, `BUILD_MODULE_ApplicationFramework=OFF`,
-  `BUILD_MODULE_Draw=OFF`), linked statically into `mgeom`. KLayout is used
-  only through its Python package, by the exporters and rule checks. The
-  engine links no third-party geometry library.
+  `BUILD_MODULE_Draw=OFF`), linked statically into `mgeom`. The engine
+  links no third-party geometry library, and the Python side uses none.
 - **The geometry module is optional in a source install.** The package's
   build (the top `CMakeLists.txt`) makes `mems_sketch._geom` when OCC is
   found and is pure Python otherwise; release wheels require it
@@ -555,9 +554,17 @@ test passing and updates this document.
    Python backend has turned curves into segments before an operation).
    One difference is deliberate: a bevelled offset cuts every corner at the
    distance from it, where KLayout's sizing agrees only on right angles.
-   Next: the built-in components as a library, then the switch. Then switch the default backend to
-   the C++ engine. The Python geometry code is removed once the C++ engine
-   has been the default for one release.
+   The built-in components became an ordinary library, and the C++ engine
+   is now the only backend: `mems_sketch.engine` builds through
+   `_core.Engine` (a cache shared across versions of a project, node records
+   for the editor, imported cells passed in as polygons), `Geometry` holds a
+   `Region` of grid polygons per layer, and the Python evaluator and
+   compiler are gone, with KLayout: layout files are plain Python
+   (`mems_sketch.layout`; holes joined to their outline by zero-width cuts,
+   `mgeom::grid::hole_free`), rule checks use the library's grid booleans
+   and offsets (`mgeom::grid`, Clipper2: the resonator's checks take 0.04 s). What the Python backend built for the equivalence test's cases
+   was recorded before it went (`tests/data/python_backend.json.gz`), and
+   the engine is still compared with it.
 7. **New capabilities:** the layer stack, STEP/BREP, the 3D view, meshing
    with gmsh.
 

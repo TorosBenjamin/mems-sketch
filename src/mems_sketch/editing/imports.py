@@ -16,10 +16,10 @@ from mems_sketch.core.component import Geometry, is_builtin
 from mems_sketch.core.imports import (
     ImportedCell,
     cells,
+    gds_bytes,
     gds_layers,
     layer_key,
     layer_names,
-    oasis_bytes,
     parse_layer_key,
     read_layout,
 )
@@ -118,18 +118,18 @@ class ImportEdits(Commands):
     # -- helpers -----------------------------------------------------------------
 
     def read(self, path: str | Path) -> tuple[bytes, str]:
-        """The layout to import from ``path`` (GDS or OASIS bytes) and the name to
-        keep it under: the file itself, or a geometry document as OASIS."""
+        """The layout to import from ``path`` (GDS bytes) and the name to keep it
+        under: the file itself, or a geometry document as GDS."""
         path = Path(path)
         if is_document(path):
             geometry, numbers, _ = read_geometry(path)
-            return self._as_oasis(geometry, numbers), f"{path.stem}.oas"
+            return self._as_gds(geometry, numbers), f"{path.stem}.gds"
         data = path.read_bytes()
         read_layout(data)  # a readable file, or a clear error
         return data, path.name
 
-    def _as_oasis(self, geometry: Geometry, numbers: dict[str, tuple[int, int] | None]) -> bytes:
-        """The geometry as an OASIS file: layers keep their names, and get their GDS
+    def _as_gds(self, geometry: Geometry, numbers: dict[str, tuple[int, int] | None]) -> bytes:
+        """The geometry as a GDS file: layers keep their names, and get their GDS
         numbers from the document, else from the project layer of that name, else
         numbers nothing else uses."""
         taken = {n for n in numbers.values() if n is not None}
@@ -144,7 +144,7 @@ class ImportEdits(Commands):
             if gds is None:
                 gds, free = (free, 0), free + 1
             layers[name] = gds
-        return oasis_bytes(geometry, layers, DOCUMENT_CELL)
+        return gds_bytes(geometry, layers, DOCUMENT_CELL)
 
     def suggested_name(self, path: str | Path) -> str:
         """A free component name made from the file's name (``Pad frame`` -> ``pad_frame``)."""

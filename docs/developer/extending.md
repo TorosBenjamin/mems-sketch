@@ -101,7 +101,8 @@ It then appears in **File → Export…**, `mems-sketch-cli export` and
 
 A class with `name`, `title`, `roles` (the layers it takes, e.g.
 `("outer", "inner")`), `parameters` (`Option`s, as an exporter's options) and
-`check(regions, dbu, **values)`, which gets one KLayout region per role in
+`check(regions, dbu, **values)`, which gets one `Region` per role
+(`core/region.py`: booleans, `sized`, `each_merged`, `area`, `bbox`) in
 database units of `dbu` µm and returns `Finding(message, bbox_um)`s:
 
 ```python

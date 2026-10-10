@@ -63,6 +63,15 @@ size_t offset_level(const std::vector<Level>& levels, const std::string& spec, c
 
 }  // namespace
 
+std::string Project::stack_key() const {
+    std::string key = default_level_.value_or("");
+    for (const auto& level : levels_) {
+        key += "|" + level.layer;
+        for (const auto& [role, layer] : level.roles) key += "," + role + "=" + layer;
+    }
+    return key;
+}
+
 OptionalLevel Project::top_level(const OptionalLevel& own) const {
     if (own) {
         index_of(levels_, *own);

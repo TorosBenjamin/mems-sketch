@@ -12,10 +12,9 @@ from pathlib import Path
 import pytest
 
 from mems_sketch import ComponentDef, ParamDef, RectShape, RefShape, TransformShape
-from mems_sketch.core.compiler import Compiler
 from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.project import Library, PrivateComponentError, Project, new_project
-from mems_sketch.engine import project_data
+from mems_sketch.engine import Engine, project_data
 from mems_sketch.storage import load
 
 try:
@@ -205,7 +204,7 @@ def parameter_cases(definition: ComponentDef, constants):
 @pytest.mark.parametrize("project", projects(), ids=lambda p: p.name)
 def test_parameter_values_agree(project):
     core = engine(project)
-    session = Compiler().session(project)
+    session = Engine().load(project)
     pools = [("", project.components)]
     pools += [(f"{name}.", lib.components) for name, lib in project.libraries.items()]
     checked = 0
@@ -223,12 +222,14 @@ def edits(project: Project):
     """(description, change) pairs, each applied to a copy of the project."""
     for name in project.components:
         yield (
+            name,
             f"default of {name}",
             lambda p, n=name: p.components[n].parameters.append(
                 ParamDef(name="added_parameter", default=1)
             ),
         )
         yield (
+            name,
             f"shape in {name}",
             lambda p, n=name: p.components[n].shapes.append(
                 RectShape(layer="device", x0=0, y0=0, x1=1, y1=1)
@@ -237,6 +238,7 @@ def edits(project: Project):
     for library, lib in project.libraries.items():
         for name in lib.components:
             yield (
+                f"{library}.{name}",
                 f"shape in {library}.{name}",
                 lambda p, b=library, n=name: (
                     p.libraries[b]
@@ -244,15 +246,28 @@ def edits(project: Project):
                     .shapes.append(RectShape(layer="device", x0=0, y0=0, x1=1, y1=1))
                 ),
             )
-    yield "a process constant", lambda p: p.process.constants.update({"extra": 1.0})
+    yield None, "a process constant", lambda p: p.process.constants.update({"extra": 1.0})
     if project.imports:
-        yield "the imported file", lambda p: setattr(p.imports["logo"], "data", b"other")
+        yield "logo", "the imported file", lambda p: setattr(p.imports["logo"], "data", b"other")
+
+
+def depends_on(project: Project, name: str, seen=None) -> set[str]:
+    """What a component's geometry depends on: itself and what it places, at any depth."""
+    seen = set() if seen is None else seen
+    if name in seen:
+        return seen
+    seen.add(name)
+    found = None if name in project.imports else project.definition(name)
+    if found is not None:
+        definition, context = found
+        for reference in definition.references():
+            depends_on(project, project.qualify(reference, context), seen)
+    return seen
 
 
 def fingerprints(project: Project, names):
-    python = Compiler().session(project)
     core = engine(project)
-    return {n: python.fingerprint(n) for n in names}, {n: core.fingerprint(n) for n in names}
+    return {n: core.fingerprint(n) for n in names}
 
 
 @pytest.mark.parametrize("project", projects(), ids=lambda p: p.name)
@@ -262,21 +277,20 @@ def test_fingerprints_change_on_the_same_edits(project):
         f"{library}.{n}" for library, lib in project.libraries.items() for n in lib.components
     ]
     names += [*project.imports]
-    python_before, core_before = fingerprints(project, names)
-    assert len(set(core_before.values())) == len(set(python_before.values()))
-    for description, change in edits(project):
+    before = fingerprints(project, names)
+    assert len(set(before.values())) == len(names)  # different definitions, different hashes
+    for target, description, change in edits(project):
         edited = copy.deepcopy(project)
         change(edited)
-        python_after, core_after = fingerprints(edited, names)
+        after = fingerprints(edited, names)
         for name in names:
-            python_changed = python_after[name] != python_before[name]
-            core_changed = core_after[name] != core_before[name]
-            assert python_changed == core_changed, (description, name)
+            expected = target is not None and target in depends_on(project, name)
+            assert (after[name] != before[name]) == expected, (description, name)
 
 
 def test_built_in_components_are_components_like_any_other():
     project = nested_project()
-    core, session = engine(project), Compiler().session(project)
+    core, session = engine(project), Engine().load(project)
     assert core.qualify("comb_drive", "") == "comb_drive"
     for name in ("anchor", "comb_drive", "serpentine_spring"):
         for params in ({}, {"size": 10, "enclosure": 5}, {"fingers": 0}, {"pitch": 3}):

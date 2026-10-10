@@ -44,8 +44,8 @@ PATH_ROLE = Qt.ItemDataRole.UserRole
 VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message
 SLOT_LABELS = {"boolean": ("A", "B")}
 IMPORT_FILTER = (
-    "Layouts (*.gds *.gds2 *.gdsii *.oas *.json *.xml *.mat);;"
-    "GDS and OASIS (*.gds *.gds2 *.gdsii *.oas);;"
+    "Layouts (*.gds *.gds2 *.gdsii *.json *.xml *.mat);;"
+    "GDS (*.gds *.gds2 *.gdsii);;"
     "Geometry documents (*.json *.xml *.mat);;All files (*)"
 )
 

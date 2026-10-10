@@ -15,9 +15,9 @@ from mems_sketch import (
     load,
     save,
 )
-from mems_sketch.core.compiler import Compiler
 from mems_sketch.core.component import DBU_UM
 from mems_sketch.core.shapes import GroupShape
+from mems_sketch.engine import Engine
 
 
 def rect(name, x0, y0, x1, y1, layer="device", **kw) -> RectShape:
@@ -262,11 +262,10 @@ def test_points_are_cached_with_geometry():
     )
     for n in range(10):
         project.add(Instance(f"c{n}", "c", y=n * 10))
-    compiler = Compiler()
-    session = compiler.session(project)
-    session.render(project.top)
-    assert compiler.misses == 2  # top and c, once each
-    assert session.component("c").points(session.component("c").Params()) == {"tip": (5, 0)}
+    engine = Engine().load(project)
+    engine.build(project.top).geometry  # noqa: B018 - built
+    assert engine.cached == 2  # top and c, once each
+    assert engine.build("c").points() == {"tip": (5, 0)}
 
 
 def test_example_stays_connected_when_sizes_change():

@@ -11,13 +11,14 @@ not mapped are left out. Importing the file again updates every placement.
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
+import struct
 from dataclasses import dataclass, field
 
-import klayout.db as kdb
-
+from mems_sketch import layout as layout_files
 from mems_sketch.core.component import DBU_UM, Component, Geometry, Params
+from mems_sketch.core.region import IntPolygon, Region
+from mems_sketch.layout import gds
+from mems_sketch.layout.model import Layout
 
 GdsLayer = tuple[int, int]  # layer, datatype
 
@@ -52,110 +53,94 @@ class ImportedCell:
 
 # -- reading GDS files ----------------------------------------------------------
 
-_layouts: dict[str, kdb.Layout] = {}  # by digest: a file is read once
+_layouts: dict[str, Layout] = {}  # by digest: a file is read once
+_names: dict[str, dict[GdsLayer, str]] = {}  # layer names of files made from documents
 
 
-def read_layout(data: bytes) -> kdb.Layout:
-    """The layout in a GDS (or OASIS) file's content."""
+def read_layout(data: bytes) -> Layout:
+    """The layout in a GDS file's content."""
     digest = hashlib.sha256(data).hexdigest()
     if digest not in _layouts:
-        layout = kdb.Layout()
         try:
-            if hasattr(layout, "read_bytes"):
-                layout.read_bytes(data)
-            else:  # older klayout
-                with tempfile.NamedTemporaryFile(suffix=".gds", delete=False) as f:
-                    f.write(data)
-                try:
-                    layout.read(f.name)
-                finally:
-                    os.unlink(f.name)
-        except RuntimeError as exc:
+            _layouts[digest] = layout_files.read(data)
+        except (ValueError, struct.error) as exc:
             raise ValueError(f"not a readable GDS file: {exc}") from None
-        _layouts[digest] = layout
     return _layouts[digest]
 
 
-def oasis_bytes(geometry: Geometry, layers: dict[str, tuple[int, int]], cell: str) -> bytes:
-    """``geometry`` as an OASIS file with one cell; each layer keeps its name and
-    gets its GDS numbers from ``layers``."""
-    layout = kdb.Layout()
-    layout.dbu = DBU_UM
-    top = layout.create_cell(cell)
+def gds_bytes(geometry: Geometry, layers: dict[str, tuple[int, int]], cell: str) -> bytes:
+    """``geometry`` as a GDS file with one cell; each layer gets its GDS numbers
+    from ``layers`` and keeps its name for :func:`layer_names`."""
+    out = Layout(dbu=DBU_UM)
+    top = out.cell(cell)
     for name, (number, datatype) in layers.items():
         region = geometry.layers.get(name)
         if region is not None:
-            top.shapes(layout.layer(kdb.LayerInfo(number, datatype, name))).insert(region)
-    options = kdb.SaveLayoutOptions()
-    options.format = "OASIS"
-    return bytes(layout.write_bytes(options))
+            for polygon in region.each_merged():
+                top.add((number, datatype), polygon)
+    data = gds.write(out)
+    _names[hashlib.sha256(data).hexdigest()] = {gds_layer: n for n, gds_layer in layers.items()}
+    return data
 
 
 def cells(data: bytes) -> list[str]:
     """The file's cells, top cells first (what an import would usually pick)."""
     layout = read_layout(data)
-    tops = [cell.name for cell in layout.top_cells()]
-    others = sorted(cell.name for cell in layout.each_cell() if cell.name not in tops)
-    return tops + others
+    tops = layout.top_cells()
+    return tops + sorted(name for name in layout.cells if name not in tops)
 
 
 def gds_layers(data: bytes, cell: str) -> list[GdsLayer]:
     """The GDS layers that have shapes in ``cell`` (its sub-cells included)."""
     layout = read_layout(data)
-    top = _cell(layout, cell)
-    found = []
-    for index in layout.layer_indexes():
-        if not top.begin_shapes_rec(index).at_end():
-            info = layout.get_info(index)
-            found.append((info.layer, info.datatype))
-    return sorted(found)
+    _cell(layout, cell)
+    return sorted(layout.layers_in(cell))
 
 
 def layer_names(data: bytes) -> dict[GdsLayer, str]:
-    """The names the file gives its layers (OASIS can, GDS cannot)."""
-    layout = read_layout(data)
-    names = {}
-    for index in layout.layer_indexes():
-        info = layout.get_info(index)
-        if info.name:
-            names[(info.layer, info.datatype)] = info.name
-    return names
+    """The names of the file's layers, when it was made from a geometry document
+    (GDS has none of its own)."""
+    return dict(_names.get(hashlib.sha256(data).hexdigest(), {}))
 
 
-def _cell(layout: kdb.Layout, name: str) -> kdb.Cell:
-    cell = layout.cell(name)
-    if cell is None:
+def _cell(layout: Layout, name: str) -> None:
+    if name not in layout.cells:
         raise ValueError(f"the file has no cell '{name}'")
-    return cell
 
 
 def cell_geometry(imported: ImportedCell) -> Geometry:
     """The cell, flattened, on the project layers its GDS layers are mapped to."""
     layout = read_layout(imported.data)
-    top = _cell(layout, imported.cell)
+    _cell(layout, imported.cell)
     scale = layout.dbu / DBU_UM  # the file's grid to ours (1 nm)
-    trans = kdb.ICplxTrans(scale)
     geometry = Geometry()
-    for index in layout.layer_indexes():
-        info = layout.get_info(index)
-        target = imported.layers.get(layer_key((info.layer, info.datatype)))
+    for gds_layer in sorted(layout.layers_in(imported.cell)):
+        target = imported.layers.get(layer_key(gds_layer))
         if not target:
             continue
-        region = kdb.Region(top.begin_shapes_rec(index))
-        if region.is_empty():
-            continue
-        geometry.region(target).insert(region.transformed(trans) if scale != 1 else region)
+        polygons = layout.flat(imported.cell, gds_layer)
+        if scale != 1:
+            polygons = [
+                IntPolygon(
+                    [(round(x * scale), round(y * scale)) for x, y in polygon.hull],
+                    [[(round(x * scale), round(y * scale)) for x, y in h] for h in polygon.holes],
+                )
+                for polygon in polygons
+            ]
+        # Merged: overlaps united, and holes that the file joined to their
+        # outline by cuts made holes again.
+        geometry.layers[target] = (
+            geometry.region(target) + Region.from_polygons(polygons)
+        ).merged()
     return geometry
 
 
 class ImportedComponent(Component):
-    """A component that stands for an imported cell (no parameters)."""
+    """A component that stands for an imported cell (no parameters; the engine
+    builds it from :func:`cell_geometry`)."""
 
     Params = Params
 
     def __init__(self, imported: ImportedCell) -> None:
         self.imported = imported
         self.type_name = imported.name
-
-    def build(self, params: Params) -> Geometry:
-        return cell_geometry(self.imported)

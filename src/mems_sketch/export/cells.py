@@ -1,5 +1,6 @@
 """Layouts written from the geometry library's cells (``_geom``): GDSII,
-OASIS and DXF through KLayout, on an output grid, keeping the hierarchy.
+OASIS and DXF (:mod:`mems_sketch.layout`), on an output grid, keeping the
+hierarchy.
 
 - Each cell becomes a cell of the file, written once however often it is
   placed, and an array becomes an array reference (requirement OUT-4).
@@ -22,9 +23,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import klayout.db as kdb
+from mems_sketch import layout
+from mems_sketch.core.region import IntPolygon
 
-KLAYOUT_FORMATS = {".gds": "GDS2", ".oas": "OASIS", ".dxf": "DXF"}
+LAYOUT_FORMATS = {".gds": "GDS2", ".oas": "OASIS", ".dxf": "DXF"}
 
 
 def geom() -> Any:
@@ -70,9 +72,9 @@ def _on_grid(value: float, grid: float) -> int | None:
     return nearest if abs(steps - nearest) < 1e-6 else None
 
 
-def _grid_trans(t: Any, grid: float) -> kdb.Trans | None:
-    """``t`` as KLayout's integer transformation, if it maps the grid onto
-    itself; None otherwise. Both mirror about the x axis, then rotate."""
+def _grid_trans(t: Any, grid: float) -> tuple[int, bool, int, int] | None:
+    """``t`` as (quarter turns, mirror, x, y) on the grid, if it maps the grid
+    onto itself; None otherwise. Both mirror about the x axis, then rotate."""
     if t.scale != 1.0:
         return None
     quarter = t.angle_deg / 90.0
@@ -82,7 +84,7 @@ def _grid_trans(t: Any, grid: float) -> kdb.Trans | None:
     x, y = _on_grid(t.dx, grid), _on_grid(t.dy, grid)
     if x is None or y is None:
         return None
-    return kdb.Trans(turns % 4, bool(t.mirror_x), x, y)
+    return turns % 4, bool(t.mirror_x), x, y
 
 
 def write_cell(
@@ -100,11 +102,11 @@ def write_cell(
 
     ``layers`` maps each layer name to its GDS (layer, datatype); a layer with
     geometry but no mapping is an error. The format is ``file_format``
-    (KLayout's name: ``GDS2``, ``OASIS``, ``DXF``) or the file's extension.
+    (``GDS2``, ``OASIS``, ``DXF``) or the file's extension.
     """
     g = geom()
     path = Path(path)
-    file_format = file_format or KLAYOUT_FORMATS.get(path.suffix.lower())
+    file_format = file_format or LAYOUT_FORMATS.get(path.suffix.lower())
     if file_format is None:
         raise ValueError(f"no layout format for '{path.suffix}' files")
     if not (grid_um > 0 and math.isfinite(grid_um)):
@@ -113,11 +115,10 @@ def write_cell(
     if missing:
         raise ValueError(f"layer(s) {', '.join(missing)} have no GDS mapping")
 
-    layout = kdb.Layout()
-    layout.dbu = grid_um
-    indexes = {name: layout.layer(kdb.LayerInfo(*layers[name], name)) for name in layers}
+    out = layout.Layout(dbu=grid_um)
+    out.layer_names = {layers[name]: name for name in layers}
     report = WriteReport(grid_um)
-    written: dict[Any, int] = {}  # _geom.Cell -> KLayout cell index
+    written: dict[Any, str] = {}  # _geom.Cell -> its name in the file
     names: dict[str, int] = {}
 
     def unique(name: str) -> str:
@@ -125,25 +126,31 @@ def write_cell(
         names[name] = count + 1
         return name if count == 0 else f"{name}${count}"
 
-    def write(cell: Any, name: str | None = None) -> int:
+    def write(cell: Any, name: str | None = None) -> str:
         if cell in written:
             return written[cell]
-        target = layout.create_cell(unique(name or cell.name or "CELL"))
-        written[cell] = target.cell_index()
+        target = out.cell(unique(name or cell.name or "CELL"))
+        written[cell] = target.name
         flattened: dict[str, list[Any]] = {}
         for child, t, (columns, rows, dx, dy) in cell.references:
             trans = _grid_trans(t, grid_um) if keep_hierarchy else None
             a, b = _on_grid(dx, grid_um), _on_grid(dy, grid_um)
             if trans is not None and a is not None and b is not None:
-                index = write(child)
-                if columns > 1 or rows > 1:
-                    target.insert(
-                        kdb.CellInstArray(
-                            index, trans, kdb.Vector(a, 0), kdb.Vector(0, b), columns, rows
-                        )
+                child_name = write(child)
+                turns, mirror, x, y = trans
+                target.placements.append(
+                    layout.Placement(
+                        child_name,
+                        x,
+                        y,
+                        angle=90.0 * turns,
+                        mirror=mirror,
+                        columns=columns,
+                        rows=rows,
+                        column_step=(a, 0),
+                        row_step=(0, b),
                     )
-                else:
-                    target.insert(kdb.CellInstArray(index, trans))
+                )
                 continue
             report.flattened += 1
             for i in range(columns):
@@ -160,18 +167,21 @@ def write_cell(
                 continue
             snapped = g.snap(region, grid_um, chord_um)
             report.layers.append(LayerReport(target.name, layer, snapped.report))
-            shapes = target.shapes(indexes[layer])
             for hull, holes in snapped.polygons:
-                polygon = kdb.Polygon([kdb.Point(int(x), int(y)) for x, y in hull])
-                for hole in holes:
-                    polygon.insert_hole([kdb.Point(int(x), int(y)) for x, y in hole])
-                shapes.insert(polygon)
+                target.add(
+                    layers[layer],
+                    IntPolygon(
+                        [tuple(p) for p in hull.tolist()],
+                        [[tuple(p) for p in h.tolist()] for h in holes],
+                    ),
+                )
         return written[cell]
 
     write(top, top_cell)
-    options = kdb.SaveLayoutOptions()
-    options.format = file_format
-    layout.write(str(path), options)
+    # Children before their parents, as some readers want.
+    order = list(dict.fromkeys(reversed(list(out.cells))))
+    out.cells = {name: out.cells[name] for name in order}
+    layout.write(out, path, file_format)
     return report
 
 

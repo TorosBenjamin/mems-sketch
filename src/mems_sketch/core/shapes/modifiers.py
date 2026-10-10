@@ -37,33 +37,25 @@ from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
-from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.transform import Transform
 
 if TYPE_CHECKING:
-    from mems_sketch.core.shapes.base import Point, Value
+    from mems_sketch.core.shapes.base import Value
     from mems_sketch.core.shapes.points import NodePoints
     from mems_sketch.core.shapes.registry import Shape
 else:
     Value = float | str
 
-# What a node makes for given variables: its geometry and declared points.
-Produce = Callable[[dict[str, float]], "tuple[Geometry, dict[str, Point]]"]
-
 
 class Modifier(BaseModel):
-    """What every modifier has; a kind overrides :meth:`apply`."""
+    """What every modifier has (the engine applies them; here: the model, and
+    what Apply turns a modifier into)."""
 
     model_config = ConfigDict(extra="forbid")
 
     icon: ClassVar[str] = "repeat"
     enabled: bool = True
-
-    def apply(
-        self, produce: Produce, variables: dict[str, float]
-    ) -> tuple[Geometry, dict[str, Point]]:
-        raise NotImplementedError
 
     def copies(self, variables: dict[str, float] | None = None) -> int:
         """How many copies of its input it makes (1 when that depends on expressions
@@ -109,13 +101,6 @@ class Modifier(BaseModel):
             values[name] = own.point(point)[0 if axis == "x" else 1]
         return values
 
-    def _with_self(self, produce: Produce, variables: dict[str, float]) -> dict[str, float]:
-        """``variables`` plus its ``self`` points, measured on its input (made once more)."""
-        if not self._self_names():
-            return variables
-        geometry, declared = produce(variables)
-        return self.resolved(variables, _points("self", geometry, declared))
-
     @classmethod
     def kind_name(cls) -> str:
         return cls.model_fields["kind"].default
@@ -139,10 +124,6 @@ def _format(value: Value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
 
 
-def _placed(geometry: Geometry, transform: Transform) -> Geometry:
-    return geometry.transformed(transform)
-
-
 class ArrayModifier(Modifier):
     """Copies on a grid; the copy's column and row are ``i`` and ``j``."""
 
@@ -152,20 +133,6 @@ class ArrayModifier(Modifier):
     rows: Value = 1.0
     dx: Value = 0.0
     dy: Value = 0.0
-
-    def apply(self, produce, variables):
-        variables = self._with_self(produce, variables)
-        columns = _count(self.columns, variables, "array columns")
-        rows = _count(self.rows, variables, "array rows")
-        dx, dy = evaluate(self.dx, variables), evaluate(self.dy, variables)
-        geometry, declared = Geometry(), None
-        for j in range(rows):
-            for i in range(columns):
-                copy, points = produce({**variables, "i": float(i), "j": float(j)})
-                geometry.merge(_placed(copy, Transform(i * dx, j * dy)))
-                if declared is None:
-                    declared = points  # the first copy sits at the node's own place
-        return geometry, declared or {}
 
     def copies(self, variables=None):
         columns, rows = _try_count(self.columns, variables), _try_count(self.rows, variables)
@@ -202,27 +169,6 @@ class PolarArrayModifier(Modifier):
     y: Value = 0.0
     step: Value | None = None  # degrees between copies; default 360 / count
     rotate: bool = True
-
-    def apply(self, produce, variables):
-        variables = self._with_self(produce, variables)
-        count = _count(self.count, variables, "polar array count")
-        step = self._step(count, variables)
-        cx, cy = evaluate(self.x, variables), evaluate(self.y, variables)
-        geometry, declared = Geometry(), None
-        for k in range(count):
-            copy, points = produce({**variables, "i": float(k)})
-            angle = k * step
-            if self.rotate:
-                transform = Transform.rotating(angle, (cx, cy))
-            else:  # move the copy's centre round the circle, keep its orientation
-                box = copy.bbox()
-                px, py = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2) if box else (cx, cy)
-                tx, ty = Transform(angle=angle).apply(px - cx, py - cy)
-                transform = Transform(cx + tx - px, cy + ty - py)
-            geometry.merge(_placed(copy, transform))
-            if declared is None:
-                declared = points
-        return geometry, declared or {}
 
     def copies(self, variables=None):
         count = _try_count(self.count, variables)
@@ -317,16 +263,6 @@ class MirrorModifier(Modifier):
         angle = math.degrees(math.atan2(ey - sy, ex - sx))
         return [Transform.reflecting(angle, (sx, sy))]
 
-    def apply(self, produce, variables):
-        original, declared = produce(variables)
-        variables = self.resolved(variables, _points("self", original, declared))
-        geometry = Geometry()
-        if self.keep:
-            geometry.merge(original)
-        for transform in self.transforms(variables):
-            geometry.merge(_placed(original, transform))
-        return geometry, declared
-
     def copies(self, variables=None):
         images = 3 if self.axis == "both" and self.about is None else 1
         return images + (1 if self.keep else 0)
@@ -414,32 +350,12 @@ class CornersModifier(Modifier):
             result.append((variables[names[0]], variables[names[1]]))
         return result
 
-    def apply(self, produce, variables):
-        from mems_sketch.core.shapes.geometry import round_corners
-
-        geometry, declared = produce(variables)
-        if not self.corners:
-            return geometry, declared
-        variables = self.resolved(variables, _points("self", geometry, declared))
-        specs = [
-            (x, y, evaluate(corner.radius, variables), corner.style)
-            for corner, (x, y) in zip(self.corners, self.positions(variables), strict=True)
-        ]
-        n = evaluate(self.segments, variables) if self.segments is not None else None
-        return round_corners(geometry, specs, n), declared
-
     def summary(self):
         count = len(self.corners)
         return f"{count} corner{'s' if count != 1 else ''}"
 
     def baked(self, node, variables, measure):
         raise ValueError("rounded corners cannot be applied into shapes; keep the modifier")
-
-
-def _points(name: str, geometry: Geometry, declared: dict[str, Point]) -> NodePoints:
-    from mems_sketch.core.shapes.points import NodePoints
-
-    return NodePoints(name, geometry, declared)
 
 
 def _um(value: float) -> float:
@@ -484,20 +400,6 @@ def new_modifier(kind: str) -> Modifier:
         return BY_MODIFIER_KIND[kind]()
     except KeyError:
         raise ValueError(f"unknown modifier '{kind}'") from None
-
-
-def apply_stack(
-    modifiers: list[Modifier], produce: Produce, variables: dict[str, float]
-) -> tuple[Geometry, dict[str, Point]]:
-    """The node's result with its enabled modifiers applied, first to last."""
-    for modifier in modifiers:
-        if modifier.enabled:
-            produce = _bind(modifier, produce)
-    return produce(variables)
-
-
-def _bind(modifier: Modifier, inner: Produce) -> Produce:
-    return lambda variables: modifier.apply(inner, variables)
 
 
 def total_copies(modifiers: list[Modifier], variables: dict[str, float] | None = None) -> int:

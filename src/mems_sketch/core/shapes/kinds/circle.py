@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal
 
-from mems_sketch.core.component import Geometry
 from mems_sketch.core.levels import LEVEL
-from mems_sketch.core.shapes.base import Point, Primitive, RenderContext, Value
-from mems_sketch.core.shapes.geometry import arc_points, segments
+from mems_sketch.core.shapes.base import Primitive, Value
 
 
 class CircleShape(Primitive):
@@ -19,15 +17,6 @@ class CircleShape(Primitive):
     y: Value = 0.0
     radius: Value
     segments: Value | None = None  # default: from ARC_TOLERANCE_UM
-
-    def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
-        r = ctx.ev(self.radius)
-        n = segments(r, self.segments and ctx.ev(self.segments))
-        geometry = Geometry()
-        geometry.add_polygon(
-            ctx.layer(self.layer), arc_points(ctx.ev(self.x), ctx.ev(self.y), r, 0, 360, n)
-        )
-        return geometry, {}
 
     def moved(self, x, y, inner) -> dict:
         return {"x": x(self.x), "y": y(self.y)}

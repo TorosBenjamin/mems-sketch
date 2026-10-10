@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal
 
-from mems_sketch.core.component import Geometry
 from mems_sketch.core.levels import LEVEL
-from mems_sketch.core.shapes.base import Point, Primitive, RenderContext, Value
+from mems_sketch.core.shapes.base import Primitive, Value
 
 
 class RectShape(Primitive):
@@ -18,17 +17,6 @@ class RectShape(Primitive):
     y0: Value
     x1: Value
     y1: Value
-
-    def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
-        geometry = Geometry()
-        geometry.add_rect(
-            ctx.layer(self.layer),
-            ctx.ev(self.x0),
-            ctx.ev(self.y0),
-            ctx.ev(self.x1),
-            ctx.ev(self.y1),
-        )
-        return geometry, {}
 
     def moved(self, x, y, inner) -> dict:
         return {"x0": x(self.x0), "x1": x(self.x1), "y0": y(self.y0), "y1": y(self.y1)}

@@ -22,17 +22,18 @@ def _isolated_settings(tmp_path):
 def _write_gds(path, boxes, dbu=0.001, cell="FRAME"):
     """A GDS file with ``boxes``: (layer, datatype, x0, y0, x1, y1) in µm, the
     last box inside a sub-cell (so the import has to flatten)."""
-    import klayout.db as kdb
+    from mems_sketch.core.region import IntPolygon
+    from mems_sketch.layout import Layout, Placement, gds
 
-    layout = kdb.Layout()
-    layout.dbu = dbu
-    top = layout.create_cell(cell)
-    child = layout.create_cell("PART")
-    for index, (layer, datatype, *box) in enumerate(boxes):
+    layout = Layout(dbu=dbu)
+    top = layout.cell(cell)
+    child = layout.cell("PART")
+    for index, (layer, datatype, x0, y0, x1, y1) in enumerate(boxes):
         target = child if index == len(boxes) - 1 else top
-        target.shapes(layout.layer(layer, datatype)).insert(kdb.DBox(*box))
-    top.insert(kdb.DCellInstArray(child.cell_index(), kdb.DTrans()))
-    layout.write(str(path))
+        l, b, r, t = (round(v / dbu) for v in (x0, y0, x1, y1))
+        target.add((layer, datatype), IntPolygon([(l, b), (r, b), (r, t), (l, t)], []))
+    top.placements.append(Placement("PART"))
+    path.write_bytes(gds.write(layout))
     return path
 
 

@@ -5,10 +5,11 @@ src/geom/README.md); skipped without it."""
 
 import os
 
-import klayout.db as kdb
 import pytest
+from helpers import read_gds
 
 from mems_sketch.core.project import Layer, Project
+from mems_sketch.core.region import Region
 from mems_sketch.export.base import export
 from mems_sketch.export.cells import geom, write_cell
 
@@ -23,13 +24,16 @@ LAYERS = {"device": (1, 0), "etch": (2, 0)}
 
 
 def read(path):
-    layout = kdb.Layout()
-    layout.read(str(path))
-    return layout
+    return read_gds(path)
+
+
+def top_cell(layout):
+    (top,) = layout.top_cells()
+    return layout.cells[top]
 
 
 def flat_region(layout, layer=(1, 0)):
-    return kdb.Region(layout.top_cell().begin_shapes_rec(layout.layer(*layer)))
+    return Region.from_polygons(layout.flat(top_cell(layout).name, layer))
 
 
 def plate(dx=10.0, columns=10, rows=10, transform=None):
@@ -46,13 +50,11 @@ def test_arrays_stay_array_references(tmp_path):
     report = write_cell(plate(), tmp_path / "plate.gds", LAYERS)
     layout = read(tmp_path / "plate.gds")
     assert layout.dbu == pytest.approx(0.001)
-    assert sorted(c.name for c in layout.each_cell()) == ["hole", "plate"]
-    [instance] = list(layout.top_cell().each_inst())
-    assert (instance.na, instance.nb) == (10, 10)
-    # KLayout may read the two step vectors back in either order.
-    steps = {(instance.a.x, instance.a.y), (instance.b.x, instance.b.y)}
-    assert steps == {(10000, 0), (0, 10000)}
-    assert instance.trans == kdb.Trans(5000, 5000)
+    assert sorted(layout.cells) == ["hole", "plate"]
+    [instance] = top_cell(layout).placements
+    assert (instance.columns, instance.rows) == (10, 10)
+    assert (instance.column_step, instance.row_step) == ((10000, 0), (0, 10000))
+    assert (instance.x, instance.y, instance.angle, instance.mirror) == (5000, 5000, 0, False)
     assert flat_region(layout, (2, 0)).count() == 100
     assert report.flattened == 0
     assert not report.changed_shape
@@ -64,14 +66,12 @@ def test_the_hierarchy_matches_snapping_the_flat_geometry(tmp_path):
     write_cell(cell, tmp_path / "plate.gds", LAYERS)
     layout = read(tmp_path / "plate.gds")
     written = flat_region(layout, (2, 0))
-    [inst] = list(layout.top_cell().each_inst())
-    assert inst.trans.angle == 1 and inst.trans.is_mirror()  # quarter turns
-    expected = kdb.Region()
-    for hull, holes in g.snap(cell.flat("etch")).polygons:
-        polygon = kdb.Polygon([kdb.Point(int(x), int(y)) for x, y in hull])
-        for hole in holes:
-            polygon.insert_hole([kdb.Point(int(x), int(y)) for x, y in hole])
-        expected.insert(polygon)
+    [inst] = top_cell(layout).placements
+    assert inst.angle == 90 and inst.mirror  # quarter turns
+    expected = Region.from_polygons(
+        (hull.tolist(), [h.tolist() for h in holes])
+        for hull, holes in g.snap(cell.flat("etch")).polygons
+    )
     assert (written ^ expected).is_empty()
 
 
@@ -88,7 +88,7 @@ def test_placements_that_leave_the_grid_are_flattened(tmp_path, transform, dx):
     cell = plate(dx=dx, columns=3, rows=3, transform=transform)
     report = write_cell(cell, tmp_path / "plate.gds", LAYERS)
     layout = read(tmp_path / "plate.gds")
-    assert [c.name for c in layout.each_cell()] == ["plate"]
+    assert list(layout.cells) == ["plate"]
     assert report.flattened == 1
     area = flat_region(layout, (2, 0)).area() * layout.dbu**2
     # Each circle split at a 5 nm chord loses about 2/3 of the chord times its
@@ -99,7 +99,7 @@ def test_placements_that_leave_the_grid_are_flattened(tmp_path, transform, dx):
 
 def test_everything_flat_on_request(tmp_path):
     report = write_cell(plate(), tmp_path / "flat.gds", LAYERS, keep_hierarchy=False)
-    assert [c.name for c in read(tmp_path / "flat.gds").each_cell()] == ["plate"]
+    assert list(read(tmp_path / "flat.gds").cells) == ["plate"]
     assert report.flattened == 1
 
 
@@ -109,7 +109,7 @@ def test_a_coarser_grid_and_the_report(tmp_path):
     report = write_cell(cell, tmp_path / "gap.gds", LAYERS, grid_um=0.01, top_cell="CHIP")
     layout = read(tmp_path / "gap.gds")
     assert layout.dbu == pytest.approx(0.01)
-    assert layout.top_cell().name == "CHIP"
+    assert layout.top_cells() == ["CHIP"]
     assert report.changed_shape
     [(cell_name, layer, event)] = report.events
     assert (cell_name, layer) == ("CHIP", "device")
@@ -122,7 +122,7 @@ def test_cells_with_the_same_name_get_distinct_names(tmp_path):
     b = g.CellBuilder("part").add("device", g.Region.rect(0, 0, 2, 2)).build()
     top = g.CellBuilder("top").place(a).place(b, g.Transform(dx=10)).build()
     write_cell(top, tmp_path / "top.gds", LAYERS)
-    assert sorted(c.name for c in read(tmp_path / "top.gds").each_cell()) == [
+    assert sorted(read(tmp_path / "top.gds").cells) == [
         "part",
         "part$1",
         "top",
@@ -150,5 +150,5 @@ def test_the_gds_exporter_takes_a_library_cell(tmp_path):
     path = export(project, tmp_path / "chip.gds", geometry=plate(), options={"grid_um": 0.005})
     layout = read(path)
     assert layout.dbu == pytest.approx(0.005)
-    assert layout.top_cell().name == "plate"
-    assert len(list(layout.each_cell())) == 2
+    assert layout.top_cells() == ["plate"]
+    assert len(layout.cells) == 2

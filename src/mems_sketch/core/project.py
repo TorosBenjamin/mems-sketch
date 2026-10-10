@@ -23,7 +23,7 @@ Component names are resolved like this, from the component holding the reference
   the project's local components
 
 The project is plain data. Turning it into geometry is the job of
-:mod:`mems_sketch.core.compiler`; the ``render`` helpers here are shortcuts.
+:mod:`mems_sketch.engine`; the ``render`` helpers here are shortcuts.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from mems_sketch.core.shapes import RefShape, Shape, child_lists, find, walk
 from mems_sketch.core.user_component import ComponentDef, ParamDef, name_shapes
 
 if TYPE_CHECKING:
-    from mems_sketch.core.compiler import Compiler
+    from mems_sketch.engine import Engine
 
 __all__ = ["Instance", "Layer", "Library", "Process", "Project", "new_project"]
 
@@ -469,9 +469,9 @@ class Project:
         self, component: str | None = None, params: dict[str, Any] | None = None
     ) -> dict[str, float]:
         """Parameter values of a local component (defaults unless given) plus ``process.*``."""
-        from mems_sketch.core.compiler import Compiler
+        from mems_sketch.engine import Engine
 
-        return Compiler().session(self).variables(self._target(component), params)
+        return Engine().load(self).variables(self._target(component), params)
 
     resolved_variables = resolved_parameters
 
@@ -528,50 +528,40 @@ class Project:
         self,
         component: str | None = None,
         params: dict[str, Any] | None = None,
-        compiler: Compiler | None = None,
+        engine: Engine | None = None,
     ) -> Geometry:
-        """Merged geometry of a component (default: top) with the given or default parameters."""
-        from mems_sketch.core.compiler import Compiler
+        """Merged geometry of a component (default: top) with the given or default
+        parameters (``engine``: one to build with, e.g. to share its cache)."""
+        from mems_sketch.engine import Engine
 
-        return (compiler or Compiler()).session(self).render(self._target(component), params)
+        return (engine or Engine()).load(self).build(self._target(component), params).geometry
 
     def render_shape(
         self,
         shape: Shape,
         component: str | None = None,
         variables: dict[str, float] | None = None,
-        compiler: Compiler | None = None,
     ) -> Geometry:
         """Geometry of one shape evaluated in a component's scope (default: top)."""
-        from mems_sketch.core.compiler import Compiler
+        from mems_sketch.engine import Engine
 
-        session = (compiler or Compiler()).session(self)
+        engine = Engine().load(self)
         name = self._target(component)
-        variables = session.variables(name) if variables is None else variables
-        return session.render_shapes([shape], variables, name)
+        variables = engine.variables(name) if variables is None else variables
+        return engine.shapes([shape], variables, name)
 
     def component(self, name: str) -> Component:
-        """A buildable component, resolved from the project namespace."""
-        from mems_sketch.core.compiler import Compiler
+        """A component's parameters as placements see them, resolved from the project
+        namespace."""
+        from mems_sketch.engine import Engine
 
-        return Compiler().session(self).component(name)
+        return Engine().load(self).component(name)
 
     def validate(self) -> list[str]:
         """Problems that stop components from building with their defaults (empty if none)."""
-        problems = []
-        try:
-            self.check_references()
-        except ValueError as exc:
-            return [str(exc)]
-        from mems_sketch.core.compiler import Compiler
+        from mems_sketch.engine import Engine
 
-        session = Compiler().session(self)
-        for name in self.components:
-            try:
-                session.render(name)
-            except Exception as exc:  # noqa: BLE001 - collected for the caller
-                problems.append(f"{name}: {exc}")
-        return problems
+        return Engine().load(self).problems()
 
 
 class PrivateComponentError(KeyError):

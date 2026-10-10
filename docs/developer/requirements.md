@@ -716,8 +716,9 @@ ten times larger than that, so the numbers hold with room to spare.
 - **C-2** The geometry backend is **C++**: a geometry library on **Open
   CASCADE**, with the mems-sketch engine on top
   ([core architecture](core-architecture.md)).
-- **C-3** GDS, OASIS and DXF, and rule checks, use **KLayout**'s Python
-  package. The C++ backend does not link KLayout.
+- **C-3** GDS, OASIS and DXF are read and written in plain Python
+  (`mems_sketch.layout`); rule checks use the geometry library's grid
+  booleans and offsets (Clipper2). No layout library is a dependency.
 - **C-4** **Licences:** a GPL dependency (gmsh) is optional, as an extra or
   a plugin. The rest of the tool does not depend on it.
 
@@ -782,7 +783,7 @@ ten times larger than that, so the numbers hold with room to spare.
   outlines snapped to a grid with the snapping report (OUT-3), solids and
   triangles, and OCC's own BREP and STEP writers. Snapping is done once, in
   the library, so every grid-based format reports the same changes. Adding
-  a format then needs no C++, and the backend does not link KLayout.
+  a format then needs no C++.
 
 - **R-1: Rules are data; rule kinds are code in plugins.** A project or a
   process only names rule kinds and gives them values (DRC-10). Allowing code in

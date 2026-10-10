@@ -1,8 +1,8 @@
 # Architecture
 
 ```
-  project folder (YAML)  ──►  backend = compiler  ──►  geometry, rule checks, exports
-  source of truth, in git      mems_sketch.core …            │
+  project folder (YAML)  ──►  backend: model + engine  ──►  geometry, rule checks, exports
+  source of truth, in git      mems_sketch.core, _core         │
           ▲                          ▲                        ▼
           └──── edits ──── frontends: GUI (mems_sketch.gui), CLI, Python scripts
 ```
@@ -15,17 +15,16 @@
 - **Frontends:** the GUI, the CLI and scripts all work through the same
   backend API and the same files.
 
-The geometry backend is moving to a C++ core on Open CASCADE, with exact
-curves, one fine tolerance and 3D output: see
-[Geometry core architecture](core-architecture.md). This page describes the
-code as it is now.
+Geometry is built by the C++ engine on the geometry library (Open CASCADE,
+exact curves): see [Geometry core architecture](core-architecture.md). This
+page describes the code as it is now.
 
 ## The model
 
 - A `Project` (`core/project.py`) holds a `Process` (layers, constants), its
   components (`ComponentDef`: parameters, points and a shape tree), libraries
   (read-only sets of components from other folders) and imported layouts. It
-  is plain data; building geometry is the compiler's job.
+  is plain data; building geometry is the engine's job.
 - **Components are resolved by name** from the inside out: a component's own
   private components (`comb/finger`), its owner's, the shared ones, then the
   built-ins; `lib.name` names a library's. See the docstring of
@@ -39,16 +38,18 @@ code as it is now.
   `process.*` and point coordinates (`beam.right.x`), with dependency
   resolution.
 
-## The engine, the compiler and its cache
+## The engine and its cache
 
 Everything outside the backend builds through `mems_sketch.engine`: an
 `Engine` is loaded with a project and makes `Build`s of its components (the
-merged geometry, declared points, the nodes as evaluated). Behind it,
-`core/compiler.py`'s `Compiler` builds components into `Geometry` (KLayout
-regions per layer, 1 nm database unit); the C++ engine will replace it
-behind the same interface (see `core-architecture.md`). Placements are
-plain `Transform` values (`core/transform.py`), and code outside the backend
-uses `Geometry`'s methods, never its regions.
+merged geometry, declared points, the nodes as evaluated). Behind it the C++
+engine (`mems_sketch._core`, `src/engine/`) evaluates the shape trees on the
+geometry library and hands back polygons on the 1 nm grid, which Python
+holds as `Geometry`: a `Region` per layer (`core/region.py`), whose
+booleans and offsets go back to the geometry library (`mems_sketch._geom`).
+Parameters and their checks stay with the Python model. Placements are plain
+`Transform` values (`core/transform.py`), and code outside the backend uses
+`Geometry`'s methods, never its regions.
 
 - Every build is keyed by a **fingerprint** of everything it depends on: the
   definition, the components it places, parameter values, process constants,
@@ -66,7 +67,7 @@ uses `Geometry`'s methods, never its regions.
 
 - An `EditSession` holds the project, the active component, undo/redo
   (whole-project snapshots, remembering which component each change was
-  made in), trial values and the compiler.
+  made in), trial values and the engine.
 - **Command groups** do the changes: `session.components`, `.nodes`,
   `.modifiers`, `.corners`, `.moves`, `.points`, `.parameters`, `.process`,
   `.imports`, plus `.history` (git) and `.results` (what the components
@@ -99,15 +100,16 @@ wires the parts; each part only talks to the session:
 |---|---|
 | `core/project.py` | `Project`, `Library`, `Instance`: components, name resolution, parameters |
 | `engine.py` | `Engine` and `Build`: what everything outside the backend builds through |
-| `core/compiler.py` | `Compiler` and `Session`: fingerprints, cache, rendering |
+| `core/region.py` | `Region`, `Box`: polygons on the 1 nm grid; booleans and offsets through the geometry library |
 | `core/transform.py` | `Transform`: placements as plain values |
-| `core/shapes/` | The shape tree: one module per kind in `kinds/`, their registry, points, evaluation, modifiers, rewriting |
+| `core/shapes/` | The shape tree: one module per kind in `kinds/`, their registry, points, node records, modifiers, rewriting |
 | `core/user_component.py` | `ComponentDef`, `ParamDef`, `PointDef` and their adapter to `Component` |
 | `core/component.py` | `Component` base class, `Geometry`, the built-in components by name |
 | `core/process.py` | `Process`, `Layer`, `Level` (the layer stack), process constants |
 | `core/levels.py` | Components on levels: layers relative to a component's level (`level-1`, `level.anchor`) |
 | `core/expressions.py` | Safe arithmetic expressions with dependency resolution |
-| `core/imports.py` | Imported layouts (GDS/OASIS cells) as components |
+| `core/imports.py` | Imported layouts (GDS cells) as components |
+| `layout/` | Layout files without a layout library: GDSII read and written, OASIS and DXF written |
 | `core/diff.py` | What changed between two versions of a project, in words and in geometry |
 | `components/builtin/` | The built-in components as a library folder: `anchor`, `comb_drive`, `serpentine_spring` |
 | `process/rules.py` | Design-rule checks: the project's rules checked by rule kinds, which are plugins (`mems_sketch.rules` entry points) |

@@ -6,9 +6,8 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 
 from pydantic import Field, field_validator
 
-from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import evaluate
-from mems_sketch.core.shapes.base import Operation, Point, RenderContext, Value
+from mems_sketch.core.shapes.base import Operation, Value
 from mems_sketch.core.transform import Transform
 
 if TYPE_CHECKING:
@@ -39,17 +38,6 @@ class TransformShape(Operation):
     @classmethod
     def _current_kind(cls, kind: str) -> str:
         return "transform"
-
-    def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
-        if ctx.ev(self.scale) <= 0:
-            raise ValueError("transform scale must be positive")
-        transform = self.placement(ctx.variables)
-        inverse = transform.inverted()
-        inner_scope = {k: p.seen_through(inverse) for k, p in ctx.scope.items()}
-        (inner,) = ctx.children([self.children], inner_scope)
-        geometry = Geometry()
-        geometry.merge(inner, transform)
-        return geometry, {}
 
     def moved(self, x, y, inner) -> dict:
         return {"x": x(self.x), "y": y(self.y)}  # the children stay in their own frame

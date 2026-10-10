@@ -36,20 +36,16 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 
-from mems_sketch.core.component import Component, Geometry, Params
+from mems_sketch.core.component import Component, Params
 from mems_sketch.core.expressions import RESERVED_NAMES, evaluate, resolve_variables
 from mems_sketch.core.levels import DEFAULT_STACK, Stack
 from mems_sketch.core.shapes import (
     BBOX_POINTS,
     INDEX_NAMES,
-    Evaluator,
-    NodePoints,
-    Point,
     Shape,
     check_point_reference,
     map_expressions,
     point_renamer,
-    point_values,
     references,
     rename_node_references,
     rewrite,
@@ -300,16 +296,14 @@ def name_shapes(shapes: list[Shape]) -> None:
 
 
 class UserComponent(Component):
-    """Adapts a :class:`ComponentDef` to the :class:`Component` interface.
-
-    ``lookup`` resolves the names used by ``ref`` shapes; ``scope`` holds the
-    ``process.*`` constants visible to every expression.
+    """Adapts a :class:`ComponentDef` to the :class:`Component` interface: its
+    parameters, as a placement sees them (the engine builds it). ``scope``
+    holds the ``process.*`` constants visible to every expression.
     """
 
     def __init__(
         self,
         definition: ComponentDef,
-        lookup: Callable[[str], Component],
         scope: Mapping[str, float] | None = None,
         stack: Stack = DEFAULT_STACK,
     ) -> None:
@@ -320,47 +314,6 @@ class UserComponent(Component):
         self.stack = stack
         self.Params = _params_model(definition, self.scope)
         self.internal = frozenset(p.name for p in definition.parameters if p.internal)
-        self._lookup = lookup
-
-    def build(self, params: Params) -> Geometry:
-        return self.compile(params)[0]
-
-    def points(self, params: Params) -> dict[str, Point]:
-        return self.compile(params)[1]
-
-    def compile(
-        self, params: Params, level: str | None = None
-    ) -> tuple[Geometry, dict[str, Point]]:
-        variables = {**self.scope, **{k: float(v) for k, v in params.model_dump().items()}}
-        evaluator = Evaluator(self._lookup, level=level, stack=self.stack)
-        geometry, local = evaluator.render_scoped(self.definition.shapes, variables)
-        return geometry, declared_points(self.definition, variables, local, geometry)
-
-
-def declared_points(
-    definition: ComponentDef,
-    variables: dict[str, float],
-    shapes: dict[str, NodePoints],
-    geometry: Geometry | None = None,
-) -> dict[str, Point]:
-    """Positions of a component's declared points, given its evaluated top-level shapes
-    and its geometry (for points measured from its own ``center``, ``left``, …)."""
-    result = {}
-    for point in definition.points:
-        v = {**variables, "i": 0.0, "j": 0.0}
-        v.update(point_values([e for e in (point.x, point.y) if isinstance(e, str)], shapes))
-        base = (0.0, 0.0)
-        if point.at in BBOX_POINTS:
-            base = NodePoints(definition.name, geometry or Geometry(), {}).point(point.at)
-        elif point.at is not None:
-            node, _, name = point.at.partition(".")
-            if node not in shapes:
-                raise ValueError(
-                    f"point '{point.name}' is at '{point.at}', but there is no shape '{node}'"
-                )
-            base = shapes[node].point(name)
-        result[point.name] = (base[0] + evaluate(point.x, v), base[1] + evaluate(point.y, v))
-    return result
 
 
 def _number_limits(p: ParamDef) -> dict[str, float]:

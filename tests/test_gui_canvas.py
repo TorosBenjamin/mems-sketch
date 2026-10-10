@@ -62,7 +62,7 @@ def test_the_wheel_zooms_about_the_cursor(canvas, up):
 
 
 def test_cursor_positions_fit_the_database_at_any_zoom(canvas):
-    """klayout points are 32-bit integers of nm, so ±2.1 m is the edge of the world."""
+    """layout files hold 32-bit integers of nm, so ±2.1 m is the edge of the world."""
     seen = []
     canvas.cursor_moved.connect(lambda x, y: seen.append((x, y)))
     canvas.setTransform(QTransform.fromScale(1.01e-4, -1.01e-4))  # zoomed out to the limit

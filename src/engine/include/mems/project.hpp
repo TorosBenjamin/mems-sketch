@@ -13,7 +13,8 @@
 //                "default_level": "poly1" | null},
 //    "components": {"top": <ComponentDef>, "comb/finger": <ComponentDef>},
 //    "libraries": {"std": {"anchor": <ComponentDef>}},
-//    "imports": {"pads": {"digest": ..., "cell": ..., "layers": {...}}},
+//    "imports": {"pads": {"digest": ..., "cell": ..., "layers": {...},
+//                         "geometry": {"device": [[hull, [hole, ...]], ...]}}},
 //    "builtins": {"comb_drive": <ComponentDef>}}
 //
 // where a ComponentDef is its model_dump(mode="json") without waivers.
@@ -72,6 +73,14 @@ struct Level {
 
 using OptionalLevel = std::optional<std::string>;
 
+// An imported cell's geometry: per layer, polygons in µm (an outline and its holes).
+using Ring = std::vector<std::pair<double, double>>;
+struct ImportedPolygon {
+    Ring hull;
+    std::vector<Ring> holes;
+};
+using ImportedGeometry = std::map<std::string, std::vector<ImportedPolygon>>;
+
 struct ComponentDef {
     std::string name;  // its path: "plate", "comb/finger"
     OptionalLevel level;  // the level it is on unless placed elsewhere
@@ -119,6 +128,12 @@ public:
     OptionalLevel top_level(const OptionalLevel& own) const;
     OptionalLevel place(const OptionalLevel& spec, const OptionalLevel& own, const OptionalLevel& current) const;
     std::string layer(const std::string& spec, const OptionalLevel& current) const;
+    std::string stack_key() const;  // changes whenever the layer stack does
+
+    // An imported cell's geometry, or nothing for another name; throws when the
+    // file could not be read.
+    const ImportedGeometry* imported(std::string_view qualified) const;
+    bool is_imported(std::string_view qualified) const { return imports_.count(qualified) > 0; }
 
     // A hash of everything a component's geometry depends on except its
     // parameter values and the process constants: its definition and,
@@ -132,6 +147,8 @@ private:
     };
     struct Import {
         std::string digest, cell, layers;
+        ImportedGeometry geometry;
+        std::string error;  // why the file gives no geometry
     };
 
     const Library& pool(const std::optional<std::string>& library) const;

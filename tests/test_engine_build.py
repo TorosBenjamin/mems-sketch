@@ -1,18 +1,21 @@
-"""Components built by the C++ engine against the Python backend
+"""Components built by the C++ engine against what the Python backend built
 (core-architecture.md, step 6): the same geometry on every layer, within 1 nm,
 and within the chord tolerance (5 nm) where there are curves: the Python
-backend draws circles as segments, the engine keeps them exact until output.
+backend drew circles as segments, the engine keeps them exact until output.
 
-Every component the engine builds is compared; what it does not build yet
-must say so (NotSupported). Skipped when the engine is not built, unless
-MGEOM_REQUIRED is set (CI)."""
+The Python backend is gone; what it built for every case here was recorded
+(``data/python_backend.json.gz``) while it was there, keyed by the case's
+components and parameters. A case not in the recording cannot be added here:
+give it its own expected values instead. Skipped when the engine is not
+built, unless MGEOM_REQUIRED is set (CI)."""
 
+import gzip
+import hashlib
 import json
 import os
 import random
 from pathlib import Path
 
-import klayout.db as kdb
 import pytest
 
 from mems_sketch import (
@@ -26,9 +29,9 @@ from mems_sketch import (
     RefShape,
     TransformShape,
 )
-from mems_sketch.core.compiler import Compiler
 from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.project import Project, new_project
+from mems_sketch.core.region import Region
 from mems_sketch.core.shapes import (
     ArrayModifier,
     Corner,
@@ -63,25 +66,58 @@ STRAIGHT_NM, CURVED_NM = 1, 3  # sliver half-widths: 2 nm, and 6 nm (chord 5 nm 
 SEGMENTED_NM = 6
 
 
-def engine_regions(project: Project, component: str, params=None) -> dict[str, kdb.Region]:
-    core = _core.Project(json.dumps(project_data(project)))
-    result = {}
-    for layer, polygons in core.build(component, params or {}).items():
-        region = kdb.Region()
-        for hull, holes in polygons:
-            polygon = kdb.Polygon([kdb.Point(x, y) for x, y in hull])
-            for hole in holes:
-                polygon.insert_hole([kdb.Point(x, y) for x, y in hole])
-            region.insert(polygon)
-        result[layer] = region.merged()
-    return result
+RECORDING = Path(__file__).parent / "data" / "python_backend.json.gz"
+_recorded: dict[str, object] | None = None
 
 
-def python_regions(project: Project, component: str, params=None) -> dict[str, kdb.Region]:
-    geometry = Compiler().session(project).render(component, params)
-    return {
-        layer: region.merged() for layer, region in geometry.layers.items() if not region.is_empty()
+def case_key(project: Project, component: str, params=None, what: str = "geometry") -> str:
+    """Everything a case's result depends on, hashed."""
+
+    def dump(components):
+        return {n: d.model_dump(mode="json") for n, d in sorted(components.items())}
+
+    data = {
+        "components": dump(project.components),
+        "libraries": {n: dump(lib.components) for n, lib in sorted(project.libraries.items())},
+        "constants": project.process.constants,
+        "levels": [(lv.layer, lv.roles) for lv in project.process.levels],
+        "default_level": project.process.default_level,
+        "component": component,
+        "params": params or {},
+        "what": what,
     }
+    return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def recorded(key: str):
+    global _recorded
+    if _recorded is None:
+        _recorded = json.loads(gzip.decompress(RECORDING.read_bytes()))
+    if key not in _recorded:
+        pytest.fail("no recorded Python result for this case: give it expected values of its own")
+    return _recorded[key]
+
+
+def engine_regions(project: Project, component: str, params=None) -> dict[str, Region]:
+    core = _core.Project(json.dumps(project_data(project)))
+    return {
+        layer: Region.from_polygons(polygons, merged=True)
+        for layer, polygons in core.build(component, params or {}).items()
+    }
+
+
+def python_regions(project: Project, component: str, params=None) -> dict[str, Region]:
+    """What the Python backend built (raises ValueError where it refused)."""
+    result = recorded(case_key(project, component, params))
+    if result is None:
+        raise ValueError("the Python backend refused it")
+    return {
+        layer: Region.from_polygons(polygons, merged=True) for layer, polygons in result.items()
+    }
+
+
+def python_points(project: Project, component: str) -> dict[str, tuple[float, float]]:
+    return {n: tuple(p) for n, p in recorded(case_key(project, component, {}, "points")).items()}
 
 
 def assert_same(project: Project, component: str, params=None, tolerance=CURVED_NM):
@@ -95,7 +131,8 @@ def assert_same(project: Project, component: str, params=None, tolerance=CURVED_
     engine = engine_regions(project, component, params)
     assert sorted(engine) == sorted(python), (component, sorted(engine), sorted(python))
     for layer in python:
-        difference = (python[layer] ^ engine[layer]).sized(-tolerance)
+        # A nm more: shrinking rounds to the grid, which can leave a speck.
+        difference = (python[layer] ^ engine[layer]).sized(-tolerance - 1)
         assert difference.is_empty(), (component, layer, difference.bbox(), difference.area())
         # The area differs by at most a sliver that wide along every edge.
         allowance = 2 * tolerance * python[layer].perimeter() + 50
@@ -481,7 +518,7 @@ def aligned() -> Project:
 def test_alignment_and_points(component):
     project = aligned()
     assert assert_same(project, component, tolerance=CURVED_NM) == "same"
-    python = Compiler().session(project).points(component, {})
+    python = python_points(project, component)
     core = _core.Project(json.dumps(project_data(project))).points(component, {})
     assert sorted(core) == sorted(python)
     for name, (x, y) in python.items():

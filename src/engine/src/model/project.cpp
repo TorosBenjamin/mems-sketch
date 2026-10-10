@@ -162,7 +162,23 @@ Project Project::from_json(std::string_view text) {
     for (const auto& [name, cell] : imports.items()) {
         // Its layers sorted, as Python's fingerprint has them.
         std::map<std::string, std::string> layers = cell.value("layers", std::map<std::string, std::string>{});
-        p.imports_[name] = {cell.value("digest", ""), cell.value("cell", ""), Json(layers).dump()};
+        Import imported{cell.value("digest", ""), cell.value("cell", ""), Json(layers).dump(), {},
+                        cell.value("error", "")};
+        const Json geometry = cell.value("geometry", Json::object());
+        auto ring = [](const Json& points) {
+            Ring result;
+            for (const auto& point : points) result.emplace_back(point.at(0).get<double>(), point.at(1).get<double>());
+            return result;
+        };
+        for (const auto& [layer, polygons] : geometry.items()) {
+            auto& out = imported.geometry[layer];
+            for (const auto& polygon : polygons) {
+                ImportedPolygon one{ring(polygon.at(0)), {}};
+                for (const auto& hole : polygon.at(1)) one.holes.push_back(ring(hole));
+                out.push_back(std::move(one));
+            }
+        }
+        p.imports_[name] = std::move(imported);
     }
     const Json builtins = j.value("builtins", Json::object());
     for (const auto& [name, def] : builtins.items()) {
@@ -226,6 +242,13 @@ std::string Project::qualify(std::string_view name, const std::optional<std::str
     }
     if (imports_.count(name) || builtins_.components.count(name)) return std::string(name);
     throw UnknownComponent("unknown component " + in_quotes(name));
+}
+
+const ImportedGeometry* Project::imported(std::string_view qualified) const {
+    const auto found = imports_.find(qualified);
+    if (found == imports_.end()) return nullptr;
+    if (!found->second.error.empty()) throw ModelError(in_quotes(std::string(qualified)) + ": " + found->second.error);
+    return &found->second.geometry;
 }
 
 const ComponentDef* Project::definition(std::string_view qualified) const {

@@ -2,7 +2,7 @@
 
 Frontends (the GUI, the CLI, scripts) never build geometry or touch files
 themselves; they go through a session, which uses the rest of the backend
-(project model, compiler, storage, rules, export). Edits are grouped:
+(project model, engine, storage, rules, export). Edits are grouped:
 ``session.components``, ``.nodes``, ``.modifiers``, ``.moves``, ``.points``,
 ``.parameters`` and ``.process``; ``session.results`` is what the components evaluate to.
 

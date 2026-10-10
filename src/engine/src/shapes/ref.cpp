@@ -11,16 +11,15 @@ namespace mems {
 Result render_ref(const Json& node, const Context& ctx) {
     const Project& project = ctx.builder.project();
     const std::string target = project.qualify(node.at("component").get<std::string>(), ctx.component);
-    const ComponentDef* definition = project.definition(target);
-    if (!definition)
-        throw NotSupported("'" + target + "' is an imported component: Python builds those for now");
+    const ComponentDef* definition = project.definition(target);  // none: an imported cell
     // Values a placement may not set: the component's internal parameters.
     Values values;
     std::vector<std::string> hidden;
     const Json params = node.value("params", Json::object());  // a copy: kept for the loop
     for (const auto& [name, value] : params.items()) {
-        for (const auto& param : definition->parameters)
-            if (param.name == name && param.internal) hidden.push_back(name);
+        if (definition)
+            for (const auto& param : definition->parameters)
+                if (param.name == name && param.internal) hidden.push_back(name);
         values.emplace_back(name, ctx.value(value));
     }
     if (!hidden.empty()) {
@@ -36,7 +35,7 @@ Result render_ref(const Json& node, const Context& ctx) {
     try {
         OptionalLevel spec;
         if (node.contains("level") && !node["level"].is_null()) spec = node["level"].get<std::string>();
-        level = project.place(spec, definition->level, ctx.builder.level());
+        level = project.place(spec, definition ? definition->level : std::nullopt, ctx.builder.level());
     } catch (const ModelError& error) {
         const std::string name = node.contains("name") && node["name"].is_string() ? node["name"].get<std::string>()
                                                                                     : node["component"].get<std::string>();

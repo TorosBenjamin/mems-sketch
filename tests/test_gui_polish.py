@@ -162,7 +162,7 @@ def test_move_gizmo_centre_moves_freely(window):
     assert (plate.x0, plate.y0) == (5, 20)
 
 
-def test_rotate_ring_rotates_about_the_centre_in_steps(window):
+def test_rotate_drag_rotates_about_the_centre_with_a_sweep(window):
     one_rect(window)
     window.set_tool("rotate")
     _, cx, cy = window.canvas.gizmo

@@ -483,3 +483,14 @@ def test_resizing_panels_leaves_the_canvas_alone_and_saves_once(window, qtbot, m
         splitter.moveSplitter(splitter.handle(1).pos().y() + (2 if k % 2 else -2), 1)
     assert overlays == [] and saves == []
     qtbot.waitUntil(lambda: saves == [1])  # once the drag has stopped
+
+
+def test_the_minus_button_hides_its_panel(window, qtbot):
+    tw = window.tool_windows
+    name = next(n for n in tw.names() if tw.is_open(n))
+    host = tw._hosts[tw._windows[name].anchor]
+    minus = next(b for b in host.findChildren(QToolButton) if b.toolTip() == "Hide")
+    qtbot.mouseClick(minus, Qt.MouseButton.LeftButton)
+    assert not tw.is_open(name) and not host.isVisible()
+    tw.toggle(name)  # the View menu and the stripe bring it back
+    assert tw.is_open(name)

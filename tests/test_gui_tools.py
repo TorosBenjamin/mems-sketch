@@ -16,6 +16,8 @@ from mems_sketch.gui.editor_state import state_path
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 NONE = Qt.KeyboardModifier.NoModifier
+SHIFT = Qt.KeyboardModifier.ShiftModifier
+CTRL = Qt.KeyboardModifier.ControlModifier
 LEFT = Qt.MouseButton.LeftButton
 
 
@@ -139,15 +141,39 @@ def test_move_by_typed_amount(window, monkeypatch):
     assert (window.document.node(((0, 1),)).x0, window.document.node(((0, 1),)).y0) == (160, 47.5)
 
 
-def test_rotate_tool_snaps_to_15_degrees(window):
+def rotate_setup(window):
     window.document.nodes.add(RefShape(name="pad", component="anchor", x=0, y=0))
     window.canvas.zoom_to(window.canvas.content_rect())
     window.tree.select_paths([((0, 0),)])
     window.set_tool("rotate")
-    click(window, 0, 0)  # pivot: the centre
-    hover(window, 1, 18)  # about 87°
-    click(window, 1, 18)
+    return window.document.results.selection_center(window.selection)
+
+
+def test_rotate_drags_anywhere_smoothly_and_ctrl_snaps(window):
+    cx, cy = rotate_setup(window)
+    drag(window, (cx + 18, cy), (cx + 1, cy + 18))  # about 87°, about the centre
+    rotation = window.document.node(((0, 0),)).rotation
+    assert rotation == pytest.approx(87, abs=0.5) and rotation % 15  # free: not in steps
+    window.document.undo()
+    drag(window, (cx + 18, cy), (cx + 1, cy + 18), CTRL)  # Ctrl: 15° steps
     assert window.document.node(((0, 0),)).rotation == 90
+
+
+def test_shift_click_sets_another_pivot_and_esc_goes_back(window):
+    cx, cy = rotate_setup(window)
+    tool = window.tool
+    click(window, cx + 30, cy, SHIFT)
+    assert tool.pivot == pytest.approx((cx + 30, cy), abs=1)
+    assert tool.markers() == {"anchor": [("pivot", *tool.pivot)]}
+    window.escape()
+    assert tool.pivot is None and window.tool.name == "rotate"  # still rotating
+
+
+def test_a_click_without_dragging_selects(window):
+    rotate_setup(window)
+    click(window, 500, 500)  # nothing there
+    assert window.selection == []
+    assert window.document.node(((0, 0),)).kind == "ref"  # not rotated
 
 
 def test_rotate_and_mirror_buttons(window):
@@ -288,8 +314,6 @@ def test_damaged_or_foreign_state_is_ignored(window, example):
 
 
 # -- drawing tools -----------------------------------------------------------
-
-SHIFT = Qt.KeyboardModifier.ShiftModifier
 
 
 def canvas_area(window):

@@ -7,25 +7,32 @@ the project model, the shape kinds, modifiers and alignments, and decide what
 is rebuilt; the Python package reaches it as **`mems_sketch._core`**, behind
 `mems_sketch.engine`.
 
-**Status:** expressions (`include/mems/expression.hpp`): the language of
-`mems_sketch.core.expressions` with Python's arithmetic, to the last bit.
-`tests/test_engine_expressions.py` compares the two on every expression in
-the examples and twenty thousand generated ones. Nothing in mems-sketch uses
-it yet.
+**Status:** nothing in mems-sketch uses it yet.
+
+- **Expressions** (`include/mems/expression.hpp`): the language of
+  `mems_sketch.core.expressions` with Python's arithmetic, to the last bit.
+  `tests/test_engine_expressions.py` compares the two on every expression in
+  the examples and twenty thousand generated ones.
+- **The project model** (`include/mems/project.hpp`): a project read from
+  JSON (`mems_sketch.engine.project_data`), with its process constants,
+  component names resolved as `mems_sketch.core.project` resolves them,
+  reference checks, parameter values and fingerprints.
+  `tests/test_engine_model.py` compares it with Python's.
 
 ## Building
 
 Needs a C++20 compiler, CMake 3.28 or later, Ninja and doctest, and for the
 Python module the Python with nanobind from the
-[library's setup](../geom/README.md#building). The engine does not use Open
-CASCADE yet.
+[library's setup](../geom/README.md#building). CMake fetches
+[nlohmann/json](https://github.com/nlohmann/json) at a fixed commit. The
+engine does not use Open CASCADE yet.
 
 ```bash
 cmake -S src/engine -B build/engine -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DMEMS_ENGINE_BUILD_PYTHON=ON -DPython_EXECUTABLE="$PWD/build/pyenv/bin/python"
 cmake --build build/engine
 ctest --test-dir build/engine --output-on-failure
-PYTHONPATH=build/engine MGEOM_REQUIRED=1 pytest -q tests/test_engine_expressions.py
+PYTHONPATH=build/engine MGEOM_REQUIRED=1 pytest -q tests/test_engine_expressions.py tests/test_engine_model.py
 ```
 
 The package's build (`pip install -e .`) makes `mems_sketch._core` together

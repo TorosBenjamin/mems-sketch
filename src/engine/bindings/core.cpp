@@ -1,5 +1,6 @@
 // mems_sketch._core: the mems-sketch engine for Python. So far its expressions,
-// which give the same values as mems_sketch.core.expressions.
+// which give the same values as mems_sketch.core.expressions, and its project
+// model (mems_sketch.engine.project_data makes the JSON it reads).
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/map.h>
 #include <nanobind/stl/pair.h>
@@ -9,7 +10,10 @@
 #include <nanobind/stl/variant.h>
 #include <nanobind/stl/vector.h>
 
+#include <nanobind/stl/optional.h>
+
 #include "mems/expression.hpp"
+#include "mems/project.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -35,12 +39,45 @@ double evaluate(const nb::object& expression, const nb::object& variables) {
     return mems::Expression(text).evaluate(lookup_in(variables));
 }
 
+// Parameter values from a Python mapping, in its order: numbers or expressions.
+mems::Values values_in(const nb::dict& given) {
+    mems::Values values;
+    for (auto [key, value] : given) {
+        const std::string name = nb::cast<std::string>(key);
+        if (nb::isinstance<nb::str>(value)) values.emplace_back(name, nb::cast<std::string>(value));
+        else values.emplace_back(name, nb::cast<double>(value));
+    }
+    return values;
+}
+
 }  // namespace
 
 NB_MODULE(_core, m) {
     m.doc() = "The mems-sketch engine.";
     m.attr("__version__") = MEMS_ENGINE_VERSION;
     nb::exception<mems::ExpressionError>(m, "ExpressionError", PyExc_ValueError);
+    nb::exception<mems::ModelError>(m, "ModelError", PyExc_ValueError);
+    auto unknown = nb::exception<mems::UnknownComponent>(m, "UnknownComponentError", PyExc_KeyError);
+    nb::exception<mems::PrivateComponent>(m, "PrivateComponentError", unknown.ptr());
+
+    nb::class_<mems::Project>(m, "Project", "A project as the engine knows it before building it.")
+        .def("__init__", [](mems::Project* p, std::string_view json) { new (p) mems::Project(mems::Project::from_json(json)); },
+             "json"_a)
+        .def_prop_ro("name", &mems::Project::name)
+        .def_prop_ro("top", &mems::Project::top)
+        .def_prop_ro("scope", &mems::Project::scope, "The resolved process constants: {'process.gap': 2.0}.")
+        .def("qualify", &mems::Project::qualify, "name"_a, "context"_a = nb::none(),
+             "The unique name of the component ``name`` refers to, written in ``context``.")
+        .def("check_references", &mems::Project::check_references)
+        .def(
+            "variables",
+            [](const mems::Project& p, std::string_view component, const nb::dict& params) {
+                return p.variables(component, values_in(params));
+            },
+            "component"_a, "params"_a = nb::dict(),
+            "A user component's parameter values with the process constants.")
+        .def("fingerprint", nb::overload_cast<std::string_view>(&mems::Project::fingerprint, nb::const_),
+             "component"_a);
 
     nb::class_<mems::Expression>(m, "Expression", "A parsed expression.")
         .def(nb::init<std::string_view>(), "text"_a)

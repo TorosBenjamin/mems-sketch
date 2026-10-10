@@ -538,7 +538,13 @@ test passing and updates this document.
    `mems_sketch._core`, in the wheels) evaluates them with Python's
    arithmetic, and `tests/test_engine_expressions.py` finds the same values,
    names and errors on the examples' expressions and twenty thousand
-   generated ones. Next: the project model.
+   generated ones. *Done for the model:* `mems::Project` reads the project
+   as JSON (`mems_sketch.engine.project_data`) and has its process
+   constants, name resolution, reference checks, user components'
+   parameter values and fingerprints; `tests/test_engine_model.py` checks
+   them against Python's on the examples and on projects with private
+   components, libraries and imports. Built-in components' parameters stay
+   with Python until the built-ins become library components.
 6. **Shape kinds and modifiers in the engine,** on the library. The
    equivalence test runs from here on. Then switch the default backend to
    the C++ engine. The Python geometry code is removed once the C++ engine

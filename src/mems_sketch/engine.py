@@ -22,7 +22,13 @@ from __future__ import annotations
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from mems_sketch.core.compiler import DEFAULT_CACHE_ENTRIES, Compiler, Session
+from mems_sketch.core.compiler import (
+    DEFAULT_CACHE_ENTRIES,
+    Compiler,
+    Session,
+    _builtin_fingerprint,
+)
+from mems_sketch.core.component import component_types, get_component
 from mems_sketch.core.shapes.render import Evaluator
 
 if TYPE_CHECKING:
@@ -150,6 +156,32 @@ class Build:
         points, frame), by path; empty for other components. When evaluating fails,
         the nodes evaluated so far."""
         return self._records
+
+
+def project_data(project: Project) -> dict[str, Any]:
+    """The project as the C++ engine reads it (``mems_sketch._core.Project``): plain
+    data, validated by the pydantic model it comes from."""
+
+    def component(definition) -> dict[str, Any]:
+        return definition.model_dump(mode="json", exclude={"waivers"})
+
+    return {
+        "name": project.name,
+        "top": project.top,
+        "process": {"constants": dict(project.process.constants)},
+        "components": {name: component(d) for name, d in project.components.items()},
+        "libraries": {
+            name: {n: component(d) for n, d in library.components.items()}
+            for name, library in project.libraries.items()
+        },
+        "imports": {
+            name: {"digest": cell.digest, "cell": cell.cell, "layers": dict(cell.layers)}
+            for name, cell in project.imports.items()
+        },
+        "builtins": {
+            name: _builtin_fingerprint(type(get_component(name))) for name in component_types()
+        },
+    }
 
 
 def build_shapes(shapes: list[Shape], variables: dict[str, float] | None = None) -> Geometry:

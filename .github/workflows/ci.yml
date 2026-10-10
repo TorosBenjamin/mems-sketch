@@ -66,4 +66,4 @@ jobs:
         run: |
           SKBUILD_CMAKE_DEFINE="MEMS_SKETCH_REQUIRE_GEOMETRY=ON" python -m pip install -e .
           python -c "from mems_sketch import _geom, _core; print('mems_sketch._geom', _geom.__version__, '_core', _core.__version__)"
-          MGEOM_REQUIRED=1 python -m pytest -q tests/test_cells_export.py tests/test_engine_expressions.py
+          MGEOM_REQUIRED=1 python -m pytest -q tests/test_cells_export.py tests/test_engine_expressions.py tests/test_engine_model.py

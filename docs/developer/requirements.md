@@ -100,6 +100,12 @@ but should not have to program. Scripting is there for those who want it.
   by default, e.g. 54.74° for KOH etching of (100) silicon. 3D output, cross-
   sections and meshes use it. It describes the shape of the walls only;
   simulating the etch stays out of scope.
+- **PRC-6** (Must, new) **The layer stack is a list of levels**, bottom to
+  top (e.g. poly0, poly1, poly2, metal). Each level has its main layer and
+  can name **roles** for other layers that belong to it (poly1: `anchor`
+  is anchor1, `via` is poly1_poly2_via). One level is the project's
+  **default level**. Relative layers ([CMP-10](#components-and-parameters))
+  count levels, so adding a layer to a level never moves anything.
 
 ### Components and parameters
 
@@ -107,19 +113,26 @@ but should not have to program. Scripting is there for those who want it.
   project's top component, so any project can be placed in another. A
   component has parameters, points and a shape tree. It never stores
   geometry: it is evaluated from its parameters.
-- **CMP-2** (Must, exists) **Built-in components:** `rectangle`, `anchor`,
-  `comb_drive`, `serpentine_spring`, with their parameters and points
+- **CMP-2** (Must, changes) **Built-in components** are an ordinary
+  component library that ships with the tool: `anchor`, `comb_drive`,
+  `serpentine_spring`, with their parameters and points
   (`serpentine_spring`: `start`, `end`; `comb_drive`: `moving`, `fixed`).
+  They use relative layers ([CMP-10](#components-and-parameters)), not a
+  layer parameter. `rectangle` is retired: `rect` does the same.
 - **CMP-3** (Must, exists) Components are **shared** or **private** to
   another (`comb/finger`), and are resolved by name from the inside out: the
   component's own private components, its owner's, the shared ones, then
   built-ins. `lib.name` names a library's.
 - **CMP-4** (Must, exists) **Renaming** a component, parameter, shape or point
   updates everything that refers to it.
-- **CMP-5** (Must, exists) A **parameter** has a default (a number or an
+- **CMP-5** (Must, changes) A **parameter** has a default (a number or an
   expression over other parameters and process constants), an optional
   min, max and integer flag, and is **public** (set where the component is
   placed) or **internal** (used only inside, not offered where placed).
+  **Min and max may be expressions** over the other parameters and process
+  constants (`enclosure`: max `size / 2`), and either may be **exclusive**
+  (the value must differ from it). The editor shows each limit next to its
+  parameter, evaluated.
 - **CMP-6** (Must, exists) Values passed to a placed component are
   **evaluated where it is placed**. Parameters left out take their defaults.
   Values outside min/max or not whole when integer are errors.
@@ -134,6 +147,24 @@ but should not have to program. Scripting is there for those who want it.
   **read-only** and show their interface (geometry, description, public
   parameters, points), not how they are built, unless the user asks to see
   it.
+- **CMP-10** (Must, new) **Every component is on a layer.** A placed
+  component's layer is, first match wins: the one set on the placement; the
+  component's own default layer, if it declares one; the layer of the
+  component that places it. A top component without a default is on the
+  default level ([PRC-6](#process)). Inside a component, each shape and each
+  placement is on the component's layer (the default), a number of levels
+  above or below it (`+1`, `-1`), one of its level's roles (`anchor`), or a
+  named layer (`metal`). A relative layer that runs off the bottom or top of
+  the stack is an error on that placement, naming the component and layer.
+- **CMP-11** (Should, new) A component can have **checks** for what one
+  parameter's limits cannot say: an expression that must hold and a message
+  shown when it does not.
+- **CMP-12** (Must, new) **Libraries use the importing project's stack.** A
+  library has no layers of its own; its components normally use only
+  relative layers and roles, so they work in any project with enough levels.
+  A library made for one process may name layers, and then says which
+  process; a named layer the project lacks is an error naming the library
+  and the layer.
 
 ### Expressions
 
@@ -158,7 +189,8 @@ but should not have to program. Scripting is there for those who want it.
 
 - **SHP-1** (Must, exists) **Primitives:** `rect`; `polygon`; `circle`; `arc`
   (an annular sector, a ring at 360°); `path` (a centreline with a width and
-  flush, square or round ends). Each is on one layer.
+  flush, square or round ends). Each is on one layer
+  ([CMP-10](#components-and-parameters)).
 - **SHP-2** (Must, exists) **References:** `ref` places a component with
   parameter values, position, rotation and mirroring.
 - **SHP-3** (Must, exists) **Operations**, as nodes in the tree that keep
@@ -764,5 +796,14 @@ ten times larger than that, so the numbers hold with room to spare.
    export there.
 4. **Default export grid and chord tolerance** (OUT-2): 1 nm and 5 nm. Each
    export can change them, so the defaults only need to be sensible.
-5. **Platforms** (QC-4): Windows and Linux; macOS if it costs little, which
+5. **Layers of components** (CMP-10, CMP-12, PRC-6): a component is on a
+   layer, which a placement can always change, and its shapes sit relative
+   to it. This replaces a layer map per library: the same library comb can
+   be placed on poly1 in one place and poly2 in another. Relative layers
+   count levels of the stack rather than entries in a list of layers, so a
+   via or dimple layer between two structural layers does not shift them.
+6. **Limits** (CMP-5, CMP-11): min and max stay, because the editor shows
+   them where the value is edited, but they may be expressions and
+   exclusive; component checks cover the rest.
+7. **Platforms** (QC-4): Windows and Linux; macOS if it costs little, which
    it does (the same build on another CI runner).

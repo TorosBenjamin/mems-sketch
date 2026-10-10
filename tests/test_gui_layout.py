@@ -432,6 +432,20 @@ def test_the_layer_stack_is_edited_in_the_level_column(window):
     assert process.default_level is None
 
 
+def test_the_process_panel_sets_the_fabs_grid(window):
+    window.open_process()
+    panel = window.area.process_view.layers
+    process = window.document.project.process
+    assert panel.grid.value() == pytest.approx(0.001) and panel.chord.value() == pytest.approx(
+        0.005
+    )
+    panel.grid.setValue(0.002)
+    panel.grid.editingFinished.emit()
+    assert process.grid_um == pytest.approx(0.002)
+    window.document.undo()
+    assert window.area.process_view.layers.grid.value() == pytest.approx(0.001)
+
+
 def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path):
     from mems_sketch import Project, load_library, save
 

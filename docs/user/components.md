@@ -144,6 +144,12 @@ or a role the level does not have, is an error on that placement.
 **Top components on level** below the layers chooses where a component
 without a default is in its own tab.
 
+**Grid** and **Curve tolerance** are the fab's: the design rules are checked on
+the design rounded onto that grid, with curves split within that tolerance,
+which is what the fab will check; layout exports start from them too. The
+design itself stays exact. They belong to the process: a project using a
+library's process takes them from it.
+
 ### Design rules
 
 Each rule is a **kind** of check on some layers, with values. Values are

@@ -1556,8 +1556,10 @@ class MainWindow(QMainWindow):
         options = options_of(cls)
         values: dict = {}
         if options:
+            process = self.document.project.process
+            start = {"grid_um": process.grid_um, "chord_um": process.chord_um}
             dialog = ExportOptionsDialog(
-                title_of(cls), options, remembered(self.settings, format_name, options), self
+                title_of(cls), options, remembered(self.settings, format_name, options, start), self
             )
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return

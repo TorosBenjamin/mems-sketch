@@ -257,9 +257,19 @@ class Build:
         flatten them). Raises if the component does not build."""
         return self._built[0]
 
+    @cached_property
+    def built(self):
+        """The engine's own build of the component (``_core.Built``): outputs are made
+        from it. Get it where the engine builds (the main thread); ``output`` may then
+        run on another thread, since it only reads what was built."""
+        engine = self._engine
+        engine.variables(self.component, self.params)  # the model's checks, with its messages
+        return engine._core.built(self.component, self.params)
+
     def output(self, grid: float = GRID_UM, chord: float = CHORD_UM) -> Output:
         """The component for an output with this grid and chord tolerance (µm): see
-        :class:`Output`. The grid is a whole multiple of 1 nm. Kept per grid and chord."""
+        :class:`Output`. The grid is a whole multiple of 1 nm. Kept per grid and chord;
+        once ``built`` is there, it may be made on another thread."""
         steps = round(grid / DBU_UM)
         if steps < 1 or abs(steps * DBU_UM - grid) > 1e-9 * DBU_UM:
             raise ValueError(f"the grid must be a whole multiple of 1 nm, not {grid:g} µm")
@@ -267,9 +277,7 @@ class Build:
             raise ValueError(f"the chord tolerance must be positive, not {chord:g} µm")
         outputs = self.__dict__.setdefault("_outputs", {})
         if (grid, chord) not in outputs:
-            engine = self._engine
-            engine.variables(self.component, self.params)  # the model's checks
-            layers, reports = engine._core.output(self.component, self.params, grid, chord)
+            layers, reports = self.built.output(grid, chord)
             snapping = {
                 layer: LayerSnapping(
                     exact, snapped, tuple(SnapEvent(change, tuple(box)) for change, box in events)

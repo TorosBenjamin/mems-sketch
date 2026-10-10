@@ -35,6 +35,9 @@ if TYPE_CHECKING:
     from mems_sketch.engine import Build
 
 ENTRY_POINT_GROUP = "mems_sketch.exporters"
+# Options an exporter that makes its own output takes from the process when they
+# are not given: the fab's grid and curve tolerance (Process.grid_um, chord_um).
+PROCESS_DEFAULTS = ("grid_um", "chord_um")
 ExportOption = Option  # an exporter's settings are options
 
 
@@ -158,6 +161,9 @@ def export_with_report(
     values = resolve_options(cls, options)
     exporter = cls()
     if getattr(exporter, "wants_build", False):
+        for name in PROCESS_DEFAULTS:  # not given: the process's grid and tolerance
+            if name in values and name not in (options or {}):
+                values[name] = getattr(project.process, name)
         if build is None:
             from mems_sketch.engine import Engine
 

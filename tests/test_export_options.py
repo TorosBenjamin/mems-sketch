@@ -180,3 +180,15 @@ def test_the_cli_says_what_snapping_changed(narrow_gap, tmp_path, capsys):
     printed = capsys.readouterr().out
     assert "snapping to the grid changed the shape" in printed
     assert "gap narrower than the grid closed" in printed
+
+
+def test_rule_checks_and_exports_start_from_the_process_grid(narrow_gap, tmp_path):
+    from mems_sketch.process import rules
+
+    assert rules.checked_geometry(narrow_gap).pieces() == 2  # 0.8 µm apart: two pieces
+    narrow_gap.process.grid_um = 1.0
+    assert rules.checked_geometry(narrow_gap).pieces() == 1  # rounded as the fab will: joined
+    layout = read_gds(export(narrow_gap, tmp_path / "default.gds"))  # no grid given
+    assert layout.dbu == pytest.approx(1.0)
+    layout = read_gds(export(narrow_gap, tmp_path / "own.gds", options={"grid_um": 0.001}))
+    assert layout.dbu == pytest.approx(0.001)

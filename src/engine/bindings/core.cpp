@@ -174,6 +174,27 @@ nb::tuple report_tuple(const mgeom::SnapReport& report) {
     return nb::make_tuple(report.area_exact, report.area_snapped, events);
 }
 
+// An output of a built component: everything placed merged in, snapped once.
+// Only reads what was built, so it may run on another thread than the builds.
+nb::tuple output_of(const mems::Built& built, double grid, double chord) {
+    std::vector<std::pair<std::string, mgeom::Snapped>> snapped;
+    {
+        nb::gil_scoped_release release;
+        for (const auto& [layer, region] : built.flat()) snapped.emplace_back(layer, mgeom::snap(region, grid, chord));
+    }
+    nb::dict layers, reports;
+    for (const auto& [layer, result] : snapped) {
+        layers[nb::str(layer.c_str())] = polygons_tuple(result);
+        reports[nb::str(layer.c_str())] = report_tuple(result.report);
+    }
+    return nb::make_tuple(layers, reports);
+}
+
+// A component as built: what outputs are made from (see output_of).
+struct BuiltHandle {
+    std::shared_ptr<const mems::Built> built;
+};
+
 // A project loaded for building, with a build cache it may share with other
 // versions of the project (mems_sketch.engine.Engine).
 struct Engine {
@@ -266,6 +287,13 @@ NB_MODULE(_core, m) {
             "A component built by the engine: {layer: [(hull, [holes])]}, points in grid units, "
             "curves within chord. Raises NotSupported for what the engine does not build yet.");
 
+    nb::class_<BuiltHandle>(m, "Built", "A component as the engine built it.")
+        .def(
+            "output", [](const BuiltHandle& h, double grid, double chord) { return output_of(*h.built, grid, chord); },
+            "grid"_a = 0.001, "chord"_a = 0.005,
+            "(layers, reports) as Engine.output() gives them. Only reads what was built: safe to call on "
+            "another thread while the engine builds.");
+
     nb::class_<Engine>(m, "Engine",
                        "A project loaded for building. Builds are cached by everything they depend on, "
                        "and the cache is shared by the engines made with trial().")
@@ -312,19 +340,12 @@ NB_MODULE(_core, m) {
             "output",
             [](Engine& e, std::string_view component, const nb::dict& params, double grid, double chord) {
                 const mems::Values values = values_in(params);
-                std::vector<std::pair<std::string, mgeom::Snapped>> snapped;
+                std::shared_ptr<const mems::Built> built;
                 {
                     nb::gil_scoped_release release;
-                    const auto built = e.builder->build(component, values);
-                    for (const auto& [layer, region] : built->flat())
-                        snapped.emplace_back(layer, mgeom::snap(region, grid, chord));
+                    built = e.builder->build(component, values);
                 }
-                nb::dict layers, reports;
-                for (const auto& [layer, result] : snapped) {
-                    layers[nb::str(layer.c_str())] = polygons_tuple(result);
-                    reports[nb::str(layer.c_str())] = report_tuple(result.report);
-                }
-                return nb::make_tuple(layers, reports);
+                return output_of(*built, grid, chord);
             },
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
             "(layers, reports): the component as an output gets it, everything it places merged in and "
@@ -332,6 +353,20 @@ NB_MODULE(_core, m) {
             "Layers as build() gives them; reports {layer: (exact area, snapped area, [(change, box)])} say "
             "what snapping changed in the shape of the geometry (changes: vanished, split, merged, "
             "hole_closed, hole_joined, hole_formed; boxes in µm).")
+        .def(
+            "built",
+            [](Engine& e, std::string_view component, const nb::dict& params) {
+                const mems::Values values = values_in(params);
+                BuiltHandle handle;
+                {
+                    nb::gil_scoped_release release;
+                    handle.built = e.builder->build(component, values);
+                }
+                return handle;
+            },
+            "component"_a, "params"_a = nb::dict(),
+            "The component as built (a Built): its output() may be made on another thread, while this "
+            "engine goes on building.")
         .def(
             "records",
             [](Engine& e, std::string_view component, const nb::dict& params, double grid, double chord) {

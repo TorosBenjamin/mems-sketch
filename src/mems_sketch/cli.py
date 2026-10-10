@@ -203,7 +203,8 @@ def _number(value: float | str) -> str:
 
 def _check(args: argparse.Namespace) -> int:
     project = load(args.project)
-    violations = rules.check(project, _geometry(project, args), args.component)
+    checked = rules.checked_geometry(project, args.component, _parameters(args.set))
+    violations = rules.check(project, checked, args.component)
     if args.json:
         print(
             json.dumps(

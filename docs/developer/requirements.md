@@ -409,7 +409,7 @@ behaviours every frontend must keep.
 - **DRC-2** (Must, exists) The check runs on the final geometry **after every
   change**. Violations are listed and marked on the canvas, and each can be
   clicked to go there.
-- **DRC-3** (Must, changes; [#47](https://github.com/TorosBenjamin/mems-sketch/issues/47)) The check runs on the geometry **as it will be
+- **DRC-3** (Must, exists; [#47](https://github.com/TorosBenjamin/mems-sketch/issues/47)) The check runs on the geometry **as it will be
   exported** (snapped to the export grid, curves split at the export's chord
   tolerance), because that is what the fab checks.
 - **DRC-4** (Must, exists) From the command line, `check` exits with status 1
@@ -484,10 +484,10 @@ behaviours every frontend must keep.
 
 - **OUT-1** (Must, exists) Export a component, with its current trial
   values, to **GDSII, OASIS and DXF**, with the layers' GDS numbers.
-- **OUT-2** (Must, changes; [#53](https://github.com/TorosBenjamin/mems-sketch/issues/53)) Each export to a grid **chooses its grid**
+- **OUT-2** (Must, exists; [#53](https://github.com/TorosBenjamin/mems-sketch/issues/53)) Each export to a grid **chooses its grid**
   (default 1 nm) and **chord tolerance** for curves (default 5 nm).
   Neither changes the design.
-- **OUT-3** (Must, new; [#54](https://github.com/TorosBenjamin/mems-sketch/issues/54)) An export to a grid **reports what snapping
+- **OUT-3** (Must, exists; [#54](https://github.com/TorosBenjamin/mems-sketch/issues/54)) An export to a grid **reports what snapping
   changed** in the shape of the geometry, with where: pieces that vanished,
   split or merged (a neck or gap narrower than the grid), and holes that
   closed, joined another or the outside, or formed (a notch's mouth
@@ -605,10 +605,10 @@ Ansys) can mesh the STEP export themselves (OUT-6).
 - **QP-2** (Must, changes; [#56](https://github.com/TorosBenjamin/mems-sketch/issues/56)) **Curves are exact** through every operation
   (boolean, offset, fillet, corners, transforms). Curves are split into
   segments only by an output, at that output's tolerance.
-- **QP-3** (Must, new; [#57](https://github.com/TorosBenjamin/mems-sketch/issues/57)) **Each output chooses its own tolerance**: the export
+- **QP-3** (Must, exists; [#57](https://github.com/TorosBenjamin/mems-sketch/issues/57)) **Each output chooses its own tolerance**: the export
   grid and chord tolerance for GDS/OASIS/DXF and rule checks; the merge
   tolerance and sizes for a mesh; the chord tolerance for drawing.
-- **QP-4** (Must, new; [#58](https://github.com/TorosBenjamin/mems-sketch/issues/58)) Rounding happens **once per output**, never in between:
+- **QP-4** (Must, exists; [#58](https://github.com/TorosBenjamin/mems-sketch/issues/58)) Rounding happens **once per output**, never in between:
   nested transforms are combined before they are applied.
 - **QP-5** (Must, changes; [#59](https://github.com/TorosBenjamin/mems-sketch/issues/59)) **Deterministic:** the same project and parameters
   give the same output, byte for byte, on every run (exists) and on every

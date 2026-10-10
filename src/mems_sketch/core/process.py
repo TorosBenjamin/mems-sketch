@@ -91,6 +91,11 @@ class Process:
     levels: list[Level] = field(default_factory=list)  # the layer stack, bottom to top
     default_level: str | None = None  # where a top component is; None: the first level
     description: str = ""
+    # The fab's grid and curve tolerance, µm: the rule checks run on the geometry
+    # rounded onto it as an export would write it (requirement DRC-3), and layout
+    # exports start from it.
+    grid_um: float = 0.001
+    chord_um: float = 0.005
 
     def add_rule(self, rule: Rule) -> Rule:
         if rule.name in self.rules:
@@ -163,6 +168,8 @@ def changes_between(
         raise ValueError("the layers and layer stack belong to the process: they cannot change")
     if process.default_level != base.default_level:
         raise ValueError("the default level belongs to the process: it cannot change")
+    if (process.grid_um, process.chord_um) != (base.grid_um, base.chord_um):
+        raise ValueError("the grid and curve tolerance belong to the process: they cannot change")
     for kind, mine, theirs in (
         ("constant", process.constants, base.constants),
         ("rule", process.rules, base.rules),

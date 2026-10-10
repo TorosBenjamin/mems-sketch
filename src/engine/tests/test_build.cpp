@@ -30,7 +30,13 @@ const char* PROJECT = R"({
                                       "points": [[0, 0], ["w", 0], [0, "process.gap"]]}]}]},
     "aligned": {"name": "aligned", "shapes": [{"kind": "rect", "layer": "device", "x0": 0, "y0": 0,
                 "x1": 1, "y1": 1, "align": {"point": "center", "to": "x.center"}}]},
-    "spring": {"name": "spring", "shapes": [{"kind": "ref", "component": "comb_drive"}]}
+    "spring": {"name": "spring", "shapes": [{"kind": "ref", "component": "comb_drive"}]},
+    "hidden_anchor": {"name": "hidden_anchor", "shapes": [
+      {"kind": "rect", "name": "anchor", "layer": "metal", "x0": 10, "y0": 0, "x1": 20, "y1": 10, "enabled": false},
+      {"kind": "rect", "name": "comb", "layer": "device", "x0": 0, "y0": 0, "x1": 2, "y1": 2,
+       "align": {"point": "center", "to": "anchor.center"}},
+      {"kind": "rect", "name": "broken", "layer": "metal", "x0": 0, "y0": 0, "x1": "nothing", "y1": 1,
+       "enabled": false}]}
   },
   "builtins": {"comb_drive": {"name": "comb_drive",
                  "shapes": [{"kind": "rect", "layer": "level", "x0": 0, "y0": 0, "x1": 4, "y1": 2}]}}
@@ -103,4 +109,14 @@ TEST_CASE("built-in components, and errors") {
     // A built-in is built like any other component, on the default layer stack's first level.
     CHECK(builder.build("spring")->flat().at("device").area() == doctest::Approx(8.0));
     CHECK(builder.build("comb_drive")->layers.count("device") == 1);
+}
+
+TEST_CASE("a switched-off shape is hidden, not removed: shapes aligned to it stay") {
+    const Project project = Project::from_json(PROJECT);
+    Builder builder(project);
+    const auto& layers = builder.build("hidden_anchor")->flat();
+    CHECK(layers.count("metal") == 0);  // neither the anchor nor the broken shape is drawn
+    const auto box = layers.at("device").bbox();  // the comb, centred on the hidden anchor
+    CHECK(box.x0 == doctest::Approx(14));
+    CHECK(box.y0 == doctest::Approx(4));
 }

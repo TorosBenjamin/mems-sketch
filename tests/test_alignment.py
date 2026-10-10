@@ -278,3 +278,11 @@ def test_example_stays_connected_when_sizes_change():
         pieces = project.render().layers["device"].merged().count()
         # The mass with its springs, anchors and moving combs, plus the two fixed combs.
         assert pieces == 3, (plate, turns)
+
+
+def test_hiding_the_target_keeps_the_aligned_shape_where_it_is():
+    project = Project()
+    project.add(rect("base", 0, 0, 100, 20, enabled=False))  # switched off: hidden
+    project.add(metal("post", 0, 0, 10, 30, align=Align(point="bottom", to="base.top")))
+    assert moved(project) == [(45, 20, 55, 50)]  # as when it is shown
+    assert "device" not in project.render().layers  # but the target is not drawn

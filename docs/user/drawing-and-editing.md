@@ -20,7 +20,10 @@
 ## Tools
 
 A tool stays active until another is chosen; **Esc** cancels what it is doing
-and, pressed again, returns to Select.
+and, pressed again, returns to Select. A shape added from **Add** (in
+**Insert** or the right-click menu) is drawn once, then the editor returns to
+Select; choose the drawing tool in the toolbar, or press its key, to draw
+several.
 
 | Tool | Key | What it does |
 |---|---|---|
@@ -85,7 +88,9 @@ too: the rounding belongs to the placement, not to the library.
 ## Properties
 
 The selected shape's fields. The name is the title (click to rename), with an
-eye beside it that switches the shape off or on.
+eye beside it that hides or shows the shape. A hidden shape is not drawn,
+exported or checked, but it keeps its points: shapes aligned to it, or using
+its points, stay where they are.
 
 - **Any number field takes a number or an expression.** An expression is
   tinted and shows its value; a red border means it cannot be evaluated.

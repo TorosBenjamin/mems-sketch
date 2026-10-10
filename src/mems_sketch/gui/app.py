@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import multiprocessing
+import subprocess
 import sys
 from pathlib import Path
 
@@ -640,6 +641,8 @@ class MainWindow(QMainWindow):
         if tool is not self.tool:
             self.tool.deactivate()
             self.tool = tool
+        if tool.draws:
+            tool.once = False  # chosen as a tool: it stays on (see draw_once)
         self.tool_actions[name].setChecked(True)
         for view in self.area.views():
             view.canvas.set_tool_cursor(tool.cursor)
@@ -682,7 +685,8 @@ class MainWindow(QMainWindow):
 
     def escape(self) -> None:
         """Esc: stop what the tool is doing; if it was idle, go back to Select."""
-        if not self.tool.cancel() and self.tool.name != "select":
+        once = getattr(self.tool, "once", False)  # Add › a shape: Esc ends it too
+        if (not self.tool.cancel() or once) and self.tool.name != "select":
             self.set_tool("select")
         else:
             self.prompt(self.tool.hint())
@@ -744,6 +748,7 @@ class MainWindow(QMainWindow):
             self.tool_windows.add(name, title, icon, widget, anchor, PANEL_HELP[name])
         self._restore_tool_windows()
         self.tool_windows.changed.connect(self._save_tool_windows)
+        self.tool_windows.resized.connect(self._save_tool_windows)
         self.tool_windows.changed.connect(self.update_overlay)  # points follow the panel
 
     def _restore_tool_windows(self) -> None:
@@ -1262,9 +1267,18 @@ class MainWindow(QMainWindow):
         menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         menu.popup(at)
 
-    def start_drawing(self, kind: str, x: float, y: float) -> None:
-        """Start a drawing tool with its first point at ``(x, y)``."""
+    def draw_once(self, kind: str) -> None:
+        """Add › a shape: its drawing tool for one shape, then back to Select.
+
+        Chosen from the toolbar or by its shortcut, a drawing tool stays active
+        for the next shape instead.
+        """
         self.set_tool(kind)
+        self.tool.once = True
+
+    def start_drawing(self, kind: str, x: float, y: float) -> None:
+        """Right-click › Add: draw one shape, with its first point at ``(x, y)``."""
+        self.draw_once(kind)
         self.tool.start_at(x, y)
 
     def _edit_top(self) -> None:
@@ -1394,13 +1408,14 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Discard
 
     def new_project(self, library: bool = False) -> None:
-        """The New Project wizard: name, folder, process and libraries; saved at once."""
-        if not self._confirm_discard():
-            return
+        """The New Project wizard: name, folder, process and libraries; saved at once.
+
+        Unsaved changes are asked about once the wizard is finished, not before.
+        """
         last = Path(self._last_dir())  # the last project's folder: offer the one it is in
         location = last.parent if (last / "project.yaml").exists() else last
         dialog = NewProjectDialog(str(location), library, self)
-        if self.show_dialog(dialog) == QDialog.DialogCode.Accepted:
+        if self.show_dialog(dialog) == QDialog.DialogCode.Accepted and self._confirm_discard():
             self.create_project(**dialog.values())
 
     def show_dialog(self, dialog: QDialog) -> int:
@@ -1428,13 +1443,27 @@ class MainWindow(QMainWindow):
         self.new_project(library=True)
 
     def open_project(self, path: str | None = None) -> None:
-        if not self._confirm_discard():
-            return
+        """Open a project; without ``path``, the one chosen in a file dialog.
+
+        The file is chosen first. Then, if this window holds a project, the
+        user chooses to open it here or in a new window; only opening it here
+        asks about unsaved changes.
+        """
         if not path:
             path, _ = QFileDialog.getOpenFileName(
                 self, "Open project", self._last_dir(), OPEN_FILTER
             )
-        if not path:
+            if not path:
+                return
+            if self.document.path is not None or self.document.dirty:
+                where = self.ask_where_to_open(path)
+                if where is None:
+                    return
+                if where == "new":
+                    self._remember_dir(path)
+                    self.open_in_new_window(path)
+                    return
+        if not self._confirm_discard():
             return
         self.save_editor_state()
         if self._run(lambda: self._open(path))[0]:
@@ -1447,6 +1476,28 @@ class MainWindow(QMainWindow):
                     "project folder",
                     10000,
                 )
+
+    def ask_where_to_open(self, path: str) -> str | None:
+        """``"here"``, ``"new"`` (another window) or None (cancelled)."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Open project")
+        chosen = Path(path)
+        name = chosen.parent.name if chosen.name == "project.yaml" else chosen.name
+        box.setText(f"Open {name} in this window or in a new one?")
+        here = box.addButton("This window", QMessageBox.ButtonRole.AcceptRole)
+        new = box.addButton("New window", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(here)
+        box.exec()
+        return {id(here): "here", id(new): "new"}.get(id(box.clickedButton()))
+
+    def open_in_new_window(self, path: str) -> None:
+        """Open a project in another copy of the program, a window of its own."""
+        if getattr(sys, "frozen", False):  # the bundled app: the program is the executable
+            command = [sys.executable, path]
+        else:
+            command = [sys.executable, "-m", "mems_sketch.gui", path]
+        subprocess.Popen(command, start_new_session=sys.platform != "win32")
 
     def _open(self, path: str) -> None:
         self._restoring = True

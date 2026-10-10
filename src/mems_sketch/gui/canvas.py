@@ -1080,22 +1080,36 @@ class LayoutCanvas(QGraphicsView):
     def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
         super().drawBackground(painter, rect)
         step = self.grid_step()
+        # The grid colour mixed with the background beforehand: semi-transparent
+        # lines cost Qt's raster engine about 15 times as much as opaque ones.
+        background = QColor(self.theme["background"])
         minor, major, axis = (
-            QPen(QColor(*self.theme["grid"], alpha), 0) for alpha in self.theme["grid_alpha"]
+            QPen(_mixed(background, QColor(*self.theme["grid"]), alpha / 255), 0)
+            for alpha in self.theme["grid_alpha"]
         )
         left, right = math.floor(rect.left() / step), math.ceil(rect.right() / step)
         top, bottom = math.floor(rect.top() / step), math.ceil(rect.bottom() / step)
         if self.options["show_grid"] and (right - left) * (bottom - top) <= 400_000:
+            # Drawn in pixels, on whole pixels and without antialiasing: through the
+            # view's scale, semi-transparent lines cost more than the rest of a frame.
+            to_pixels = painter.worldTransform()
+            area = to_pixels.mapRect(rect)
             lines: dict[int, list[QLineF]] = {0: [], 1: [], 2: []}  # minor, major, axis
             for i in range(left, right + 1):
                 kind = 2 if i == 0 else 1 if i % 5 == 0 else 0
-                lines[kind].append(QLineF(i * step, rect.top(), i * step, rect.bottom()))
+                x = round(to_pixels.map(QPointF(i * step, 0)).x()) + 0.5
+                lines[kind].append(QLineF(x, area.top(), x, area.bottom()))
             for j in range(top, bottom + 1):
                 kind = 2 if j == 0 else 1 if j % 5 == 0 else 0
-                lines[kind].append(QLineF(rect.left(), j * step, rect.right(), j * step))
+                y = round(to_pixels.map(QPointF(0, j * step)).y()) + 0.5
+                lines[kind].append(QLineF(area.left(), y, area.right(), y))
+            painter.save()
+            painter.resetTransform()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
             for kind, pen in enumerate((minor, major, axis)):
                 painter.setPen(pen)
                 painter.drawLines(lines[kind])
+            painter.restore()
         if self.options["show_axes"]:
             for key, line in (
                 ("axis_x", (QPointF(rect.left(), 0), QPointF(rect.right(), 0))),
@@ -1296,6 +1310,13 @@ class LayoutCanvas(QGraphicsView):
         target = self.options["grid_spacing_px"] / pixels_per_um
         exponent = math.floor(math.log10(target))
         return next(m * 10**exponent for m in (1, 2, 5, 10) if m * 10**exponent >= target)
+
+
+def _mixed(under: QColor, over: QColor, alpha: float) -> QColor:
+    """``over`` drawn with opacity ``alpha`` on ``under``, as one opaque colour."""
+    return QColor(
+        *(round(a + (b - a) * alpha) for a, b in zip(under.getRgb()[:3], over.getRgb()[:3]))
+    )
 
 
 def _round_pen(color: QColor, width: float) -> QPen:

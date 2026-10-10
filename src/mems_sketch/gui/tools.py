@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 
 SNAP_PX = 10  # default: a point snaps to another within this many pixels
 DRAG_THRESHOLD_PX = 4  # a press moving less than this is a click, not a drag
+GRID_POINTS = 64  # a move snaps the nearest of at most this many moving points to the grid
 ANGLE_STEP = 15.0  # default: degrees the Rotate tool snaps to
 CTRL = Qt.KeyboardModifier.ControlModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
@@ -65,6 +66,28 @@ ALT = Qt.KeyboardModifier.AltModifier
 NONE = Qt.KeyboardModifier.NoModifier
 
 Candidate = tuple[str, float, float]  # label, x, y
+
+
+def grid_move(points, dx: float, dy: float, step: float, axes: str = "xy") -> tuple[float, float]:
+    """``dx, dy`` changed so that one of the moving ``points`` lands on the grid.
+
+    Of the points (``(x, y)`` before the move), the one that needs the least
+    change is put on a grid line in each of ``axes``; the others keep their
+    places relative to it. Without points, the move itself is whole grid steps.
+    """
+    if not points:
+        return (
+            round(dx / step) * step if "x" in axes else dx,
+            round(dy / step) * step if "y" in axes else dy,
+        )
+    best = None
+    for px, py in points[:GRID_POINTS]:
+        mx = round((px + dx) / step) * step - px if "x" in axes else dx
+        my = round((py + dy) / step) * step - py if "y" in axes else dy
+        change = math.hypot(mx - dx, my - dy)
+        if best is None or change < best[0]:
+            best = (change, mx, my)
+    return _um(best[1]), _um(best[2])
 
 
 class Tool:
@@ -209,8 +232,8 @@ class Tool:
                 return tx - px, ty - py, (path, name, target, tx, ty)
         if not self.setting("snapping/grid", True):
             return dx, dy, None
-        step = self.canvas.grid_step()
-        return round(dx / step) * step, round(dy / step) * step, None
+        moving = [(px, py) for _, _, px, py in plan.points]
+        return (*grid_move(moving, dx, dy, self.canvas.grid_step()), None)
 
     # -- the move gizmo (Select and Move) ---------------------------------
 
@@ -238,10 +261,11 @@ class Tool:
         dx, dy = x - x0, y - y0
         if part == "free":
             return self.snapped_move(plan, dx, dy, modifiers)[:2]
-        step = self.canvas.grid_step()
-        snap = not modifiers & CTRL and self.setting("snapping/grid", True)
         along = dx if part == "x" else dy
-        along = round(along / step) * step if snap else along
+        if not modifiers & CTRL and self.setting("snapping/grid", True):
+            moving = [(px, py) for _, _, px, py in plan.points]
+            gx, gy = grid_move(moving, dx, dy, self.canvas.grid_step(), axes=part)
+            along = gx if part == "x" else gy
         return (along, 0.0) if part == "x" else (0.0, along)
 
     def gizmo_move(self, x, y, modifiers) -> None:
@@ -714,6 +738,7 @@ class CornersTool(Tool):
         self.rounded: list[tuple[int, tuple[float, float]]] = []
         self._press: tuple[float, float] | None = None  # the corner a press is on
         self._dragged: float | None = None  # the radius being dragged
+        self._limit: float | None = None  # the largest radius that corner takes
 
     @property
     def busy(self) -> bool:
@@ -778,6 +803,10 @@ class CornersTool(Tool):
                 self.begin(hit)
             return
         self._press, self._dragged = corner, None
+        try:  # worked out once: the drag stops at the largest radius that fits
+            self._limit = self.document.corners.max_radius(self.path, *corner)
+        except (ValueError, KeyError, IndexError):
+            self._limit = None
 
     def move(self, x, y, modifiers, left) -> None:
         if self._press is None or not left:
@@ -786,8 +815,14 @@ class CornersTool(Tool):
         if self._dragged is None and distance * self.canvas.pixels_per_um() < self.DRAG_PX:
             return
         radius = distance if modifiers & CTRL else max(round(distance, 1), 0.1)
+        largest = math.floor(self._limit * 1e6) / 1e6 if self._limit is not None else None
+        if largest is not None and radius >= largest:
+            radius = largest
+        if radius == self._dragged:
+            return  # nothing new to show: no rebuild
         self._dragged = radius
-        self.window.prompt(f"Radius {radius:g} µm (release to set; Ctrl: exact)")
+        note = "the largest that fits" if radius == largest else "Ctrl: exact"
+        self.window.prompt(f"Radius {radius:g} µm (release to set; {note})")
         with contextlib.suppress(ValueError, KeyError):
             node, _ = self.document.corners.with_corner(self.path, *self._press, _um(radius))
             self.window._preview_node(node, self.path)
@@ -965,6 +1000,11 @@ class DrawTool(Tool):
     uses_layer: ClassVar[bool] = True  # draws on the chosen layer (a guide does not)
     cursor = Qt.CursorShape.CrossCursor
     noun: ClassVar[str]
+    once = False  # started from Add: back to Select after one shape (see draw_once)
+
+    def deactivate(self) -> None:
+        super().deactivate()
+        self.once = False
 
     def reset(self) -> None:
         self.placed: list[tuple[float, float]] = []
@@ -1028,7 +1068,10 @@ class DrawTool(Tool):
             self.window.report_error(problem)
             return
         self.window.add_drawn(shape)
-        self.window.prompt(self.hint())
+        if self.once:
+            self.window.set_tool("select")
+        else:
+            self.window.prompt(self.hint())
 
     def hover_label(self, x, y) -> str | None:
         return self.snap(x, y, self._points(), NONE, grid=False)[2]

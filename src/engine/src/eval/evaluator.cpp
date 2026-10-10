@@ -77,9 +77,10 @@ void own_strings(const Json& value, std::vector<std::string>& out) {
         for (const auto& [key, item] : value.items()) own_strings(item, out);
 }
 
-// The names of the nodes whose points a node or its subtree uses.
+// The names of the nodes whose points a node or its subtree uses (a switched-off
+// node too: it is still built, for its points).
 void point_dependencies(const Json& node, std::set<std::string>& found) {
-    if (node.value("enabled", true)) {
+    {
         if (node.contains("align") && node["align"].is_object())
             found.insert(node["align"].value("to", std::string()).substr(0, node["align"].value("to", std::string()).find('.')));
         std::vector<std::string> texts;
@@ -348,9 +349,13 @@ Layers LayerSet::merged() const {
 
 Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, const std::string& component,
                       const Variables& variables, const Scope& scope) {
+    // A switched-off node (enabled: false) is hidden, not removed: it is built, so
+    // that shapes aligned to it or using its points stay where they are, but its
+    // geometry is left out. If it cannot be built, it has no points either.
     struct Entry {
-        size_t slot, index;  // its list, and its index there (disabled nodes count)
+        size_t slot, index;  // its list, and its index there
         const Json* node;
+        bool enabled;
     };
     std::vector<Entry> entries;
     std::map<std::string, size_t> named;
@@ -358,9 +363,8 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
         size_t index = 0;
         for (const auto& node : *lists[slot]) {
             const size_t at = index++;
-            if (!node.value("enabled", true)) continue;
             if (const std::string name = name_of(node); !name.empty()) named[name] = entries.size();
-            entries.push_back({slot, at, &node});
+            entries.push_back({slot, at, &node, node.value("enabled", true)});
         }
     }
     std::vector<std::optional<Layers>> results(entries.size());
@@ -368,6 +372,11 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
     std::vector<bool> visiting(entries.size(), false);
     Rendered rendered;
 
+    // A hidden node that cannot be built: nothing, and no points.
+    auto finish_hidden = [&](size_t k) {
+        visiting[k] = false;
+        results[k] = Layers{};
+    };
     std::function<void(size_t)> visit = [&](size_t k) {
         if (results[k]) return;
         const Json& node = *entries[k].node;
@@ -389,7 +398,15 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
         try {
             result = render_node(node, builder, component, variables, visible);
         } catch (const mgeom::GeometryError& error) {
+            if (!entries[k].enabled) return finish_hidden(k);
             throw BuildError("'" + label_of(node) + "': " + error.what());
+        } catch (const std::exception&) {  // a build or expression error
+            if (!entries[k].enabled) return finish_hidden(k);
+            throw;
+        }
+        if (!entries[k].enabled) {  // hidden: its points, not its geometry
+            result.layers.clear();
+            result.instances.clear();
         }
         if (Records* records = builder.recording(); records && !records->count(path))
             records->emplace(path, NodeRecord{result.layers, result.instances, result.points.name,

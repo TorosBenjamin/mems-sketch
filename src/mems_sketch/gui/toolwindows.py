@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -102,7 +102,8 @@ class _Host(QFrame):
 class ToolWindows(QWidget):
     """The window's body: the editor with the tool windows around it."""
 
-    changed = Signal()  # a window was opened or closed, or a panel resized
+    changed = Signal()  # a window was opened or closed
+    resized = Signal()  # a panel was resized (once, when the drag has stopped)
 
     def __init__(self, editor: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -110,6 +111,10 @@ class ToolWindows(QWidget):
         self._hosts = {anchor: _Host(lambda a=anchor: self._hide(a)) for anchor in ANCHORS}
 
         self.setObjectName("tool-windows")
+        # A resize drag moves a splitter pixel by pixel: reported once it stops,
+        # so that nothing else (saving, the canvas's overlays) runs at every step.
+        self._resize_timer = QTimer(self, singleShot=True, interval=300)
+        self._resize_timer.timeout.connect(self.resized)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.left_side = QSplitter(Qt.Orientation.Vertical)
         self.left_side.addWidget(self._hosts["left-top"])
@@ -129,7 +134,7 @@ class ToolWindows(QWidget):
             splitter.setChildrenCollapsible(False)
             splitter.setHandleWidth(GAP)
             splitter.setSizes(DEFAULT_SIZES[name])
-            splitter.splitterMoved.connect(self.changed)
+            splitter.splitterMoved.connect(self._resize_timer.start)
 
         self._groups: dict[str, QVBoxLayout] = {}
         left = self._stripe("left")

@@ -29,7 +29,9 @@ one value changes one line. See `examples/resonator` and the library it uses,
 
 **File** (in **☰**): New (Ctrl+N), New library, Open (Ctrl+O), Save (Ctrl+S)
 and Save as. Open also takes a one-file project or a legacy `.mems` design;
-those open as a copy, which **Save as** stores as a folder.
+those open as a copy, which **Save as** stores as a folder. When a project is
+already open, Open asks, once you have chosen the file, whether to open it in
+this window or in a new one; only opening it here asks about unsaved changes.
 
 ## Exporting
 

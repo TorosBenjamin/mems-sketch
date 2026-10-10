@@ -472,3 +472,14 @@ def test_menus_have_lines_only_between_groups(window):
     assert actions[0].text() == "Add"  # no heading or line above the first group
     assert lines and all(0 < i < len(actions) - 1 for i in lines)
     menu.deleteLater()
+
+
+def test_resizing_panels_leaves_the_canvas_alone_and_saves_once(window, qtbot, monkeypatch):
+    overlays, saves = [], []
+    monkeypatch.setattr(window, "update_overlay", lambda: overlays.append(1))
+    window.tool_windows.resized.connect(lambda: saves.append(1))
+    splitter = window.tool_windows._splitters["left"]
+    for k in range(10):  # a drag: the splitter moves pixel by pixel
+        splitter.moveSplitter(splitter.handle(1).pos().y() + (2 if k % 2 else -2), 1)
+    assert overlays == [] and saves == []
+    qtbot.waitUntil(lambda: saves == [1])  # once the drag has stopped

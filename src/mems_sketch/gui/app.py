@@ -748,6 +748,7 @@ class MainWindow(QMainWindow):
             self.tool_windows.add(name, title, icon, widget, anchor, PANEL_HELP[name])
         self._restore_tool_windows()
         self.tool_windows.changed.connect(self._save_tool_windows)
+        self.tool_windows.resized.connect(self._save_tool_windows)
         self.tool_windows.changed.connect(self.update_overlay)  # points follow the panel
 
     def _restore_tool_windows(self) -> None:

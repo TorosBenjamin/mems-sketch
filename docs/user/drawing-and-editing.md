@@ -20,7 +20,10 @@
 ## Tools
 
 A tool stays active until another is chosen; **Esc** cancels what it is doing
-and, pressed again, returns to Select.
+and, pressed again, returns to Select. A shape added from **Add** (in
+**Insert** or the right-click menu) is drawn once, then the editor returns to
+Select; choose the drawing tool in the toolbar, or press its key, to draw
+several.
 
 | Tool | Key | What it does |
 |---|---|---|

@@ -47,14 +47,6 @@ OPERATIONS = [
 BOOLEANS = ("subtract", "intersect", "xor")  # under Operations › Combine
 
 
-def _label(window, path) -> str:
-    try:
-        node = window.document.node(path)
-    except KeyError:
-        return "?"
-    return node.name or node.kind
-
-
 def make_action(
     parent, text: str, slot, shortcut=None, menu: QMenu | None = None, icon: str | None = None
 ) -> QAction:
@@ -153,9 +145,10 @@ class Actions:
         self.add = insert.addMenu("Add")
         icons.bind(self.add.menuAction(), "rect")
         for kind, label in PRIMITIVES:
-            # Drawn shapes start their drawing tool; an arc is added as a default one.
+            # Drawn shapes start their drawing tool, for one shape; an arc is added
+            # as a default one.
             slot = (
-                (lambda _=False, k=kind: w.set_tool(k))
+                (lambda _=False, k=kind: w.draw_once(k))
                 if kind in w.tools
                 else (lambda _=False, k=kind: w.add_primitive(k))
             )
@@ -262,7 +255,6 @@ class Actions:
             action.setEnabled(enabled and editable)
             return action
 
-        menu.addSection("At the cursor")
         add = menu.addMenu(self.add.menuAction().icon(), "Add")
         for source in self.add.actions():
             kind = next(k for k, label in PRIMITIVES if label == source.text())
@@ -277,7 +269,7 @@ class Actions:
         add.setEnabled(editable)
         place.setEnabled(editable)
 
-        menu.addSection(", ".join(_label(w, p) for p in selection[:3]) or "No selection")
+        menu.addSeparator()
         one, some, several = len(selection) == 1, bool(selection), len(selection) > 1
         reference = one and w.document.reference_target(selection[0]) is not None
         combine = menu.addMenu(self.combine.menuAction().icon(), "Combine")

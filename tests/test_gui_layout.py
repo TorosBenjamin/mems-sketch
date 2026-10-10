@@ -463,3 +463,12 @@ def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path)
     panel.actions.buttons["Reset the selected rules to the process's"].click()
     assert window.document.project.process.rules["device_min_width"].values == {"value": 2.0}
     assert load_library("fab", tmp_path / "fab").processes["surface"].constants == {"undercut": 2}
+
+
+def test_menus_have_lines_only_between_groups(window):
+    menu = window.actions_.context_menu(0, 0)
+    actions = menu.actions()
+    lines = [i for i, a in enumerate(actions) if a.isSeparator()]
+    assert actions[0].text() == "Add"  # no heading or line above the first group
+    assert lines and all(0 < i < len(actions) - 1 for i in lines)
+    menu.deleteLater()

@@ -328,6 +328,31 @@ def test_rectangle_by_dragging_or_two_clicks(window):
     assert window.tool.name == "rect"  # stays active for the next one
 
 
+def test_add_menu_draws_one_shape_then_selects(window):
+    canvas_area(window)
+    window.draw_once("rect")  # Add › Rectangle
+    drag(window, (0, 0), (40, 20))
+    assert isinstance(drawn(window), RectShape)
+    assert window.tool.name == "select"  # no hidden drawing mode left on
+    drag(window, (100, 100), (140, 120))  # a drag now selects with a box
+    assert len(window.document.shapes) == 1
+
+
+def test_esc_ends_a_shape_from_the_add_menu(window):
+    window.draw_once("rect")
+    window.escape()
+    assert window.tool.name == "select"
+
+
+def test_a_drawing_tool_chosen_from_the_toolbar_stays_on(window):
+    canvas_area(window)
+    window.set_tool("rect")
+    window.draw_once("rect")
+    window.set_tool("rect")  # chosen again from the toolbar: not one shape only
+    drag(window, (0, 0), (40, 20))
+    assert window.tool.name == "rect"
+
+
 def test_rectangle_with_shift_is_a_square_and_snaps_to_corners(window):
     canvas_area(window)
     window.set_tool("rect")

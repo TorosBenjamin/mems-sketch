@@ -965,6 +965,11 @@ class DrawTool(Tool):
     uses_layer: ClassVar[bool] = True  # draws on the chosen layer (a guide does not)
     cursor = Qt.CursorShape.CrossCursor
     noun: ClassVar[str]
+    once = False  # started from Add: back to Select after one shape (see draw_once)
+
+    def deactivate(self) -> None:
+        super().deactivate()
+        self.once = False
 
     def reset(self) -> None:
         self.placed: list[tuple[float, float]] = []
@@ -1028,7 +1033,10 @@ class DrawTool(Tool):
             self.window.report_error(problem)
             return
         self.window.add_drawn(shape)
-        self.window.prompt(self.hint())
+        if self.once:
+            self.window.set_tool("select")
+        else:
+            self.window.prompt(self.hint())
 
     def hover_label(self, x, y) -> str | None:
         return self.snap(x, y, self._points(), NONE, grid=False)[2]

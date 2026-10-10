@@ -418,7 +418,6 @@ class ValueEdit(QLineEdit):
         """The parameter button's menu: use a parameter, make one, or use the value."""
         menu = QMenu(self)
         if self.parameters:
-            menu.addSection("Parameters")
             for name in self.parameters:
                 shown = f"{name}  = {_format(self.scope[name])}" if name in self.scope else name
                 action = menu.addAction(shown)
@@ -429,7 +428,8 @@ class ValueEdit(QLineEdit):
             for name in constants:
                 action = sub.addAction(f"{name}  = {_format(self.scope[name])}")
                 action.triggered.connect(lambda _=False, n=name: self._use(n))
-        menu.addSeparator()
+        if not menu.isEmpty():
+            menu.addSeparator()  # a line only between groups
         make = menu.addAction(icons.icon("add"), "Make a parameter from this value…")
         make.triggered.connect(self._make_parameter)
         make.setEnabled(bool(self.text().strip()))

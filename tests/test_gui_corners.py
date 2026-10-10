@@ -64,6 +64,44 @@ def test_dragging_from_a_corner_sets_its_radius_in_one_step(window):
     assert [c.radius for c in corners(window)] == [3.0, 3.0]
 
 
+def test_dragging_stops_at_the_largest_radius_that_fits(window):
+    window.set_tool("corners")
+    tool = window.tool
+    tool.press(40, 20, NONE)
+    tool.move(40, 50, NONE, True)  # 30 µm away: the plate is only 20 high
+    tool.release(40, 50, NONE)
+    assert [c.radius for c in corners(window)] == [20.0]
+    assert window.document.problems() == []
+    tool.press(40, 0, NONE)  # beside it, on the same 20 µm edge: nothing left
+    tool.move(40, -15, NONE, True)
+    tool.release(40, -15, NONE)
+    assert window.document.problems() == []
+
+
+def test_corners_follow_moves_rotations_and_mirroring(window):
+    doc, path = window.document, ((0, 0),)
+    doc.corners.add(path, 40, 20, radius=2)
+    doc.moves.move([path], 10, 5)
+    doc.moves.rotate([path], 30, (0, 0))  # wraps the plate in a transform
+    doc.moves.rotate([path], 45, (5, 5))  # turns the transform
+    doc.moves.mirror([path], True, (3, 0))
+    doc.moves.move([path], -7, 2)
+    assert doc.problems() == []
+    plate = doc.node(path).children[0]  # the plate, inside the transform, keeps its corner
+    assert [c.at for m in plate.modifiers for c in m.corners] == ["self.top_right"]
+
+
+def test_a_placed_nodes_corner_turns_with_it(window):
+    doc, path = window.document, ((0, 0),)
+    doc.moves.rotate([path], 45, (0, 0))  # now a transform holding the plate
+    x, y = doc.corners.candidates(path)[0]
+    doc.corners.add(path, x, y, radius=2)  # a corner of the transform, recorded around it
+    doc.moves.rotate([path], 90, (0, 0))
+    assert doc.problems() == []
+    [(_, (rx, ry))] = doc.corners.rounded(path)
+    assert (rx, ry) == pytest.approx((-y, x), abs=1e-5)  # turned with it
+
+
 def test_the_properties_card_edits_and_removes_corners(window):
     window.document.corners.add(((0, 0),), 40, 20, radius=1)
     window.tree.select_paths([((0, 0),)])

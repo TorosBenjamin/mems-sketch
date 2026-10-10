@@ -738,6 +738,7 @@ class CornersTool(Tool):
         self.rounded: list[tuple[int, tuple[float, float]]] = []
         self._press: tuple[float, float] | None = None  # the corner a press is on
         self._dragged: float | None = None  # the radius being dragged
+        self._limit: float | None = None  # the largest radius that corner takes
 
     @property
     def busy(self) -> bool:
@@ -802,6 +803,10 @@ class CornersTool(Tool):
                 self.begin(hit)
             return
         self._press, self._dragged = corner, None
+        try:  # worked out once: the drag stops at the largest radius that fits
+            self._limit = self.document.corners.max_radius(self.path, *corner)
+        except (ValueError, KeyError, IndexError):
+            self._limit = None
 
     def move(self, x, y, modifiers, left) -> None:
         if self._press is None or not left:
@@ -810,8 +815,14 @@ class CornersTool(Tool):
         if self._dragged is None and distance * self.canvas.pixels_per_um() < self.DRAG_PX:
             return
         radius = distance if modifiers & CTRL else max(round(distance, 1), 0.1)
+        largest = math.floor(self._limit * 1e6) / 1e6 if self._limit is not None else None
+        if largest is not None and radius >= largest:
+            radius = largest
+        if radius == self._dragged:
+            return  # nothing new to show: no rebuild
         self._dragged = radius
-        self.window.prompt(f"Radius {radius:g} µm (release to set; Ctrl: exact)")
+        note = "the largest that fits" if radius == largest else "Ctrl: exact"
+        self.window.prompt(f"Radius {radius:g} µm (release to set; {note})")
         with contextlib.suppress(ValueError, KeyError):
             node, _ = self.document.corners.with_corner(self.path, *self._press, _um(radius))
             self.window._preview_node(node, self.path)

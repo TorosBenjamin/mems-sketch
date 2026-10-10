@@ -67,6 +67,44 @@ class CornerEdits(Commands):
                 result.append((index, to_component.apply(x, y)))
         return result
 
+    def max_radius(self, path: NodePath, x: float, y: float) -> float | None:
+        """The largest radius the corner at ``(x, y)`` (component frame) takes, with the
+        node's other rounded corners as they are; None if it is not a corner.
+
+        A round corner turning by φ uses ``r·tan(φ/2)`` of each edge beside it,
+        and the corner at the edge's other end uses some too: what is left of the
+        shorter edge decides.
+        """
+        geometry, own, to_component = self._before(path)
+        target = to_component.inverted().apply(x, y)
+        variables = self._variables(path, own)
+        taken: list[tuple[Position, float]] = []  # the other rounded corners: where, radius
+        found = self._modifier(self.session.node(path))
+        for corner in found[1].corners if found is not None else []:
+            with contextlib.suppress(ValueError):
+                where = CornersModifier(corners=[corner]).positions(variables)[0]
+                if not _same(where, target):
+                    taken.append((where, float(evaluate(corner.radius, variables))))
+        for layer in geometry.layer_names():
+            for polygon in geometry.polygons(layer):
+                for ring in [polygon.hull.tolist(), *(h.tolist() for h in polygon.holes)]:
+                    for index, point in enumerate(ring):
+                        if not _same(tuple(point), target):
+                            continue
+                        uses = math.tan(_turn(ring, index) / 2)
+                        if uses <= 0:
+                            return None
+                        largest = math.inf
+                        for step in (-1, 1):
+                            j = (index + step) % len(ring)
+                            other = tuple(ring[j])
+                            length = math.dist(point, other)
+                            radius = next((r for w, r in taken if _same(w, other)), 0.0)
+                            length -= radius * math.tan(_turn(ring, j) / 2)
+                            largest = min(largest, length / uses)
+                        return max(largest, 0.0)
+        return None
+
     def at(self, path: NodePath, x: float, y: float) -> int | None:
         """The recorded corner at ``(x, y)`` (component frame), if any."""
         return next((i for i, p in self.rounded(path) if _same(p, (x, y))), None)
@@ -265,6 +303,14 @@ def _turning(ring: list[Position]) -> list[Position]:
         if abs(math.degrees(math.remainder(b - a, 2 * math.pi))) >= MIN_TURN_DEG:
             result.append(p)
     return result
+
+
+def _turn(ring: list[Position], index: int) -> float:
+    """How much the ring turns at a vertex, in radians (0 to π)."""
+    before, p, after = ring[index - 1], ring[index], ring[(index + 1) % len(ring)]
+    a = math.atan2(p[1] - before[1], p[0] - before[0])
+    b = math.atan2(after[1] - p[1], after[0] - p[0])
+    return abs(math.remainder(b - a, 2 * math.pi))
 
 
 def _same(a: Position, b: Position) -> bool:

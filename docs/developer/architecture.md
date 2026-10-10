@@ -104,7 +104,8 @@ wires the parts; each part only talks to the session:
 | `core/shapes/` | The shape tree: one module per kind in `kinds/`, their registry, points, evaluation, modifiers, rewriting |
 | `core/user_component.py` | `ComponentDef`, `ParamDef`, `PointDef` and their adapter to `Component` |
 | `core/component.py` | `Component` base class, `Geometry`, the built-in component registry |
-| `core/process.py` | `Process`, `Layer`, process constants |
+| `core/process.py` | `Process`, `Layer`, `Level` (the layer stack), process constants |
+| `core/levels.py` | Components on levels: layers relative to a component's level (`level-1`, `level.anchor`) |
 | `core/expressions.py` | Safe arithmetic expressions with dependency resolution |
 | `core/imports.py` | Imported layouts (GDS/OASIS cells) as components |
 | `core/diff.py` | What changed between two versions of a project, in words and in geometry |

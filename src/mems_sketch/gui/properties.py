@@ -84,6 +84,7 @@ _LABELS = {
     "end_angle": "End angle °",
     "rotation": "Rotation °",
     "op": "Operation",
+    "level": "Level",
 }
 MODIFIER_TITLES = {
     "array": "Array",
@@ -265,9 +266,27 @@ class PropertyEditor(QScrollArea):
         if field == "layer":
             combo = _combo()
             combo.setEditable(True)
+            combo.addItems(layer_choices(self.document.project.process.levels))
             combo.addItems(list(self.document.project.layers))
             combo.setCurrentText(value)
+            combo.setToolTip(
+                "level: the component's level of the layer stack; level-1, level+1: the "
+                "levels below and above; level.anchor: a layer of the level by role; "
+                "or a layer by name"
+            )
             self._editors[field] = lambda: combo.currentText().strip()
+            return self._applies(combo)
+        if field == "level":  # where a placed component is
+            combo = _combo()
+            combo.setEditable(True)
+            levels = [lv.layer for lv in self.document.project.process.levels]
+            combo.addItems(["", "level+1", "level-1", *levels] if levels else [""])
+            combo.setCurrentText(value or "")
+            combo.setToolTip(
+                "The level of the layer stack it is placed on: a level, or one relative to "
+                "this component's (level+1). Empty: its own default level, else this one's"
+            )
+            self._editors[field] = lambda: combo.currentText().strip() or None
             return self._applies(combo)
         if field == "component":
             combo = _combo()
@@ -918,6 +937,14 @@ def _numeric(model, pair) -> bool:
 
 def _format(value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
+
+
+def layer_choices(levels) -> list[str]:
+    """The relative layers a shape can be on with this layer stack."""
+    if not levels:
+        return []
+    roles = sorted({role for level in levels for role in level.roles})
+    return ["level", "level+1", "level-1", *(f"level.{role}" for role in roles)]
 
 
 def _limit(limit, relation: str, values: dict[str, float]) -> str:

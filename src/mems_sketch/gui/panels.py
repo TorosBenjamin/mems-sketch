@@ -9,6 +9,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, 
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.component import component_types
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
-from mems_sketch.core.process import Layer
+from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
@@ -485,6 +486,7 @@ class ComponentsPanel(_Panel):
                 "duplicate",
             )
             _menu_action(menu, "Delete", lambda: self._delete(name), "delete")
+            self._level_actions(menu, name)
             menu.addSeparator()
             if name == project.top:
                 _menu_action(menu, "Make the project a library (no top component)", self._no_top)
@@ -510,6 +512,26 @@ class ComponentsPanel(_Panel):
                 lambda: self._guard(lambda: self.document.components.copy(name)),
                 "duplicate",
             )
+
+    def _level_actions(self, menu: QMenu, name: str) -> None:
+        """Choose the level of the layer stack a component is on unless placed elsewhere."""
+        levels = [lv.layer for lv in self.document.project.process.levels]
+        if not levels:
+            return
+        current = self.document.project.components[name].level
+        sub = menu.addMenu("Level")
+        sub.setToolTip(
+            "The level of the layer stack it is on unless a placement says otherwise; "
+            "its shapes draw relative to it"
+        )
+        for level in [None, *levels]:
+            action = _menu_action(
+                sub,
+                level or "The level it is placed on",
+                lambda lv=level: self._guard(lambda: self.document.components.set_level(name, lv)),
+            )
+            action.setCheckable(True)
+            action.setChecked(level == current)
 
     def _ownership_actions(self, menu: QMenu, name: str) -> None:
         """Make a component shared, or private to another one."""
@@ -1210,10 +1232,51 @@ class LayersPanel(_Panel):
             self.visibility_changed.emit(name, shown)
 
 
-class LayerDefinitionsPanel(_Panel):
-    """The process's layers: name and GDS mapping (in the Process tab)."""
+def stack_place(levels: list[Level], layer: str) -> str:
+    """Where a layer is in the stack, as its Level cell shows it: the level's
+    number (1 at the bottom), ``poly1.anchor`` for a role, or nothing."""
+    for number, level in enumerate(levels, start=1):
+        if level.layer == layer:
+            return str(number)
+        for role, name in level.roles.items():
+            if name == layer:
+                return f"{level.layer}.{role}"
+    return ""
 
-    LAYER_COLUMNS = ("Layer", "GDS", "Datatype")
+
+def moved_in_stack(levels: list[Level], layer: str, place: str) -> list[Level]:
+    """The stack with ``layer`` put at ``place`` (see :func:`stack_place`):
+    a number inserts it as that level, ``level_layer.role`` gives that level the
+    role, nothing takes it out (a level with its roles)."""
+    result = [
+        Level(lv.layer, {r: n for r, n in lv.roles.items() if n != layer})
+        for lv in levels
+        if lv.layer != layer
+    ]
+    place = place.strip()
+    if not place:
+        return result
+    if place.isdigit():
+        number = int(place)
+        if not 1 <= number <= len(result) + 1:
+            raise ValueError(f"a level number is between 1 and {len(result) + 1}")
+        result.insert(number - 1, Level(layer))
+        return result
+    owner, dot, role = place.partition(".")
+    for level in result:
+        if level.layer == owner and dot and role.isidentifier():
+            level.roles[role] = layer
+            return result
+    raise ValueError(
+        f"'{place}': a level number, or a level's layer and a role (e.g. poly1.anchor)"
+    )
+
+
+class LayerDefinitionsPanel(_Panel):
+    """The process's layers: name, GDS mapping and place in the layer stack (in
+    the Process tab)."""
+
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Level")
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -1228,10 +1291,24 @@ class LayerDefinitionsPanel(_Panel):
             ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
             ("remove", "Remove the selected layers", self._remove_layers),
             help="The mask layers and their *GDS* layer and datatype for export. "
-            "What they are checked with is in *Rules*.",
+            "What they are checked with is in *Rules*.\n\n"
+            "*Level* places a layer in the layer stack: a number makes it a level "
+            "(1 at the bottom); `poly1.anchor` makes it level poly1's anchor layer. "
+            "Components draw relative to their level (`level-1`, `level.anchor`), "
+            "so the same component can be placed on any level.",
         )
         layout.addLayout(self.actions)
         layout.addWidget(self.layers)
+        row = QHBoxLayout()
+        row.setContentsMargins(6, 4, 6, 4)
+        row.addWidget(QLabel("Top components on level"))
+        self.default_level = QComboBox()
+        self.default_level.setToolTip(
+            "The level a component without a default level is on in its own tab and when exported"
+        )
+        self.default_level.activated.connect(self._default_level_chosen)
+        row.addWidget(self.default_level, 1)
+        layout.addLayout(row)
         self._layer_names: list[str] = []
 
     def refresh(self) -> None:
@@ -1239,11 +1316,25 @@ class LayerDefinitionsPanel(_Panel):
         self._layer_names = list(layers)
         self.layers.blockSignals(True)
         self.layers.setRowCount(len(layers))
+        levels = self.document.project.process.levels
         for row, layer in enumerate(layers.values()):
-            values = [layer.name, layer.gds_layer, layer.gds_datatype]
+            values = [
+                layer.name,
+                layer.gds_layer,
+                layer.gds_datatype,
+                stack_place(levels, layer.name),
+            ]
             for column, value in enumerate(values):
                 self.layers.setItem(row, column, QTableWidgetItem(_format(value)))
+            self.layers.item(row, 3).setToolTip(
+                "A level number (1 at the bottom), a level's role (poly1.anchor), or empty"
+            )
         self.layers.blockSignals(False)
+        self.default_level.clear()
+        self.default_level.addItems(["(the first level)", *(lv.layer for lv in levels)])
+        default = self.document.project.process.default_level
+        self.default_level.setCurrentText(default or "(the first level)")
+        self.default_level.setEnabled(bool(levels))
         # the name column also holds the check box and the colour swatch
         header = self.layers.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
@@ -1257,10 +1348,24 @@ class LayerDefinitionsPanel(_Panel):
         texts = [self.layers.item(row, c).text().strip() for c in range(len(self.LAYER_COLUMNS))]
 
         def apply() -> None:
+            if item.column() == 3:
+                process = self.document.project.process
+                levels = moved_in_stack(process.levels, name, texts[3])
+                default = process.default_level
+                self.document.process.set_levels(
+                    levels, default if default in {lv.layer for lv in levels} else None
+                )
+                return
             layer = Layer(texts[0], int(texts[1]), int(texts[2]))
             self.document.process.set_layer(name, layer)
 
         if not self._guard(apply):
+            self.refresh()
+
+    def _default_level_chosen(self, index: int) -> None:
+        levels = self.document.project.process.levels
+        default = None if index <= 0 else self.default_level.itemText(index)
+        if not self._guard(lambda: self.document.process.set_levels(list(levels), default)):
             self.refresh()
 
     def _remove_layers(self) -> None:

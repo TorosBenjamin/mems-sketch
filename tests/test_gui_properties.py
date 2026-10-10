@@ -178,6 +178,32 @@ def test_limits_are_typed_as_expressions_and_exclusive_with_a_mark(window):
     assert doc.active_definition.parameter("enclosure").max is None
 
 
+def test_shapes_and_placements_offer_relative_layers_and_levels(window):
+    from PySide6.QtWidgets import QComboBox
+
+    from mems_sketch import ComponentDef, RefShape
+
+    doc = window.document
+    combos = [c for c in window.properties.findChildren(QComboBox) if c.isEditable()]
+    items = [combos[0].itemText(k) for k in range(combos[0].count())]
+    assert items[:4] == ["level", "level+1", "level-1", "level.anchor"]
+    assert "metal" in items
+    doc.project.define_component(
+        ComponentDef(name="post", shapes=[RectShape(x0=0, y0=0, x1=5, y1=5)])
+    )
+    path = doc.nodes.add(RefShape(name="p", component="post"))
+    window.tree.select_paths([path])
+    level = next(
+        c for c in window.properties.findChildren(QComboBox) if c.toolTip().startswith("The level")
+    )
+    level.setCurrentText("metal")
+    window.properties.apply()
+    assert doc.node(path).level == "metal"
+    assert set(doc.results.geometry("top").layer_names()) >= {"metal"}
+    doc.components.set_level("post", "device")
+    assert doc.project.components["post"].level == "device"
+
+
 def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window, qtbot):
     """Enter in a field, or a click on the eye or a card button, rebuilds the panel
     from inside that widget's own event: the old widgets must outlive the event."""

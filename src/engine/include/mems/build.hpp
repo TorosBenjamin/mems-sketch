@@ -5,8 +5,8 @@
 // Every shape kind (rect, polygon, circle, arc, path, guide, boolean,
 // transform, offset, fillet, layer_map, references to user components), every
 // modifier (array, polar_array, mirror, corners), alignment, point
-// coordinates in expressions and components' declared points
-// (core-architecture.md, step 6). Built-in components are still Python's:
+// coordinates in expressions, components' declared points and levels of the
+// layer stack (core-architecture.md, step 6). Built-in components are still Python's:
 // placing one raises NotSupported, so callers can fall back to the Python
 // backend.
 #pragma once

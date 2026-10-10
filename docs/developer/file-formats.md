@@ -6,10 +6,31 @@
 
 ```
 project.yaml     format: mems-sketch/1, name, top (null: a library), libraries, imports
-process.yaml     constants, layers: {name: {gds: [layer, datatype]}}, rules (below)
+process.yaml     constants, layers: {name: {gds: [layer, datatype]}}, levels, rules (below)
 components/      one file per component; private ones in their owner's folder
 imports/         the imported files
 ```
+
+The layer stack lists levels bottom to top: each level's main layer, and the
+layers that belong to it by role. `default_level` (the first level when left
+out) is where a top component is:
+
+```yaml
+levels:
+- layer: poly0
+- layer: poly1
+  roles:
+    anchor: anchor1
+- layer: poly2
+  roles:
+    anchor: anchor2
+default_level: poly1
+```
+
+A component's `level`, and a `ref`'s, put it on a level; a shape's `layer` is
+`level` (the default: the component's level), `level+1`, `level-1`,
+`level.anchor`, `level-1.anchor`, or a layer by name
+(`mems_sketch.core.levels`).
 
 A rule is written by its name, with its kind, its layers, then its values as
 keys of their own; `severity`, `enabled` and `message` only when they differ

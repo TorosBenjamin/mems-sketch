@@ -100,7 +100,7 @@ but should not have to program. Scripting is there for those who want it.
   by default, e.g. 54.74° for KOH etching of (100) silicon. 3D output, cross-
   sections and meshes use it. It describes the shape of the walls only;
   simulating the etch stays out of scope.
-- **PRC-6** (Must, new) **The layer stack is a list of levels**, bottom to
+- **PRC-6** (Must, exists) **The layer stack is a list of levels**, bottom to
   top (e.g. poly0, poly1, poly2, metal). Each level has its main layer and
   can name **roles** for other layers that belong to it (poly1: `anchor`
   is anchor1, `via` is poly1_poly2_via). One level is the project's
@@ -125,7 +125,7 @@ but should not have to program. Scripting is there for those who want it.
   built-ins. `lib.name` names a library's.
 - **CMP-4** (Must, exists) **Renaming** a component, parameter, shape or point
   updates everything that refers to it.
-- **CMP-5** (Must, changes) A **parameter** has a default (a number or an
+- **CMP-5** (Must, exists) A **parameter** has a default (a number or an
   expression over other parameters and process constants), an optional
   min, max and integer flag, and is **public** (set where the component is
   placed) or **internal** (used only inside, not offered where placed).
@@ -147,7 +147,7 @@ but should not have to program. Scripting is there for those who want it.
   **read-only** and show their interface (geometry, description, public
   parameters, points), not how they are built, unless the user asks to see
   it.
-- **CMP-10** (Must, new) **Every component is on a layer.** A placed
+- **CMP-10** (Must, exists) **Every component is on a layer.** A placed
   component's layer is, first match wins: the one set on the placement; the
   component's own default layer, if it declares one; the layer of the
   component that places it. A top component without a default is on the

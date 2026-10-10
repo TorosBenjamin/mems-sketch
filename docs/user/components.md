@@ -118,6 +118,29 @@ design rules.
 
 ![The Process tab](../images/process.png)
 
+### The layer stack and component levels
+
+The layers' **Level** column places them in the **layer stack**: a number
+makes a layer a level (1 at the bottom), and `poly1.anchor` makes it level
+poly1's *anchor* layer. Any other role name works too (`via`, `dimple`).
+
+Every component is on a level, and its shapes are drawn relative to it:
+
+- a shape's layer `level` is the component's level (a new shape without a
+  layer is there too); `level+1` and `level-1` are the levels above and
+  below; `level.anchor` is the level's anchor layer;
+- a layer by name (`metal`) stays that layer wherever the component is.
+
+A component is on the level its placement chooses (*Level* in its
+properties: `poly2`, or `level+1` relative to the component placing it).
+Without one, it is on its own default level (**Level** in its right-click
+menu in Components), and without that, on the level of the component that
+places it. So one comb drive can be placed on poly1 here and on poly2 there,
+and its anchors follow. A level that runs off the bottom or top of the stack,
+or a role the level does not have, is an error on that placement.
+**Top components on level** below the layers chooses where a component
+without a default is in its own tab.
+
 ### Design rules
 
 Each rule is a **kind** of check on some layers, with values. Values are

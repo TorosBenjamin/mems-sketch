@@ -309,7 +309,7 @@ def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window)
     assert headers(window.layers.layers) == ["Layer", "GDS"]
     window.open_process()
     definitions = window.area.process_view.layers.layers
-    assert headers(definitions) == ["Layer", "GDS", "Datatype"]
+    assert headers(definitions) == ["Layer", "GDS", "Datatype", "Level"]
     rules = window.area.process_view.rules.rules
     assert headers(rules)[:6] == ["Rule", "Kind", "Layers", "Values", "Severity", "Note"]
     row = [rules.item(r, 0).text() for r in range(rules.rowCount())].index("device_min_width")
@@ -406,3 +406,27 @@ def test_the_editor_island_has_all_four_corners_rounded(window, name, qtbot):
     for x, y in ((0, 0), (right, 0), (0, bottom), (right, bottom)):
         pixel = island.mapTo(window, QPoint(x, y))
         assert image.pixelColor(pixel).name() == TOKENS[name]["frame"], (x, y)
+
+
+def test_the_layer_stack_is_edited_in_the_level_column(window):
+    from mems_sketch.core.process import Level
+
+    window.open_process()
+    panel = window.area.process_view.layers
+    table = panel.layers
+    rows = {table.item(r, 0).text(): r for r in range(table.rowCount())}
+    assert table.item(rows["device"], 3).text() == "1"
+    assert table.item(rows["anchor"], 3).text() == "device.anchor"
+    assert table.item(rows["metal"], 3).text() == "2"
+    table.item(rows["metal"], 3).setText("1")  # metal below device
+    process = window.document.project.process
+    assert process.levels == [Level("metal"), Level("device", {"anchor": "anchor"})]
+    table.item(rows["anchor"], 3).setText("metal.anchor")
+    assert process.levels == [Level("metal", {"anchor": "anchor"}), Level("device")]
+    table.item(rows["anchor"], 3).setText("nowhere.anchor")  # refused, shown again
+    assert table.item(rows["anchor"], 3).text() == "metal.anchor"
+    panel.default_level.activated.emit(2)  # device
+    assert process.default_level == "device"
+    table.item(rows["device"], 3).setText("")  # out of the stack: no longer the default
+    assert process.levels == [Level("metal", {"anchor": "anchor"})]
+    assert process.default_level is None

@@ -189,6 +189,17 @@ class ComponentEdits(Commands):
         description = f"Make {name} the top component" if name else "Make the project a library"
         self.session.edit(description, change)
 
+    def set_level(self, name: str, level: str | None) -> None:
+        """The level of the layer stack a local component is on unless placed
+        elsewhere; ``None``: the level of whatever places it."""
+
+        def change(project: Project) -> None:
+            if level is not None and level not in {lv.layer for lv in project.process.levels}:
+                raise ValueError(f"'{level}' is not a level of the layer stack")
+            project.components[name].level = level
+
+        self.session.edit(f"Put {name} on {level or 'the level it is placed on'}", change)
+
     def _check_name(self, name: str, owner: str | None = None) -> str:
         """The path of a new component ``name`` (private to ``owner``), if it is free."""
         if not name.isidentifier():
@@ -322,7 +333,17 @@ class ComponentEdits(Commands):
         return path
 
 
-_NOT_EXPRESSIONS = {"kind", "name", "layer", "component", "op", "ends", "corners", "mapping"}
+_NOT_EXPRESSIONS = {
+    "kind",
+    "name",
+    "layer",
+    "level",
+    "component",
+    "op",
+    "ends",
+    "corners",
+    "mapping",
+}
 
 
 def _parameter_values(definition: ComponentDef, given: dict[str, Value]) -> dict[str, Value]:

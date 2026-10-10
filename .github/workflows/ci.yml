@@ -24,7 +24,7 @@ jobs:
           key: occt-${{ runner.os }}-${{ hashFiles('src/geom/scripts/build-occt.sh') }}
       - name: Build Open CASCADE (only when not cached)
         run: src/geom/scripts/build-occt.sh
-      - name: Install (the package builds its engine: every geometry comes from it)
+      - name: Install (the package builds its engine, which makes all geometry)
         run: SKBUILD_CMAKE_DEFINE="MEMS_SKETCH_REQUIRE_GEOMETRY=ON" pip install -e ".[dev]"
       - name: Lint
         run: |

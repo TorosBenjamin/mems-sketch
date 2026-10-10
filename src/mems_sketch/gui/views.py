@@ -8,7 +8,8 @@ of the main window follow the current tab.
 
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
+import multiprocessing
+from concurrent.futures import Executor, Future, ProcessPoolExecutor, ThreadPoolExecutor
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtWidgets import (
@@ -31,9 +32,25 @@ from mems_sketch.process import rules
 
 MAX_PANES = 2
 # Rule checks of geometry with more points than this run in the background:
-# the edit is on screen at once and the violations follow.
+# the edit is on screen at once and the violations follow. They run in a
+# process of their own, so that their Python work does not slow the window
+# down (threads take turns at the interpreter); in a thread when a rule kind
+# was registered at runtime (another process would not know it).
 BACKGROUND_CHECK_POINTS = 20_000
-_checks = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rule-check")
+_executors: dict[str, Executor] = {}
+
+
+def _checks() -> Executor:
+    if rules.registered_at_runtime():
+        kind = "thread"
+        if kind not in _executors:
+            _executors[kind] = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rule-check")
+    else:
+        kind = "process"
+        if kind not in _executors:
+            context = multiprocessing.get_context("spawn")  # not a fork of a running Qt application
+            _executors[kind] = ProcessPoolExecutor(max_workers=1, mp_context=context)
+    return _executors[kind]
 
 
 class _NoSlideStyle(QProxyStyle):
@@ -144,7 +161,13 @@ class ComponentView(QWidget):
             return
         generation, project, component = self._generation, self.document.project, self.component
         self.checking = True
-        future = _checks.submit(rules.check, project, drawn, component)
+        try:
+            future = _checks().submit(rules.check, project, drawn, component)
+        except (RuntimeError, OSError):  # no process to be had (e.g. a script without a main guard)
+            _executors["process"] = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="rule-check"
+            )
+            future = _checks().submit(rules.check, project, drawn, component)
         future.add_done_callback(lambda f: self._report_check(generation, f))
 
     def _report_check(self, generation: int, future: Future) -> None:

@@ -50,8 +50,21 @@ booleans and offsets go back to the geometry library (`mems_sketch._geom`).
 Polygons cross between C++ and Python as int64 NumPy arrays, never point by
 point; the engine snaps each built region once and gives its box with it, and
 a region caches its box and a hash of its points. Rule checks are cached by
-that hash, and on a big design they run in the background
-(`gui/views.py`): the edit is on screen at once, the violations follow.
+that hash, and on a big design they run in the background, in a process of
+their own (`gui/views.py`): the edit is on screen at once, the violations
+follow.
+
+A component placed whole stays placed: the engine keeps a reference (copied
+by modifiers, turned by transforms) as an *instance* of what it built, and
+`Geometry` has its own polygons plus `instances` of other geometries. One
+geometry per built component (by the engine's cache key) is shared by every
+version of the project, so a layout that places a component a hundred times
+holds, snaps and draws it once: the canvas keeps a painter path per geometry
+and an item per placement, and a refresh keeps the items that did not
+change. `Geometry.layers` flattens on demand (rule checks, exports);
+`bbox`, `touches` and drawing look through the placements instead.
+Operations that work on geometry (booleans, offsets, fillets, layer maps,
+rounded corners) flatten what they are given, in the engine.
 Parameters and their checks stay with the Python model. Placements are plain
 `Transform` values (`core/transform.py`), and code outside the backend uses
 `Geometry`'s methods, never its regions.

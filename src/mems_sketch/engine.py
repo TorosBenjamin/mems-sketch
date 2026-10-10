@@ -54,6 +54,10 @@ class Engine:
         self._core = None
         self._project: Project | None = None
         self._components: dict[str, Component] = {}
+        # Built components as geometry, by the engine's key for them: shared with
+        # the trials, so a component that did not change is the same geometry
+        # in every version of the project (what draws it can keep its drawing).
+        self._cells: dict[str, Geometry] = {}
 
     def load(self, project: Project) -> Engine:
         """Build from ``project`` from now on. It must not change while it is loaded:
@@ -70,7 +74,7 @@ class Engine:
         """Another engine for a variant of the project (e.g. an edit being tried),
         sharing this one's cache; this engine keeps its project."""
         other = Engine()
-        other._root = self._root
+        other._root, other._cells = self._root, self._cells
         return other.load(project)
 
     @property
@@ -158,6 +162,7 @@ class Engine:
 
     def clear(self) -> None:
         """Forget every cached build."""
+        self._cells.clear()
         if self._root is not None:
             self._root.clear()
 
@@ -175,12 +180,13 @@ class Build:
     def _built(self) -> tuple[Geometry, dict[str, Point]]:
         engine = self._engine
         engine.variables(self.component, self.params)  # the model's checks, with its messages
-        layers, points = engine._core.build(self.component, self.params, GRID_UM, CHORD_UM)
-        return _geometry(layers), {name: tuple(p) for name, p in points.items()}
+        key, cells, points = engine._core.tree(self.component, self.params, GRID_UM, CHORD_UM)
+        return _cell(engine, cells, key), {name: tuple(p) for name, p in points.items()}
 
     @property
     def geometry(self) -> Geometry:
-        """The merged geometry, per layer. Raises if the component does not build."""
+        """The geometry, with the components it places as instances (its ``layers``
+        flatten them). Raises if the component does not build."""
         return self._built[0]
 
     def layers(self) -> list[str]:
@@ -211,10 +217,14 @@ class Build:
             self._engine.variables(self.component, self.params)
         except Exception:  # noqa: BLE001 - nothing evaluates; nothing to show
             return {}
-        records, _error = self._engine._core.records(self.component, self.params, GRID_UM, CHORD_UM)
+        records, cells, _error = self._engine._core.records(
+            self.component, self.params, GRID_UM, CHORD_UM
+        )
         result = {}
-        for path, (layers, name, declared, inner, shift) in records.items():
+        for path, (layers, instances, name, declared, inner, shift) in records.items():
             geometry = _geometry(layers)
+            for key, placement in instances:
+                geometry.place(_cell(self._engine, cells, key), _transform(placement))
             points = NodePoints(name, geometry, {k: tuple(p) for k, p in declared.items()})
             result[path] = NodeRecord(geometry, points, _transform(inner), _transform(shift))
         return result
@@ -232,6 +242,21 @@ def _geometry(layers: dict[str, tuple]) -> Geometry:
     for layer, (polygons, box) in layers.items():
         geometry.layers[layer] = Region.from_polygons(polygons, merged=True, box=box)
     return geometry
+
+
+def _cell(engine: Engine, cells: dict[str, tuple], key: str) -> Geometry:
+    """The geometry of the engine's cell ``key`` (``cells`` as its ``tree`` gives
+    them), with the cells it places as instances; one geometry per key."""
+    known = engine._cells
+    if key not in known:
+        if len(known) >= 4096:
+            known.clear()
+        layers, placed = cells[key]
+        geometry = _geometry(layers)
+        for child, placement in placed:
+            geometry.place(_cell(engine, cells, child), _transform(placement))
+        known[key] = geometry
+    return known[key]
 
 
 def _transform(t: tuple[float, float, float, bool, float]) -> Transform:

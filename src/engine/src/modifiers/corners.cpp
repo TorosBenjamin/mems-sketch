@@ -52,7 +52,7 @@ Result apply_corners(const Json& modifier, const Produce& produce, const Variabl
     // Each layer gets the corners that are its own; every corner must be someone's.
     std::vector<bool> found(wanted.size(), false);
     Layers result;
-    for (const auto& [layer, region] : made.layers) {
+    for (const auto& [layer, region] : made.flat()) {  // a placed component's corners too
         std::vector<mgeom::CornerRounding> own;
         for (size_t k = 0; k < wanted.size(); ++k) {
             if (is_corner_of(region, wanted[k].at)) {

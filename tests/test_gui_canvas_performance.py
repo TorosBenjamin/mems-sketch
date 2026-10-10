@@ -50,7 +50,7 @@ def test_the_geometry_and_overlays_are_drawn_from_a_cache(canvas):
     canvas.show_hover(geometry)
     canvas.show_drag_preview(geometry, {"device": QColor("#4c78a8")})
     items = [
-        *canvas._layer_items.values(),
+        *(item for items in canvas._layer_items.values() for item in items),
         *canvas._overlay,
         canvas._hover_item,
         *canvas._drag_items,
@@ -184,9 +184,32 @@ def test_shape_outlines_are_one_pixel_wide(canvas):
     canvas.show_hover(geometry)
     canvas.show_drag_preview(geometry, colors)
     items = [
-        *canvas._layer_items.values(),
+        *(item for items in canvas._layer_items.values() for item in items),
         *canvas._overlay,
         canvas._hover_item,
         *canvas._drag_items,
     ]
     assert all(item.pen().isCosmetic() and item.pen().widthF() <= 1.0 for item in items)
+
+
+def test_a_placed_geometry_is_one_path_and_unchanged_placements_keep_their_items(canvas):
+    from mems_sketch.core.transform import Transform
+
+    plate = Geometry()
+    plate.layers["device"] = plate_with_holes()
+    colors = {"device": QColor("#4c78a8")}
+    top = Geometry()
+    for k in range(4):
+        top.place(plate, Transform(k * 200, 0))
+    canvas.show_geometry(top, colors, {})
+    items = canvas._layer_items["device"]
+    assert len(items) == 4
+    assert len({id(item.path()) for item in items}) <= 4  # one path, shared (Qt copies on write)
+    assert all(item.path() == items[0].path() for item in items)
+    moved = Geometry()
+    for k in range(4):
+        moved.place(plate, Transform(k * 200 if k else -300, 0))  # the first one moved
+    canvas.show_geometry(moved, colors, {})
+    after = canvas._layer_items["device"]
+    assert len(after) == 4
+    assert len(set(map(id, items)) & set(map(id, after))) == 3  # the other three were kept

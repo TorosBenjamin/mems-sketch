@@ -120,6 +120,27 @@ nb::dict layers_dict(const mems::Layers& layers, double grid, double chord) {
     return result;
 }
 
+// Instances as [(cell key, transform)], with every cell they reach added to
+// ``cells``: {key: (own layers, instances)}, each cell once.
+nb::list instances_list(const mems::Instances& instances, nb::dict& cells, double grid, double chord);
+
+void add_cell(const mems::Built& built, nb::dict& cells, double grid, double chord) {
+    nb::str key(built.key.c_str());
+    if (cells.contains(key)) return;
+    cells[key] = nb::none();  // placed in itself never: a placeholder is enough
+    nb::list placed = instances_list(built.instances, cells, grid, chord);
+    cells[key] = nb::make_tuple(layers_dict(built.layers, grid, chord), placed);
+}
+
+nb::list instances_list(const mems::Instances& instances, nb::dict& cells, double grid, double chord) {
+    nb::list result;
+    for (const auto& instance : instances) {
+        add_cell(*instance.built, cells, grid, chord);
+        result.append(nb::make_tuple(nb::str(instance.built->key.c_str()), transform_tuple(instance.transform)));
+    }
+    return result;
+}
+
 nb::dict points_dict(const mems::PointMap& points) {
     nb::dict result;
     for (const auto& [name, point] : points) result[nb::str(name.c_str())] = nb::make_tuple(point.x, point.y);
@@ -189,7 +210,7 @@ NB_MODULE(_core, m) {
                 {
                     nb::gil_scoped_release release;
                     mems::Builder builder(p);
-                    points = builder.build(component, values).points;
+                    points = builder.build(component, values)->points;
                 }
                 nb::dict result;
                 for (const auto& [name, point] : points) result[nb::str(name.c_str())] = nb::make_tuple(point.x, point.y);
@@ -207,7 +228,7 @@ NB_MODULE(_core, m) {
                 {
                     nb::gil_scoped_release release;  // geometry takes a while; Python may go on
                     mems::Builder builder(p);
-                    layers = builder.build(component, values).layers;
+                    layers = builder.build(component, values)->flat();
                 }
                 nb::dict result;
                 for (const auto& [layer, region] : layers)
@@ -232,16 +253,34 @@ NB_MODULE(_core, m) {
             "build",
             [](Engine& e, std::string_view component, const nb::dict& params, double grid, double chord) {
                 const mems::Values values = values_in(params);
-                mems::Built built;
+                std::shared_ptr<const mems::Built> built;
                 {
                     nb::gil_scoped_release release;  // geometry takes a while; Python may go on
                     built = e.builder->build(component, values);
+                    built->flat();
                 }
-                return nb::make_tuple(layers_dict(built.layers, grid, chord), points_dict(built.points));
+                return nb::make_tuple(layers_dict(built->flat(), grid, chord), points_dict(built->points));
             },
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
-            "(layers, points): {layer: ([(hull, [holes])], box)} with points and box in grid units, curves within "
-            "chord; and the declared points, µm.")
+            "(layers, points): everything flattened, {layer: ([(hull, [holes])], box)} with points and box in "
+            "grid units, curves within chord; and the declared points, µm.")
+        .def(
+            "tree",
+            [](Engine& e, std::string_view component, const nb::dict& params, double grid, double chord) {
+                const mems::Values values = values_in(params);
+                std::shared_ptr<const mems::Built> built;
+                {
+                    nb::gil_scoped_release release;
+                    built = e.builder->build(component, values);
+                }
+                nb::dict cells;
+                add_cell(*built, cells, grid, chord);
+                return nb::make_tuple(nb::str(built->key.c_str()), cells, points_dict(built->points));
+            },
+            "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
+            "(key, cells, points): the component as cells, {key: (own layers, [(key, transform)])}, its own "
+            "under ``key``; each component it places whole is a cell of its own, built and snapped once. "
+            "Layers as build() gives them, transforms as (dx, dy, angle, mirror_x, scale).")
         .def(
             "records",
             [](Engine& e, std::string_view component, const nb::dict& params, double grid, double chord) {
@@ -252,20 +291,21 @@ NB_MODULE(_core, m) {
                     nb::gil_scoped_release release;
                     records = e.builder->records(component, values, &error);
                 }
-                nb::dict result;
+                nb::dict result, cells;
                 for (const auto& [path, record] : records) {
                     nb::list steps;
                     for (const auto& [slot, index] : path) steps.append(nb::make_tuple(slot, index));
-                    result[nb::tuple(steps)] =
-                        nb::make_tuple(layers_dict(record.layers, grid, chord), nb::str(record.name.c_str()),
-                                       points_dict(record.declared), transform_tuple(record.inner),
-                                       transform_tuple(record.shift));
+                    result[nb::tuple(steps)] = nb::make_tuple(
+                        layers_dict(record.layers, grid, chord), instances_list(record.instances, cells, grid, chord),
+                        nb::str(record.name.c_str()), points_dict(record.declared), transform_tuple(record.inner),
+                        transform_tuple(record.shift));
                 }
-                return nb::make_tuple(result, error.empty() ? nb::none() : nb::object(nb::str(error.c_str())));
+                return nb::make_tuple(result, cells, error.empty() ? nb::none() : nb::object(nb::str(error.c_str())));
             },
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
-            "({path: (layers, name, declared points, inner, shift)}, error or None): every node of the "
-            "component's own shape tree as evaluated; transforms as (dx, dy, angle, mirror_x, scale).")
+            "({path: (layers, instances, name, declared points, inner, shift)}, cells, error or None): every "
+            "node of the component's own shape tree as evaluated, what it places whole as instances of the "
+            "cells (as tree() gives them); transforms as (dx, dy, angle, mirror_x, scale).")
         .def(
             "clear",
             [](Engine& e) {

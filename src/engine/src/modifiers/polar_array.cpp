@@ -18,6 +18,7 @@ Result apply_polar_array(const Json& modifier, const Produce& produce, const Var
     const double cx = ctx.number(modifier, "x", 0.0), cy = ctx.number(modifier, "y", 0.0);
     const bool rotate = modifier.value("rotate", true);
     LayerSet layers;
+    Instances instances;
     std::optional<PointMap> declared;
     for (int k = 0; k < count; ++k) {
         Variables copy = variables;
@@ -29,15 +30,16 @@ Result apply_polar_array(const Json& modifier, const Produce& produce, const Var
         if (rotate) {
             t = mgeom::Transform::translation(cx, cy) * turn * mgeom::Transform::translation(-cx, -cy);
         } else {  // the copy's centre goes round the circle; it keeps its orientation
-            const mgeom::Box box = bbox_of(made.layers);
+            const mgeom::Box box = bbox_of(made.layers, made.instances);
             const double px = box.empty() ? cx : (box.x0 + box.x1) / 2, py = box.empty() ? cy : (box.y0 + box.y1) / 2;
             const mgeom::Point turned = turn.apply({px - cx, py - cy});
             t = mgeom::Transform::translation(cx + turned.x - px, cy + turned.y - py);
         }
         layers.add(placed(made.layers, t));
+        for (auto& instance : placed(made.instances, t)) instances.push_back(std::move(instance));
         if (!declared) declared = made.points;
     }
-    return {layers.merged(), declared.value_or(PointMap{})};
+    return {layers.merged(), declared.value_or(PointMap{}), std::move(instances)};
 }
 
 }  // namespace mems

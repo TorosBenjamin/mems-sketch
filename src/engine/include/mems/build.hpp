@@ -7,15 +7,19 @@
 // modifier (array, polar_array, mirror, corners), alignment, point
 // coordinates in expressions, components' declared points and levels of the
 // layer stack (core-architecture.md, step 6). Built-in components are built
-// from their definitions like any other. Imported cells are still Python's:
-// placing one raises NotSupported, so callers can fall back to the Python
-// backend.
+// from their definitions like any other; imported cells come as polygons.
+// What a component places whole stays a placed instance of what was built
+// (Built::instances); operations that work on geometry (booleans, offsets,
+// fillets, layer maps, rounded corners) flatten what they are given.
 #pragma once
 
 #include <map>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "mems/project.hpp"
 #include "mgeom/region.hpp"
@@ -37,11 +41,43 @@ public:
 using Layers = std::map<std::string, mgeom::Region, std::less<>>;
 using PointMap = std::map<std::string, mgeom::Point, std::less<>>;
 
-// A built component: its geometry per layer, merged, and its declared points.
-struct Built {
-    Layers layers;
-    PointMap points;
+struct Built;
+
+// A component placed whole (a reference, maybe copied by modifiers, turned by
+// transforms): what was built, and where it goes. Components keep what they
+// place as instances, so each is built once however often it is placed, and
+// whoever draws it can draw it once.
+struct Instance {
+    std::shared_ptr<const Built> built;
+    mgeom::Transform transform;
 };
+using Instances = std::vector<Instance>;
+
+// A built component: its own geometry per layer, merged (everything but what
+// it places whole), the components it places whole, and its declared points.
+struct Built {
+    std::string key;  // what the build cache knows it by: the same key, the same geometry
+    Layers layers;
+    Instances instances;
+    PointMap points;
+    mgeom::Box box;  // around everything, instances included
+
+    // Everything, instances placed and merged in, per layer (worked out once).
+    const Layers& flat() const;
+
+private:
+    mutable std::once_flag flat_once_;
+    mutable Layers flat_;
+};
+
+// Geometry with what it places whole merged in.
+Layers flatten(const Layers& own, const Instances& instances);
+
+// The box around a built component where an instance places it.
+mgeom::Box box_of(const Instance& instance);
+
+// The box around geometry and instances together.
+mgeom::Box bbox_of(const Layers& layers, const Instances& instances);
 
 // Where a node is in a shape tree: for each level, which of its parent's child
 // lists (0 at the top) and its index there (mems_sketch.core.shapes.NodePath).
@@ -52,6 +88,7 @@ using NodePath = std::vector<std::pair<int, int>>;
 // (``inner``), and the move its alignment made (``shift``).
 struct NodeRecord {
     Layers layers;
+    Instances instances;
     std::string name;  // its name, or its kind
     PointMap declared;
     mgeom::Transform inner, shift;
@@ -64,14 +101,14 @@ using Records = std::map<NodePath, NodeRecord>;
 class BuildCache {
 public:
     explicit BuildCache(size_t max_entries = 4096) : max_entries_(max_entries) {}
-    const Built* find(const std::string& key) const;
-    const Built& put(const std::string& key, Built built);
+    std::shared_ptr<const Built> find(const std::string& key) const;
+    std::shared_ptr<const Built> put(std::shared_ptr<const Built> built);
     void clear() { built_.clear(); }
     size_t size() const { return built_.size(); }
 
 private:
     size_t max_entries_;
-    std::map<std::string, Built> built_;
+    std::map<std::string, std::shared_ptr<const Built>> built_;
 };
 
 // Builds the components of one project. Each component built with the same
@@ -84,10 +121,11 @@ public:
     // A component (as written at project level) with the given parameter values,
     // defaults for the rest, on its own level of the layer stack (its default
     // level, else the process's).
-    const Built& build(std::string_view component, const Values& params = {});
+    std::shared_ptr<const Built> build(std::string_view component, const Values& params = {});
 
     // A component by unique name on a given level (or none: no layer stack).
-    const Built& build_on(const std::string& qualified, const Values& params, const OptionalLevel& level);
+    std::shared_ptr<const Built> build_on(const std::string& qualified, const Values& params,
+                                          const OptionalLevel& level);
 
     // Every node of a component's own shape tree as evaluated, by path: what
     // the editor shows and moves. When evaluating fails, the nodes evaluated
@@ -112,7 +150,7 @@ private:
     OptionalLevel level_;  // while a component is built
     NodePath path_;
     Records* recording_ = nullptr;
-    std::map<std::string, Built, std::less<>> imported_;
+    std::map<std::string, std::shared_ptr<const Built>, std::less<>> imported_;
 };
 
 }  // namespace mems

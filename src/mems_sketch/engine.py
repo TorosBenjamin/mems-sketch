@@ -42,6 +42,13 @@ CHORD_UM = 0.005
 PREVIEW = "_preview"  # the component loose shapes are built in
 
 
+def versions() -> dict[str, str]:
+    """The versions of the engine and the geometry library it is built on."""
+    from mems_sketch import _core, _geom
+
+    return {"engine": _core.__version__, "geometry library": _geom.__version__}
+
+
 def _core():
     from mems_sketch import _core
 

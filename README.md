@@ -19,6 +19,21 @@ compensation, mask preparation) and simulation are out of scope.
 
 ## Install and run
 
+**Download the app** from the
+[releases page](https://github.com/TorosBenjamin/mems-sketch/releases): nothing
+else needs to be installed.
+
+- **Windows:** `MEMS_Sketch-<version>-windows-setup.exe` installs it for you
+  (no administrator rights needed); the `-windows-portable.zip` runs from any
+  folder. Windows may warn about an unknown publisher (the app is not signed
+  yet): *More info* → *Run anyway*.
+- **macOS** (Apple silicon): open the `.dmg` and drag *MEMS Sketch* to
+  Applications. The first time, right-click it and choose *Open* (it is not
+  signed yet).
+- **Linux:** make the `.AppImage` executable (`chmod +x`) and run it.
+
+From the source, with Python 3.11 or newer:
+
 ```bash
 pip install -e ".[gui]"                        # add ,matlab for .mat files
 mems-sketch examples/resonator/project.yaml    # the editor

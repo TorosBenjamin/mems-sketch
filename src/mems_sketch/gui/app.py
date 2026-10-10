@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import multiprocessing
 import sys
 from pathlib import Path
 
@@ -1550,7 +1551,27 @@ def _path(steps) -> NodePath:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # First: in a bundled app the rule-check process starts as another copy of
+    # the program, which must run its task, not open a window.
+    multiprocessing.freeze_support()
     argv = sys.argv if argv is None else argv
+    if len(argv) > 1 and argv[1] in ("--version", "--self-test"):
+        from mems_sketch import __version__
+
+        if argv[1] == "--version":
+            print(f"mems-sketch {__version__}")
+            return 0
+        from mems_sketch.gui.selftest import run, say
+
+        try:
+            run()
+        except Exception:  # noqa: BLE001 - reported, and the exit code says so
+            import traceback
+
+            say(traceback.format_exc())
+            say("self-test FAILED")
+            return 1
+        return 0
     app = QApplication.instance() or QApplication(argv)
     app.setApplicationName("MEMS Sketch")
     window = MainWindow()

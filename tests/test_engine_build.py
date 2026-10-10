@@ -28,7 +28,13 @@ from mems_sketch import (
 )
 from mems_sketch.core.compiler import Compiler
 from mems_sketch.core.project import Project, new_project
-from mems_sketch.core.shapes import ArrayModifier
+from mems_sketch.core.shapes import (
+    ArrayModifier,
+    Corner,
+    CornersModifier,
+    MirrorModifier,
+    PolarArrayModifier,
+)
 from mems_sketch.core.shapes.kinds.arc import ArcShape
 from mems_sketch.core.shapes.kinds.fillet import FilletShape
 from mems_sketch.core.shapes.kinds.guide import GuideShape
@@ -649,6 +655,217 @@ def test_kind_errors_alike():
         "path_width": [PathShape(layer="device", points=[(0, 0), (5, 0)], width=0)],
         "guide_point": [GuideShape(x0=1, y0=1, x1=1, y1=1)],
         "fillet_negative": [FilletShape(radius=-1, children=[rect(x0=0, y0=0, x1=4, y1=4)])],
+    }
+    for name, shapes in cases.items():
+        project.components[name] = ComponentDef(name=name, shapes=shapes)
+        assert assert_same(project, name).startswith("both fail"), name
+
+
+# -- the other modifiers ------------------------------------------------------------
+
+BLADE = {"x0": 10, "y0": -1, "x1": 20, "y1": 1}
+MODIFIER_CASES = [
+    ("polar", [rect(**BLADE, modifiers=[PolarArrayModifier(count=6)])], STRAIGHT_NM),
+    (
+        "polar_step",
+        [rect(**BLADE, modifiers=[PolarArrayModifier(count=3, step=30, x=5, y=5)])],
+        STRAIGHT_NM,
+    ),
+    (
+        "polar_upright",
+        [rect(**BLADE, modifiers=[PolarArrayModifier(count=5, rotate=False)])],
+        STRAIGHT_NM,
+    ),
+    (
+        "polar_index",
+        [rect(x0=10, y0=-1, x1="12 + 2 * i", y1=1, modifiers=[PolarArrayModifier(count=4)])],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_x",
+        [
+            PolygonShape(
+                layer="device",
+                points=[(1, 0), (5, 0), (2, 4)],
+                modifiers=[MirrorModifier(axis="x", x=-1)],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_y",
+        [
+            PolygonShape(
+                layer="device",
+                points=[(1, 0), (5, 0), (2, 4)],
+                modifiers=[MirrorModifier(axis="y", y=-2, keep=False)],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_both",
+        [
+            PolygonShape(
+                layer="device",
+                points=[(1, 1), (5, 1), (2, 4)],
+                modifiers=[MirrorModifier(axis="both")],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_guide",
+        [
+            GuideShape(name="axis", x0=0, y0=0, x1=10, y1=5),
+            PolygonShape(
+                layer="device",
+                points=[(1, 3), (5, 6), (2, 9)],
+                modifiers=[MirrorModifier(about="axis")],
+            ),
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_point",
+        [
+            rect(name="hub", x0=-1, y0=-1, x1=1, y1=1),
+            rect(x0=3, y0=0, x1=6, y1=2, modifiers=[MirrorModifier(about="hub.center")]),
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_self",
+        [
+            rect(
+                x0=3,
+                y0=0,
+                x1=6,
+                y1=2,
+                modifiers=[MirrorModifier(about="self.top_left", keep=False)],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_self_x",
+        [rect(x0=3, y0=0, x1=6, y1=2, modifiers=[MirrorModifier(axis="x", x="self.left.x")])],
+        STRAIGHT_NM,
+    ),
+    (
+        "corners_round",
+        [
+            rect(
+                x0=0,
+                y0=0,
+                x1=10,
+                y1=6,
+                modifiers=[
+                    CornersModifier(
+                        corners=[
+                            Corner(at="self.top_right", radius=2),
+                            Corner(at="self.bottom_left", radius=1),
+                        ]
+                    )
+                ],
+            )
+        ],
+        SEGMENTED_NM,
+    ),
+    (
+        "corners_chamfer",
+        [
+            rect(
+                x0=0,
+                y0=0,
+                x1=10,
+                y1=6,
+                modifiers=[
+                    CornersModifier(corners=[Corner(x=10, y=0, radius=1.5, style="chamfer")])
+                ],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "corners_neighbour",
+        [
+            GuideShape(name="cut", x0=4, y0=2, x1=4, y1=8),  # where the slot's corner is
+            BooleanShape(
+                op="subtract",
+                a=[rect(x0=0, y0=0, x1=10, y1=6)],
+                b=[rect(name="slot", x0=4, y0=2, x1=12, y1=8)],
+                modifiers=[
+                    CornersModifier(
+                        corners=[
+                            Corner(x="cut.start.x", y="cut.start.y", radius=0.5),
+                            Corner(at="self.top_left", radius=1),
+                        ]
+                    )
+                ],
+            ),
+        ],
+        SEGMENTED_NM,
+    ),
+    (
+        "stacked",
+        [
+            rect(
+                x0=10,
+                y0=0,
+                x1=14,
+                y1=3,
+                modifiers=[
+                    ArrayModifier(columns=2, dx=6),
+                    MirrorModifier(axis="y"),
+                    PolarArrayModifier(count=3, step=120),
+                ],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "name, shapes, tolerance", MODIFIER_CASES, ids=[c[0] for c in MODIFIER_CASES]
+)
+def test_the_other_modifiers(name, shapes, tolerance):
+    project = new_project("modifiers")
+    project.components[name] = ComponentDef(name=name, shapes=shapes)
+    assert assert_same(project, name, tolerance=tolerance) == "same"
+
+
+def test_modifier_errors_alike():
+    project = new_project("modifier errors")
+    cases = {
+        "polar_count": [rect(**BLADE, modifiers=[PolarArrayModifier(count=2.5)])],
+        "mirror_nowhere": [rect(**BLADE, modifiers=[MirrorModifier(about="ghost.center")])],
+        "mirror_flat_guide": [
+            GuideShape(name="g", x0=1, y0=1, x1=1, y1=1),
+            rect(**BLADE, modifiers=[MirrorModifier(about="g")]),
+        ],
+        "not_a_corner": [
+            rect(x0=0, y0=0, x1=10, y1=6, modifiers=[CornersModifier(corners=[Corner(x=5, y=0)])])
+        ],
+        "too_round": [
+            rect(
+                x0=0,
+                y0=0,
+                x1=10,
+                y1=6,
+                modifiers=[CornersModifier(corners=[Corner(at="self.top_right", radius=7)])],
+            )
+        ],
+        "negative_radius": [
+            rect(
+                x0=0,
+                y0=0,
+                x1=10,
+                y1=6,
+                modifiers=[CornersModifier(corners=[Corner(at="self.top_right", radius=-1)])],
+            )
+        ],
     }
     for name, shapes in cases.items():
         project.components[name] = ComponentDef(name=name, shapes=shapes)

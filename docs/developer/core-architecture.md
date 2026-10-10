@@ -546,16 +546,16 @@ test passing and updates this document.
    components, libraries and imports. Built-in components' parameters stay
    with Python until the built-ins become library components.
 6. **Shape kinds and modifiers in the engine,** on the library. The
-   equivalence test runs from here on. *Started:* the engine builds every
-   shape kind, the array modifier, alignment, point coordinates and
-   declared points (`mems::Builder`, `_core.Project.build` and `points`),
+   equivalence test runs from here on. *Done but for the built-in
+   components:* the engine builds every shape kind and modifier,
+   alignment, point coordinates and declared points (`mems::Builder`, `_core.Project.build` and `points`),
    and raises `NotSupported` for the rest; `tests/test_engine_build.py`
    compares every component it builds with the Python backend, within 1 nm
    on straight edges and the chord tolerance on curves (more where the
    Python backend has turned curves into segments before an operation).
    One difference is deliberate: a bevelled offset cuts every corner at the
    distance from it, where KLayout's sizing agrees only on right angles.
-   Next: the other modifiers, and the built-in components as a library. Then switch the default backend to
+   Next: the built-in components as a library, then the switch. Then switch the default backend to
    the C++ engine. The Python geometry code is removed once the C++ engine
    has been the default for one release.
 7. **New capabilities:** the layer stack, STEP/BREP, the 3D view, meshing

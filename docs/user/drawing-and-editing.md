@@ -88,7 +88,9 @@ too: the rounding belongs to the placement, not to the library.
 ## Properties
 
 The selected shape's fields. The name is the title (click to rename), with an
-eye beside it that switches the shape off or on.
+eye beside it that hides or shows the shape. A hidden shape is not drawn,
+exported or checked, but it keeps its points: shapes aligned to it, or using
+its points, stay where they are.
 
 - **Any number field takes a number or an expression.** An expression is
   tinted and shows its value; a red border means it cannot be evaluated.

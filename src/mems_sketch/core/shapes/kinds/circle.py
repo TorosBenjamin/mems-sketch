@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 
 from mems_sketch.core.component import Geometry
+from mems_sketch.core.levels import LEVEL
 from mems_sketch.core.shapes.base import Point, Primitive, RenderContext, Value
 from mems_sketch.core.shapes.geometry import arc_points, segments
 
@@ -13,7 +14,7 @@ class CircleShape(Primitive):
     icon: ClassVar[str] = "circle"
 
     kind: Literal["circle"] = "circle"
-    layer: str
+    layer: str = LEVEL  # see mems_sketch.core.levels
     x: Value = 0.0
     y: Value = 0.0
     radius: Value
@@ -23,7 +24,9 @@ class CircleShape(Primitive):
         r = ctx.ev(self.radius)
         n = segments(r, self.segments and ctx.ev(self.segments))
         geometry = Geometry()
-        geometry.add_polygon(self.layer, arc_points(ctx.ev(self.x), ctx.ev(self.y), r, 0, 360, n))
+        geometry.add_polygon(
+            ctx.layer(self.layer), arc_points(ctx.ev(self.x), ctx.ev(self.y), r, 0, 360, n)
+        )
         return geometry, {}
 
     def moved(self, x, y, inner) -> dict:

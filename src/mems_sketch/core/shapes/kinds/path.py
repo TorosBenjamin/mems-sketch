@@ -8,6 +8,7 @@ import klayout.db as kdb
 from pydantic import Field
 
 from mems_sketch.core.component import Geometry, to_dbu
+from mems_sketch.core.levels import LEVEL
 from mems_sketch.core.shapes.base import Point, Primitive, RenderContext, Value
 
 
@@ -17,7 +18,7 @@ class PathShape(Primitive):
     icon: ClassVar[str] = "path"
 
     kind: Literal["path"] = "path"
-    layer: str
+    layer: str = LEVEL  # see mems_sketch.core.levels
     points: list[tuple[Value, Value]] = Field(min_length=2)
     width: Value
     ends: Literal["flush", "square", "round"] = "flush"
@@ -29,7 +30,9 @@ class PathShape(Primitive):
             raise ValueError("path width must be positive")
         ext = 0 if self.ends == "flush" else width // 2
         geometry = Geometry()
-        geometry.region(self.layer).insert(kdb.Path(points, width, ext, ext, self.ends == "round"))
+        geometry.region(ctx.layer(self.layer)).insert(
+            kdb.Path(points, width, ext, ext, self.ends == "round")
+        )
         return geometry, {}
 
     def moved(self, x, y, inner) -> dict:

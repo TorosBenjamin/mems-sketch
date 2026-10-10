@@ -10,7 +10,7 @@ Result render_polygon(const Json& node, const Context& ctx) {
     for (const auto& point : node.at("points")) points.push_back({ctx.value(point.at(0)), ctx.value(point.at(1))});
     const auto region = mgeom::Region::polygon(points);
     if (region.empty()) return {};
-    return {Layers{{node.at("layer").get<std::string>(), region}}, {}};
+    return {Layers{{ctx.layer(node), region}}, {}};
 }
 
 }  // namespace mems

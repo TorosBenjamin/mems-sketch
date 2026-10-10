@@ -45,6 +45,15 @@ class Layer:
 
 
 @dataclass
+class Level:
+    """A level of the layer stack: its main layer, and the layers that belong to
+    it by role (``anchor``: the layer anchoring this level to the one below)."""
+
+    layer: str
+    roles: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class Rule:
     """A design rule: a rule kind checked on ``layers`` (in the order the
     kind names them) with ``values`` for its parameters. A rule that is turned
@@ -128,6 +137,8 @@ class Process:
     constants: dict[str, Value] = field(default_factory=dict)
     rules: dict[str, Rule] = field(default_factory=dict)
     decks: dict[str, DeckUse] = field(default_factory=dict)
+    levels: list[Level] = field(default_factory=list)  # the layer stack, bottom to top
+    default_level: str | None = None  # where a top component is; None: the first level
 
     def add_rule(self, rule: Rule) -> Rule:
         if rule.name in self.rules:
@@ -138,6 +149,23 @@ class Process:
     def scope(self) -> dict[str, float]:
         """Resolved constants keyed as they appear in expressions (``process.name``)."""
         return {PROCESS_PREFIX + k: v for k, v in resolve_variables(self.constants).items()}
+
+
+def check_levels(levels: list[Level], default: str | None, layers: dict[str, Layer]) -> None:
+    """A layer stack names layers that exist, each at most once, and its default
+    level is one of its levels."""
+    seen: set[str] = set()
+    for level in levels:
+        for role, name in [("", level.layer), *level.roles.items()]:
+            if name not in layers:
+                raise ValueError(f"the layer stack names layer '{name}', which does not exist")
+            if name in seen:
+                raise ValueError(f"layer '{name}' is in the layer stack twice")
+            seen.add(name)
+            if role and not role.isidentifier():
+                raise ValueError(f"'{role}' is not a valid role name")
+    if default is not None and default not in {level.layer for level in levels}:
+        raise ValueError(f"the default level '{default}' is not a level of the layer stack")
 
 
 def default_process() -> Process:
@@ -164,4 +192,5 @@ def default_process() -> Process:
         },
         constants={"undercut": 2.0},
         rules={rule.name: rule for rule in rules},
+        levels=[Level("device", {"anchor": "anchor"}), Level("metal")],
     )

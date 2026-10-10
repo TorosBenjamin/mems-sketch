@@ -14,7 +14,12 @@ from mems_sketch.core.transform import Transform
 
 
 class RefShape(Node):
-    """An instance of a built-in or user-defined component."""
+    """An instance of a built-in or user-defined component.
+
+    ``level`` puts it on a level of the layer stack (``poly2``, or relative:
+    ``level+1``); left out, it is on its own default level if it declares one,
+    else on the level of the component placing it (mems_sketch.core.levels).
+    """
 
     category: ClassVar[str] = "reference"
     icon: ClassVar[str] = "component"
@@ -27,11 +32,17 @@ class RefShape(Node):
     y: Value = 0.0
     rotation: Value = 0.0  # degrees, counter-clockwise
     mirror_x: bool = False
+    level: str | None = None
 
     def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
         child = ctx.lookup(self.component)
         child.check_placement(self.params)
-        built, points = child.compile(resolve_params(child, self.params, ctx.variables))
+        try:
+            level = ctx.stack.place(self.level, child.default_level, ctx.level)
+        except ValueError as error:
+            raise ValueError(f"'{self.name or self.component}': {error}") from None
+        params = resolve_params(child, self.params, ctx.variables)
+        built, points = child.compile(params, level)
         transform = self.placement(ctx.variables)
         geometry = Geometry()
         geometry.merge(built, transform)

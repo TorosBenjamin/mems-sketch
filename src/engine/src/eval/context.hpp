@@ -51,6 +51,10 @@ struct Context {
     double number(const Json& node, const char* key, double fallback) const;
     double number(const Json& node, const char* key) const;
 
+    // The layer a primitive draws on: its ``layer`` (default ``level``) on the
+    // component's level of the layer stack.
+    std::string layer(const Json& node) const { return builder.layer(node.value("layer", std::string("level"))); }
+
     // Sibling child lists evaluated together (names in one are visible in the
     // others), each merged per layer; ``scope`` replaces the visible points.
     std::vector<Layers> children(const std::vector<const Json*>& lists, const Scope* scope = nullptr) const;

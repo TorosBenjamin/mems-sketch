@@ -71,6 +71,7 @@ void collect_references(const Json& node, std::set<std::string>& found) {
 ComponentDef component_from(const Json& j) {
     ComponentDef def;
     def.name = j.at("name").get<std::string>();
+    if (j.contains("level") && !j["level"].is_null()) def.level = j["level"].get<std::string>();
     const Json parameters = j.value("parameters", Json::array());
     for (const auto& p : parameters) {
         ParamDef param;
@@ -131,6 +132,15 @@ Project Project::from_json(std::string_view text) {
     const Json process = j.value("process", Json::object());
     const Json constants = process.value("constants", Json::object());
     for (const auto& [name, value] : constants.items()) p.constants_.emplace_back(name, value_of(value));
+    const Json levels = process.value("levels", Json::array());
+    for (const auto& entry : levels) {
+        Level level{entry.at("layer").get<std::string>(), {}};
+        const Json roles = entry.value("roles", Json::object());
+        for (const auto& [role, layer] : roles.items()) level.roles[role] = layer.get<std::string>();
+        p.levels_.push_back(std::move(level));
+    }
+    if (process.contains("default_level") && !process["default_level"].is_null())
+        p.default_level_ = process["default_level"].get<std::string>();
     const Json components = j.value("components", Json::object());
     for (const auto& [name, def] : components.items()) {
         p.local_.order.push_back(name);

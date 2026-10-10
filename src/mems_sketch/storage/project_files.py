@@ -38,10 +38,12 @@ from mems_sketch.core.process import (
     RULE_FIELDS,
     DeckUse,
     Layer,
+    Level,
     Process,
     Rule,
     RuleDeck,
     RuleOverride,
+    check_levels,
     layer_rules,
 )
 from mems_sketch.core.project import Library, Project
@@ -143,6 +145,13 @@ def process_data(process: Process, folder: str | Path | None = None) -> dict[str
     if process.constants:
         data["constants"] = yaml_format.to_data(process.constants)
     data["layers"] = layers
+    if process.levels:
+        data["levels"] = [
+            {"layer": level.layer, **({"roles": dict(level.roles)} if level.roles else {})}
+            for level in process.levels
+        ]
+    if process.default_level is not None:
+        data["default_level"] = process.default_level
     if process.rules:
         data["rules"] = {rule.name: _rule_data(rule) for rule in process.rules.values()}
     if process.decks:
@@ -384,7 +393,27 @@ def process_from_data(data: dict[str, Any], folder: str | Path | None = None) ->
         str(name): _deck_use_from_data(str(name), entry or {}, base)
         for name, entry in (data.get("decks") or {}).items()
     }
-    return Process(layers=layers, constants=constants, rules=rules, decks=decks)
+    levels = [
+        Level(
+            layer=str(entry["layer"]),
+            roles={str(k): str(v) for k, v in (entry.get("roles") or {}).items()},
+        )
+        for entry in data.get("levels") or []
+    ]
+    default_level = data.get("default_level")
+    default_level = None if default_level is None else str(default_level)
+    try:
+        check_levels(levels, default_level, layers)
+    except ValueError as error:
+        raise ProjectFormatError(str(error)) from None
+    return Process(
+        layers=layers,
+        constants=constants,
+        rules=rules,
+        decks=decks,
+        levels=levels,
+        default_level=default_level,
+    )
 
 
 def _load_components(folder: Path) -> dict[str, ComponentDef]:

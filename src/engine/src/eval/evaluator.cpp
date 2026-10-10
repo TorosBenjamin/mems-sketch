@@ -326,14 +326,27 @@ const Built& Builder::build(std::string_view component, const Values& params) {
     const ComponentDef* definition = project_.definition(qualified);
     if (!definition)
         throw NotSupported("'" + qualified + "' is a built-in or imported component: Python builds those for now");
+    return build_on(qualified, params, project_.top_level(definition->level));
+}
+
+const Built& Builder::build_on(const std::string& qualified, const Values& params, const OptionalLevel& level) {
+    const ComponentDef* definition = project_.definition(qualified);
+    if (!definition)
+        throw NotSupported("'" + qualified + "' is a built-in or imported component: Python builds those for now");
     const auto values = project_.variables(qualified, params);
-    std::string key = project_.fingerprint(qualified);
+    std::string key = project_.fingerprint(qualified) + "@" + (level ? *level : std::string("-"));
     for (const auto& [name, value] : values) {
         char buffer[40];
         std::snprintf(buffer, sizeof buffer, "%.17g", value);
         key += "|" + name + "=" + buffer;
     }
     if (const auto found = cache_.find(key); found != cache_.end()) return found->second;
+    struct Restore {  // the level of the component that placed this one, after it
+        OptionalLevel& level;
+        OptionalLevel saved;
+        ~Restore() { level = std::move(saved); }
+    } restore{level_, level_};
+    level_ = level;
     const Variables variables(values.begin(), values.end());
     Rendered rendered = render_lists({&definition->shapes->json}, *this, qualified, variables, Scope{});
 

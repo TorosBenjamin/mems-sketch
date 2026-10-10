@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from mems_sketch.core.component import DBU_UM, Geometry, to_dbu
 from mems_sketch.core.expressions import evaluate
+from mems_sketch.core.levels import NO_STACK, Stack
 from mems_sketch.core.shapes.base import Point, RenderContext
 from mems_sketch.core.shapes.geometry import apply_transform
 from mems_sketch.core.shapes.modifiers import apply_stack
@@ -47,9 +48,13 @@ class Evaluator:
         self,
         lookup: Callable[[str], Component],
         record: dict[NodePath, NodeRecord] | None = None,
+        level: str | None = None,
+        stack: Stack = NO_STACK,
     ) -> None:
         self.lookup = lookup
         self.record = record
+        self.level = level  # the component's level of the layer stack
+        self.stack = stack
         self._dependencies: dict[int, set[str]] = {}
 
     def render(
@@ -179,7 +184,9 @@ class Evaluator:
         def render_lists(lists, inner_scope) -> list[Geometry]:
             return self._render_lists(lists, v, inner_scope, path)[0]
 
-        return shape.render(RenderContext(v, scope, self.lookup, render_lists))
+        return shape.render(
+            RenderContext(v, scope, self.lookup, render_lists, self.level, self.stack)
+        )
 
 
 def transform_of(shape: Shape, v: dict[str, float]) -> Transform:

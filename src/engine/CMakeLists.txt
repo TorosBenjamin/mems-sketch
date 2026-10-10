@@ -36,6 +36,7 @@ endif()
 add_library(mems_engine
     src/expr/expression.cpp
     src/model/project.cpp
+    src/model/levels.cpp
     src/util/sha256.cpp
     src/eval/evaluator.cpp
     src/shapes/kinds.cpp

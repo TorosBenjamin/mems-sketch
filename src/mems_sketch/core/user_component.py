@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from mems_sketch.core.component import Component, Geometry, Params
 from mems_sketch.core.expressions import RESERVED_NAMES, evaluate, resolve_variables
+from mems_sketch.core.levels import NO_STACK, Stack
 from mems_sketch.core.shapes import (
     BBOX_POINTS,
     INDEX_NAMES,
@@ -175,10 +176,15 @@ class ComponentDef(_Model):
     ``name`` is its path: ``plate`` for a shared component, ``comb/finger`` for
     ``finger``, a *private* component of ``comb`` (see
     :mod:`mems_sketch.core.project` for what can place it).
+
+    ``level`` is the level of the layer stack it is on unless a placement says
+    otherwise; without one it is on the level of whatever places it
+    (:mod:`mems_sketch.core.levels`).
     """
 
     name: str
     description: str = ""
+    level: str | None = None
     parameters: list[ParamDef] = Field(default_factory=list)
     points: list[PointDef] = Field(default_factory=list)
     shapes: list[Shape] = Field(default_factory=list)
@@ -281,10 +287,13 @@ class UserComponent(Component):
         definition: ComponentDef,
         lookup: Callable[[str], Component],
         scope: Mapping[str, float] | None = None,
+        stack: Stack = NO_STACK,
     ) -> None:
         self.definition = definition
         self.type_name = definition.name
+        self.default_level = definition.level
         self.scope = dict(scope or {})
+        self.stack = stack
         self.Params = _params_model(definition, self.scope)
         self.internal = frozenset(p.name for p in definition.parameters if p.internal)
         self._lookup = lookup
@@ -295,9 +304,12 @@ class UserComponent(Component):
     def points(self, params: Params) -> dict[str, Point]:
         return self.compile(params)[1]
 
-    def compile(self, params: Params) -> tuple[Geometry, dict[str, Point]]:
+    def compile(
+        self, params: Params, level: str | None = None
+    ) -> tuple[Geometry, dict[str, Point]]:
         variables = {**self.scope, **{k: float(v) for k, v in params.model_dump().items()}}
-        geometry, local = Evaluator(self._lookup).render_scoped(self.definition.shapes, variables)
+        evaluator = Evaluator(self._lookup, level=level, stack=self.stack)
+        geometry, local = evaluator.render_scoped(self.definition.shapes, variables)
         return geometry, declared_points(self.definition, variables, local, geometry)
 
 

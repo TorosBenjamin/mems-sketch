@@ -18,7 +18,8 @@ class LayerMapShape(Operation):
 
     ``mapping`` sends source layer -> target layer; several sources may merge
     into one target. Layers not in ``mapping`` are dropped unless
-    ``keep_unmapped`` is set.
+    ``keep_unmapped`` is set. Both sides may be relative to the component's
+    level (``level``, ``level-1.anchor``; see :mod:`mems_sketch.core.levels`).
     """
 
     icon: ClassVar[str] = "layer_map"
@@ -37,8 +38,11 @@ class LayerMapShape(Operation):
 
     def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
         geometry = Geometry()
+        mapping: dict[str, str] = {}
+        for source, target in self.mapping.items():
+            mapping.setdefault(ctx.layer(source), ctx.layer(target))
         for layer, region in ctx.children([self.children])[0].layers.items():
-            target = self.mapping.get(layer, layer if self.keep_unmapped else None)
+            target = mapping.get(layer, layer if self.keep_unmapped else None)
             if target is not None:
                 geometry.region(target).insert(region)
         return geometry, {}

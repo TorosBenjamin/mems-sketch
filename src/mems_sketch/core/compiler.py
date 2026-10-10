@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from mems_sketch.core.component import Component, Geometry, Params, get_component, resolve_params
 from mems_sketch.core.imports import ImportedComponent
+from mems_sketch.core.levels import Stack
 from mems_sketch.core.shapes import Evaluator, NodePath, NodeRecord, Point, Shape
 from mems_sketch.core.user_component import UserComponent
 
@@ -73,7 +74,8 @@ class Session:
         self.compiler = compiler
         self.project = project
         self.scope = project.process.scope()
-        self._scope_key = json.dumps(self.scope, sort_keys=True)
+        self.stack = Stack.of(project.process.levels, project.process.default_level)
+        self._scope_key = json.dumps(self.scope, sort_keys=True) + self.stack.key()
         self._fingerprints: dict[str, str] = {}
         self._components: dict[str, Component] = {}
 
@@ -92,7 +94,7 @@ class Session:
             else:
                 definition, inside = found
                 inner = UserComponent(
-                    definition, lambda n, c=inside: self.component(n, c), self.scope
+                    definition, lambda n, c=inside: self.component(n, c), self.scope, self.stack
                 )
             self._components[qualified] = _CachedComponent(inner, qualified, self)
         return self._components[qualified]
@@ -122,16 +124,22 @@ class Session:
 
     # -- building ----------------------------------------------------------
 
-    def compile(self, qualified: str, inner: Component, params: Params) -> Compiled:
-        key = _hash(self.fingerprint(qualified), params.model_dump_json(), self._scope_key)
+    def compile(
+        self, qualified: str, inner: Component, params: Params, level: str | None = None
+    ) -> Compiled:
+        key = _hash(
+            self.fingerprint(qualified), params.model_dump_json(), self._scope_key, repr(level)
+        )
         cached = self.compiler._get(key)
         if cached is None:
-            cached = inner.compile(params)
+            cached = inner.compile(params, level)
             self.compiler._put(key, cached)
         return cached
 
-    def build(self, qualified: str, inner: Component, params: Params) -> Geometry:
-        return self.compile(qualified, inner, params)[0]
+    def level(self, component: str) -> str | None:
+        """The level of the layer stack a component is on when built on its own
+        (its tab, an export): its default level, else the process's."""
+        return self.stack.top_level(self.component(component).default_level)
 
     def variables(self, component: str, params: dict[str, Any] | None = None) -> dict[str, float]:
         """Resolved parameters of a component (defaults unless given) plus ``process.*``."""
@@ -142,13 +150,15 @@ class Session:
     def points(self, component: str, params: dict[str, Any] | None = None) -> dict[str, Point]:
         """Declared alignment points of a component (defaults unless given)."""
         built = self.component(component)
-        return built.points(resolve_params(built, params or {}, self.scope))
+        return built.compile(
+            resolve_params(built, params or {}, self.scope), self.level(component)
+        )[1]
 
     def render(self, component: str, params: dict[str, Any] | None = None) -> Geometry:
         """Merged geometry of a component. The result is a fresh copy the caller may modify."""
         built = self.component(component)
-        geometry = built.build(resolve_params(built, params or {}, self.scope))
-        return geometry.merged()
+        params = resolve_params(built, params or {}, self.scope)
+        return built.compile(params, self.level(component))[0].merged()
 
     def inspect(
         self, component: str, params: dict[str, Any] | None = None
@@ -164,7 +174,9 @@ class Session:
         if found is None:  # a built-in has no shape tree
             return record
         definition, context = found
-        evaluator = Evaluator(lambda n: self.component(n, context), record)
+        evaluator = Evaluator(
+            lambda n: self.component(n, context), record, self.level(component), self.stack
+        )
         # On failure, what was evaluated so far is still useful to show.
         with contextlib.suppress(Exception):
             evaluator.render(definition.shapes, self.variables(component, params))
@@ -174,8 +186,10 @@ class Session:
         self, shapes: list[Shape], variables: dict[str, float], context: str | None = None
     ) -> Geometry:
         """Evaluate loose shapes in a scope, e.g. one node of a component being edited
-        (``context``: that component, for the names its references use)."""
-        return Evaluator(lambda n: self.component(n, context)).render(shapes, variables)
+        (``context``: that component, for the names its references use and its level)."""
+        level = self.level(context) if context is not None else self.stack.top_level(None)
+        evaluator = Evaluator(lambda n: self.component(n, context), level=level, stack=self.stack)
+        return evaluator.render(shapes, variables)
 
 
 class _CachedComponent(Component):
@@ -189,6 +203,7 @@ class _CachedComponent(Component):
         self.type_name = qualified
         self.Params = inner.Params
         self.internal = inner.internal
+        self.default_level = inner.default_level
         self._session = session
 
     def build(self, params: Params) -> Geometry:
@@ -197,8 +212,8 @@ class _CachedComponent(Component):
     def points(self, params: Params) -> dict[str, Point]:
         return self.compile(params)[1]
 
-    def compile(self, params: Params) -> Compiled:
-        return self._session.compile(self.type_name, self.inner, params)
+    def compile(self, params: Params, level: str | None = None) -> Compiled:
+        return self._session.compile(self.type_name, self.inner, params, level)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.inner, name)

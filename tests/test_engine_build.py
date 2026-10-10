@@ -27,6 +27,7 @@ from mems_sketch import (
     TransformShape,
 )
 from mems_sketch.core.compiler import Compiler
+from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.project import Project, new_project
 from mems_sketch.core.shapes import (
     ArrayModifier,
@@ -870,3 +871,62 @@ def test_modifier_errors_alike():
     for name, shapes in cases.items():
         project.components[name] = ComponentDef(name=name, shapes=shapes)
         assert assert_same(project, name).startswith("both fail"), name
+
+
+def stacked() -> Project:
+    """Components on levels of a layer stack: relative layers, roles, a default
+    level, placements on other levels, a relative layer_map."""
+    project = new_project("stacked")
+    for number, name in enumerate(["anchor0", "poly0", "anchor1", "poly1", "via12", "poly2"]):
+        project.add_layer(Layer(name, number + 10))
+    project.process.levels = [
+        Level("poly0", {"anchor": "anchor0"}),
+        Level("poly1", {"anchor": "anchor1"}),
+        Level("poly2", {"via": "via12"}),
+    ]
+    square = {"x0": 0, "y0": 0, "x1": 10, "y1": 10}
+    project.components["post"] = ComponentDef(
+        name="post",
+        shapes=[RectShape(**square), RectShape(layer="level.anchor", x0=2, y0=2, x1=8, y1=8)],
+    )
+    project.components["high"] = ComponentDef(
+        name="high", level="poly2", shapes=[RectShape(**square), rect(**square)]
+    )
+    project.components["pair"] = ComponentDef(
+        name="pair",
+        shapes=[
+            RefShape(component="post"),
+            RefShape(component="post", level="level+1", x=20),
+            RefShape(component="high", x=40),
+            RefShape(component="high", level="poly0", x=60),
+            LayerMapShape(
+                children=[RectShape(x0=80, y0=0, x1=90, y1=10)], mapping={"level": "level+2.via"}
+            ),
+        ],
+    )
+    project.components["too_high"] = ComponentDef(
+        name="too_high", shapes=[RefShape(component="pair", level="level+2")]
+    )
+    project.components["no_role"] = ComponentDef(
+        name="no_role", level="poly2", shapes=[RectShape(layer="level.anchor", **square)]
+    )
+    project.components["on_a_role"] = ComponentDef(
+        name="on_a_role", shapes=[RefShape(component="post", level="level.anchor")]
+    )
+    project.top_component.shapes = [RefShape(component="pair")]
+    return project
+
+
+@pytest.mark.parametrize("default", [None, "poly0", "poly1"])
+def test_levels(default):
+    project = stacked()
+    project.process.default_level = default
+    for name in ("post", "high", "pair", "top"):
+        if default == "poly1" and name in ("pair", "top"):  # its high post: above the top
+            assert assert_same(project, name).startswith("both fail"), name
+        else:
+            assert assert_same(project, name) == "same", name
+    for name in ("too_high", "no_role", "on_a_role"):
+        assert assert_same(project, name).startswith("both fail"), name
+    project.process.levels = []
+    assert assert_same(project, "post").startswith("both fail")

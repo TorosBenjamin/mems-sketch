@@ -8,6 +8,11 @@ layers:
     gds: [2, 0]
   metal:
     gds: [3, 0]
+levels:
+- layer: device
+  roles:
+    anchor: anchor
+- layer: metal
 rules:
   device_min_width:
     kind: min_width

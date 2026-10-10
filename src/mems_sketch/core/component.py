@@ -178,6 +178,9 @@ class Component:
     Params: ClassVar[type[Params]]
     # Parameters only the component itself uses: a placement cannot set them.
     internal: frozenset[str] = frozenset()
+    # The level of the layer stack it is on unless placed elsewhere (None: the
+    # level of whatever places it); see mems_sketch.core.levels.
+    default_level: str | None = None
 
     def public_params(self) -> dict[str, Any]:
         """The parameters a placement may set (name -> pydantic field info)."""
@@ -206,8 +209,11 @@ class Component:
         """
         return {}
 
-    def compile(self, params: Params) -> tuple[Geometry, dict[str, tuple[float, float]]]:
-        """Geometry and alignment points together (one evaluation for user components)."""
+    def compile(
+        self, params: Params, level: str | None = None
+    ) -> tuple[Geometry, dict[str, tuple[float, float]]]:
+        """Geometry and alignment points together (one evaluation for user components),
+        on a level of the layer stack (which components with fixed layers ignore)."""
         return self.build(params), self.points(params)
 
 

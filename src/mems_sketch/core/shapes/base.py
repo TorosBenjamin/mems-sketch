@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from mems_sketch.core.expressions import evaluate
+from mems_sketch.core.levels import NO_STACK, Stack
 from mems_sketch.core.shapes.modifiers import AnyModifier, ArrayModifier
 
 if TYPE_CHECKING:
@@ -76,9 +77,15 @@ class RenderContext:
     scope: Mapping[str, NodePoints]  # the named nodes it can see
     lookup: Callable[[str], Component]  # components by name, for references
     render_lists: Callable[[list[list[Shape]], Mapping[str, NodePoints]], list[Geometry]]
+    level: str | None = None  # the component's level of the layer stack
+    stack: Stack = NO_STACK
 
     def ev(self, value: Value) -> float:
         return evaluate(value, self.variables)
+
+    def layer(self, spec: str) -> str:
+        """The layer a shape's ``layer`` names (``level-1``, ``level.anchor``, ``metal``)."""
+        return self.stack.layer(spec, self.level)
 
     def children(
         self, lists: list[list[Shape]], scope: Mapping[str, NodePoints] | None = None

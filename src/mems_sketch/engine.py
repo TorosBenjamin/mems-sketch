@@ -168,7 +168,14 @@ def project_data(project: Project) -> dict[str, Any]:
     return {
         "name": project.name,
         "top": project.top,
-        "process": {"constants": dict(project.process.constants)},
+        "process": {
+            "constants": dict(project.process.constants),
+            "levels": [
+                {"layer": level.layer, "roles": dict(level.roles)}
+                for level in project.process.levels
+            ],
+            "default_level": project.process.default_level,
+        },
         "components": {name: component(d) for name, d in project.components.items()},
         "libraries": {
             name: {n: component(d) for n, d in library.components.items()}

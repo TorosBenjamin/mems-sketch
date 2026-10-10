@@ -8,7 +8,9 @@
 // pydantic model (which has validated it):
 //
 //   {"name": ..., "top": "top" | null,
-//    "process": {"constants": {"gap": 2, "pitch": "2 * gap"}},
+//    "process": {"constants": {"gap": 2, "pitch": "2 * gap"},
+//                "levels": [{"layer": "poly1", "roles": {"anchor": "anchor1"}}],
+//                "default_level": "poly1" | null},
 //    "components": {"top": <ComponentDef>, "comb/finger": <ComponentDef>},
 //    "libraries": {"std": {"anchor": <ComponentDef>}},
 //    "imports": {"pads": {"digest": ..., "cell": ..., "layers": {...}}},
@@ -61,8 +63,18 @@ struct ParamDef {
 
 struct ShapeTree;  // a component's shapes as read (see src/model/shape_tree.hpp)
 
+// A level of the layer stack: its main layer and the layers that belong to it
+// by role (mems_sketch.core.process.Level).
+struct Level {
+    std::string layer;
+    std::map<std::string, std::string> roles;
+};
+
+using OptionalLevel = std::optional<std::string>;
+
 struct ComponentDef {
     std::string name;  // its path: "plate", "comb/finger"
+    OptionalLevel level;  // the level it is on unless placed elsewhere
     std::vector<ParamDef> parameters;
     std::vector<std::string> references;  // the components its ref shapes name, as written, sorted
     std::string canonical;                // its definition as canonical JSON (for the fingerprint)
@@ -99,6 +111,15 @@ public:
     // with the process constants.
     std::map<std::string, double> variables(std::string_view component, const Values& given = {}) const;
 
+    // The layer stack (mems_sketch.core.levels): the level of a component built
+    // on its own (``own``: its default level); the level of a placed one (the
+    // placement's ``spec``, else ``own``, else the placing component's
+    // ``current``); the layer a shape's ``layer`` names on level ``current``.
+    const std::vector<Level>& levels() const { return levels_; }
+    OptionalLevel top_level(const OptionalLevel& own) const;
+    OptionalLevel place(const OptionalLevel& spec, const OptionalLevel& own, const OptionalLevel& current) const;
+    std::string layer(const std::string& spec, const OptionalLevel& current) const;
+
     // A hash of everything a component's geometry depends on except its
     // parameter values and the process constants: its definition and,
     // recursively, those of what it places.
@@ -119,6 +140,8 @@ private:
     std::string name_;
     std::optional<std::string> top_;
     std::vector<std::pair<std::string, Value>> constants_;
+    std::vector<Level> levels_;
+    OptionalLevel default_level_;
     Library local_;
     std::vector<std::string> library_order_;
     std::map<std::string, Library, std::less<>> libraries_;

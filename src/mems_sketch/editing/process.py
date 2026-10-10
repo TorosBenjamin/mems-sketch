@@ -6,7 +6,16 @@ import dataclasses
 from pathlib import Path
 from typing import Any
 
-from mems_sketch.core.process import RULE_FIELDS, DeckUse, Layer, Rule, RuleDeck, RuleOverride
+from mems_sketch.core.process import (
+    RULE_FIELDS,
+    DeckUse,
+    Layer,
+    Level,
+    Rule,
+    RuleDeck,
+    RuleOverride,
+    check_levels,
+)
 from mems_sketch.core.project import Project
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
@@ -52,7 +61,17 @@ class ProcessEdits(Commands):
                 (layer.name if k == name else k): (layer if k == name else v)
                 for k, v in project.layers.items()
             }
-            if layer.name != name:  # the rules follow a renamed layer
+            if layer.name != name:  # the rules and the layer stack follow a renamed layer
+                process = project.process
+                process.levels = [
+                    Level(
+                        layer.name if lv.layer == name else lv.layer,
+                        {r: layer.name if n == name else n for r, n in lv.roles.items()},
+                    )
+                    for lv in process.levels
+                ]
+                if process.default_level == name:
+                    process.default_level = layer.name
                 for rule in project.process.rules.values():
                     rule.layers = [layer.name if n == name else n for n in rule.layers]
                 for use in project.process.decks.values():  # deck rules by an override
@@ -75,7 +94,29 @@ class ProcessEdits(Commands):
         return name
 
     def remove_layer(self, name: str) -> None:
-        self.session.edit(f"Delete layer {name}", lambda p: p.layers.pop(name))
+        def change(project: Project) -> None:
+            project.layers.pop(name)
+            process = project.process
+            process.levels = [
+                Level(lv.layer, {r: n for r, n in lv.roles.items() if n != name})
+                for lv in process.levels
+                if lv.layer != name
+            ]
+            if process.default_level == name:
+                process.default_level = None
+
+        self.session.edit(f"Delete layer {name}", change)
+
+    def set_levels(self, levels: list[Level], default: str | None = None) -> None:
+        """The layer stack, bottom to top, and the level a top component is on
+        (None: the first)."""
+
+        def change(project: Project) -> None:
+            check_levels(levels, default, project.layers)
+            project.process.levels = list(levels)
+            project.process.default_level = default
+
+        self.session.edit("Edit layer stack", change)
 
     # -- design rules --------------------------------------------------------
 

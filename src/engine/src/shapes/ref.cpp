@@ -32,7 +32,17 @@ Result render_ref(const Json& node, const Context& ctx) {
     }
     const mgeom::Transform placement{ctx.number(node, "x", 0.0), ctx.number(node, "y", 0.0),
                                      ctx.number(node, "rotation", 0.0), node.value("mirror_x", false), 1.0};
-    const Built& built = ctx.builder.build(target, values);
+    OptionalLevel level;
+    try {
+        OptionalLevel spec;
+        if (node.contains("level") && !node["level"].is_null()) spec = node["level"].get<std::string>();
+        level = project.place(spec, definition->level, ctx.builder.level());
+    } catch (const ModelError& error) {
+        const std::string name = node.contains("name") && node["name"].is_string() ? node["name"].get<std::string>()
+                                                                                    : node["component"].get<std::string>();
+        throw BuildError("'" + name + "': " + error.what());
+    }
+    const Built& built = ctx.builder.build_on(target, values, level);
     Result result;
     for (const auto& [layer, region] : built.layers) result.layers.emplace(layer, region.transformed(placement));
     for (const auto& [name, point] : built.points) result.points.emplace(name, placement.apply(point));

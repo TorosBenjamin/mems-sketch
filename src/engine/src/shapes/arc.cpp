@@ -11,7 +11,7 @@ Result render_arc(const Json& node, const Context& ctx) {
     const double start = ctx.number(node, "start_angle", 0.0), end = ctx.number(node, "end_angle", 360.0);
     if (!(0 <= r_in && r_in < r_out)) throw BuildError("arc needs 0 <= inner_radius < outer_radius");
     if (end <= start) throw BuildError("arc end_angle must be greater than start_angle");
-    const std::string layer = node.at("layer").get<std::string>();
+    const std::string layer = ctx.layer(node);
     const double segments = explicit_segments(node, ctx);
     if (segments == 0.0 && r_out > ARC_TOLERANCE_UM) {
         const auto region = mgeom::Region::arc({cx, cy}, r_in, r_out, start, std::min(end, start + 360.0));

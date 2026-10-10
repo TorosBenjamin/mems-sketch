@@ -7,6 +7,7 @@ from typing import ClassVar, Literal
 import klayout.db as kdb
 
 from mems_sketch.core.component import Geometry, to_dbu
+from mems_sketch.core.levels import LEVEL
 from mems_sketch.core.shapes.base import Point, Primitive, RenderContext, Value
 from mems_sketch.core.shapes.geometry import arc_points, segments
 
@@ -17,7 +18,7 @@ class ArcShape(Primitive):
     icon: ClassVar[str] = "arc"
 
     kind: Literal["arc"] = "arc"
-    layer: str
+    layer: str = LEVEL  # see mems_sketch.core.levels
     x: Value = 0.0
     y: Value = 0.0
     inner_radius: Value = 0.0
@@ -28,7 +29,7 @@ class ArcShape(Primitive):
 
     def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
         geometry = Geometry()
-        geometry.layers[self.layer] = self._sector(ctx)
+        geometry.layers[ctx.layer(self.layer)] = self._sector(ctx)
         return geometry, {}
 
     def _sector(self, ctx: RenderContext) -> kdb.Region:

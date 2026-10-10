@@ -48,14 +48,24 @@ public:
     explicit Builder(const Project& project) : project_(project) {}
 
     // A component (as written at project level) with the given parameter values,
-    // defaults for the rest.
+    // defaults for the rest, on its own level of the layer stack (its default
+    // level, else the process's).
     const Built& build(std::string_view component, const Values& params = {});
 
+    // A component by unique name on a given level (or none: no layer stack).
+    const Built& build_on(const std::string& qualified, const Values& params, const OptionalLevel& level);
+
     const Project& project() const { return project_; }
+
+    // The level of the component being built, and the layer a shape's ``layer``
+    // names on it (``level-1``, ``level.anchor``, ``metal``).
+    const OptionalLevel& level() const { return level_; }
+    std::string layer(const std::string& spec) const { return project_.layer(spec, level_); }
 
 private:
     const Project& project_;
     std::map<std::string, Built> cache_;
+    OptionalLevel level_;  // while a component is built
 };
 
 }  // namespace mems

@@ -30,7 +30,7 @@ several.
 | **Select** | V | Click to select (Ctrl/Shift adds), drag the selection to move it, drag on empty space for a box. A drag snaps a point of the moved shapes to another shape's point, else to the grid (Ctrl: no snapping); release with **Shift** on a snapped point to *align* there. |
 | **Hand** | H | The left button pans (for trackpads). |
 | **Move** | M | A gizmo: drag the red arrow along x, the green along y, the centre freely. Or click a base point, then where it goes. **Edit → Move by…** takes a typed dx, dy; arrow keys nudge by a grid step (Shift: a tenth). |
-| **Rotate** | R | Drag the ring around the selection, or click a pivot then set the angle (15° steps; Ctrl: free). **Rotate 90°** is Ctrl+R / Ctrl+Shift+R; **Mirror** is in the right-click menu. |
+| **Rotate** | R | Drag anywhere to turn the selection about its centre; the angle follows the mouse (Ctrl: 15° steps). **Shift+click** sets another pivot (snaps to points), Esc goes back to the centre; a click without dragging selects. **Rotate 90°** is Ctrl+R / Ctrl+Shift+R; **Mirror** is in the right-click menu. |
 | **Align** | A | Click a shape, one of its points, then the point to put it on (below). |
 | **Corners** | O | Round or chamfer single corners (below). |
 | **Measure** | D | Click two points (they snap) for the distance, dx and dy. Rulers stay until **Tools → Clear rulers**. |

@@ -1,0 +1,60 @@
+name: Release
+
+# Merging development into main releases the version in pyproject.toml: the
+# wheels and the app are built and tested on every platform (wheels.yml,
+# app.yml), then published as a GitHub release, tagged v<version> on the
+# merge commit. The release pull request has checked that the version is new
+# (release-source.yml). Built on main, Open CASCADE's cached builds are
+# shared with every branch and pull request.
+on:
+  push:
+    branches: [main]
+
+# One release at a time; a second merge waits for the first.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The version to release
+        id: version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "::error::Version $version is already released (tag v$version); set a new version in pyproject.toml."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing version $version."
+
+  wheels:
+    needs: version
+    uses: ./.github/workflows/wheels.yml
+
+  app:
+    needs: version
+    uses: ./.github/workflows/app.yml
+
+  publish:
+    needs: [version, wheels, app]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4  # every artifact: the wheels and the app's packages
+        with:
+          merge-multiple: true
+          path: out
+      - uses: softprops/action-gh-release@v2.2.2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: MEMS Sketch ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: out/*

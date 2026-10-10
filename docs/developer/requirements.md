@@ -16,6 +16,12 @@ to satisfy every requirement here. A rewrite that drops one has a bug.
   (exists, but the requirement asks for something different).
 
 Requirements are written to be testable: each one should map to a test.
+
+**The work is tracked on GitHub.** Each requirement that is new or changes
+what exists has an [issue](https://github.com/TorosBenjamin/mems-sketch/issues?q=label%3Arequirement)
+(linked next to its status, labelled by priority and area); this file says
+what the tool must do, the issues track doing it. When an issue is closed,
+the requirement's status here becomes **exists**.
 Answers to the questions that set numbers here are listed under
 [Answered questions](#answered-questions).
 
@@ -104,14 +110,14 @@ but should not have to program. Scripting is there for those who want it.
 - **PRC-1** (Must, exists) The process has **constants** (`process.<name>` in
   every expression) and **layers**. Each layer has a GDS layer and datatype,
   and optionally a minimum width and minimum spacing.
-- **PRC-2** (Should, new) Each layer has a **position in the stack**: its
+- **PRC-2** (Should, new; [#76](https://github.com/TorosBenjamin/mems-sketch/issues/76)) Each layer has a **position in the stack**: its
   bottom z and thickness, as values or expressions over process constants.
   It is used by 3D output ([MSH](#meshing), [VIEW](#3d-view)) and ignored by
   2D output.
-- **PRC-3** (Later, new) Rules between layers (enclosure, overlap).
-- **PRC-4** (Should, new) Each layer can have a **material density**, so
+- **PRC-3** (Later, new; [#104](https://github.com/TorosBenjamin/mems-sketch/issues/104)) Rules between layers (enclosure, overlap).
+- **PRC-4** (Should, new; [#77](https://github.com/TorosBenjamin/mems-sketch/issues/77)) Each layer can have a **material density**, so
   measurements give mass ([MEA-3](#measurements)).
-- **PRC-5** (Could, new) Each layer can have a **sidewall angle**: vertical
+- **PRC-5** (Could, new; [#95](https://github.com/TorosBenjamin/mems-sketch/issues/95)) Each layer can have a **sidewall angle**: vertical
   by default, e.g. 54.74° for KOH etching of (100) silicon. 3D output, cross-
   sections and meshes use it. It describes the shape of the walls only;
   simulating the etch stays out of scope.
@@ -171,10 +177,10 @@ but should not have to program. Scripting is there for those who want it.
   above or below it (`+1`, `-1`), one of its level's roles (`anchor`), or a
   named layer (`metal`). A relative layer that runs off the bottom or top of
   the stack is an error on that placement, naming the component and layer.
-- **CMP-11** (Should, new) A component can have **checks** for what one
+- **CMP-11** (Should, new; [#64](https://github.com/TorosBenjamin/mems-sketch/issues/64)) A component can have **checks** for what one
   parameter's limits cannot say: an expression that must hold and a message
   shown when it does not.
-- **CMP-12** (Must, new) **Libraries use the importing project's stack.** A
+- **CMP-12** (Must, exists) **Libraries use the importing project's stack.** A
   library has no layers of its own; its components normally use only
   relative layers and roles, so they work in any project with enough levels.
   A library made for one process may name layers, and then says which
@@ -226,28 +232,28 @@ but should not have to program. Scripting is there for those who want it.
   deleted, and an operation can be **unwrapped**, giving back its inputs.
 - **SHP-7** (Must, exists) A shape can be **in pieces** (a slot cut through a
   beam), and says so. Its points come from the box around all the pieces.
-- **SHP-8** (Must, changes) Circles, arcs, round path ends, fillets, rounded
+- **SHP-8** (Must, changes; [#63](https://github.com/TorosBenjamin/mems-sketch/issues/63)) Circles, arcs, round path ends, fillets, rounded
   corners and the round joins of offsets are **exact curves**, not polygons
   ([QP-2](#precision)). Today they are polygons within 5 nm.
-- **SHP-9** (Should, new) **Paths along curves:** a path's centreline can
+- **SHP-9** (Should, new; [#84](https://github.com/TorosBenjamin/mems-sketch/issues/84)) **Paths along curves:** a path's centreline can
   have arc segments (a given radius, or tangent to the previous segment) as
   well as straight ones, with an exact width. Folded springs get true round
   turns.
-- **SHP-10** (Should, new) **Variable width:** a path's width can change
+- **SHP-10** (Should, new; [#80](https://github.com/TorosBenjamin/mems-sketch/issues/80)) **Variable width:** a path's width can change
   along it (linearly, or as an expression of the position along it), for
   tapered beams, tapered comb fingers and stress-relief shapes at flexure
   roots.
-- **SHP-11** (Could, new) **Splines:** a polygon or path edge can be a smooth
+- **SHP-11** (Could, new; [#97](https://github.com/TorosBenjamin/mems-sketch/issues/97)) **Splines:** a polygon or path edge can be a smooth
   curve through given points (or with control points), for free-form
   outlines such as optimised spring profiles.
-- **SHP-12** (Should, new) **One polygon, with curved segments:** a polygon's
+- **SHP-12** (Should, new; [#81](https://github.com/TorosBenjamin/mems-sketch/issues/81)) **One polygon, with curved segments:** a polygon's
   boundary is a list of segments, each straight or an arc (given by a
   radius, a bulge, or tangent to the previous segment), and later a spline
   (SHP-11). Any outline can then be drawn exactly: rounded slots, curved
   electrodes, cam profiles. The other primitives (rect, circle, arc, path,
   text) are made by factories on the same construction ([decision
   G-1](#decisions)).
-- **SHP-13** (Should, new) **Text** as geometry: letters as shapes on a layer,
+- **SHP-13** (Should, new; [#82](https://github.com/TorosBenjamin/mems-sketch/issues/82)) **Text** as geometry: letters as shapes on a layer,
   fabricated like any other shape (die names, version numbers, orientation
   marks, labels next to test structures). Height, alignment, and for a
   stroke font the stroke width, are values and expressions. Text goes
@@ -262,11 +268,11 @@ but should not have to program. Scripting is there for those who want it.
     imported layouts, so the same project gives the same text on every
     machine (QP-5). System fonts are not used unless copied into the
     project.
-- **SHP-14** (Should, new) **Perforation:** fill a region with holes (any
+- **SHP-14** (Should, new; [#83](https://github.com/TorosBenjamin/mems-sketch/issues/83)) **Perforation:** fill a region with holes (any
   shape) on a square or hexagonal grid, keeping a margin from the region's
   edges and from keep-out shapes (anchors, other layers mapped in). The holes
   follow when the region changes. For release holes.
-- **SHP-15** (Could, new) More factory shapes: **regular polygon** (n sides),
+- **SHP-15** (Could, new; [#98](https://github.com/TorosBenjamin/mems-sketch/issues/98)) More factory shapes: **regular polygon** (n sides),
   **ellipse** (exact), **spiral** (Archimedean, with a width).
 
 ### Modifiers
@@ -310,7 +316,7 @@ but should not have to program. Scripting is there for those who want it.
   own position then only matters through rotation and mirroring.
 - **PNT-4** (Must, exists) Removing an alignment leaves the shape where it
   is.
-- **PNT-5** (Could, new) **Points of the exact geometry** as well as of the
+- **PNT-5** (Could, new; [#94](https://github.com/TorosBenjamin/mems-sketch/issues/94)) **Points of the exact geometry** as well as of the
   bounding box: the centre of an arc, the midpoint of an edge, the
   intersection of two edges, the point where a line is tangent to a curve.
   They can be aligned to and used in expressions, and they follow the design
@@ -324,36 +330,36 @@ canvas, a panel, and expressions.
 - **MEA-1** (Must, exists) The **Measure** tool gives the distance, dx and dy
   between two points it snaps to, and **Measure angle** the angle between
   two lines. Rulers stay until cleared.
-- **MEA-2** (Should, new) The Measure tool also measures **between shapes**:
+- **MEA-2** (Should, new; [#67](https://github.com/TorosBenjamin/mems-sketch/issues/67)) The Measure tool also measures **between shapes**:
   the exact minimum distance between two shapes (or two edges) on a layer,
   the length of an edge, and the radius and centre of an arc. A measurement
   can be kept on the canvas as a ruler that follows the design when it
   changes.
-- **MEA-3** (Should, new) An **information panel** shows the properties of the
+- **MEA-3** (Should, new; [#68](https://github.com/TorosBenjamin/mems-sketch/issues/68)) An **information panel** shows the properties of the
   selection, per layer: area, perimeter, bounding box, centroid and second
   moments of area; with the layers' thickness (PRC-2) and density (PRC-4),
   also volume, mass and moments of inertia. For several selected shapes it
   shows each and their total.
-- **MEA-4** (Should, new) **Measurements in expressions:** a shape's
+- **MEA-4** (Should, new; [#69](https://github.com/TorosBenjamin/mems-sketch/issues/69)) **Measurements in expressions:** a shape's
   measurements can be used like its points, e.g. `mass.area`,
   `mass.centroid.x`, `mass.mass`, `mass.inertia_z`, and functions such as
   `gap(finger, stator)` (minimum distance) and `overlap(rotor, stator)`
   (length or area of overlap). A design can then be driven by them: a
   counterweight sized so that the centroid sits on the pivot. Dependency
   order and loop errors apply as for other values (EXP-4).
-- **MEA-5** (Could, new) Measurements are available from the command line and
+- **MEA-5** (Could, new; [#91](https://github.com/TorosBenjamin/mems-sketch/issues/91)) Measurements are available from the command line and
   the Python API (`mems-sketch-cli info --measure`), for sweeps and reports.
 
 ### Cross-sections
 
-- **XS-1** (Could, new) **A cross-section** of the layer stack along a line
+- **XS-1** (Could, new; [#100](https://github.com/TorosBenjamin/mems-sketch/issues/100)) **A cross-section** of the layer stack along a line
   drawn on the canvas: the exact profile of each layer (with its thickness,
   z position and sidewall angle), shown in a view of its own and updated as
   the design changes.
-- **XS-2** (Could, new) A cross-section line is saved with the component and
+- **XS-2** (Could, new; [#101](https://github.com/TorosBenjamin/mems-sketch/issues/101)) A cross-section line is saved with the component and
   can be aligned like a guide, so it stays where it matters (e.g. through a
   comb's fingers) when the design changes.
-- **XS-3** (Could, new) Cross-sections can be exported as a drawing (SVG,
+- **XS-3** (Could, new; [#102](https://github.com/TorosBenjamin/mems-sketch/issues/102)) Cross-sections can be exported as a drawing (SVG,
   DXF) for documentation and reviews.
 
 ### Editing
@@ -377,25 +383,25 @@ behaviours every frontend must keep.
   canvas as the value changes ([QS-1](#performance-and-scale)).
 - **EDT-6** (Must, exists) The same edits are available from code, with the
   same checks and undo ([CLI-3](#command-line-and-scripting)).
-- **EDT-7** (Must, changes) **Snapping in the editor** (to points and to a
+- **EDT-7** (Must, changes; [#48](https://github.com/TorosBenjamin/mems-sketch/issues/48)) **Snapping in the editor** (to points and to a
   grid) is a convenience of the editor, set by the user. It is separate
   from the geometry's precision and from an export's grid.
-- **EDT-8** (Should, new) **What a value affects:** selecting or hovering a
+- **EDT-8** (Should, new; [#66](https://github.com/TorosBenjamin/mems-sketch/issues/66)) **What a value affects:** selecting or hovering a
   parameter (or a process constant, or a shape's value) highlights everything
   that depends on it: shapes, points, alignments and other parameters,
   directly or through other values. It comes from the dependency graph
   (QS-7), so it is shown without building anything.
-- **EDT-9** (Could, new) **The change a value makes:** while a value is
+- **EDT-9** (Could, new; [#88](https://github.com/TorosBenjamin/mems-sketch/issues/88)) **The change a value makes:** while a value is
   dragged or tried, the canvas can show the geometric difference from where
   it started (material added and removed, as in the History panel, HIS-2).
-- **EDT-10** (Could, new) **Annotations:** notes on the canvas, saved with
+- **EDT-10** (Could, new; [#87](https://github.com/TorosBenjamin/mems-sketch/issues/87)) **Annotations:** notes on the canvas, saved with
   the component and alignable like guides, never fabricated. They can
   optionally be exported as GDS text labels (zero-area text records) on a
   chosen layer, which other tools read as names.
 
 ### Rule checks
 
-- **DRC-1** (Must, changes) **Rules are project data:** a list of rules,
+- **DRC-1** (Must, exists) **Rules are project data:** a list of rules,
   each naming a rule kind, the layers it applies to, its values, a severity
   (error or warning) and an optional message. Minimum width and spacing per
   layer, set in the process today, become rules of the built-in kinds;
@@ -403,19 +409,19 @@ behaviours every frontend must keep.
 - **DRC-2** (Must, exists) The check runs on the final geometry **after every
   change**. Violations are listed and marked on the canvas, and each can be
   clicked to go there.
-- **DRC-3** (Must, changes) The check runs on the geometry **as it will be
+- **DRC-3** (Must, changes; [#47](https://github.com/TorosBenjamin/mems-sketch/issues/47)) The check runs on the geometry **as it will be
   exported** (snapped to the export grid, curves split at the export's chord
   tolerance), because that is what the fab checks.
 - **DRC-4** (Must, exists) From the command line, `check` exits with status 1
   on violations and 2 on errors, so it can gate CI.
-- **DRC-5** (Could, new) **Pattern density** per layer: the fraction of area
+- **DRC-5** (Could, new; [#86](https://github.com/TorosBenjamin/mems-sketch/issues/86)) **Pattern density** per layer: the fraction of area
   covered, overall and as a map over a grid, with optional minimum and
   maximum limits as a rule. Etch rates (e.g. in DRIE) depend on it.
-- **DRC-6** (Must, new) **Rules are parametric:** every value in a rule is an
+- **DRC-6** (Must, exists) **Rules are parametric:** every value in a rule is an
   expression over the process constants and the parameters of its rule set
   (DRC-8), evaluated like any other expression (EXP). Changing a constant
   such as `undercut` re-checks every rule that reads it.
-- **DRC-7** (Must, new) **Default rules:** a new project starts with a
+- **DRC-7** (Must, exists) **Default rules:** a new project starts with a
   default rule set: minimum width and spacing per layer, `anchored` and
   `release` (DRC-11). Every rule and value can be changed, and any rule can
   be turned off. A rule turned off stays listed as off, so a check never
@@ -426,17 +432,17 @@ behaviours every frontend must keep.
   constant (a different `undercut` for a different etch), change or turn off
   one of its rules and add rules of its own, each with an optional reason.
   There are no separate rule decks.
-- **DRC-9** (Must, new) **Rule kinds are plugins**, like exporters (OUT-7): a
+- **DRC-9** (Must, exists) **Rule kinds are plugins**, like exporters (OUT-7): a
   kind declares its parameters (as exporters declare their options, OUT-8)
   and checks the geometry as exported (DRC-3), returning violations with
   their locations. Kinds are found through the `mems_sketch.rules`
   entry-point group, so a team can install its own; the built-in kinds are
   plugins too. The rules editor and the command line are built from the
   declarations.
-- **DRC-10** (Must, new) **No code in project files:** projects and processes
+- **DRC-10** (Must, exists) **No code in project files:** projects and processes
   only name rule kinds and give them values. A rule whose kind is not
   installed is reported as not checked, an error, and never passes.
-- **DRC-11** (Should, new) **Built-in rule kinds:**
+- **DRC-11** (Should, new; [#65](https://github.com/TorosBenjamin/mems-sketch/issues/65)) **Built-in rule kinds:**
   - per layer: minimum width, minimum spacing, minimum area, minimum hole
     area, maximum width, minimum angle (no sharp spikes), density (DRC-5);
   - between layers: enclosure, separation, overlap, inside, not
@@ -448,10 +454,10 @@ behaviours every frontend must keep.
       them (at most twice the undercut wide), and anchors are wide enough to
       survive it, which catches a plate missing its release holes;
     - `connected`: a layer is one piece, or a given number of pieces.
-- **DRC-12** (Must, new) A violation names its **rule, layers, location** and
+- **DRC-12** (Must, exists) A violation names its **rule, layers, location** and
   the values it was checked with. Errors make `check` exit with status 1
   (DRC-4); warnings are listed and do so only with `--strict`.
-- **DRC-13** (Could, new) **Waivers:** a single violation can be accepted
+- **DRC-13** (Could, exists) **Waivers:** a single violation can be accepted
   with a reason, saved with the component and listed in the check's
   results. A waiver lapses when the geometry it covers changes.
 
@@ -466,11 +472,11 @@ behaviours every frontend must keep.
 - **IMP-4** (Must, exists) The project keeps a **copy** of the imported file.
   **Re-import** replaces it and every placement follows. An imported
   component is placed, arrayed, aligned and rounded like any other.
-- **IMP-5** (Could, new) **DXF with true curves:** arcs and circles in a DXF
+- **IMP-5** (Could, new; [#89](https://github.com/TorosBenjamin/mems-sketch/issues/89)) **DXF with true curves:** arcs and circles in a DXF
   file are imported as exact curves, not polygons.
-- **IMP-6** (Later, new) **STEP and IGES import** of 3D parts (a package, a
+- **IMP-6** (Later, new; [#103](https://github.com/TorosBenjamin/mems-sketch/issues/103)) **STEP and IGES import** of 3D parts (a package, a
   mechanical part) to check how a design fits with them, in the 3D view.
-- **IMP-7** (Could, new) Imported geometry that is slightly broken (tiny
+- **IMP-7** (Could, new; [#90](https://github.com/TorosBenjamin/mems-sketch/issues/90)) Imported geometry that is slightly broken (tiny
   gaps, self-touching outlines) is **repaired** where that is unambiguous, and
   what was repaired is reported.
 
@@ -478,22 +484,22 @@ behaviours every frontend must keep.
 
 - **OUT-1** (Must, exists) Export a component, with its current trial
   values, to **GDSII, OASIS and DXF**, with the layers' GDS numbers.
-- **OUT-2** (Must, changes) Each export to a grid **chooses its grid**
+- **OUT-2** (Must, changes; [#53](https://github.com/TorosBenjamin/mems-sketch/issues/53)) Each export to a grid **chooses its grid**
   (default 1 nm) and **chord tolerance** for curves (default 5 nm).
   Neither changes the design.
-- **OUT-3** (Must, new) An export to a grid **reports what snapping
+- **OUT-3** (Must, new; [#54](https://github.com/TorosBenjamin/mems-sketch/issues/54)) An export to a grid **reports what snapping
   changed** in the shape of the geometry, with where: pieces that vanished,
   split or merged (a neck or gap narrower than the grid), and holes that
   closed, joined another or the outside, or formed (a notch's mouth
   closing). It also gives the area before and after. Every edge moves by up
   to half a grid step, so a width can change by up to one step anywhere off
   the grid; that is what a grid means, and is not reported edge by edge.
-- **OUT-4** (Should, new) GDS and OASIS exports **keep the hierarchy**:
+- **OUT-4** (Should, new; [#74](https://github.com/TorosBenjamin/mems-sketch/issues/74)) GDS and OASIS exports **keep the hierarchy**:
   components as cells, arrays as array references.
 - **OUT-5** (Must, exists) Export a component's **geometry as data** (JSON,
   XML, `.mat`): polygons per layer with their holes, in µm, plus the
   component's points and parameter values.
-- **OUT-6** (Should, new) Export **STEP**: the layers extruded through the
+- **OUT-6** (Should, new; [#75](https://github.com/TorosBenjamin/mems-sketch/issues/75)) Export **STEP**: the layers extruded through the
   stack into solids, with exact curves. For simulation tools that import CAD
   and mesh it themselves, and for mechanical CAD (packaging, assemblies).
   See [decision X-1](#decisions).
@@ -501,7 +507,7 @@ behaviours every frontend must keep.
   be added in its own package, in Python, without changing or rebuilding
   mems-sketch. The built-in formats are plugins too. See
   [decision E-1](#decisions).
-- **OUT-8** (Should, new) Each exporter **declares its options** (grid,
+- **OUT-8** (Should, exists) Each exporter **declares its options** (grid,
   chord tolerance, hierarchy, its own settings); the export dialog and the
   command line are built from the declaration, with no code per format.
 
@@ -511,50 +517,50 @@ Most users have no licence for a commercial mesher or solver, so a mesh
 from mems-sketch is their way into simulation; those who have one (e.g.
 Ansys) can mesh the STEP export themselves (OUT-6).
 
-- **MSH-1** (Must, new) Export a **mesh** of a component for simulation:
+- **MSH-1** (Must, new; [#49](https://github.com/TorosBenjamin/mems-sketch/issues/49)) Export a **mesh** of a component for simulation:
   2D (the layers' faces) or 3D (the layers extruded through the stack).
-- **MSH-2** (Must, new) **Mesh settings are project data**, as expressions:
+- **MSH-2** (Must, new; [#50](https://github.com/TorosBenjamin/mems-sketch/issues/50)) **Mesh settings are project data**, as expressions:
   a global size, sizes per layer, and refinement regions (areas, points,
   edges, distances from edges) drawn on the canvas. They are saved, diffed
   and parametric like everything else.
-- **MSH-3** (Should, new) The mesh is generated from the **exact geometry**,
+- **MSH-3** (Should, new; [#70](https://github.com/TorosBenjamin/mems-sketch/issues/70)) The mesh is generated from the **exact geometry**,
   not the export grid, with its own merge tolerance (e.g. 10⁻⁶ µm).
-- **MSH-4** (Should, new) Mesh regions and boundaries are **named** after
+- **MSH-4** (Should, new; [#71](https://github.com/TorosBenjamin/mems-sketch/issues/71)) Mesh regions and boundaries are **named** after
   layers and named shapes (physical groups), so a solver finds anchors and
   electrodes by name.
-- **MSH-5** (Must, new) Mesh formats for **free solvers** first: Elmer
+- **MSH-5** (Must, new; [#51](https://github.com/TorosBenjamin/mems-sketch/issues/51)) Mesh formats for **free solvers** first: Elmer
   (good MEMS support: electrostatics, structures, modes), CalculiX (Abaqus
   `.inp`), and FEniCS or scikit-fem (through meshio, e.g. XDMF); gmsh's
   `.msh` itself. Abaqus `.inp` and Nastran `.bdf` also go into commercial
   tools such as Ansys Mechanical. Further formats are exporter plugins
   (OUT-7).
-- **MSH-6** (Should, new) A **preview** of the mesh on the canvas, with element
+- **MSH-6** (Should, new; [#72](https://github.com/TorosBenjamin/mems-sketch/issues/72)) A **preview** of the mesh on the canvas, with element
   count and quality.
-- **MSH-7** (Must, new) **Graded sizes, no seams:** where regions of
+- **MSH-7** (Must, new; [#52](https://github.com/TorosBenjamin/mems-sketch/issues/52)) **Graded sizes, no seams:** where regions of
   different sizes meet (a finely meshed spring on a coarse frame), the
   element size changes gradually, by at most a growth rate per element
   (a project setting, e.g. 1.2), never in one step. The mesh is conforming
   everywhere: neighbouring regions share their nodes. A sudden jump in size
   makes distorted elements and unreliable results along the seam.
-- **MSH-8** (Should, new) An **automatic size map** from the geometry:
+- **MSH-8** (Should, new; [#73](https://github.com/TorosBenjamin/mems-sketch/issues/73)) An **automatic size map** from the geometry:
   smaller elements in narrow beams, small gaps (between comb fingers),
   tight curves and sharp corners. It is what gmsh's own sizing makes
   (curvature, distance between edges), shown on the canvas as a colour
   scale so the user sees where the mesh will be fine before meshing.
-- **MSH-9** (Could, new) **Editing the size map with a brush,** where the
+- **MSH-9** (Could, new; [#93](https://github.com/TorosBenjamin/mems-sketch/issues/93)) **Editing the size map with a brush,** where the
   automatic map does not know enough, such as the stress at a spring's
   root. Only the edits are saved, as project data, not the whole map: when
   the design changes, the automatic map follows the new geometry and the
   edits stay where they were painted. Grading (MSH-7) applies on top, so a
   rough painting cannot make a seam.
-- **MSH-10** (Could, new) **Refinement from a solution:** solve on a
+- **MSH-10** (Could, new; [#92](https://github.com/TorosBenjamin/mems-sketch/issues/92)) **Refinement from a solution:** solve on a
   coarse mesh with a free solver, estimate the error, refine where it is
   large and mesh again. It needs a solver in the loop, so it comes after
   the rest.
 
 ### 3D view
 
-- **VIEW-1** (Could, new) A 3D view of a component: the layers extruded
+- **VIEW-1** (Could, new; [#99](https://github.com/TorosBenjamin/mems-sketch/issues/99)) A 3D view of a component: the layers extruded
   through the stack, updated as the design changes.
 
 ### History
@@ -584,7 +590,7 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   way the editor does: the same commands, checks and undo.
 - **CLI-4** (Should, exists) Usable **from MATLAB**: through the command line,
   MATLAB's Python interface, and geometry documents in `.mat`.
-- **CLI-5** (Could, new) The geometry library usable **on its own** from
+- **CLI-5** (Could, new; [#85](https://github.com/TorosBenjamin/mems-sketch/issues/85)) The geometry library usable **on its own** from
   Python and C++, without projects
   ([core architecture](core-architecture.md#overview)).
 
@@ -592,19 +598,19 @@ Ansys) can mesh the STEP export themselves (OUT-6).
 
 ### Precision
 
-- **QP-1** (Must, changes) The geometry has **one internal precision of
+- **QP-1** (Must, changes; [#55](https://github.com/TorosBenjamin/mems-sketch/issues/55)) The geometry has **one internal precision of
   10⁻⁸ µm or finer**, everywhere, for every design size the tool supports
   ([QS-3](#performance-and-scale)). It is fixed, not a setting
   ([decision P-1](#decisions)). Today it is 1 nm.
-- **QP-2** (Must, changes) **Curves are exact** through every operation
+- **QP-2** (Must, changes; [#56](https://github.com/TorosBenjamin/mems-sketch/issues/56)) **Curves are exact** through every operation
   (boolean, offset, fillet, corners, transforms). Curves are split into
   segments only by an output, at that output's tolerance.
-- **QP-3** (Must, new) **Each output chooses its own tolerance**: the export
+- **QP-3** (Must, new; [#57](https://github.com/TorosBenjamin/mems-sketch/issues/57)) **Each output chooses its own tolerance**: the export
   grid and chord tolerance for GDS/OASIS/DXF and rule checks; the merge
   tolerance and sizes for a mesh; the chord tolerance for drawing.
-- **QP-4** (Must, new) Rounding happens **once per output**, never in between:
+- **QP-4** (Must, new; [#58](https://github.com/TorosBenjamin/mems-sketch/issues/58)) Rounding happens **once per output**, never in between:
   nested transforms are combined before they are applied.
-- **QP-5** (Must, changes) **Deterministic:** the same project and parameters
+- **QP-5** (Must, changes; [#59](https://github.com/TorosBenjamin/mems-sketch/issues/59)) **Deterministic:** the same project and parameters
   give the same output, byte for byte, on every run (exists) and on every
   supported platform (new: tested across platforms).
 
@@ -638,22 +644,22 @@ ten times larger than that, so the numbers hold with room to spare.
   and opening a project within 2 s.
 - **QS-5** (Must, exists) An unchanged component is **never rebuilt**; an edit
   rebuilds only what depends on it.
-- **QS-6** (Should, new) A component placed or arrayed many times is **built
+- **QS-6** (Should, exists) A component placed or arrayed many times is **built
   once** and instanced, unless its copies differ (MOD-2).
-- **QS-7** (Must, new) **Only what depends on a change is rebuilt,** down to
+- **QS-7** (Must, new; [#61](https://github.com/TorosBenjamin/mems-sketch/issues/61)) **Only what depends on a change is rebuilt,** down to
   single shapes, not whole components: the dependencies go through
   expressions, points, alignments, modifiers and `layer_map`. Shapes that do
   not read the changed value, and layers it does not reach, cost nothing.
-- **QS-8** (Must, new) **The editor never waits for a build.** Builds run in
+- **QS-8** (Must, new; [#62](https://github.com/TorosBenjamin/mems-sketch/issues/62)) **The editor never waits for a build.** Builds run in
   the background; the canvas shows the last finished result and says when a
   newer one is on its way. A newer value cancels a build that is no longer
   needed, inside long operations too.
-- **QS-9** (Should, new) **A cheaper result while dragging:** during a drag the
+- **QS-9** (Should, new; [#79](https://github.com/TorosBenjamin/mems-sketch/issues/79)) **A cheaper result while dragging:** during a drag the
   canvas may show instances without merging them and skip the rule check.
   The full result, rule check included, follows when the drag ends. A
   setting turns it off, next to "Draft quality while zooming and resizing"
   (which only drops smoothing when drawing, not accuracy).
-- **QS-10** (Could, new) **Speculative builds:** while a value is being
+- **QS-10** (Could, new; [#96](https://github.com/TorosBenjamin/mems-sketch/issues/96)) **Speculative builds:** while a value is being
   changed, values it is likely to take next are built ahead in the
   background (for a whole-number parameter such as a tooth count, the
   neighbouring values), so that moving to one of them is a cache hit. They
@@ -672,7 +678,7 @@ ten times larger than that, so the numbers hold with room to spare.
     always comes first and cancels speculative ones that are in its way.
   - **Bounded memory:** speculative results are the first to be evicted
     from the cache.
-- **QS-11** (Should, new) **Performance settings:** the number of threads
+- **QS-11** (Should, new; [#78](https://github.com/TorosBenjamin/mems-sketch/issues/78)) **Performance settings:** the number of threads
   builds may use, the cache's memory limit, and the speculative builds'
   settings (QS-10), in the editor's settings with sensible defaults from the
   machine (number of cores, memory).
@@ -683,7 +689,7 @@ ten times larger than that, so the numbers hold with room to spare.
   (EDT-3).
 - **QR-2** (Must, exists) Every evaluation error names **where** it happened
   (component and shape path) and **why**.
-- **QR-3** (Must, new) A geometry operation that fails, or that would exceed
+- **QR-3** (Must, new; [#60](https://github.com/TorosBenjamin/mems-sketch/issues/60)) A geometry operation that fails, or that would exceed
   the precision of QP-1, reports it as an error, never as silently wrong
   geometry.
 
@@ -703,7 +709,7 @@ ten times larger than that, so the numbers hold with room to spare.
 ### Maintainability
 
 - **QM-1** (Must, exists) The backend never imports Qt. A test enforces it.
-- **QM-2** (Must, new) The geometry library never depends on the engine. A
+- **QM-2** (Must, exists) The geometry library never depends on the engine. A
   check enforces it.
 - **QM-3** (Must, exists) The local checks (lint, format, tests) are the same
   as CI's and stay fast enough to run before every push.

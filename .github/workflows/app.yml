@@ -4,14 +4,15 @@ name: App
 # (PyInstaller, packaging/mems-sketch.spec), packaged the way each platform
 # installs things: a Windows installer and a portable zip, a macOS disk image,
 # a Linux AppImage. Each is started with --self-test before it is kept.
-# Built for version tags (and attached to that tag's GitHub release), on
-# demand, and for pull requests that change the packaging. macOS does not
-# hold a release back while its build is experimental (requirement QC-4).
+# Built for each release (release.yml calls it when development is merged
+# into main) and on demand, and for Linux alone for pull requests into
+# development that change the packaging. macOS does not hold a release back while its build is
+# experimental (requirement QC-4).
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
+  workflow_call:
   pull_request:
+    branches: [development]
     paths:
       - packaging/**
       - pyproject.toml
@@ -26,17 +27,11 @@ jobs:
     continue-on-error: ${{ matrix.optional }}
     strategy:
       fail-fast: false
+      # Pull requests build Linux alone; releases and runs on demand all three.
+      # Linux runs on the oldest supported runner: the AppImage runs on glibc
+      # 2.35 and newer. macOS is Apple silicon.
       matrix:
-        include:
-          - name: linux
-            os: ubuntu-22.04  # the oldest supported runner: the AppImage runs on glibc 2.35 and newer
-            optional: false
-          - name: windows
-            os: windows-latest
-            optional: false
-          - name: macos
-            os: macos-14  # Apple silicon
-            optional: true
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"linux","os":"ubuntu-22.04","optional":false}]' || '[{"name":"linux","os":"ubuntu-22.04","optional":false},{"name":"windows","os":"windows-latest","optional":false},{"name":"macos","os":"macos-14","optional":true}]') }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
       QT_QPA_PLATFORM: offscreen  # the self-tests open the window without a screen
@@ -77,13 +72,7 @@ jobs:
 
       - name: Version
         id: version
-        run: |
-          version=$(python -c "import mems_sketch; print(mems_sketch.__version__)")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$version" ]]; then
-            echo "::error::The tag ${GITHUB_REF#refs/tags/} does not match the package version $version (pyproject.toml)."
-            exit 1
-          fi
+        run: echo "version=$(python -c 'import mems_sketch; print(mems_sketch.__version__)')" >> "$GITHUB_OUTPUT"
 
       - name: Build the app
         run: |
@@ -131,21 +120,3 @@ jobs:
           name: app-${{ matrix.name }}
           path: out/*
 
-  release:
-    # A version tag's packages, attached to its GitHub release (made as a draft:
-    # its notes are written, and it is published, by hand).
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: app
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: app-*
-          merge-multiple: true
-          path: out
-      - uses: softprops/action-gh-release@v2.2.2
-        with:
-          draft: true
-          files: out/*

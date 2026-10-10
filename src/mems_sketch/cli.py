@@ -27,7 +27,7 @@ from mems_sketch.core.project import Project, new_project
 from mems_sketch.engine import Build, Engine
 from mems_sketch.export.base import (
     available_exporters,
-    export,
+    export_with_report,
     exporter_class,
     format_for,
     options_of,
@@ -203,7 +203,8 @@ def _number(value: float | str) -> str:
 
 def _check(args: argparse.Namespace) -> int:
     project = load(args.project)
-    violations = rules.check(project, _geometry(project, args), args.component)
+    checked = rules.checked_geometry(project, args.component, _parameters(args.set))
+    violations = rules.check(project, checked, args.component)
     if args.json:
         print(
             json.dumps(
@@ -254,16 +255,23 @@ def _export(args: argparse.Namespace) -> int:
     options = _options(format_name, args.option)
     project = load(args.project)
     params = _parameters(args.set)
-    path = export(
+    build = _build(project, args.component, params)
+    path, written = export_with_report(
         project,
         args.output,
         format_name=format_name,
-        geometry=_build(project, args.component, params).geometry,
+        geometry=build.geometry,
         component=args.component,
         params=params,
         options=options,
+        build=build,
     )
     print(f"wrote {path}")
+    changes = written.describe() if hasattr(written, "describe") else []
+    if changes:
+        print("snapping to the grid changed the shape:")
+        for line in changes:
+            print(f"  {line}")
     return 0
 
 

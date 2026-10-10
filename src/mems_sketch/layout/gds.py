@@ -9,6 +9,7 @@ magnification; texts and nodes are skipped.
 from __future__ import annotations
 
 import math
+import os
 import struct
 import time
 
@@ -16,6 +17,8 @@ import numpy as np
 
 from mems_sketch.core.region import IntPolygon
 from mems_sketch.layout.model import Cell, Layout, Placement, hole_free
+
+FIXED_DATE = 946684800  # 2000-01-01 00:00:00 UTC: when nothing else is said
 
 # Record types (high byte) and their data types (low byte).
 HEADER, BGNLIB, LIBNAME, UNITS, ENDLIB = 0x0002, 0x0102, 0x0206, 0x0305, 0x0400
@@ -84,9 +87,17 @@ def _points(points) -> bytes:
     return _record(XY, np.asarray(points, dtype=">i4").tobytes())
 
 
+def _date() -> tuple[int, ...]:
+    """The date written into the file: fixed, so that the same design gives the same
+    bytes on every run (requirement QP-5), or SOURCE_DATE_EPOCH's, as reproducible
+    builds set it."""
+    epoch = os.environ.get("SOURCE_DATE_EPOCH", "").strip()
+    stamp = time.gmtime(int(epoch)) if epoch.isdigit() else time.gmtime(FIXED_DATE)
+    return (stamp.tm_year, stamp.tm_mon, stamp.tm_mday, stamp.tm_hour, stamp.tm_min, stamp.tm_sec)
+
+
 def write(layout: Layout) -> bytes:
-    stamp = time.localtime()
-    date = (stamp.tm_year, stamp.tm_mon, stamp.tm_mday, stamp.tm_hour, stamp.tm_min, stamp.tm_sec)
+    date = _date()
     out = [
         _ints2(HEADER, 600),
         _ints2(BGNLIB, *date, *date),

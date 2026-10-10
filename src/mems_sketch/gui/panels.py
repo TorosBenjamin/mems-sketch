@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -1309,6 +1310,31 @@ class LayerDefinitionsPanel(_Panel):
         self.default_level.activated.connect(self._default_level_chosen)
         row.addWidget(self.default_level, 1)
         layout.addLayout(row)
+        # The fab's grid: the rule checks see the design rounded onto it, as an
+        # export writes it, and layout exports start from it.
+        row = QHBoxLayout()
+        row.setContentsMargins(6, 0, 6, 4)
+        self.grid = QDoubleSpinBox()
+        self.chord = QDoubleSpinBox()
+        for box, label, tip, minimum in (
+            (self.grid, "Grid", "The fab's grid: rule checks round the design onto it", 0.001),
+            (
+                self.chord,
+                "Curve tolerance",
+                "How far the straight segments that curves become may stray from them",
+                0.0005,
+            ),
+        ):
+            box.setDecimals(4)
+            box.setRange(minimum, 1.0)
+            box.setSingleStep(0.001)
+            box.setSuffix(" µm")
+            box.setToolTip(tip)
+            box.setKeyboardTracking(False)
+            box.editingFinished.connect(self._output_changed)
+            row.addWidget(QLabel(label))
+            row.addWidget(box, 1)
+        layout.addLayout(row)
         self._layer_names: list[str] = []
 
     def refresh(self) -> None:
@@ -1335,6 +1361,12 @@ class LayerDefinitionsPanel(_Panel):
         default = self.document.project.process.default_level
         self.default_level.setCurrentText(default or "(the first level)")
         self.default_level.setEnabled(bool(levels))
+        process = self.document.project.process
+        for box, value in ((self.grid, process.grid_um), (self.chord, process.chord_um)):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+            box.setEnabled(self.document.project.base_process is None)
         # the name column also holds the check box and the colour swatch
         header = self.layers.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
@@ -1360,6 +1392,14 @@ class LayerDefinitionsPanel(_Panel):
             self.document.process.set_layer(name, layer)
 
         if not self._guard(apply):
+            self.refresh()
+
+    def _output_changed(self) -> None:
+        process = self.document.project.process
+        grid, chord = round(self.grid.value(), 4), round(self.chord.value(), 4)
+        if (grid, chord) == (process.grid_um, process.chord_um):
+            return
+        if not self._guard(lambda: self.document.process.set_output(grid, chord)):
             self.refresh()
 
     def _default_level_chosen(self, index: int) -> None:

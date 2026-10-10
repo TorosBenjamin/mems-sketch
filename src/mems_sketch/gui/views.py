@@ -40,6 +40,26 @@ BACKGROUND_CHECK_POINTS = 20_000
 _executors: dict[str, Executor] = {}
 
 
+def _outputs() -> Executor:
+    """Where the engine makes the output the rule checks look at: a thread (the
+    engine lets Python go on meanwhile), apart from the checks themselves."""
+    if "output" not in _executors:
+        _executors["output"] = ThreadPoolExecutor(max_workers=1, thread_name_prefix="output")
+    return _executors["output"]
+
+
+def _check_job(build, grid: float, chord: float, project, component: str) -> list:
+    """In the output thread: the design as the process's grid has it, then its rule
+    checks, in another process when it can have one."""
+    geometry = build.output(grid, chord).geometry
+    try:
+        future = _checks().submit(rules.check, project, geometry, component)
+    except (RuntimeError, OSError):  # no process to be had (e.g. a script without a main guard)
+        _executors["process"] = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rule-check")
+        future = _checks().submit(rules.check, project, geometry, component)
+    return future.result()
+
+
 def _checks() -> Executor:
     if rules.registered_at_runtime():
         kind = "thread"
@@ -153,21 +173,27 @@ class ComponentView(QWidget):
             return
         if self.canvas.isVisible():
             self.canvas.viewport().repaint()
+        # The checks look at the design as an export to the process's grid writes it
+        # (requirement DRC-3); the engine makes that from what it built.
+        results, process = self.document.results, self.document.project.process
+        try:
+            build = results.build(self.component)
+            _ = build.built  # here, where the engine builds: the output may be made elsewhere
+        except Exception as exc:  # noqa: BLE001 - shown in the messages panel
+            self.errors.append(str(exc))
+            return
         if drawn.point_count() <= BACKGROUND_CHECK_POINTS:
             try:
-                self.violations = self.document.results.check(drawn, self.component)
+                checked = build.output(process.grid_um, process.chord_um).geometry
+                self.violations = results.check(checked, self.component)
             except Exception as exc:  # noqa: BLE001 - shown in the messages panel
                 self.errors.append(str(exc))
             return
         generation, project, component = self._generation, self.document.project, self.component
         self.checking = True
-        try:
-            future = _checks().submit(rules.check, project, drawn, component)
-        except (RuntimeError, OSError):  # no process to be had (e.g. a script without a main guard)
-            _executors["process"] = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="rule-check"
-            )
-            future = _checks().submit(rules.check, project, drawn, component)
+        future = _outputs().submit(
+            _check_job, build, process.grid_um, process.chord_um, project, component
+        )
         future.add_done_callback(lambda f: self._report_check(generation, f))
 
     def _report_check(self, generation: int, future: Future) -> None:

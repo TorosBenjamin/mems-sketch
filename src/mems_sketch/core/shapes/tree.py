@@ -5,9 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
-import klayout.db as kdb
-
-from mems_sketch.core.shapes.geometry import to_ictrans
 from mems_sketch.core.shapes.kinds.ref import RefShape
 
 if TYPE_CHECKING:
@@ -66,20 +63,6 @@ def paths(
         yield path, shape
         for child_slot, children in enumerate(child_lists(shape)):
             yield from paths(children, path, child_slot)
-
-
-def placement_of(
-    shapes: list[Shape], path: NodePath, variables: dict[str, float]
-) -> kdb.ICplxTrans:
-    """Combined transform of the transforms enclosing ``path`` (repeats and alignment
-    are not included; see :class:`NodeRecord` for the placement as evaluated)."""
-    transform = kdb.ICplxTrans()
-    for depth in range(1, len(path)):
-        ancestor = node_at(shapes, path[:depth])
-        ancestor_placement = ancestor.placement({**variables, "i": 0.0, "j": 0.0})
-        if ancestor_placement is not None:
-            transform = transform * to_ictrans(ancestor_placement)
-    return transform
 
 
 def find(shapes: list[Shape], name: str) -> Shape:

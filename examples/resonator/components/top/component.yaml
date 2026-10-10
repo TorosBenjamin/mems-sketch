@@ -1,0 +1,23 @@
+description: Comb-driven resonator
+parameters: {plate: 160, pitch: 20, w_finger: process.min_gap}
+shapes:
+  mass: {ref: std.perforated_plate, size: plate, pitch: pitch}
+  comb_top:
+    ref: comb_drive
+    fingers: 16
+    finger_width: w_finger
+    gap: w_finger
+    rotation: 180
+    align: {point: moving, to: mass.top, dy: -1}
+  comb_bottom:
+    ref: comb_drive
+    fingers: 16
+    finger_width: w_finger
+    gap: w_finger
+    align: {point: moving, to: mass.bottom, dy: 1}
+  suspension_left:
+    ref: suspension
+    align: {point: right, to: mass.left, dx: 1.5}
+  suspension_right:
+    ref: suspension
+    align: {point: left, to: mass.right, dx: -1.5}

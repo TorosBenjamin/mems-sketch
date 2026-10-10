@@ -309,11 +309,21 @@ def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window)
     assert headers(window.layers.layers) == ["Layer", "GDS"]
     window.open_process()
     definitions = window.area.process_view.layers.layers
-    assert "Undercut µm" not in headers(definitions)
-    column = headers(definitions).index("Min width µm")
-    definitions.item(0, column).setText("0.5")
-    first = next(iter(window.document.project.layers.values()))
-    assert first.min_width == 0.5
+    assert headers(definitions) == ["Layer", "GDS", "Datatype", "Level"]
+    rules = window.area.process_view.rules.rules
+    assert headers(rules)[:6] == ["Rule", "Kind", "Layers", "Values", "Severity", "Note"]
+    row = [rules.item(r, 0).text() for r in range(rules.rowCount())].index("device_min_width")
+    rules.item(row, 3).setText("value=0.5")
+    assert window.document.project.process.rules["device_min_width"].values == {"value": 0.5}
+    rules.item(row, 3).setText("value=2 * process.undercut")
+    assert window.document.project.process.rules["device_min_width"].values == {
+        "value": "2 * process.undercut"
+    }
+    rules.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert not window.document.project.process.rules["device_min_width"].enabled
+    rules.item(row, 4).setText("sometimes")  # not a severity: refused, shown again
+    assert window.document.project.process.rules["device_min_width"].severity == "error"
+    assert rules.item(row, 4).text() == "error"
 
 
 def test_a_tool_window_header_carries_the_panels_own_buttons(window):
@@ -396,3 +406,60 @@ def test_the_editor_island_has_all_four_corners_rounded(window, name, qtbot):
     for x, y in ((0, 0), (right, 0), (0, bottom), (right, bottom)):
         pixel = island.mapTo(window, QPoint(x, y))
         assert image.pixelColor(pixel).name() == TOKENS[name]["frame"], (x, y)
+
+
+def test_the_layer_stack_is_edited_in_the_level_column(window):
+    from mems_sketch.core.process import Level
+
+    window.open_process()
+    panel = window.area.process_view.layers
+    table = panel.layers
+    rows = {table.item(r, 0).text(): r for r in range(table.rowCount())}
+    assert table.item(rows["device"], 3).text() == "1"
+    assert table.item(rows["anchor"], 3).text() == "device.anchor"
+    assert table.item(rows["metal"], 3).text() == "2"
+    table.item(rows["metal"], 3).setText("1")  # metal below device
+    process = window.document.project.process
+    assert process.levels == [Level("metal"), Level("device", {"anchor": "anchor"})]
+    table.item(rows["anchor"], 3).setText("metal.anchor")
+    assert process.levels == [Level("metal", {"anchor": "anchor"}), Level("device")]
+    table.item(rows["anchor"], 3).setText("nowhere.anchor")  # refused, shown again
+    assert table.item(rows["anchor"], 3).text() == "metal.anchor"
+    panel.default_level.activated.emit(2)  # device
+    assert process.default_level == "device"
+    table.item(rows["device"], 3).setText("")  # out of the stack: no longer the default
+    assert process.levels == [Level("metal", {"anchor": "anchor"})]
+    assert process.default_level is None
+
+
+def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path):
+    from mems_sketch import Project, load_library, save
+
+    library = Project(name="fab", top=None, process_name="surface")
+    library.process.layers = dict(window.document.project.process.layers)
+    library.process.constants = {"undercut": 2.0}
+    library.process.rules = {
+        name: rule
+        for name, rule in window.document.project.process.rules.items()
+        if name.startswith("device")
+    }
+    save(library, tmp_path / "fab")
+    window.document.components.add_library(tmp_path / "fab", "fab")
+    window.open_process()
+    panel = window.area.process_view.rules
+    panel.refresh()
+    items = [panel.process.itemText(k) for k in range(panel.process.count())]
+    assert items == ["main", "fab.surface"]
+    panel.process.activated.emit(1)
+    assert window.document.project.process_name == "fab.surface"
+    table = panel.rules
+    row = [table.item(r, 0).text() for r in range(table.rowCount())].index("device_min_width")
+    assert table.item(row, 6).text() == "fab.surface"
+    table.item(row, 3).setText("value=1")
+    assert table.item(row, 6).text() == "fab.surface (changed)"
+    table.item(row, 7).setText("test structures")
+    assert window.document.project.reasons == {"device_min_width": "test structures"}
+    table.selectRow(row)
+    panel.actions.buttons["Reset the selected rules to the process's"].click()
+    assert window.document.project.process.rules["device_min_width"].values == {"value": 2.0}
+    assert load_library("fab", tmp_path / "fab").processes["surface"].constants == {"undercut": 2}

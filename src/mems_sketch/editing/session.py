@@ -2,7 +2,7 @@
 
 Frontends (the GUI, the CLI, scripts) never build geometry or touch files
 themselves; they go through a session, which uses the rest of the backend
-(project model, compiler, storage, rules, export). Edits are grouped:
+(project model, engine, storage, rules, export). Edits are grouped:
 ``session.components``, ``.nodes``, ``.modifiers``, ``.moves``, ``.points``,
 ``.parameters`` and ``.process``; ``session.results`` is what the components evaluate to.
 
@@ -17,8 +17,8 @@ themselves; they go through a session, which uses the rest of the backend
 * Undo/redo keep whole-project snapshots (libraries are read-only and shared)
   and remember which component each change was made in, so a frontend can
   go back to it, like a code editor.
-* A long-lived :class:`Compiler` caches built components by fingerprint, so
-  recompiling after an edit only rebuilds what changed.
+* A long-lived :class:`~mems_sketch.engine.Engine` caches built components by
+  fingerprint, so recompiling after an edit only rebuilds what changed.
 """
 
 from __future__ import annotations
@@ -28,9 +28,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from mems_sketch.core.compiler import Compiler, Session
 from mems_sketch.core.component import Component
-from mems_sketch.core.project import Project, new_project
+from mems_sketch.core.project import MAIN_PROCESS, Project, new_project
 from mems_sketch.core.shapes import (
     NodePath,
     RefShape,
@@ -39,7 +38,7 @@ from mems_sketch.core.shapes import (
     node_at,
     walk,
 )
-from mems_sketch.core.user_component import ComponentDef, ParamDef
+from mems_sketch.core.user_component import ComponentDef, ParamDef, name_shapes
 from mems_sketch.editing.components import ComponentEdits, library_name
 from mems_sketch.editing.corners import CornerEdits
 from mems_sketch.editing.events import Event
@@ -53,6 +52,7 @@ from mems_sketch.editing.parameters import ParameterEdits
 from mems_sketch.editing.points import PointEdits
 from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
+from mems_sketch.engine import Engine
 from mems_sketch.export.base import export
 from mems_sketch.storage import is_copy, load, save
 from mems_sketch.storage.project_files import PROJECT_FILE, load_library, project_folder
@@ -72,7 +72,7 @@ class EditSession:
         self.active = self.project.default_component()
         self.path: Path | None = None
         self.dirty = False
-        self.compiler = Compiler()
+        self._engine = Engine()
         # (description, other project state, active before the change, active after it)
         self._undo: list[tuple[str, Project, str, str]] = []
         self._redo: list[tuple[str, Project, str, str]] = []
@@ -111,6 +111,8 @@ class EditSession:
         was_valid = not self.problems(before)
         try:
             result = change(self.project)
+            for definition in self.project.components.values():
+                name_shapes(definition.shapes)  # every shape has a name (PRJ-3)
             if was_valid:
                 problems = self.problems()
                 if problems:
@@ -137,19 +139,7 @@ class EditSession:
 
     def problems(self, project: Project | None = None) -> list[str]:
         """Why the project does not compile (empty when it does)."""
-        project = project or self.project
-        try:
-            project.check_references()
-        except ValueError as exc:
-            return [str(exc)]
-        session = self.compiler.session(project)
-        problems = []
-        for name in project.components:
-            try:
-                session.render(name)
-            except Exception as exc:  # noqa: BLE001 - collected for the caller
-                problems.append(f"{name}: {exc}")
-        return problems
+        return self._engine.trial(project or self.project).problems()
 
     def can_undo(self) -> bool:
         return bool(self._undo)
@@ -206,15 +196,16 @@ class EditSession:
         if folder.exists() and not folder.is_dir():
             raise ValueError(f"{folder} is a file, not a folder")
         project = new_project(name.strip(), library=library)
-        if process_from is not None:
-            project.process = load(process_from).process
+        if process_from is not None:  # a copy, as the new project's own process
+            own = copy.deepcopy(load(process_from).process)
+            project.processes, project.process = {MAIN_PROCESS: own}, own
         for path in libraries:
             key = library_name(path)
             if key in project.libraries:
                 raise ValueError(f"two libraries would both be called '{key}'")
             project.libraries[key] = load_library(key, Path(path))
-            if not project.libraries[key].components:
-                raise ValueError(f"{path} has no components")
+            if not project.libraries[key].components and not project.libraries[key].processes:
+                raise ValueError(f"{path} has no components or processes")
         self._reset(project, None)
         return self.save(folder)
 
@@ -239,14 +230,18 @@ class EditSession:
         self.changed.emit()  # tabs drop their "modified" marks
         return target
 
-    def export(self, path: str | Path) -> Path:
+    def export(
+        self, path: str | Path, format_name: str | None = None, options: dict | None = None
+    ) -> Path:
         component = self.active
         return export(
             self.project,
             path,
+            format_name=format_name,
             geometry=self.results.geometry(),
             component=component,
             params=self.trials_for(component),
+            options=options,
         )
 
     def _reset(self, project: Project, path: Path | None) -> None:
@@ -274,8 +269,10 @@ class EditSession:
         self.dirty = dirty
         self.file_changed.emit()
 
-    def compiled(self) -> Session:
-        return self.compiler.session(self.project)
+    @property
+    def engine(self) -> Engine:
+        """The engine, with the project as it is now loaded."""
+        return self._engine.load(self.project)
 
     def exists(self, component: str) -> bool:
         """Whether ``component`` (as written at project level) can be opened."""
@@ -295,7 +292,7 @@ class EditSession:
         found = self.project.definition(self.project.qualify(component))
         if found is not None:
             return found[0]
-        schema = self.compiled().component(component).Params.model_fields
+        schema = self.engine.component(component).Params.model_fields
         return ComponentDef(
             name=component,
             parameters=[
@@ -332,7 +329,7 @@ class EditSession:
             previous = trials.get(name)
             trials[name] = value
             try:
-                self.compiled().variables(component, self.trials_for(component))
+                self.engine.variables(component, self.trials_for(component))
             except Exception:
                 if previous is None:
                     trials.pop(name)
@@ -351,7 +348,7 @@ class EditSession:
                 kept = self.trials.setdefault(component, {})
                 kept[name] = value
                 try:
-                    self.compiled().variables(component, self.trials_for(component))
+                    self.engine.variables(component, self.trials_for(component))
                 except Exception:  # noqa: BLE001 - an outdated trial value is dropped
                     kept.pop(name)
 
@@ -361,7 +358,7 @@ class EditSession:
         if not trials:
             return {}
         try:
-            schema = self.compiled().component(component).Params.model_fields
+            schema = self.engine.component(component).Params.model_fields
         except KeyError:
             return {}
         return {k: v for k, v in trials.items() if k in schema}
@@ -382,7 +379,7 @@ class EditSession:
         return self.project.qualify(name, component or self.active)
 
     def component(self, name: str) -> Component:
-        return self.compiled().component(name)
+        return self.engine.component(name)
 
     def parameter_defaults(self, component: str) -> dict[str, Any]:
         """Declared defaults (numbers or expressions) of a component's parameters."""

@@ -2,10 +2,14 @@
 
 ## A built-in component
 
-Subclass `Component` (`core/component.py`), define a nested `Params` model and
-`build(params) -> Geometry`, and decorate the class with
-`@register_component`. Override `points()` to offer alignment points (as
-`serpentine_spring` offers `start` and `end`). See `components/library.py`.
+Built-in components are ordinary components in a library that ships with the
+tool, `components/builtin/` (a project folder without a top component, see
+[File formats](file-formats.md)). Add a component folder there and list it in
+its `project.yaml`; draw on `level` and `level.anchor` rather than named
+layers, so it works on any level of any project's layer stack. Both backends
+build it like any other component, and its parameters' limits are its checks.
+There is no Python API for components that compute their own geometry: a
+component is always data, so the C++ engine can build it.
 
 ## A shape kind
 
@@ -48,16 +52,82 @@ the session and emits `error(str)` for problems.
 ## An export format
 
 A class with `format_name`, `file_extension` and
-`export(project, geometry, path)`; set `wants_context = True` to also receive
-`component=` and `params=`. Register it with `@register_exporter`, or from a
-separate package under the `mems_sketch.exporters` entry-point group:
+`export(project, geometry, path)`. Optionally:
+
+- `title`: its name in **File → Export…** (default: the format name);
+- `options`: the settings it takes, as `ExportOption`s. Each value is passed to
+  `export` as a keyword argument; values not given take their defaults;
+- `wants_context = True`: it also receives `component=` and `params=`.
+
+```python
+from typing import ClassVar
+
+from mems_sketch.export.base import ExportOption, register_exporter
+
+
+@register_exporter
+class SvgExporter:
+    format_name = "svg"
+    title = "SVG drawing"
+    file_extension = ".svg"
+    options: ClassVar = (
+        ExportOption("stroke_um", 0.0, "Outline width", minimum=0, suffix=" µm"),
+        ExportOption("filled", True, "Filled"),
+    )
+
+    def export(self, project, geometry, path, stroke_um=0.0, filled=True): ...
+```
+
+An option's type is its default's: `bool`, `int`, `float` or `str` (with
+`choices`, one of them). `minimum`, `maximum`, `suffix` and `help` go into the
+export dialog, which is built from the options, as are
+`mems-sketch-cli export --option NAME=VALUE` and the list
+`mems-sketch-cli formats` prints. Values are checked against the
+declaration before `export` is called, and the dialog remembers the last ones
+per format.
+
+Register the class with `@register_exporter`, or from a separate package
+under the `mems_sketch.exporters` entry-point group:
 
 ```toml
 [project.entry-points."mems_sketch.exporters"]
 svg = "my_package.svg:SvgExporter"
 ```
 
-It then appears in **File → Export…** and `mems-sketch-cli export`.
+It then appears in **File → Export…**, `mems-sketch-cli export` and
+`mems-sketch-cli formats`.
+
+## A rule kind
+
+A class with `name`, `title`, `roles` (the layers it takes, e.g.
+`("outer", "inner")`), `parameters` (`Option`s, as an exporter's options) and
+`check(regions, dbu, **values)`, which gets one `Region` per role
+(`core/region.py`: booleans, `sized`, `each_merged`, `area`, `bbox`) in
+database units of `dbu` µm and returns `Finding(message, bbox_um)`s:
+
+```python
+from typing import ClassVar
+
+from mems_sketch.options import Option
+from mems_sketch.process.rules import Finding, register_rule_kind
+
+
+@register_rule_kind
+class MinAngle:
+    name = "min_angle"
+    title = "Minimum angle"
+    roles = ("layer",)
+    parameters: ClassVar = (Option("value", 30.0, "Angle", minimum=0, suffix="°"),)
+
+    def check(self, regions, dbu, value): ...
+```
+
+Rules then use it like a built-in kind (`kind: min_angle`), with values that
+may be expressions over the process constants; values are evaluated and
+checked against the declaration before `check` is called. Register it with
+`@register_rule_kind`, or from a package under the `mems_sketch.rules`
+entry-point group. A project never contains code: a rule whose kind is not
+installed is reported as not checked, an error.
 
 ## A file format for documents
 

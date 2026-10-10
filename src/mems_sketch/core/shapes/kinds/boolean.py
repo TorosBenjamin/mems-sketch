@@ -8,9 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-from mems_sketch.core.component import Geometry
-from mems_sketch.core.shapes.base import Operation, Point, RenderContext
-from mems_sketch.core.shapes.geometry import boolean_op
+from mems_sketch.core.shapes.base import Operation
 
 if TYPE_CHECKING:
     from mems_sketch.core.shapes.registry import Shape
@@ -26,10 +24,6 @@ class BooleanShape(Operation):
     op: Literal["subtract", "intersect", "xor"]
     a: list[Shape]
     b: list[Shape]
-
-    def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
-        a, b = ctx.children([self.a, self.b])
-        return boolean_op(self.op, a, b), {}
 
     def summary(self) -> str:
         return self.op

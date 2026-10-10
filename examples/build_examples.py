@@ -2,8 +2,8 @@
 
     python examples/build_examples.py
 
-writes examples/libraries/mems_std (a component library) and
-examples/resonator (a project that uses it). Both are committed as YAML; this
+writes examples/libraries/mems_std (a library of components and a process)
+and examples/resonator (a project that uses both). Both are committed as YAML; this
 script shows how the same files can be produced code-first.
 """
 
@@ -28,7 +28,11 @@ HERE = Path(__file__).parent
 
 # -- a reusable component library ------------------------------------------
 
-library = Project(name="mems_std", top=None)  # a library: no top component
+# A library: no top component. Its process, shared with the projects using it.
+surface = default_process()
+surface.description = "Single-layer surface micromachining"
+surface.constants["min_gap"] = 2
+library = Project(name="mems_std", top=None, process=surface, process_name="surface")
 library.define_component(
     ComponentDef(
         name="perforated_plate",
@@ -81,9 +85,14 @@ library_folder = save(library, HERE / "libraries" / "mems_std")
 
 # -- a project that uses the library ----------------------------------------
 
-project = Project(name="resonator", process=default_process())
-project.process.constants["min_gap"] = 2
+project = Project(name="resonator", process_name="std.surface")
 project.libraries["std"] = load_library("std", library_folder)
+project.use_process("std.surface")
+# The drawing does not model its anchors or the etch, so the process's topology
+# rules are turned off here; they stay listed, as off, with the reason.
+for rule in ("device_anchored", "device_release"):
+    project.process.rules[rule].enabled = False
+    project.reasons[rule] = "the drawing does not model its anchors or the etch"
 
 project.define_component(
     ComponentDef(

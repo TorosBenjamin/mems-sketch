@@ -1,0 +1,9 @@
+description: Serpentine spring ending in an anchor pad
+parameters:
+  turns: {default: 3, min: 1, integer: true}
+shapes:
+  spring: {ref: serpentine_spring, turns: turns}
+  anchor:
+    ref: anchor
+    size: 40
+    align: {point: bottom, to: spring.end, dy: -1}

@@ -1,9 +1,9 @@
 import difflib
+import json
 
 import pytest
 
 from mems_sketch import (
-    Compiler,
     ComponentDef,
     Instance,
     Layer,
@@ -13,12 +13,15 @@ from mems_sketch import (
     RectShape,
     RefShape,
     Repeat,
+    _core,
     load,
     load_library,
     save,
 )
 from mems_sketch.core.component import to_dbu
+from mems_sketch.core.process import layer_rules
 from mems_sketch.core.project import new_project
+from mems_sketch.engine import Engine, project_data
 from mems_sketch.storage.project_files import ProjectFormatError
 
 
@@ -42,8 +45,9 @@ def make_project() -> Project:
     project = Project(
         name="demo",
         process=Process(
-            layers={"device": Layer("device", 1, 0, min_width=1.0)},
+            layers={"device": Layer("device", 1, 0)},
             constants={"min_gap": 2, "gap": "1.5 * min_gap"},
+            rules={r.name: r for r in layer_rules("device", min_width=1.0, min_space=None)},
         ),
     )
     project.define_component(bar())
@@ -138,14 +142,13 @@ def test_a_whole_project_can_be_used_as_a_component(tmp_path):
     assert area(wafer) == pytest.approx(3 * 20 * 2)
 
 
-def test_compiler_builds_identical_instances_once():
+def test_the_engine_builds_identical_instances_once():
     project = make_project()
     project.add(Instance("many", "bar", {"w": 1}, repeat=Repeat(columns=50, dx=30)))
-    compiler = Compiler()
-    project.render(compiler=compiler)
-    # top + one "bar" with w_top + one "bar" with w=1 are built; the other 49 copies are hits.
-    assert compiler.misses == 3
-    assert compiler.hits == 49
+    engine = Engine()
+    project.render(engine=engine)
+    # top + one "bar" with w_top + one "bar" with w=1 are built; the other 49 copies are kept.
+    assert engine.cached == 3
 
 
 def test_fingerprints_change_only_with_dependencies():
@@ -162,16 +165,16 @@ def test_fingerprints_change_only_with_dependencies():
 
 
 def project_fingerprints(project: Project) -> dict[str, str]:
-    session = Compiler().session(project)
-    return {name: session.fingerprint(name) for name in project.components}
+    core = _core.Project(json.dumps(project_data(project)))
+    return {name: core.fingerprint(name) for name in project.components}
 
 
 def test_cache_stays_correct_across_edits():
     project = make_project()
-    compiler = Compiler()
-    assert project.render(compiler=compiler).layers["device"].area() / 1e6 == pytest.approx(90)
+    engine = Engine()
+    assert project.render(engine=engine).layers["device"].area() / 1e6 == pytest.approx(90)
     project.components["bar"].parameters[1] = ParamDef(name="length", default="20 * w")
-    assert project.render(compiler=compiler).layers["device"].area() / 1e6 == pytest.approx(180)
+    assert project.render(engine=engine).layers["device"].area() / 1e6 == pytest.approx(180)
 
 
 def test_validate_reports_broken_components():
@@ -185,77 +188,99 @@ def test_validate_reports_broken_components():
 def test_project_folder_layout_and_round_trip(tmp_path):
     project = make_project()
     folder = save(project, tmp_path / "demo")
-    assert sorted(p.name for p in (folder / "components").iterdir()) == ["bar.yaml", "top.yaml"]
+    assert sorted(p.name for p in (folder / "components").iterdir()) == ["bar", "top"]
+    assert (folder / "components" / "bar" / "component.yaml").is_file()
+    assert (folder / "processes" / "main" / "process.yaml").is_file()
+    manifest = (folder / "project.yaml").read_text()
+    assert "components: {top: components/top, bar: components/bar}" in manifest
+    assert "process: main\nprocesses: {main: processes/main}" in manifest
     assert load(folder) == project
     assert load(folder / "project.yaml") == project
 
 
 def test_yaml_is_canonical_and_minimal(tmp_path):
     folder = save(make_project(), tmp_path / "demo")
-    text = (folder / "components" / "bar.yaml").read_text()
+    text = (folder / "components" / "bar" / "component.yaml").read_text()
     assert text == (
-        "name: bar\n"
         "parameters:\n"
-        "- name: w\n"
-        "  default: 2\n"
-        "  min: 0.5\n"
-        "- name: length\n"
-        "  default: 10 * w\n"
+        "  w: {default: 2, min: 0.5}\n"
+        "  length: 10 * w\n"
         "shapes:\n"
-        "- kind: rect\n"
-        "  layer: device\n"
-        "  x0: 0\n"
-        "  y0: 0\n"
-        "  x1: length\n"
-        "  y1: w\n"
+        "  rect1: {kind: rect, layer: device, x0: 0, y0: 0, x1: length, y1: w}\n"
     )
-    process = (folder / "process.yaml").read_text()
-    assert "gds: [1, 0]" in process and "min_width: 1" in process
+    process = (folder / "processes" / "main" / "process.yaml").read_text()
+    assert "gds: [1, 0]" in process
+    assert "device_min_width: {kind: min_width, layers: [device], value: 1}" in process
+
+
+def component_files(folder):
+    return {p.parent.name: p.read_text() for p in (folder / "components").rglob("component.yaml")}
 
 
 def test_changing_one_value_changes_one_line(tmp_path):
     project = make_project()
     folder = save(project, tmp_path / "demo")
-    before = {p.name: p.read_text() for p in (folder / "components").iterdir()}
+    before = component_files(folder)
     project.set_variable("w_top", 4)
     save(project, folder)
-    after = {p.name: p.read_text() for p in (folder / "components").iterdir()}
+    after = component_files(folder)
     changed = [name for name in before if before[name] != after[name]]
-    assert changed == ["top.yaml"]
+    assert changed == ["top"]
     diff = [
         line
         for line in difflib.unified_diff(
-            before["top.yaml"].splitlines(), after["top.yaml"].splitlines(), lineterm=""
+            before["top"].splitlines(), after["top"].splitlines(), lineterm=""
         )
         if line[:1] in "+-" and line[:3] not in ("+++", "---")
     ]
-    assert diff == ["-  default: 3", "+  default: 4"]
+    assert diff == ["-parameters: {w_top: 3}", "+parameters: {w_top: 4}"]
 
 
 def test_removed_components_lose_their_files(tmp_path):
     project = make_project()
     project.define_component(bar("spare"))
     folder = save(project, tmp_path / "demo")
+    (folder / "components" / "spare" / "notes.txt").write_text("kept")
     project.remove_component("spare")
     save(project, folder)
-    assert not (folder / "components" / "spare.yaml").exists()
+    assert not (folder / "components" / "spare" / "component.yaml").exists()
+    assert (folder / "components" / "spare" / "notes.txt").read_text() == "kept"  # not ours
+
+
+def test_names_come_from_the_files_not_their_places(tmp_path):
+    folder = save(make_project(), tmp_path / "demo")
+    (folder / "components" / "bar").rename(folder / "components" / "beam_files")
+    manifest = folder / "project.yaml"
+    manifest.write_text(
+        manifest.read_text().replace("bar: components/bar", "bar: components/beam_files")
+    )
+    assert set(load(folder).components) == {"top", "bar"}
+    (folder / "components" / "stray").mkdir()
+    (folder / "components" / "stray" / "component.yaml").write_text("description: lost\n")
+    assert load(folder).load_notes == [
+        "components/stray/component.yaml is not listed, so it was not loaded"
+    ]
 
 
 def test_load_errors_are_explicit(tmp_path):
     folder = save(make_project(), tmp_path / "demo")
-    (folder / "components" / "bar.yaml").rename(folder / "components" / "beam.yaml")
-    with pytest.raises(ProjectFormatError, match="does not match the file name"):
+    (folder / "components" / "bar" / "component.yaml").unlink()
+    with pytest.raises(ProjectFormatError, match="missing .*component.yaml"):
         load(folder)
     with pytest.raises(ProjectFormatError, match="missing"):
         load(tmp_path / "nowhere")
+    manifest = folder / "project.yaml"
+    manifest.write_text(manifest.read_text().replace("mems-sketch/2", "mems-sketch/1"))
+    with pytest.raises(ProjectFormatError, match="not a mems-sketch/2 project file"):
+        load(folder)
 
 
-def test_an_undercut_in_an_older_project_is_ignored(tmp_path):
-    # Etch loss was part of the process once; files that still have it load.
+def test_unknown_keys_of_a_layer_are_ignored(tmp_path):
+    # Etch loss was part of a layer once.
     folder = tmp_path / "old"
     project = Project()
     project.add_layer(Layer("device", 1))
     save(project, folder)
-    process = folder / "process.yaml"
-    process.write_text(process.read_text().replace("gds: [1, 0]", "gds: [1, 0]\n    undercut: 0.3"))
+    process = folder / "processes" / "main" / "process.yaml"
+    process.write_text(process.read_text().replace("gds: [1, 0]", "gds: [1, 0], undercut: 0.3"))
     assert load(folder).layers["device"] == Layer("device", 1)

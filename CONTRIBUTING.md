@@ -38,6 +38,20 @@ tested against the latest `development`.
    pytest -q                    # GUI tests run headless (offscreen); no windows open
    ```
 
+   If you changed the C++ geometry library (`src/geom/`) or the engine
+   (`src/engine/`), also build and run their tests (setup in
+   [`src/geom/README.md`](src/geom/README.md) and
+   [`src/engine/README.md`](src/engine/README.md)):
+
+   ```bash
+   cmake --build build/geom && ctest --test-dir build/geom --output-on-failure
+   cmake --build build/engine && ctest --test-dir build/engine --output-on-failure
+   ```
+
+   With Open CASCADE in `build/deps/`, `pip install -e .` also builds both
+   into the package, as `mems_sketch._geom` and `mems_sketch._core`. The
+   package needs them: they build every geometry.
+
 4. **Push and open a pull request into `development`:**
 
    ```bash
@@ -49,8 +63,13 @@ tested against the latest `development`.
    changes).
 
 5. **Merge when CI is green and the branch is up to date.** GitHub requires
-   both: CI (lint and tests on Python 3.11 and 3.12) must pass, and the
-   branch must contain the latest `development`. If `development` moved on,
+   both: the **CI** check must pass, and the branch must contain the latest
+   `development`. CI runs only what the change can affect
+   (`.github/scripts/changed_areas.py`): a change to the GUI runs the GUI's
+   tests, one to the Python package all Python tests, one to the engine or
+   the geometry library also their C++ builds and tests, and one to the
+   documentation alone runs nothing. Its last job, **CI**, passes when
+   everything that ran passed. If `development` moved on,
    bring it in and let CI run again:
 
    ```bash
@@ -67,10 +86,26 @@ the rules (for example `gh pr merge --admin`).
 
 ## Releasing to `main`
 
-Open a pull request from `development` into `main`
-(`gh pr create --base main --head development`). A check fails any pull
-request into `main` from another branch; CI must be green, as for
-`development`.
+A pull request into `main` is a release: merging it publishes one.
+
+1. Set the new version in `pyproject.toml`, through a pull request into
+   `development` as any change.
+2. Open a pull request from `development` into `main`
+   (`gh pr create --base main --head development`). Its checks fail when it
+   comes from another branch or when the version is already released; CI
+   must be green, as for `development`. The wheels and the app are not built
+   again here: every change was built on its way into `development`.
+3. Merging it starts the release (`release.yml`): the wheels (`wheels.yml`)
+   and the app (`app.yml`) are built on every platform (pull requests into
+   `development` build them for Linux alone), each started with
+   `--self-test` first: a Windows installer and portable zip, a macOS disk
+   image and a Linux AppImage. Then a GitHub release `v<version>` is
+   published on the merge commit with all of them and notes generated from
+   the merged pull requests; edit the notes on the releases page if needed.
+
+`mems-sketch --self-test` checks an installed or bundled app (engine, rule
+checks in another process, GDS, the window); `packaging/` holds what builds
+the app.
 
 ## Conventions
 

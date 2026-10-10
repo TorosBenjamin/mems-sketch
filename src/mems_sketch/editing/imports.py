@@ -12,12 +12,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-import klayout.db as kdb
-
-from mems_sketch.core.component import DBU_UM, Geometry, is_builtin
+from mems_sketch.core.component import Geometry, is_builtin
 from mems_sketch.core.imports import (
     ImportedCell,
     cells,
+    gds_bytes,
     gds_layers,
     layer_key,
     layer_names,
@@ -119,37 +118,33 @@ class ImportEdits(Commands):
     # -- helpers -----------------------------------------------------------------
 
     def read(self, path: str | Path) -> tuple[bytes, str]:
-        """The layout to import from ``path`` (GDS or OASIS bytes) and the name to
-        keep it under: the file itself, or a geometry document as OASIS."""
+        """The layout to import from ``path`` (GDS bytes) and the name to keep it
+        under: the file itself, or a geometry document as GDS."""
         path = Path(path)
         if is_document(path):
             geometry, numbers, _ = read_geometry(path)
-            return self._as_oasis(geometry, numbers), f"{path.stem}.oas"
+            return self._as_gds(geometry, numbers), f"{path.stem}.gds"
         data = path.read_bytes()
         read_layout(data)  # a readable file, or a clear error
         return data, path.name
 
-    def _as_oasis(self, geometry: Geometry, numbers: dict[str, tuple[int, int] | None]) -> bytes:
-        """The geometry as an OASIS file: layers keep their names, and get their GDS
+    def _as_gds(self, geometry: Geometry, numbers: dict[str, tuple[int, int] | None]) -> bytes:
+        """The geometry as a GDS file: layers keep their names, and get their GDS
         numbers from the document, else from the project layer of that name, else
         numbers nothing else uses."""
         taken = {n for n in numbers.values() if n is not None}
         taken |= {(ly.gds_layer, ly.gds_datatype) for ly in self.project.layers.values()}
         free = max((number for number, _ in taken), default=0) + 1
-        layout = kdb.Layout()
-        layout.dbu = DBU_UM
-        top = layout.create_cell(DOCUMENT_CELL)
-        for name, region in geometry.layers.items():
+        layers: dict[str, tuple[int, int]] = {}
+        for name in geometry.layer_names():
             gds = numbers.get(name)
             if gds is None and name in self.project.layers:
                 layer = self.project.layers[name]
                 gds = (layer.gds_layer, layer.gds_datatype)
             if gds is None:
                 gds, free = (free, 0), free + 1
-            top.shapes(layout.layer(kdb.LayerInfo(gds[0], gds[1], name))).insert(region)
-        options = kdb.SaveLayoutOptions()
-        options.format = "OASIS"
-        return bytes(layout.write_bytes(options))
+            layers[name] = gds
+        return gds_bytes(geometry, layers, DOCUMENT_CELL)
 
     def suggested_name(self, path: str | Path) -> str:
         """A free component name made from the file's name (``Pad frame`` -> ``pad_frame``)."""

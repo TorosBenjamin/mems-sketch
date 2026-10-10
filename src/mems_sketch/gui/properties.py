@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes import (
     MODIFIER_KINDS,
     CornersModifier,
@@ -83,6 +84,7 @@ _LABELS = {
     "end_angle": "End angle °",
     "rotation": "Rotation °",
     "op": "Operation",
+    "level": "Level",
 }
 MODIFIER_TITLES = {
     "array": "Array",
@@ -264,9 +266,27 @@ class PropertyEditor(QScrollArea):
         if field == "layer":
             combo = _combo()
             combo.setEditable(True)
+            combo.addItems(layer_choices(self.document.project.process.levels))
             combo.addItems(list(self.document.project.layers))
             combo.setCurrentText(value)
+            combo.setToolTip(
+                "level: the component's level of the layer stack; level-1, level+1: the "
+                "levels below and above; level.anchor: a layer of the level by role; "
+                "or a layer by name"
+            )
             self._editors[field] = lambda: combo.currentText().strip()
+            return self._applies(combo)
+        if field == "level":  # where a placed component is
+            combo = _combo()
+            combo.setEditable(True)
+            levels = [lv.layer for lv in self.document.project.process.levels]
+            combo.addItems(["", "level+1", "level-1", *levels] if levels else [""])
+            combo.setCurrentText(value or "")
+            combo.setToolTip(
+                "The level of the layer stack it is placed on: a level, or one relative to "
+                "this component's (level+1). Empty: its own default level, else this one's"
+            )
+            self._editors[field] = lambda: combo.currentText().strip() or None
             return self._applies(combo)
         if field == "component":
             combo = _combo()
@@ -420,11 +440,13 @@ class PropertyEditor(QScrollArea):
                 readers[field] = self._editors.pop(f"param:{field}")
                 widget.setPlaceholderText(_format(default))
                 widget.integer = info.annotation is int
-                for limit in info.metadata:  # the schema's limits (ge / le)
-                    if getattr(limit, "ge", None) is not None:
-                        widget.minimum = limit.ge
-                    if getattr(limit, "le", None) is not None:
-                        widget.maximum = limit.le
+                for limit in info.metadata:  # the schema's number limits
+                    for bound in ("ge", "gt"):
+                        if getattr(limit, bound, None) is not None:
+                            widget.minimum = getattr(limit, bound)
+                    for bound in ("le", "lt"):
+                        if getattr(limit, bound, None) is not None:
+                            widget.maximum = getattr(limit, bound)
             label = info.description or field
             if field in component.internal:
                 label = f"{field} (internal)"
@@ -779,8 +801,8 @@ class PropertyEditor(QScrollArea):
             if isinstance(parameter.default, str) and value is not None:
                 text += f"  ({value:g})"
             limits = [
-                f"≥ {parameter.min:g}" if parameter.min is not None else "",
-                f"≤ {parameter.max:g}" if parameter.max is not None else "",
+                _limit(parameter.min, ">" if parameter.min_exclusive else "≥", values),
+                _limit(parameter.max, "<" if parameter.max_exclusive else "≤", values),
                 "whole number" if parameter.integer else "",
             ]
             limits = ", ".join(t for t in limits if t)
@@ -915,6 +937,25 @@ def _numeric(model, pair) -> bool:
 
 def _format(value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
+
+
+def layer_choices(levels) -> list[str]:
+    """The relative layers a shape can be on with this layer stack."""
+    if not levels:
+        return []
+    roles = sorted({role for level in levels for role in level.roles})
+    return ["level", "level+1", "level-1", *(f"level.{role}" for role in roles)]
+
+
+def _limit(limit, relation: str, values: dict[str, float]) -> str:
+    """``≤ size / 2 = 20``: a parameter limit as shown, evaluated if an expression."""
+    if limit is None:
+        return ""
+    text = f"{relation} {_format(limit)}"
+    if isinstance(limit, str):
+        with contextlib.suppress(ValueError):
+            text += f" = {evaluate(limit, values):g}"
+    return text
 
 
 def _message(exc: Exception) -> str:

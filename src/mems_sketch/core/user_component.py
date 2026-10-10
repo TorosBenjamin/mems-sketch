@@ -30,24 +30,22 @@ Example (a plate with a grid of release holes)::
 from __future__ import annotations
 
 import keyword
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 
-from mems_sketch.core.component import Component, Geometry, Params
+from mems_sketch.core.component import Component, Params
 from mems_sketch.core.expressions import RESERVED_NAMES, evaluate, resolve_variables
+from mems_sketch.core.levels import DEFAULT_STACK, Stack
 from mems_sketch.core.shapes import (
     BBOX_POINTS,
     INDEX_NAMES,
-    Evaluator,
-    NodePoints,
-    Point,
     Shape,
     check_point_reference,
     map_expressions,
     point_renamer,
-    point_values,
     references,
     rename_node_references,
     rewrite,
@@ -69,6 +67,9 @@ class ParamDef(_Model):
     parameters and ``process.*`` constants, e.g. ``gap`` defaulting to
     ``"1.5 * width"``. Defaults are resolved in dependency order, after the
     values given by the caller, and then checked against ``min``/``max``.
+    Limits may be expressions too (``max="size / 2"``), over the other
+    parameters and the process constants; an exclusive limit refuses the value
+    equal to it.
 
     An ``internal`` parameter is used only by the component itself (often a
     derived value such as ``pitch = width + gap``): where the component is
@@ -77,8 +78,10 @@ class ParamDef(_Model):
 
     name: str
     default: Value = 0.0
-    min: float | None = None
-    max: float | None = None
+    min: Value | None = None
+    max: Value | None = None
+    min_exclusive: bool = False
+    max_exclusive: bool = False
     integer: bool = False
     internal: bool = False
     description: str = ""
@@ -96,13 +99,29 @@ class ParamDef(_Model):
     def _numeric_default_in_range(self):
         if isinstance(self.default, str):
             return self  # checked when the expression is resolved
-        if self.min is not None and self.default < self.min:
-            raise ValueError(f"default of '{self.name}' is below its minimum")
-        if self.max is not None and self.default > self.max:
-            raise ValueError(f"default of '{self.name}' is above its maximum")
         if self.integer and self.default != int(self.default):
             raise ValueError(f"default of integer parameter '{self.name}' is not an integer")
+        numbers = {
+            k: v for k, v in (("min", self.min), ("max", self.max)) if not isinstance(v, str)
+        }
+        problem = self.out_of_range(self.default, numbers.get("min"), numbers.get("max"))
+        if problem:
+            raise ValueError(f"default of '{self.name}' {problem}")
         return self
+
+    def limits(self, variables: Mapping[str, float]) -> tuple[float | None, float | None]:
+        """``min`` and ``max`` evaluated with the component's values and constants."""
+        return tuple(  # type: ignore[return-value]
+            None if limit is None else evaluate(limit, variables) for limit in (self.min, self.max)
+        )
+
+    def out_of_range(self, value: float, low: float | None, high: float | None) -> str | None:
+        """What is wrong with ``value`` against these limits, or nothing."""
+        if low is not None and (value <= low if self.min_exclusive else value < low):
+            return f"must be {'more than' if self.min_exclusive else 'at least'} {low:g}, not {value:g}"
+        if high is not None and (value >= high if self.max_exclusive else value > high):
+            return f"must be {'less than' if self.max_exclusive else 'at most'} {high:g}, not {value:g}"
+        return None
 
 
 class PointDef(_Model):
@@ -136,19 +155,37 @@ class PointDef(_Model):
         return check_point_reference(at)
 
 
+class Waiver(_Model):
+    """An accepted rule violation (requirement DRC-13): the rule, where its
+    violation is (a box in µm), why it is accepted, and a fingerprint of the
+    geometry there. When that geometry changes, the waiver lapses and the
+    violation shows again."""
+
+    rule: str
+    box: tuple[float, float, float, float]
+    reason: str
+    fingerprint: str
+
+
 class ComponentDef(_Model):
     """A user component.
 
     ``name`` is its path: ``plate`` for a shared component, ``comb/finger`` for
     ``finger``, a *private* component of ``comb`` (see
     :mod:`mems_sketch.core.project` for what can place it).
+
+    ``level`` is the level of the layer stack it is on unless a placement says
+    otherwise; without one it is on the level of whatever places it
+    (:mod:`mems_sketch.core.levels`).
     """
 
     name: str
     description: str = ""
+    level: str | None = None
     parameters: list[ParamDef] = Field(default_factory=list)
     points: list[PointDef] = Field(default_factory=list)
     shapes: list[Shape] = Field(default_factory=list)
+    waivers: list[Waiver] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -156,6 +193,13 @@ class ComponentDef(_Model):
         if not all(part.isidentifier() for part in name.split("/")):
             raise ValueError(f"'{name}' is not a valid component name")
         return name
+
+    @model_validator(mode="after")
+    def _shapes_named(self):
+        if any(shape.name is None for shape in walk(self.shapes)):
+            self.shapes = [shape.model_copy(deep=True) for shape in self.shapes]  # not the caller's
+            name_shapes(self.shapes)
+        return self
 
     @property
     def short_name(self) -> str:
@@ -235,72 +279,65 @@ class ComponentDef(_Model):
         ]
 
 
-class UserComponent(Component):
-    """Adapts a :class:`ComponentDef` to the :class:`Component` interface.
+def name_shapes(shapes: list[Shape]) -> None:
+    """Give every unnamed shape a name: its kind (a placement: its component's
+    name) and the lowest number not taken, ``rect1``, ``anchor2``."""
+    taken = {shape.name for shape in walk(shapes) if shape.name}
+    for shape in walk(shapes):
+        if shape.name is None:
+            stem = shape.kind
+            if isinstance(getattr(shape, "component", None), str):
+                stem = re.split(r"[./]", shape.component)[-1]
+            n = 1
+            while f"{stem}{n}" in taken:
+                n += 1
+            shape.name = f"{stem}{n}"
+            taken.add(shape.name)
 
-    ``lookup`` resolves the names used by ``ref`` shapes; ``scope`` holds the
-    ``process.*`` constants visible to every expression.
+
+class UserComponent(Component):
+    """Adapts a :class:`ComponentDef` to the :class:`Component` interface: its
+    parameters, as a placement sees them (the engine builds it). ``scope``
+    holds the ``process.*`` constants visible to every expression.
     """
 
     def __init__(
         self,
         definition: ComponentDef,
-        lookup: Callable[[str], Component],
         scope: Mapping[str, float] | None = None,
+        stack: Stack = DEFAULT_STACK,
     ) -> None:
         self.definition = definition
         self.type_name = definition.name
+        self.default_level = definition.level
         self.scope = dict(scope or {})
+        self.stack = stack
         self.Params = _params_model(definition, self.scope)
         self.internal = frozenset(p.name for p in definition.parameters if p.internal)
-        self._lookup = lookup
-
-    def build(self, params: Params) -> Geometry:
-        return self.compile(params)[0]
-
-    def points(self, params: Params) -> dict[str, Point]:
-        return self.compile(params)[1]
-
-    def compile(self, params: Params) -> tuple[Geometry, dict[str, Point]]:
-        variables = {**self.scope, **{k: float(v) for k, v in params.model_dump().items()}}
-        geometry, local = Evaluator(self._lookup).render_scoped(self.definition.shapes, variables)
-        return geometry, declared_points(self.definition, variables, local, geometry)
 
 
-def declared_points(
-    definition: ComponentDef,
-    variables: dict[str, float],
-    shapes: dict[str, NodePoints],
-    geometry: Geometry | None = None,
-) -> dict[str, Point]:
-    """Positions of a component's declared points, given its evaluated top-level shapes
-    and its geometry (for points measured from its own ``center``, ``left``, …)."""
-    result = {}
-    for point in definition.points:
-        v = {**variables, "i": 0.0, "j": 0.0}
-        v.update(point_values([e for e in (point.x, point.y) if isinstance(e, str)], shapes))
-        base = (0.0, 0.0)
-        if point.at in BBOX_POINTS:
-            base = NodePoints(definition.name, geometry or Geometry(), {}).point(point.at)
-        elif point.at is not None:
-            node, _, name = point.at.partition(".")
-            if node not in shapes:
-                raise ValueError(
-                    f"point '{point.name}' is at '{point.at}', but there is no shape '{node}'"
-                )
-            base = shapes[node].point(name)
-        result[point.name] = (base[0] + evaluate(point.x, v), base[1] + evaluate(point.y, v))
-    return result
+def _number_limits(p: ParamDef) -> dict[str, float]:
+    """A parameter's limits that are numbers, as pydantic field constraints (which
+    the editor reads to clamp a typed value); expressions are checked later."""
+    limits = {}
+    if p.min is not None and not isinstance(p.min, str):
+        limits["gt" if p.min_exclusive else "ge"] = p.min
+    if p.max is not None and not isinstance(p.max, str):
+        limits["lt" if p.max_exclusive else "le"] = p.max
+    return limits
 
 
 def _params_model(definition: ComponentDef, scope: Mapping[str, float]) -> type[Params]:
     fields: dict[str, Any] = {
         p.name: (
             int if p.integer else float,
-            Field(ge=p.min, le=p.max, description=p.description),
+            Field(description=p.description, **_number_limits(p)),
         )
         for p in definition.parameters
     }
+    expression_limits = [
+        p for p in definition.parameters if isinstance(p.min, str) or isinstance(p.max, str)
+    ]
     base = create_model(f"{definition.name}_Params", __base__=Params, **fields)
     defaults = {p.name: p.default for p in definition.parameters}
 
@@ -313,6 +350,18 @@ def _params_model(definition: ComponentDef, scope: Mapping[str, float]) -> type[
             missing = {k: v for k, v in defaults.items() if k not in data}
             data.update(resolve_variables(missing, {**scope, **given}))
             return data
+
+        @model_validator(mode="after")
+        def _limits_hold(self):
+            if not expression_limits:
+                return self
+            variables = {**scope, **{k: float(v) for k, v in self.model_dump().items()}}
+            for p in expression_limits:
+                value = variables[p.name]
+                problem = p.out_of_range(value, *p.limits(variables))
+                if problem:
+                    raise ValueError(f"parameter '{p.name}' of '{definition.name}' {problem}")
+            return self
 
     ResolvedParams.__name__ = base.__name__
     return ResolvedParams

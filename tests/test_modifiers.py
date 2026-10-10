@@ -1,6 +1,5 @@
 """Modifier stacks: array, polar array and mirror, their order, editing and Apply."""
 
-import klayout.db as kdb
 import pytest
 
 from mems_sketch import (
@@ -12,6 +11,7 @@ from mems_sketch import (
     Repeat,
     TransformShape,
 )
+from mems_sketch.core.region import Region
 from mems_sketch.core.shapes import SHAPE_ADAPTER, CircleShape, default_shape
 from mems_sketch.editing import EditSession
 from mems_sketch.storage import yaml_format
@@ -26,8 +26,8 @@ def doc() -> EditSession:
     return EditSession()
 
 
-def region(doc: EditSession) -> kdb.Region:
-    return doc.results.geometry().layers.get("device", kdb.Region())
+def region(doc: EditSession) -> Region:
+    return doc.results.geometry().layers.get("device", Region())
 
 
 def pieces(doc: EditSession) -> list[tuple[float, float, float, float]]:
@@ -252,10 +252,11 @@ def test_self_is_the_shape_just_before_the_modifier(doc):
     path = doc.nodes.add(rect(modifiers=[MirrorModifier(axis="x", x="self.left.x")]))
     assert pieces(doc) == [(8, 0, 12, 4)]  # doubled across its own left edge
     doc.modifiers.update(path, 0, about="self.bottom_left", x=0)
-    assert pieces(doc) == [(8, -4, 12, 4)]  # the image touches the original at the corner
+    # The image touches the original only at a corner: two pieces.
+    assert pieces(doc) == [(8, -4, 10, 0), (10, 0, 12, 4)]
     assert region(doc).area() == 2 * 8 * 1e6
     doc.modifiers.add(path, "polar_array", count=2, x="self.center.x", y="self.center.y")
-    assert pieces(doc) == [(8, -4, 12, 4)]  # the pair turned 180° about its own centre
+    assert pieces(doc) == [(8, -4, 10, 0), (10, 0, 12, 4)]  # turned 180° about its own centre
 
 
 def test_renaming_updates_mirrors_that_use_the_shape(doc):

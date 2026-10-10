@@ -1,0 +1,112 @@
+#pragma once
+
+#include <memory>
+#include <span>
+#include <vector>
+
+#include "mgeom/transform.hpp"
+#include "mgeom/types.hpp"
+#include "mgeom/wire.hpp"
+
+namespace mgeom {
+
+// Faces on one layer, bounded by exact lines and circular arcs, holes
+// allowed. Overlapping faces are merged: a region has no internal edges.
+//
+// Immutable and cheap to copy: copies share their geometry. The public API
+// is in micrometres; inside, geometry is kept in nanometres, so Open
+// CASCADE's fixed point tolerance (1e-7 model units) is 1e-10 µm.
+class Region {
+public:
+    Region();  // empty
+
+    // The one constructor: the face inside a closed outline of straight and
+    // arc segments (closed with a straight segment if it ends elsewhere).
+    // Throws if the outline crosses itself. Every other shape is a factory
+    // on top of it.
+    static Region polygon(const Wire& outline);
+
+    static Region rect(double x0, double y0, double x1, double y1);
+    static Region polygon(std::span<const Point> points);  // straight segments
+    static Region circle(Point centre, double radius);
+    // An annular sector from from_deg to to_deg, counter-clockwise; a ring
+    // when it spans 360°. r_in may be 0 (a pie slice, or a disc).
+    static Region arc(Point centre, double r_in, double r_out, double from_deg, double to_deg);
+    // A band of the given width along a centreline of straight and arc
+    // segments. Where segments meet at an angle, the corner is joined:
+    //  - miter: sharp up to a 90° turn; beyond, the outer edges run on by
+    //    half the width and are cut straight, so sharp turns do not spike;
+    //  - round: an arc around the corner;
+    //  - bevel: cut straight across.
+    // A corner at an arc is rounded for miter. Throws if an arc's radius is
+    // not more than half the width.
+    static Region path(const Wire& centreline, double width, PathEnds ends = PathEnds::flush,
+                       Join join = Join::miter);
+
+    Region operator|(const Region& other) const;  // union
+    Region operator-(const Region& other) const;  // subtract
+    Region operator&(const Region& other) const;  // intersect
+    Region operator^(const Region& other) const;  // xor
+
+    // The union of many regions at once. Regions whose bounding boxes do not
+    // touch are only collected, without a boolean; only groups that touch
+    // are merged by Open CASCADE. An array of separate shapes is cheap.
+    static Region unite(std::span<const Region> regions);
+
+    // Moves and rotations share the geometry (an Open CASCADE location);
+    // mirrors and scaling copy it, which Open CASCADE requires.
+    Region transformed(const Transform& t) const;
+
+    // Grow (distance > 0) or shrink (< 0) every boundary by distance (µm).
+    // Pieces that shrink away disappear; pieces that grow into each other
+    // merge; a shape may split or close into a ring. Corners the offset opens
+    // up are joined: miter sharp up to a 90° turn and, beyond, cut straight
+    // after running on by the distance (no spikes; as KLayout's sizing);
+    // bevel cut straight across at the distance from the corner; round an arc.
+    Region offset(double distance, Join join = Join::miter) const;
+
+    // Every corner rounded: convex ones with convex_radius, concave ones with
+    // concave_radius (0 leaves them sharp). Throws if a radius does not fit.
+    Region filleted(double convex_radius, double concave_radius) const;
+
+    // Chosen corners rounded or chamfered, each found by its position (within
+    // 2 nm). Throws if a position is not a corner or a radius does not fit.
+    Region rounded(std::span<const CornerRounding> corners) const;
+
+    // The corners of the boundary, in boundary order, face by face.
+    std::vector<Corner> corners() const;
+
+    bool empty() const;
+    // Connected pieces (faces).
+    int pieces() const;
+    Box bbox() const;
+    double area() const;  // µm²
+
+    // The faces as polygons, curves split so that no point of a segment is
+    // further than chord (µm) from the exact curve. Hulls are counter-
+    // clockwise, holes clockwise.
+    std::vector<Polygon> outlines(double chord) const;
+
+    // The largest tolerance Open CASCADE carries on a vertex or edge of this
+    // region, in µm: how far its geometry may be from exact.
+    double max_tolerance() const;
+
+    // Whether Open CASCADE's full check finds the region's faces valid (closed
+    // boundaries, holes inside, nothing crossing). For tests and diagnostics:
+    // it is not cheap.
+    bool valid() const;
+
+    // The same for copies of one region and different for regions that are
+    // alive at the same time: regions are immutable, so a cache may key what
+    // it works out from a region on this (keeping the region alive with it).
+    const void* identity() const noexcept { return impl_.get(); }
+
+    struct Impl;
+
+private:
+    friend struct RegionAccess;
+    explicit Region(std::shared_ptr<const Impl> impl);
+    std::shared_ptr<const Impl> impl_;
+};
+
+}  // namespace mgeom

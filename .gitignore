@@ -10,3 +10,4 @@ build/
 *.dxf
 *.mems
 .mems-cache/
+packaging/icons/

@@ -1,13 +1,15 @@
-"""Command-line interface to the compiler: project files in, results out.
+"""Command-line interface to the engine: project files in, results out.
 
     mems-sketch-cli new     my_project
     mems-sketch-cli info    my_project
-    mems-sketch-cli check   my_project [--component plate] [--set pitch=15] [--json]
-    mems-sketch-cli export  my_project out.gds [--set pitch=15]   (also .oas .dxf .json .xml .mat)
+    mems-sketch-cli check   my_project [--component plate] [--set pitch=15] [--json] [--strict]
+    mems-sketch-cli rules                                           (rule kinds, their parameters)
+    mems-sketch-cli export  my_project out.gds [--set pitch=15] [--option grid_um=0.005]
+    mems-sketch-cli formats                                         (export formats, their options)
     mems-sketch-cli convert my_project design.json                  (and back; .xml .mat .yaml)
 
-``check`` exits with status 1 when there are rule violations, so it can gate
-CI. Errors exit with status 2. Nothing here depends on the GUI.
+``check`` exits with status 1 when a rule is violated with severity error (or
+any rule, with ``--strict``), so it can gate CI. Errors exit with status 2. Nothing here depends on the GUI.
 """
 
 from __future__ import annotations
@@ -17,10 +19,20 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from mems_sketch.core.component import Geometry
+from mems_sketch.core.process import changes_between
 from mems_sketch.core.project import Project, new_project
-from mems_sketch.export.base import available_exporters, export
+from mems_sketch.engine import Build, Engine
+from mems_sketch.export.base import (
+    available_exporters,
+    export,
+    exporter_class,
+    format_for,
+    options_of,
+    title_of,
+)
 from mems_sketch.process import rules
 from mems_sketch.storage import is_document, load, save
 
@@ -54,13 +66,30 @@ def _parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check", help="run design-rule checks (exit 1 on violations)")
     _geometry_arguments(check)
     check.add_argument("--json", action="store_true", help="print violations as JSON")
+    check.add_argument(
+        "--strict", action="store_true", help="fail on warnings too, not only on errors"
+    )
     check.set_defaults(handler=_check)
 
     exp = commands.add_parser("export", help="write geometry to a file (format from extension)")
     _geometry_arguments(exp)
     exp.add_argument("output", type=Path)
     exp.add_argument("--format", choices=sorted(available_exporters()), help="override format")
+    exp.add_argument(
+        "-O",
+        "--option",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="a setting of the format (see 'formats'); may be repeated",
+    )
     exp.set_defaults(handler=_export)
+
+    fmt = commands.add_parser("formats", help="list the export formats and their options")
+    fmt.set_defaults(handler=_formats)
+
+    kinds = commands.add_parser("rules", help="list the rule kinds and their parameters")
+    kinds.set_defaults(handler=_rule_kinds)
 
     convert = commands.add_parser(
         "convert",
@@ -98,8 +127,16 @@ def _parameters(assignments: list[str]) -> dict[str, float | str]:
     return params
 
 
+def _build(project: Project, component: str | None, params: dict[str, Any]) -> Build:
+    """``component``, or the top component when none is named."""
+    component = component or project.top
+    if component is None:
+        raise ValueError("this project has no top component: name the component")
+    return Engine().load(project).build(component, params)
+
+
 def _geometry(project: Project, args: argparse.Namespace) -> Geometry:
-    return project.render(args.component, _parameters(args.set))
+    return _build(project, args.component, _parameters(args.set)).geometry
 
 
 def _new(args: argparse.Namespace) -> int:
@@ -115,17 +152,26 @@ def _info(args: argparse.Namespace) -> int:
     project = load(args.project)
     kind = f"top: {project.top}" if project.top else "library, no top component"
     print(f"project {project.name} ({kind})")
+    for note in project.load_notes:
+        print(f"note: {note}")
+    print(f"process: {project.process_name}")
+    if project.base_process is not None:
+        constants, changed, added = changes_between(project.base_process, project.process)
+        for name, value in constants.items():
+            print(f"  changed process.{name} = {value}")
+        for name in [*changed, *added]:
+            reason = project.reasons.get(name)
+            print(
+                f"  {'changed' if name in changed else 'added'} rule {name}"
+                + (f": {reason}" if reason else "")
+            )
     print("layers:")
     for layer in project.layers.values():
-        rules_text = ", ".join(
-            f"{k} {v:g}"
-            for k, v in (
-                ("min width", layer.min_width),
-                ("min space", layer.min_space),
-            )
-            if v
-        )
-        print(f"  {layer.name:<12} gds {layer.gds_layer}/{layer.gds_datatype}  {rules_text}")
+        print(f"  {layer.name:<12} gds {layer.gds_layer}/{layer.gds_datatype}")
+    if project.process.rules:
+        print("rules:")
+    for rule in project.process.rules.values():
+        _print_rule(rule.name, rule)
     if project.process.constants:
         print("process constants:")
         for name, value in project.process.constants.items():
@@ -143,18 +189,35 @@ def _info(args: argparse.Namespace) -> int:
     return 1 if problems else 0
 
 
+def _print_rule(name: str, rule, note: str = "") -> None:
+    values = ", ".join(f"{k}={_number(v)}" for k, v in rule.values.items())
+    state = "" if rule.enabled else "  (off)"
+    print(
+        f"  {name:<20} {rule.kind}({', '.join(rule.layers)}) {values}  {rule.severity}{state}{note}"
+    )
+
+
 def _number(value: float | str) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
 
 
 def _check(args: argparse.Namespace) -> int:
     project = load(args.project)
-    violations = rules.check(project, _geometry(project, args))
+    violations = rules.check(project, _geometry(project, args), args.component)
     if args.json:
         print(
             json.dumps(
                 [
-                    {"rule": v.rule, "layer": v.layer, "message": v.message, "bbox_um": v.bbox_um}
+                    {
+                        "rule": v.rule,
+                        "kind": v.kind,
+                        "severity": v.severity,
+                        "layer": v.layer,
+                        "message": v.message,
+                        "bbox_um": v.bbox_um,
+                        "values": v.values,
+                        "waived": v.waived or None,
+                    }
                     for v in violations
                 ],
                 indent=2,
@@ -166,23 +229,68 @@ def _check(args: argparse.Namespace) -> int:
             if v.bbox_um:
                 x0, y0, x1, y1 = v.bbox_um
                 where = f" at ({(x0 + x1) / 2:.3f}, {(y0 + y1) / 2:.3f}) µm"
-            print(f"{v.rule} {v.layer}: {v.message}{where}")
-        print(f"{len(violations)} violation(s)", file=sys.stderr)
-    return 1 if violations else 0
+            state = f"waived ({v.waived})" if v.waived else v.severity
+            print(f"{state}: {v.rule} {v.layer}: {v.message}{where}")
+        errors, warnings = len(rules.errors(violations)), len(rules.warnings(violations))
+        waived = len(violations) - len(rules.open_violations(violations))
+        print(f"{errors} error(s), {warnings} warning(s), {waived} waived", file=sys.stderr)
+    failing = rules.open_violations(violations) if args.strict else rules.errors(violations)
+    return 1 if failing else 0
+
+
+def _rule_kinds(args: argparse.Namespace) -> int:
+    for name, cls in sorted(rules.available_rule_kinds().items()):
+        print(f"{name:16} {cls.title}  layers: {', '.join(cls.roles)}")
+        for option in cls.parameters:
+            unit = f" {option.suffix.strip()}" if option.suffix.strip() else ""
+            print(f"    {option.name}={option.default}{unit}")
+            if option.help:
+                print(f"        {option.help}")
+    return 0
 
 
 def _export(args: argparse.Namespace) -> int:
+    format_name = args.format or format_for(args.output)
+    options = _options(format_name, args.option)
     project = load(args.project)
     params = _parameters(args.set)
     path = export(
         project,
         args.output,
-        format_name=args.format,
-        geometry=project.render(args.component, params),
+        format_name=format_name,
+        geometry=_build(project, args.component, params).geometry,
         component=args.component,
         params=params,
+        options=options,
     )
     print(f"wrote {path}")
+    return 0
+
+
+def _options(format_name: str, assignments: list[str]) -> dict[str, object]:
+    declared = {o.name: o for o in options_of(exporter_class(format_name))}
+    options: dict[str, object] = {}
+    for assignment in assignments:
+        name, sep, value = assignment.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            raise ValueError(f"--option expects NAME=VALUE, got '{assignment}'")
+        if name not in declared:
+            known = ", ".join(declared) or "none"
+            raise ValueError(f"'{format_name}' has no option '{name}' (its options: {known})")
+        options[name] = declared[name].parse(value.strip())
+    return options
+
+
+def _formats(args: argparse.Namespace) -> int:
+    for name, cls in sorted(available_exporters().items()):
+        print(f"{name:8} {cls.file_extension:6} {title_of(cls)}")
+        for option in options_of(cls):
+            default = option.default if option.default != "" else '""'
+            unit = f" {option.suffix.strip()}" if option.suffix.strip() else ""
+            print(f"    {option.name}={default}{unit}")
+            if option.help:
+                print(f"        {option.help}")
     return 0
 
 

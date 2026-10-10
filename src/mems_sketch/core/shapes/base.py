@@ -8,20 +8,16 @@ its children and describes itself for the GUI. The kinds are listed in
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import klayout.db as kdb
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes.modifiers import AnyModifier, ArrayModifier
 
 if TYPE_CHECKING:
-    from mems_sketch.core.component import Component, Geometry
-    from mems_sketch.core.shapes.points import NodePoints
     from mems_sketch.core.shapes.registry import Shape
+    from mems_sketch.core.transform import Transform
 
 Value = float | str  # a number or an expression
 Point = tuple[float, float]
@@ -66,25 +62,6 @@ class Align(BaseModel):
     @classmethod
     def _reference(cls, to: str) -> str:
         return check_point_reference(to)
-
-
-@dataclass(frozen=True)
-class RenderContext:
-    """What a kind needs to render one copy of itself."""
-
-    variables: dict[str, float]  # parameters, point coordinates and the array indices
-    scope: Mapping[str, NodePoints]  # the named nodes it can see
-    lookup: Callable[[str], Component]  # components by name, for references
-    render_lists: Callable[[list[list[Shape]], Mapping[str, NodePoints]], list[Geometry]]
-
-    def ev(self, value: Value) -> float:
-        return evaluate(value, self.variables)
-
-    def children(
-        self, lists: list[list[Shape]], scope: Mapping[str, NodePoints] | None = None
-    ) -> list[Geometry]:
-        """Geometry of each child list; ``scope`` replaces the visible points if given."""
-        return self.render_lists(lists, self.scope if scope is None else scope)
 
 
 class Node(BaseModel):
@@ -138,10 +115,6 @@ class Node(BaseModel):
         """The first array modifier (what ``repeat`` used to be), or None."""
         return next((m for m in self.modifiers if isinstance(m, ArrayModifier)), None)
 
-    def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
-        """Geometry of one copy, and the points it declares (only references declare any)."""
-        raise NotImplementedError
-
     def child_lists(self) -> list[list[Shape]]:
         return [getattr(self, field) for field in self.child_fields]
 
@@ -154,7 +127,7 @@ class Node(BaseModel):
         """Fields changed by a move: ``x`` and ``y`` move one coordinate, ``inner`` a child list."""
         return {field: inner(getattr(self, field)) for field in self.child_fields}
 
-    def placement(self, variables: dict[str, float]) -> kdb.DCplxTrans | None:
+    def placement(self, variables: dict[str, float]) -> Transform | None:
         """The transform a ``placed`` kind applies to its content, in µm."""
         return None
 

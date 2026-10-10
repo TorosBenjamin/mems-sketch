@@ -4,7 +4,8 @@
 * Keys keep a fixed order: ``kind`` and ``name`` first,
   ``modifiers``, ``align`` and ``enabled`` last, everything else in declaration order.
 * Whole numbers are written without ``.0``; lists of plain values (points,
-  GDS numbers) are written on one line.
+  GDS numbers), and short maps of plain values (an alignment, a placement's
+  values), are written on one line.
 
 Saving the same model twice gives byte-identical output, so a change in the
 model shows up as a small, readable diff.
@@ -58,7 +59,29 @@ def _represent_list(dumper: yaml.SafeDumper, data: list) -> yaml.Node:
     return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=flat)
 
 
+FLOW_WIDTH = 72  # a map of plain values this short (as text) is written on one line
+
+
+def _represent_dict(dumper: yaml.SafeDumper, data: dict) -> yaml.Node:
+    plain = all(
+        not isinstance(v, dict | list) or (isinstance(v, list) and _flat(v)) for v in data.values()
+    )
+    short = sum(len(str(k)) + len(str(v)) + 4 for k, v in data.items()) <= FLOW_WIDTH
+    flow = bool(data) and plain and short and all(_plain_text(v) for v in data.values())
+    return dumper.represent_mapping("tag:yaml.org,2002:map", data, flow_style=flow)
+
+
+def _flat(values: list) -> bool:
+    return all(not isinstance(v, dict | list) and _plain_text(v) for v in values)
+
+
+def _plain_text(value: Any) -> bool:
+    """Whether a value reads the same in a one-line map (no line breaks or ``#``)."""
+    return not isinstance(value, str) or ("\n" not in value and "#" not in value)
+
+
 _Dumper.add_representer(list, _represent_list)
+_Dumper.add_representer(dict, _represent_dict)
 
 
 def dump(data: Any) -> str:

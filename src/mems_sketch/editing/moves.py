@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-import klayout.db as kdb
-
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import (
@@ -20,10 +18,10 @@ from mems_sketch.core.shapes import (
     offset_value,
     own_strings,
     point_names,
-    to_ictrans,
     translated,
     walk,
 )
+from mems_sketch.core.transform import Transform
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
 
@@ -87,7 +85,7 @@ class MoveEdits(Commands):
             if used & moving:
                 plan.loose.append(path)
         for path in _outermost(plan.roots + plan.followers):
-            plan.preview.merge(record[path].geometry, to_ictrans(frame_of(record, path)))
+            plan.preview.merge(record[path].geometry, frame_of(record, path))
         for path in plan.roots:
             plan.points += [
                 (path, name, x, y) for name, x, y in self.session.results.node_points(path)
@@ -119,11 +117,11 @@ class MoveEdits(Commands):
             others = frozenset().union(*(n for p, n in names.items() if p != path))
             if node.align is not None and node.align.to.partition(".")[0] in others:
                 continue  # follows the shape it is aligned to
-            delta = frame_of(record, path).inverted() * kdb.DVector(dx, dy)
+            ddx, ddy = frame_of(record, path).inverted().apply_vector(dx, dy)
             if detach and node.align is not None:
-                delta += record[path].shift.disp
+                ddx, ddy = ddx + record[path].shift.dx, ddy + record[path].shift.dy
                 node = node.model_copy(update={"align": None})
-            moves[path] = translated(node, delta.x, delta.y, others)
+            moves[path] = translated(node, ddx, ddy, others)
         label = ", ".join(node_at(shapes, p).name or node_at(shapes, p).kind for p in moves)
 
         def change(project: Project) -> None:
@@ -135,20 +133,18 @@ class MoveEdits(Commands):
 
     def rotate(self, paths: list[NodePath], angle: float, pivot: tuple[float, float]) -> None:
         """Rotate shapes by ``angle`` degrees (counter-clockwise) about ``pivot``."""
-        px, py = pivot
-        about = kdb.DCplxTrans(px, py) * kdb.DCplxTrans(1, angle, False, 0, 0)
-        self.transform(paths, about * kdb.DCplxTrans(-px, -py), f"Rotate {angle:g}°")
+        self.transform(paths, Transform.rotating(angle, pivot), f"Rotate {angle:g}°")
 
     def mirror(self, paths: list[NodePath], left_right: bool, center: tuple[float, float]) -> None:
         """Mirror shapes left-right (about a vertical line) or up-down, through ``center``."""
         cx, cy = center
         if left_right:
-            flip = kdb.DCplxTrans(1, 180, True, 2 * cx, 0)
+            flip = Transform.reflecting(90, (cx, cy))
         else:
-            flip = kdb.DCplxTrans(1, 0, True, 0, 2 * cy)
+            flip = Transform.reflecting(0, (cx, cy))
         self.transform(paths, flip, "Mirror " + ("left-right" if left_right else "up-down"))
 
-    def transform(self, paths: list[NodePath], transform: kdb.DCplxTrans, description: str) -> None:
+    def transform(self, paths: list[NodePath], transform: Transform, description: str) -> None:
         """Apply a rigid transform, given in the active component's frame, to shapes.
 
         References and transforms get a new ``rotation`` / ``mirror_x`` (and
@@ -183,9 +179,9 @@ class MoveEdits(Commands):
                     align=node.align,
                     children=[node.model_copy(update={"name": inner, "align": None})],
                     rotation=_angle(local.angle),
-                    mirror_x=local.is_mirror(),
-                    x=_round_um(local.disp.x),
-                    y=_round_um(local.disp.y),
+                    mirror_x=local.mirror,
+                    x=_round_um(local.dx),
+                    y=_round_um(local.dy),
                 )
                 replacements[path] = wrapper
 
@@ -197,7 +193,7 @@ class MoveEdits(Commands):
         self.session.edit(description, change)
 
 
-def _reoriented(node: Shape, local: kdb.DCplxTrans, record: NodeRecord) -> Shape:
+def _reoriented(node: Shape, local: Transform, record: NodeRecord) -> Shape:
     """A reference or transform with ``local`` applied to its placement (in its parent's frame).
 
     Expressions stay expressions: rotation and position get offsets added.
@@ -211,11 +207,11 @@ def _reoriented(node: Shape, local: kdb.DCplxTrans, record: NodeRecord) -> Shape
             if isinstance(node.rotation, str)
             else _angle(node.rotation + turn) + 0.0  # + 0.0: no "-0"
         ),
-        "mirror_x": new.is_mirror(),
+        "mirror_x": new.mirror,
     }
     if node.align is None:  # an aligned shape keeps its attachment; only the orientation changes
-        update["x"] = offset_value(node.x, new.disp.x - placed.disp.x)
-        update["y"] = offset_value(node.y, new.disp.y - placed.disp.y)
+        update["x"] = offset_value(node.x, new.dx - placed.dx)
+        update["y"] = offset_value(node.y, new.dy - placed.dy)
     return node.model_copy(update=update)
 
 

@@ -1,0 +1,82 @@
+name: Wheels
+
+# Installable packages with the geometry library built in (requirement QC-3),
+# for Linux and Windows, and macOS when its build works (QC-4: a release
+# does not wait for it). Built for each release (release.yml calls it) and
+# on demand, and for Linux alone for pull requests into development that
+# change how the package is built.
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    branches: [development]
+    paths:
+      - pyproject.toml
+      - CMakeLists.txt
+      - src/geom/CMakeLists.txt
+      - src/geom/scripts/**
+      - src/geom/bindings/**
+      - src/engine/**  # the engine changes often: compile it on every platform
+      - .github/workflows/wheels.yml
+
+jobs:
+  wheels:
+    name: wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      # Pull requests build Linux alone; releases and runs on demand all three
+      # (macOS on Apple silicon).
+      matrix:
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","optional":false}]' || '[{"os":"ubuntu-latest","optional":false},{"os":"windows-latest","optional":false},{"os":"macos-14","optional":true}]') }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"  # Open CASCADE and the wheels alike
+    steps:
+      - uses: actions/checkout@v4
+
+      # Open CASCADE takes long to build: once per platform and version,
+      # cached in build/deps/, where the package's build finds it.
+      - name: Open CASCADE from the cache
+        uses: actions/cache@v4
+        with:
+          path: build/deps
+          key: occt-wheels-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/geom/scripts/build-occt.sh') }}
+      - name: Compiler environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+      - name: Build Open CASCADE (Windows, macOS; Linux builds it in its container)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          python -m pip install ninja
+          src/geom/scripts/build-occt.sh
+
+      - name: Build and test the wheels
+        uses: pypa/cibuildwheel@v3.4.1
+        env:
+          CIBW_BUILD: "cp311-* cp312-* cp313-*"
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_ARCHS_MACOS: arm64
+          # In the manylinux container the host is at /host: building Open
+          # CASCADE into the workspace there lets the cache above keep it.
+          CIBW_BEFORE_ALL_LINUX: >
+            pipx install cmake ninja &&
+            src/geom/scripts/build-occt.sh /host${{ github.workspace }}/build/deps/occt-8_0_1
+          CIBW_ENVIRONMENT_LINUX: >
+            CMAKE_PREFIX_PATH=/host${{ github.workspace }}/build/deps/occt-8_0_1
+            SKBUILD_CMAKE_DEFINE="MEMS_SKETCH_REQUIRE_GEOMETRY=ON"
+          CIBW_ENVIRONMENT_WINDOWS: SKBUILD_CMAKE_DEFINE="MEMS_SKETCH_REQUIRE_GEOMETRY=ON"
+          CIBW_ENVIRONMENT_MACOS: SKBUILD_CMAKE_DEFINE="MEMS_SKETCH_REQUIRE_GEOMETRY=ON"
+          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_ENVIRONMENT: MGEOM_REQUIRED=1
+          CIBW_TEST_COMMAND: >
+            python -c "from mems_sketch import _geom, _core; assert abs(_geom.Region.rect(0, 0, 2, 3).area - 6) < 1e-9" &&
+            pytest -q -p no:cacheprovider {project}/tests/test_cells_export.py {project}/tests/test_engine_expressions.py {project}/tests/test_engine_model.py {project}/tests/test_engine_build.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl

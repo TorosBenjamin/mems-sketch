@@ -47,7 +47,6 @@ from mems_sketch.core.shapes.base import (
     Operation,
     Point,
     Primitive,
-    RenderContext,
     Repeat,
     Value,
     check_point_reference,
@@ -55,7 +54,6 @@ from mems_sketch.core.shapes.base import (
 from mems_sketch.core.shapes.geometry import (
     ARC_TOLERANCE_UM,
     MAX_ARC_SEGMENTS,
-    to_ictrans,
 )
 from mems_sketch.core.shapes.kinds import (
     KINDS,
@@ -90,6 +88,7 @@ from mems_sketch.core.shapes.points import (
     point_names,
     point_values,
 )
+from mems_sketch.core.shapes.records import NodeRecord, frame_of, transform_of
 from mems_sketch.core.shapes.registry import (
     BY_KIND,
     PRIMITIVE_KINDS,
@@ -99,12 +98,6 @@ from mems_sketch.core.shapes.registry import (
     default_shape,
     kind_class,
     wrap_shapes,
-)
-from mems_sketch.core.shapes.render import (
-    Evaluator,
-    NodeRecord,
-    frame_of,
-    transform_of,
 )
 from mems_sketch.core.shapes.rewrite import (
     map_expressions,
@@ -121,7 +114,6 @@ from mems_sketch.core.shapes.tree import (
     find,
     node_at,
     paths,
-    placement_of,
     references,
     visible_from,
     walk,
@@ -147,7 +139,6 @@ __all__ = [
     "CircleShape",
     "Corner",
     "CornersModifier",
-    "Evaluator",
     "FilletShape",
     "GroupShape",
     "GuideShape",
@@ -167,7 +158,6 @@ __all__ = [
     "Primitive",
     "RectShape",
     "RefShape",
-    "RenderContext",
     "Repeat",
     "Shape",
     "TransformShape",
@@ -185,7 +175,6 @@ __all__ = [
     "offset_value",
     "own_strings",
     "paths",
-    "placement_of",
     "point_dependencies",
     "point_names",
     "point_renamer",
@@ -193,7 +182,6 @@ __all__ = [
     "references",
     "rename_node_references",
     "rewrite",
-    "to_ictrans",
     "transform_of",
     "translated",
     "visible_from",

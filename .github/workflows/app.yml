@@ -1,0 +1,122 @@
+name: App
+
+# The downloadable app: Python, Qt, the engine and the package in one folder
+# (PyInstaller, packaging/mems-sketch.spec), packaged the way each platform
+# installs things: a Windows installer and a portable zip, a macOS disk image,
+# a Linux AppImage. Each is started with --self-test before it is kept.
+# Built for each release (release.yml calls it when development is merged
+# into main) and on demand, and for Linux alone for pull requests into
+# development that change the packaging. macOS does not hold a release back while its build is
+# experimental (requirement QC-4).
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    branches: [development]
+    paths:
+      - packaging/**
+      - pyproject.toml
+      - src/mems_sketch/gui/selftest.py
+      - .github/workflows/app.yml
+
+jobs:
+  app:
+    name: app (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90  # Open CASCADE alone takes most of it when it is not cached
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      # Pull requests build Linux alone; releases and runs on demand all three.
+      # Linux runs on the oldest supported runner: the AppImage runs on glibc
+      # 2.35 and newer. macOS is Apple silicon.
+      matrix:
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"linux","os":"ubuntu-22.04","optional":false}]' || '[{"name":"linux","os":"ubuntu-22.04","optional":false},{"name":"windows","os":"windows-latest","optional":false},{"name":"macos","os":"macos-14","optional":true}]') }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      QT_QPA_PLATFORM: offscreen  # the self-tests open the window without a screen
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build tools and libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build desktop-file-utils libegl1 libgl1 libxkbcommon0 \
+            libfontconfig1 libdbus-1-3
+      - name: Build tools (Windows, macOS)
+        if: runner.os != 'Linux'
+        run: python -m pip install ninja
+      - name: Compiler environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+
+      - name: Open CASCADE from the cache
+        uses: actions/cache@v4
+        with:
+          path: build/deps
+          key: occt-app-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('src/geom/scripts/build-occt.sh') }}
+      - name: Build Open CASCADE (only when not cached)
+        run: src/geom/scripts/build-occt.sh
+
+      - name: Install the package with its engine, and the packaging tools
+        env:
+          SKBUILD_CMAKE_DEFINE: MEMS_SKETCH_REQUIRE_GEOMETRY=ON
+        run: python -m pip install ".[gui]" pyinstaller==6.22.3 pillow==12.3.0
+
+      - name: Version
+        id: version
+        run: echo "version=$(python -c 'import mems_sketch; print(mems_sketch.__version__)')" >> "$GITHUB_OUTPUT"
+
+      - name: Build the app
+        run: |
+          python packaging/make_icons.py
+          pyinstaller --noconfirm --distpath dist --workpath build/pyinstaller packaging/mems-sketch.spec
+          mkdir -p out
+
+      # -- Linux: an AppImage -------------------------------------------------
+      - name: Test and package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          dist/mems-sketch/mems-sketch --self-test
+          packaging/linux/build-appimage.sh dist/mems-sketch "${{ steps.version.outputs.version }}" out
+          APPIMAGE_EXTRACT_AND_RUN=1 out/*.AppImage --self-test
+
+      # -- Windows: an installer and a portable zip -----------------------------
+      - name: Test and package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $env:MEMS_SKETCH_SELFTEST_LOG = "$PWD\selftest.log"
+          # A windowed app: its lines go to the log; a hang (an error dialog) is cut short.
+          $test = Start-Process -FilePath dist\mems-sketch\mems-sketch.exe -ArgumentList "--self-test" -PassThru -NoNewWindow
+          if (-not $test.WaitForExit(600000)) { $test.Kill(); throw "the self-test did not finish" }
+          if (Test-Path selftest.log) { Get-Content selftest.log }
+          if ($test.ExitCode -ne 0) { throw "the self-test failed (exit code $($test.ExitCode))" }
+          Compress-Archive -Path dist\mems-sketch -DestinationPath "out\MEMS_Sketch-$version-windows-portable.zip"
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "/DSourceDir=$PWD\dist\mems-sketch" "/DOutputDir=$PWD\out" packaging\windows\mems-sketch.iss
+          if ($LASTEXITCODE -ne 0) { throw "the installer was not built" }
+
+      # -- macOS: a disk image with the app -------------------------------------
+      - name: Test and package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          app="dist/MEMS Sketch.app"
+          "$app/Contents/MacOS/mems-sketch" --self-test
+          mkdir -p dmg && cp -R "$app" dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname "MEMS Sketch" -srcfolder dmg -ov -format UDZO \
+            "out/MEMS_Sketch-${{ steps.version.outputs.version }}-macos-arm64.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.name }}
+          path: out/*
+

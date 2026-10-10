@@ -17,10 +17,10 @@ import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mems_sketch.core.compiler import Compiler
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.diff import Change, diff_projects, geometry_changes
 from mems_sketch.core.project import Project
+from mems_sketch.engine import Engine
 from mems_sketch.storage import git
 
 COMMIT_LIMIT = 200
@@ -41,7 +41,7 @@ class History:
 
     def __init__(self, session) -> None:
         self.session = session
-        self.compiler = Compiler()  # earlier versions build here, not in the editor's cache
+        self.engine = Engine()  # earlier versions build here, not in the editor's cache
         self._versions: dict[str, Project | None] = {}
 
     @property
@@ -97,7 +97,7 @@ class History:
                 sides.append(None)
                 continue
             try:
-                sides.append(project.render(component, compiler=self._compiler(rev)))
+                sides.append(self._engine(rev).trial(project).build(component).geometry)
             except Exception as exc:
                 raise ValueError(
                     f"the {label} version of '{component}' does not build: {exc}"
@@ -214,10 +214,10 @@ class History:
     def forget(self) -> None:
         """Drop the versions read so far (another project was opened)."""
         self._versions.clear()
-        self.compiler.clear()
+        self.engine.clear()
 
-    def _compiler(self, rev: str | None) -> Compiler:
-        return self.session.compiler if rev is None else self.compiler
+    def _engine(self, rev: str | None) -> Engine:
+        return self.session.engine if rev is None else self.engine
 
 
 def _has(project: Project, component: str) -> bool:

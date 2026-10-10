@@ -13,8 +13,7 @@ from __future__ import annotations
 import math
 from typing import ClassVar, Literal
 
-from mems_sketch.core.component import Geometry
-from mems_sketch.core.shapes.base import Node, Point, RenderContext, Value
+from mems_sketch.core.shapes.base import Node, Value
 
 
 class GuideShape(Node):
@@ -26,14 +25,6 @@ class GuideShape(Node):
     y0: Value = -50.0
     x1: Value = 0.0  # end
     y1: Value = 50.0
-
-    def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
-        start = (ctx.ev(self.x0), ctx.ev(self.y0))
-        end = (ctx.ev(self.x1), ctx.ev(self.y1))
-        if start == end:
-            raise ValueError(f"guide '{self.name or 'guide'}' needs two different end points")
-        center = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
-        return Geometry(), {"start": start, "end": end, "center": center}
 
     def moved(self, x, y, inner) -> dict:
         return {"x0": x(self.x0), "x1": x(self.x1), "y0": y(self.y0), "y1": y(self.y1)}

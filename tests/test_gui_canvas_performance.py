@@ -1,7 +1,6 @@
 """The canvas stays fast on big designs: cached rendering, a light hover outline,
 draft quality while zooming, and a frame-rate limit for mouse moves."""
 
-import klayout.db as kdb
 import pytest
 
 pytest.importorskip("PySide6")
@@ -11,6 +10,7 @@ from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPixmapCa
 from PySide6.QtWidgets import QApplication, QGraphicsItem
 
 from mems_sketch.core.component import Geometry
+from mems_sketch.core.region import Region
 from mems_sketch.gui.canvas import LayoutCanvas
 
 CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
@@ -26,14 +26,15 @@ def canvas(qtbot):
     return c
 
 
-def plate_with_holes() -> kdb.Region:
+def plate_with_holes() -> Region:
     """A 100 µm square with a 10 × 10 grid of square holes."""
-    region = kdb.Region(kdb.Box(0, 0, 100_000, 100_000))
-    for i in range(10):
-        for j in range(10):
-            x, y = 5_000 + i * 10_000, 5_000 + j * 10_000
-            region -= kdb.Region(kdb.Box(x, y, x + 2_000, y + 2_000))
-    return region
+    holes = [
+        [(x, y), (x, y + 2_000), (x + 2_000, y + 2_000), (x + 2_000, y)]
+        for x in range(5_000, 100_000, 10_000)
+        for y in range(5_000, 100_000, 10_000)
+    ]
+    hull = [(0, 0), (100_000, 0), (100_000, 100_000), (0, 100_000)]
+    return Region.from_polygons([(hull, holes)], merged=True)
 
 
 def subpaths(path: QPainterPath) -> int:
@@ -46,10 +47,10 @@ def test_the_geometry_and_overlays_are_drawn_from_a_cache(canvas):
     geometry.layers["device"] = plate_with_holes()
     canvas.show_geometry(geometry, {"device": QColor("#4c78a8")}, {})
     canvas.show_overlay(geometry, [])
-    canvas.show_hover(geometry.layers["device"])
+    canvas.show_hover(geometry)
     canvas.show_drag_preview(geometry, {"device": QColor("#4c78a8")})
     items = [
-        *canvas._layer_items.values(),
+        *(item for items in canvas._layer_items.values() for item in items),
         *canvas._overlay,
         canvas._hover_item,
         *canvas._drag_items,
@@ -58,7 +59,9 @@ def test_the_geometry_and_overlays_are_drawn_from_a_cache(canvas):
 
 
 def test_the_hover_outline_is_the_outer_outline_only(canvas):
-    canvas.show_hover(plate_with_holes())
+    geometry = Geometry()
+    geometry.layers["device"] = plate_with_holes()
+    canvas.show_hover(geometry)
     assert subpaths(canvas._hover_item.path()) == 1  # the 100 holes are left out
 
 
@@ -178,12 +181,35 @@ def test_shape_outlines_are_one_pixel_wide(canvas):
     colors = {"device": QColor("#4c78a8")}
     canvas.show_geometry(geometry, colors, {})
     canvas.show_overlay(geometry, [])
-    canvas.show_hover(geometry.layers["device"])
+    canvas.show_hover(geometry)
     canvas.show_drag_preview(geometry, colors)
     items = [
-        *canvas._layer_items.values(),
+        *(item for items in canvas._layer_items.values() for item in items),
         *canvas._overlay,
         canvas._hover_item,
         *canvas._drag_items,
     ]
     assert all(item.pen().isCosmetic() and item.pen().widthF() <= 1.0 for item in items)
+
+
+def test_a_placed_geometry_is_one_path_and_unchanged_placements_keep_their_items(canvas):
+    from mems_sketch.core.transform import Transform
+
+    plate = Geometry()
+    plate.layers["device"] = plate_with_holes()
+    colors = {"device": QColor("#4c78a8")}
+    top = Geometry()
+    for k in range(4):
+        top.place(plate, Transform(k * 200, 0))
+    canvas.show_geometry(top, colors, {})
+    items = canvas._layer_items["device"]
+    assert len(items) == 4
+    assert len({id(item.path()) for item in items}) <= 4  # one path, shared (Qt copies on write)
+    assert all(item.path() == items[0].path() for item in items)
+    moved = Geometry()
+    for k in range(4):
+        moved.place(plate, Transform(k * 200 if k else -300, 0))  # the first one moved
+    canvas.show_geometry(moved, colors, {})
+    after = canvas._layer_items["device"]
+    assert len(after) == 4
+    assert len(set(map(id, items)) & set(map(id, after))) == 3  # the other three were kept

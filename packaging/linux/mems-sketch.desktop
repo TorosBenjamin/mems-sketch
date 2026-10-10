@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=MEMS Sketch
+Comment=Parametric MEMS layout design
+Exec=mems-sketch %f
+Icon=mems-sketch
+Categories=Engineering;Science;
+Terminal=false

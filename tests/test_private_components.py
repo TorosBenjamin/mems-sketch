@@ -200,12 +200,14 @@ def test_unpacking_a_component_that_places_private_ones_is_refused(doc):
 
 def test_private_components_are_saved_in_their_owners_folder(doc, tmp_path):
     save(doc.project, tmp_path / "p")
-    assert (tmp_path / "p" / "components" / "comb" / "finger.yaml").is_file()
+    comb = tmp_path / "p" / "components" / "comb"
+    assert (comb / "finger" / "component.yaml").is_file()
+    assert "private: {finger: finger}" in (comb / "component.yaml").read_text()
     again = load(tmp_path / "p")
     assert set(again.components) == {"top", "comb", "comb/finger"}
     assert again.components["comb/finger"].name == "comb/finger"
     assert area(again) == pytest.approx(8)
     again.move_component("comb/finger", "finger")
     save(again, tmp_path / "p")
-    assert not (tmp_path / "p" / "components" / "comb").exists()  # emptied and removed
-    assert (tmp_path / "p" / "components" / "finger.yaml").is_file()
+    assert not (comb / "finger").exists()  # emptied and removed
+    assert (tmp_path / "p" / "components" / "finger" / "component.yaml").is_file()

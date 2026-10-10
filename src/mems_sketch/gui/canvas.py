@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import math
 import time
+import weakref
 
-import klayout.db as kdb
+import numpy as np
+import shiboken6
 from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
@@ -47,7 +49,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.core.component import DBU_UM, Geometry
+from mems_sketch.core.component import Geometry
+from mems_sketch.core.transform import Transform
 from mems_sketch.gui import icons
 from mems_sketch.gui.theme import ISLAND_RADIUS
 
@@ -147,31 +150,87 @@ def layer_color(index: int) -> QColor:
     return QColor(PALETTE[index % len(PALETTE)])
 
 
-def region_to_path(region: kdb.Region) -> QPainterPath:
-    """Merged polygons (with holes) as one odd-even filled painter path, in µm."""
+def geometry_path(geometry: Geometry, layer: str) -> QPainterPath:
+    """A layer's merged polygons (with holes) as one odd-even filled painter path, in µm."""
     path = QPainterPath()
     path.setFillRule(Qt.FillRule.OddEvenFill)
-    for polygon in region.each_merged():
-        _add_loop(path, polygon.each_point_hull())
-        for hole in range(polygon.holes()):
-            _add_loop(path, polygon.each_point_hole(hole))
+    for polygon in geometry.polygons(layer):
+        _add_loop(path, polygon.hull)
+        for hole in polygon.holes:
+            _add_loop(path, hole)
     return path
 
 
-def region_outline(region: kdb.Region) -> QPainterPath:
-    """The outer outlines of the merged polygons, without their holes (a light
-    outline, e.g. for hovering over a plate with thousands of holes)."""
-    path = QPainterPath()
-    for polygon in region.each_merged():
-        _add_loop(path, polygon.each_point_hull())
-    return path
+# Painter paths of a geometry's own polygons, per layer ("" for the outer
+# outlines of all its layers), kept while the geometry lives: a component the
+# engine built once is the same geometry wherever and however often it is
+# placed, so it is turned into a path once.
+_PATHS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+# Placed copies past this many are drawn without a cached picture each (the
+# pictures would take more memory than they save time).
+MAX_CACHED_ITEMS = 2000
+
+
+def own_path(geometry: Geometry, layer: str) -> QPainterPath:
+    """The geometry's own polygons on a layer (without what it places), as an
+    odd-even filled painter path in µm; ``layer`` "" is the outer outlines of
+    all its layers."""
+    paths = _PATHS.setdefault(geometry, {})
+    if layer not in paths:
+        path = QPainterPath()
+        path.setFillRule(Qt.FillRule.OddEvenFill)
+        regions = geometry.own.values() if layer == "" else [geometry.own.get(layer)]
+        for region in regions:
+            if region is None:
+                continue
+            for hull, holes in region.points_um():
+                _add_loop(path, hull)
+                if layer:
+                    for hole in holes:
+                        _add_loop(path, hole)
+        paths[layer] = path
+    return paths[layer]
+
+
+def qtransform(t: Transform) -> QTransform:
+    """A placement as Qt applies it: mirrored about x, scaled, turned, then moved."""
+    q = QTransform()
+    q.translate(t.dx, t.dy)
+    q.rotate(t.angle)
+    q.scale(t.mag, -t.mag if t.mirror else t.mag)
+    return q
+
+
+def _placement_key(t: Transform) -> tuple:
+    return (round(t.dx, 9), round(t.dy, 9), round(t.angle, 9), t.mirror, round(t.mag, 12))
 
 
 def _add_loop(path: QPainterPath, points) -> None:
-    loop = QPolygonF([QPointF(p.x * DBU_UM, p.y * DBU_UM) for p in points])
+    loop = polygon_f(points)
     if not loop.isEmpty():
         path.addPolygon(loop)  # one call per loop, not one per point
         path.closeSubpath()
+
+
+def polygon_f(points) -> QPolygonF:
+    """Points (an (n, 2) array, or pairs) as a QPolygonF, copied in one go."""
+    array = np.ascontiguousarray(points, dtype=np.float64).reshape(-1, 2)
+    loop = QPolygonF()
+    if len(array):
+        loop.resize(len(array))
+        memory = shiboken6.VoidPtr(loop.data(), array.nbytes, True)
+        np.frombuffer(memory, dtype=np.float64).reshape(-1, 2)[:] = array
+    return loop
+
+
+class _PlacedPathItem(QGraphicsPathItem):
+    """A path item that remembers its placement (for drag previews, which move
+    and turn it on top of that)."""
+
+    def __init__(self, path: QPainterPath, placement: QTransform) -> None:
+        super().__init__(path)
+        self.placement = placement
+        self.setTransform(placement)
 
 
 class LayoutCanvas(QGraphicsView):
@@ -203,7 +262,11 @@ class LayoutCanvas(QGraphicsView):
         self.theme = THEMES[DEFAULT_THEME]
         self.setBackgroundBrush(QColor(self.theme["background"]))
         self.setTransform(QTransform.fromScale(2, -2))
-        self._layer_items: dict[str, QGraphicsPathItem] = {}
+        # One item per layer of each placed geometry with polygons of its own,
+        # by layer; and by what they draw, so that a refresh keeps those that
+        # did not change (and their cached pictures).
+        self._layer_items: dict[str, list[QGraphicsPathItem]] = {}
+        self._items_by_key: dict[tuple, list[QGraphicsPathItem]] = {}
         self._overlay: list = []
         self._change_items: list = []
         self._points: dict[str, list] = {}
@@ -380,33 +443,51 @@ class LayoutCanvas(QGraphicsView):
     def show_geometry(
         self, geometry: Geometry, colors: dict[str, QColor], visible: dict[str, bool]
     ) -> None:
+        """Draw ``geometry``: each geometry it places once (a painter path per
+        layer), as an item per placement; items that are drawn as before are kept."""
         self._shown = (geometry, colors, visible)
-        for item in self._layer_items.values():
-            self.scene().removeItem(item)
-        self._layer_items.clear()
         alpha = round(255 * self.options["fill_opacity"] / 100)
         width = self.options["outline_width"]
-        for z, (layer, region) in enumerate(sorted(geometry.layers.items())):
-            color = colors.get(layer, QColor("#888888"))
-            item = QGraphicsPathItem(region_to_path(region))
-            fill = QColor(color)
-            fill.setAlpha(alpha)
-            pen = QPen(color, width)
-            pen.setCosmetic(True)  # the same width in pixels at any zoom
-            item.setPen(pen)
-            item.setBrush(QBrush(fill))
-            item.setZValue(z)
-            item.setCacheMode(CACHED)  # drawn once; pans, hovers and drags reuse it
-            item.setVisible(visible.get(layer, True))
-            self.scene().addItem(item)
-            self._layer_items[layer] = item
-        if not self._has_content and geometry.layers:
+        order = {layer: z for z, layer in enumerate(sorted(geometry.layer_names()))}
+        leaves = geometry.leaves()
+        cache = CACHED if len(leaves) <= MAX_CACHED_ITEMS else QGraphicsItem.CacheMode.NoCache
+        old, new = self._items_by_key, {}
+        self._layer_items = {}
+        for leaf, at in leaves:
+            for layer, region in leaf.own.items():
+                if region.is_empty():
+                    continue
+                color = colors.get(layer, QColor("#888888"))
+                key = (leaf, layer, _placement_key(at), color.rgba(), alpha, width)
+                kept = old.get(key)
+                if kept:
+                    item = kept.pop()
+                else:
+                    item = QGraphicsPathItem(own_path(leaf, layer))
+                    item.setTransform(qtransform(at))
+                    fill = QColor(color)
+                    fill.setAlpha(alpha)
+                    pen = QPen(color, width)
+                    pen.setCosmetic(True)  # the same width in pixels at any zoom
+                    item.setPen(pen)
+                    item.setBrush(QBrush(fill))
+                    item.setCacheMode(cache)  # drawn once; pans, hovers and drags reuse it
+                    self.scene().addItem(item)
+                item.setZValue(order[layer])
+                item.setVisible(visible.get(layer, True))
+                new.setdefault(key, []).append(item)
+                self._layer_items.setdefault(layer, []).append(item)
+        for items in old.values():
+            for item in items:
+                self.scene().removeItem(item)
+        self._items_by_key = new
+        if not self._has_content and not geometry.is_empty():
             self._has_content = True
             self.fit()
 
     def set_layer_visible(self, layer: str, visible: bool) -> None:
-        if layer in self._layer_items:
-            self._layer_items[layer].setVisible(visible)
+        for item in self._layer_items.get(layer, []):
+            item.setVisible(visible)
 
     def show_overlay(
         self,
@@ -420,18 +501,22 @@ class LayoutCanvas(QGraphicsView):
             self.scene().removeItem(item)
         self._overlay.clear()
         if highlight is not None:
-            for region in highlight.layers.values():
-                item = QGraphicsPathItem(region_to_path(region))
-                pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
-                pen.setCosmetic(True)
-                item.setPen(pen)
-                tint = QColor(self.theme["highlight"])
-                tint.setAlpha(60)  # a stronger tint makes up for the thin outline
-                item.setBrush(QBrush(tint))
-                item.setZValue(1000)
-                item.setCacheMode(CACHED)
-                self.scene().addItem(item)
-                self._overlay.append(item)
+            for leaf, at in highlight.leaves():
+                for layer, region in leaf.own.items():
+                    if region.is_empty():
+                        continue
+                    item = QGraphicsPathItem(own_path(leaf, layer))
+                    item.setTransform(qtransform(at))
+                    pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
+                    pen.setCosmetic(True)
+                    item.setPen(pen)
+                    tint = QColor(self.theme["highlight"])
+                    tint.setAlpha(60)  # a stronger tint makes up for the thin outline
+                    item.setBrush(QBrush(tint))
+                    item.setZValue(1000)
+                    item.setCacheMode(CACHED)
+                    self.scene().addItem(item)
+                    self._overlay.append(item)
         if box is not None:
             item = QGraphicsPolygonItem(QPolygonF([QPointF(x, y) for x, y in box]))
             pen = QPen(QColor(self.theme["highlight"]), 1, Qt.PenStyle.DashLine)
@@ -465,8 +550,8 @@ class LayoutCanvas(QGraphicsView):
             if geometry is None:
                 continue
             color = QColor(self.theme[style])
-            for region in geometry.layers.values():
-                item = QGraphicsPathItem(region_to_path(region))
+            for layer in geometry.layer_names():
+                item = QGraphicsPathItem(geometry_path(geometry, layer))
                 pen = QPen(color, OUTLINE_PX)
                 pen.setCosmetic(True)
                 item.setPen(pen)
@@ -505,24 +590,27 @@ class LayoutCanvas(QGraphicsView):
     def show_drag_preview(self, geometry: Geometry, colors: dict[str, QColor]) -> None:
         """Draw what is being dragged on top; move it with :meth:`move_drag_preview`."""
         self.clear_drag_preview()
-        for layer, region in geometry.layers.items():
-            color = colors.get(layer, QColor("#888888"))
-            item = QGraphicsPathItem(region_to_path(region))
-            fill = QColor(color)
-            fill.setAlpha(150)
-            pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
-            pen.setCosmetic(True)
-            pen.setStyle(Qt.PenStyle.DashLine)
-            item.setPen(pen)
-            item.setBrush(QBrush(fill))
-            item.setZValue(1050)
-            item.setCacheMode(CACHED)  # moving it reuses the picture
-            self.scene().addItem(item)
-            self._drag_items.append(item)
+        for leaf, at in geometry.leaves():
+            for layer, region in leaf.own.items():
+                if region.is_empty():
+                    continue
+                color = colors.get(layer, QColor("#888888"))
+                item = _PlacedPathItem(own_path(leaf, layer), qtransform(at))
+                fill = QColor(color)
+                fill.setAlpha(150)
+                pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
+                pen.setCosmetic(True)
+                pen.setStyle(Qt.PenStyle.DashLine)
+                item.setPen(pen)
+                item.setBrush(QBrush(fill))
+                item.setZValue(1050)
+                item.setCacheMode(CACHED)  # moving it reuses the picture
+                self.scene().addItem(item)
+                self._drag_items.append(item)
 
     def move_drag_preview(self, dx: float, dy: float) -> None:
         for item in self._drag_items:
-            item.setTransform(QTransform())
+            item.setTransform(item.placement)
             item.setPos(dx, dy)
         if self._gizmo is not None:
             self._gizmo_offset = (dx, dy)
@@ -534,7 +622,7 @@ class LayoutCanvas(QGraphicsView):
         transform = QTransform().translate(px, py).rotate(angle).translate(-px, -py)
         for item in self._drag_items:
             item.setPos(0, 0)
-            item.setTransform(transform)
+            item.setTransform(item.placement * transform)  # placed first, then turned
 
     def clear_drag_preview(self) -> None:
         for item in self._drag_items:
@@ -565,17 +653,20 @@ class LayoutCanvas(QGraphicsView):
             self.scene().addItem(self._box_item)
         self._box_item.setRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)).normalized())
 
-    def show_hover(self, region: kdb.Region | None) -> None:
+    def show_hover(self, geometry: Geometry | None) -> None:
         """Outline the shape under the cursor (pre-selection), or nothing."""
         if self._hover_item is not None:
             self.scene().removeItem(self._hover_item)
             self._hover_item = None
-        if region is None or region.is_empty():
+        if geometry is None or geometry.is_empty():
             return
         pen = QPen(QColor(self.theme["hover"]), OUTLINE_PX)
         pen.setCosmetic(True)
         pen.setStyle(Qt.PenStyle.DashLine)
-        self._hover_item = QGraphicsPathItem(region_outline(region))
+        outline = QPainterPath()
+        for leaf, at in geometry.leaves():
+            outline.addPath(qtransform(at).map(own_path(leaf, "")))
+        self._hover_item = QGraphicsPathItem(outline)
         self._hover_item.setPen(pen)
         self._hover_item.setZValue(990)
         self._hover_item.setCacheMode(CACHED)
@@ -754,9 +845,10 @@ class LayoutCanvas(QGraphicsView):
 
     def content_rect(self) -> QRectF:
         rect = QRectF()
-        for item in self._layer_items.values():
-            if item.isVisible():
-                rect = rect.united(item.boundingRect())
+        for items in self._layer_items.values():
+            for item in items:
+                if item.isVisible():
+                    rect = rect.united(item.sceneBoundingRect())
         return rect
 
     def fit(self) -> None:

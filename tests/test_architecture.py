@@ -1,6 +1,7 @@
 """The backend (everything outside mems_sketch.gui) must never depend on the GUI."""
 
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +39,36 @@ def test_importing_the_backend_loads_no_gui():
         [sys.executable, "-c", code], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# The GUI, editing, storage and the command line go through Geometry's methods
+# and plain values (Transform, µm tuples), never a geometry library's types
+# (core-architecture.md, step 1); none is a dependency, so none may come back.
+GEOMETRY_LIBRARIES = ("klayout", "gdstk", "shapely")
+# What builds geometry is reached only through mems_sketch.engine.
+BUILDERS = ("mems_sketch._core", "mems_sketch._geom")
+BUILDER_NAMES: set[str] = set()
+OUTSIDE_THE_BACKEND = ("gui", "editing", "storage", "cli.py")
+
+
+def test_only_the_backend_uses_a_geometry_library_or_the_compiler():
+    offenders = []
+    for path in PACKAGE.rglob("*.py"):
+        if path.relative_to(PACKAGE).parts[0] not in OUTSIDE_THE_BACKEND:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(), str(path))):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [f"{node.module}.{alias.name}" for alias in node.names]
+            offenders += [
+                f"{path.relative_to(PACKAGE)}: {n}"
+                for n in names
+                if n.startswith(GEOMETRY_LIBRARIES + BUILDERS)
+                or n.rsplit(".", 1)[-1] in BUILDER_NAMES
+            ]
+    assert offenders == []
 
 
 KINDS_DIR = PACKAGE / "core" / "shapes" / "kinds"
@@ -104,5 +135,49 @@ def test_only_the_shape_kinds_switch_on_kinds():
         for path in PACKAGE.rglob("*.py")
         if KINDS_DIR not in path.parents
         for switch in kind_switches(path)
+    ]
+    assert offenders == []
+
+
+SOURCE = PACKAGE.parent
+INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.MULTILINE)
+
+
+def _includes(folder: Path) -> list[tuple[Path, str]]:
+    return [
+        (path, header)
+        for path in folder.rglob("*")
+        if path.suffix in (".hpp", ".cpp", ".h")
+        for header in INCLUDE.findall(path.read_text(errors="replace"))
+    ]
+
+
+def test_the_geometry_library_never_includes_the_engine():
+    """The library stands alone (core-architecture.md): no engine header in src/geom/."""
+    offenders = [
+        f"{p.relative_to(SOURCE)}: {h}"
+        for p, h in _includes(SOURCE / "geom")
+        if h.startswith("mems/")
+    ]
+    assert offenders == []
+
+
+ENGINE_HEADERS = ("mems", "mgeom", "nlohmann")  # its own, the library's, JSON
+
+
+def test_the_engine_uses_only_the_librarys_public_headers():
+    """The engine reaches Open CASCADE only through mgeom: no OCC headers, and
+    only mgeom's public ones (include/mgeom/)."""
+    occ = re.compile(r"^(Standard|gp|TopoDS|TopExp|BRep|Geom|BOP|TopTools|TColgp|Precision)")
+    offenders = [
+        f"{p.relative_to(SOURCE)}: {h}"
+        for p, h in _includes(SOURCE / "engine")
+        if occ.match(h)
+        or (
+            h.endswith(".hpp")
+            and "/" in h
+            and not h.startswith(".")  # its own, by relative path
+            and h.split("/")[0] not in ENGINE_HEADERS
+        )
     ]
     assert offenders == []

@@ -17,14 +17,12 @@ import contextlib
 import math
 from typing import Any
 
-import klayout.db as kdb
-
-from mems_sketch.core.component import DBU_UM, Geometry
+from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import evaluate
-from mems_sketch.core.shapes import NodePath, Shape, frame_of, to_ictrans
-from mems_sketch.core.shapes.geometry import apply_transform
+from mems_sketch.core.shapes import NodePath, Shape, frame_of
 from mems_sketch.core.shapes.modifiers import Corner, CornersModifier
 from mems_sketch.core.shapes.points import NodePoints
+from mems_sketch.core.transform import IDENTITY, Transform
 from mems_sketch.editing.commands import Commands
 
 TOLERANCE_UM = 0.002  # positions this close are the same corner
@@ -44,15 +42,13 @@ class CornerEdits(Commands):
         can be rounded."""
         geometry, _, to_component = self._before(path)
         result: list[Position] = []
-        for region in geometry.layers.values():
-            for polygon in region.merged().each():
-                rings = [polygon.each_point_hull()]
-                rings += [polygon.each_point_hole(h) for h in range(polygon.holes())]
-                for ring in rings:
-                    for p in _turning(list(ring)):
-                        q = to_component * kdb.DPoint(p.x * DBU_UM, p.y * DBU_UM)
-                        if not any(_same((q.x, q.y), r) for r in result):
-                            result.append((q.x, q.y))
+        for layer in geometry.layer_names():
+            for polygon in geometry.polygons(layer):
+                for ring in [polygon.hull.tolist(), *(h.tolist() for h in polygon.holes)]:
+                    for x, y in _turning(ring):
+                        q = to_component.apply(x, y)
+                        if not any(_same(q, r) for r in result):
+                            result.append(q)
         return result
 
     def rounded(self, path: NodePath) -> list[tuple[int, Position]]:
@@ -68,8 +64,7 @@ class CornerEdits(Commands):
         for index, corner in enumerate(modifier.corners):
             with contextlib.suppress(ValueError):  # the messages panel says what is wrong
                 x, y = CornersModifier(corners=[corner]).positions(variables)[0]
-                q = to_component * kdb.DPoint(x, y)
-                result.append((index, (q.x, q.y)))
+                result.append((index, to_component.apply(x, y)))
         return result
 
     def at(self, path: NodePath, x: float, y: float) -> int | None:
@@ -145,8 +140,7 @@ class CornerEdits(Commands):
         """How to record the corner at ``(x, y)`` (component frame): ``at``, or ``x``
         and ``y``; see the module docstring."""
         _, own, to_component = self._before(path)
-        p = to_component.inverted() * kdb.DPoint(x, y)
-        target = (p.x, p.y)
+        target = to_component.inverted().apply(x, y)
         for name in own.names():
             try:
                 if _same(own.point(name), target):
@@ -158,8 +152,8 @@ class CornerEdits(Commands):
             if _same(point, target):
                 return {"at": name}
         return {
-            "x": self._axis(path, own, neighbours, 0, p.x),
-            "y": self._axis(path, own, neighbours, 1, p.y),
+            "x": self._axis(path, own, neighbours, 0, target[0]),
+            "y": self._axis(path, own, neighbours, 1, target[1]),
         }
 
     def _axis(self, path, own: NodePoints, neighbours: dict, axis: int, value: float) -> Any:
@@ -226,7 +220,7 @@ class CornerEdits(Commands):
 
     # -- helpers -----------------------------------------------------------------
 
-    def _before(self, path: NodePath) -> tuple[Geometry, NodePoints, kdb.DCplxTrans]:
+    def _before(self, path: NodePath) -> tuple[Geometry, NodePoints, Transform]:
         """What the node makes before its corners modifier, where its modifiers work
         (its list's frame, before its alignment moves it): the geometry, its
         points, and the transform into the component's frame as it is shown."""
@@ -239,14 +233,12 @@ class CornerEdits(Commands):
             raise ValueError(f"'{_label(node)}' does not build")
         shown = self.session.results.inspection()
         unshift = record[path].shift.inverted()
-        geometry = Geometry()
-        geometry.merge(record[path].geometry, to_ictrans(unshift))
+        geometry = record[path].geometry.transformed(unshift)
         declared = {
-            name: apply_transform(unshift, point)
-            for name, point in record[path].points.declared.items()
+            name: unshift.apply(*point) for name, point in record[path].points.declared.items()
         }
         own = NodePoints("self", geometry, declared)
-        shift = shown[path].shift if path in shown else kdb.DCplxTrans()
+        shift = shown[path].shift if path in shown else IDENTITY
         return geometry, own, frame_of(record, path) * shift
 
     def _modifier(self, node: Shape) -> tuple[int, CornersModifier] | None:
@@ -262,14 +254,14 @@ class CornerEdits(Commands):
         return found
 
 
-def _turning(ring: list[kdb.Point]) -> list[kdb.Point]:
+def _turning(ring: list[Position]) -> list[Position]:
     """The vertices of a ring where it turns by at least MIN_TURN_DEG: corners, not
     the many small steps of an arc or circle."""
     result = []
     for index, p in enumerate(ring):
         before, after = ring[index - 1], ring[(index + 1) % len(ring)]
-        a = math.atan2(p.y - before.y, p.x - before.x)
-        b = math.atan2(after.y - p.y, after.x - p.x)
+        a = math.atan2(p[1] - before[1], p[0] - before[0])
+        b = math.atan2(after[1] - p[1], after[0] - p[0])
         if abs(math.degrees(math.remainder(b - a, 2 * math.pi))) >= MIN_TURN_DEG:
             result.append(p)
     return result

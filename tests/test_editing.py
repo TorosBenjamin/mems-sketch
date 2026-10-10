@@ -160,8 +160,27 @@ def test_process_constants_and_layers(doc):
     with pytest.raises(ValueError):
         doc.process.remove_constant("gap")  # still used
     name = doc.process.add_layer()
-    doc.process.set_layer(name, Layer("oxide", 9, 0, 1.0, None))
+    doc.process.set_layer(name, Layer("oxide", 9, 0))
     assert "oxide" in doc.project.layers and name not in doc.project.layers
+
+
+def test_rules_are_edited_with_undo(doc):
+    rules = doc.project.process.rules
+    assert {"device_min_width", "device_anchored"} <= set(rules)  # the defaults
+    name = doc.process.add_rule("enclosure")
+    assert rules[name].layers == ["device", "anchor"] and rules[name].values == {"value": 1.0}
+    doc.process.enable_rule(name, False)
+    assert not doc.project.process.rules[name].enabled
+    doc.undo()
+    assert doc.project.process.rules[name].enabled
+    doc.process.set_layer("anchor", Layer("pad", 2, 0))  # the rules follow a renamed layer
+    assert doc.project.process.rules[name].layers == ["device", "pad"]
+    assert doc.project.process.rules["device_anchored"].layers == ["device", "pad"]
+    doc.process.remove_rule(name)
+    assert name not in doc.project.process.rules
+    with pytest.raises(ValueError, match="already exists"):
+        rule = doc.project.process.rules["device_min_width"]
+        doc.process.set_rule("device_min_space", rule)
 
 
 def test_save_open_export(doc, tmp_path):
@@ -280,8 +299,8 @@ def test_unpack_restores_the_shapes_with_values_filled_in(doc):
     assert inner.name == "rect2"  # renamed: rect1 is taken
     assert inner.x1 == "10 * width" and inner.y1 == "width"
     assert area(doc) == pytest.approx(before)
-    with pytest.raises(ValueError, match="built-in"):
-        doc.components.unpack(doc.nodes.add_component("anchor"))
+    pad = doc.components.unpack(doc.nodes.add_component("anchor"))  # a built-in too
+    assert [s.name for s in doc.node(pad).children] == ["pad", "opening"]
 
 
 def test_parameters_can_be_renamed(doc):
@@ -460,8 +479,9 @@ def test_a_script_can_edit_and_save_a_project(tmp_path):
 
     again = EditSession.open_project(tmp_path / "resonator")
     assert "suspension/spring_with_anchor" in again.project.components  # private to suspension
-    saved = tmp_path / "resonator" / "components" / "suspension" / "spring_with_anchor.yaml"
-    assert saved.read_text().startswith("name: spring_with_anchor\n")
+    owner = tmp_path / "resonator" / "components" / "suspension"
+    assert (owner / "spring_with_anchor" / "component.yaml").is_file()
+    assert "spring_with_anchor: spring_with_anchor" in (owner / "component.yaml").read_text()
     after = again.results.geometry(component="suspension")
     assert before.layers.keys() == after.layers.keys()
     assert all((before.layers[k] ^ after.layers[k]).is_empty() for k in before.layers)
@@ -492,8 +512,9 @@ def test_a_library_component_can_be_copied_into_the_project(resonator):
     assert name == "perforated_plate" and resonator.active == name
     assert not resonator.read_only
     assert resonator.components.copy("std.perforated_plate") == "perforated_plate_copy1"
-    with pytest.raises(ValueError, match="built in"):
-        resonator.components.copy("anchor")
+    assert resonator.components.copy("anchor") == "anchor_copy1"  # a built-in too
+    assert resonator.project.components["anchor_copy1"].shapes
+    resonator.undo()
     resonator.undo()
     resonator.undo()
     assert "perforated_plate" not in resonator.project.components
@@ -510,7 +531,7 @@ def test_libraries_can_be_added_and_removed_with_undo(resonator, tmp_path):
     assert "extra" in resonator.project.libraries
     resonator.undo()
     assert "extra" not in resonator.project.libraries
-    with pytest.raises(ValueError, match="no components"):
+    with pytest.raises(ValueError, match="no project.yaml"):
         resonator.components.add_library(tmp_path)
 
 
@@ -557,5 +578,5 @@ def test_create_a_library_and_what_it_refuses(tmp_path):
     with pytest.raises(ValueError, match="needs a name"):
         EditSession().create(tmp_path / "blank", " ")
     (tmp_path / "empty").mkdir()
-    with pytest.raises(ValueError, match="no components"):
+    with pytest.raises(ValueError, match="no project.yaml"):
         EditSession().create(tmp_path / "x", "x", libraries=[tmp_path / "empty"])

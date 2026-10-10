@@ -1,0 +1,54 @@
+description: >-
+  Interdigitated comb: a fixed comb (bottom spine) and a moving comb (top spine),
+  centred on the finger overlap. Points: moving and fixed, the middle of each
+  spine's outer edge.
+parameters:
+  fingers: {default: 10, min: 1, integer: true, description: Moving fingers}
+  finger_width: {default: 2, min: 0, min_exclusive: true, description: Finger width (µm)}
+  finger_length: {default: 40, min: 0, min_exclusive: true, description: Finger length (µm)}
+  gap: {default: 2, min: 0, min_exclusive: true, description: Lateral finger gap (µm)}
+  overlap:
+    default: 20
+    min: 0
+    max: finger_length
+    max_exclusive: true
+    description: Initial finger overlap (µm)
+  spine_width: {default: 10, min: 0, min_exclusive: true, description: Spine width (µm)}
+  pitch: {default: 2 * (finger_width + gap), internal: true}
+  total:
+    default: (fingers + 1) * finger_width + fingers * finger_width + 2 * fingers * gap
+    internal: true
+    description: Width of the spines (µm); the fixed comb has one finger more
+  x_start: {default: -total / 2, internal: true}
+points:
+  moving: {y: -overlap/2 + finger_length + spine_width}
+  fixed: {y: overlap/2 - finger_length - spine_width}
+shapes:
+  fixed_fingers:
+    kind: rect
+    x0: x_start
+    y0: overlap/2 - finger_length
+    x1: x_start + finger_width
+    y1: overlap/2
+    modifiers:
+    - {kind: array, columns: fingers + 1, dx: pitch}
+  moving_fingers:
+    kind: rect
+    x0: x_start + finger_width + gap
+    y0: -overlap/2
+    x1: x_start + 2 * finger_width + gap
+    y1: -overlap/2 + finger_length
+    modifiers:
+    - {kind: array, columns: fingers, dx: pitch}
+  fixed_spine:
+    kind: rect
+    x0: x_start
+    y0: overlap/2 - finger_length - spine_width
+    x1: x_start + total
+    y1: overlap/2 - finger_length
+  moving_spine:
+    kind: rect
+    x0: x_start
+    y0: -overlap/2 + finger_length
+    x1: x_start + total
+    y1: -overlap/2 + finger_length + spine_width

@@ -8,9 +8,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ClassVar
 
-from mems_sketch.core.compiler import Compiler
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.project import Project
+from mems_sketch.engine import Engine
 from mems_sketch.storage import formats
 from mems_sketch.storage.document import geometry_data
 
@@ -32,26 +32,30 @@ class DocumentExporter:
         parameters: dict[str, Any] = {}
         points: dict[str, tuple[float, float]] = {}
         if name is not None:
-            session = Compiler().session(project)
-            variables = session.variables(name, params)
-            parameters = {k: v for k, v in variables.items() if k not in session.scope}
-            points = {n: (x, y) for n, (x, y) in session.points(name, params).items()}
+            engine = Engine().load(project)
+            build = engine.build(name, params)
+            constants = engine.constants
+            parameters = {k: v for k, v in build.variables().items() if k not in constants}
+            points = {n: (x, y) for n, (x, y) in build.points().items()}
         tree = geometry_data(project, geometry, name, parameters, points)
         Path(path).write_bytes(formats.codecs()[self.format_name].dump(tree))
 
 
 class JsonExporter(DocumentExporter):
     format_name = "json"
+    title = "Geometry as JSON"
     file_extension = ".json"
 
 
 class XmlExporter(DocumentExporter):
     format_name = "xml"
+    title = "Geometry as XML"
     file_extension = ".xml"
 
 
 class MatExporter(DocumentExporter):
     format_name = "mat"
+    title = "Geometry for MATLAB"
     file_extension = ".mat"
 
 

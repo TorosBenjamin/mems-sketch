@@ -9,6 +9,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, 
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -30,8 +31,8 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.core.component import component_types
-from mems_sketch.core.expressions import ExpressionError, resolve_variables
-from mems_sketch.core.process import Layer
+from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
+from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
@@ -40,10 +41,11 @@ from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
+VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message
 SLOT_LABELS = {"boolean": ("A", "B")}
 IMPORT_FILTER = (
-    "Layouts (*.gds *.gds2 *.gdsii *.oas *.json *.xml *.mat);;"
-    "GDS and OASIS (*.gds *.gds2 *.gdsii *.oas);;"
+    "Layouts (*.gds *.gds2 *.gdsii *.json *.xml *.mat);;"
+    "GDS (*.gds *.gds2 *.gdsii);;"
     "Geometry documents (*.json *.xml *.mat);;All files (*)"
 )
 
@@ -85,6 +87,21 @@ def _format(value) -> str:
     if value is None:
         return ""
     return f"{value:g}" if isinstance(value, float | int) else str(value)
+
+
+def limit_text(limit: float | str | None, exclusive: bool, mark: str) -> str:
+    """A limit as typed in its cell: ``> 0`` for an exclusive minimum (``mark``
+    is ``>`` for a minimum, ``<`` for a maximum), ``size / 2`` for an inclusive one."""
+    text = _format(limit)
+    return f"{mark} {text}" if text and exclusive else text
+
+
+def parse_limit(text: str, mark: str) -> tuple[float | str | None, bool]:
+    """A limit cell's text as (limit, exclusive): see :func:`limit_text`."""
+    text = text.strip()
+    exclusive = text.startswith(mark)
+    text = text.removeprefix(mark).strip()
+    return (parse_value(text) if text else None), exclusive and bool(text)
 
 
 def _action_bar(
@@ -469,6 +486,7 @@ class ComponentsPanel(_Panel):
                 "duplicate",
             )
             _menu_action(menu, "Delete", lambda: self._delete(name), "delete")
+            self._level_actions(menu, name)
             menu.addSeparator()
             if name == project.top:
                 _menu_action(menu, "Make the project a library (no top component)", self._no_top)
@@ -494,6 +512,26 @@ class ComponentsPanel(_Panel):
                 lambda: self._guard(lambda: self.document.components.copy(name)),
                 "duplicate",
             )
+
+    def _level_actions(self, menu: QMenu, name: str) -> None:
+        """Choose the level of the layer stack a component is on unless placed elsewhere."""
+        levels = [lv.layer for lv in self.document.project.process.levels]
+        if not levels:
+            return
+        current = self.document.project.components[name].level
+        sub = menu.addMenu("Level")
+        sub.setToolTip(
+            "The level of the layer stack it is on unless a placement says otherwise; "
+            "its shapes draw relative to it"
+        )
+        for level in [None, *levels]:
+            action = _menu_action(
+                sub,
+                level or "The level it is placed on",
+                lambda lv=level: self._guard(lambda: self.document.components.set_level(name, lv)),
+            )
+            action.setCheckable(True)
+            action.setChecked(level == current)
 
     def _ownership_actions(self, menu: QMenu, name: str) -> None:
         """Make a component shared, or private to another one."""
@@ -1004,8 +1042,8 @@ class ParametersPanel(_Panel):
             cells = [
                 make(p.name),
                 make(_format(p.default)),
-                make(_format(p.min)),
-                make(_format(p.max)),
+                make(limit_text(p.min, p.min_exclusive, ">")),
+                make(limit_text(p.max, p.max_exclusive, "<")),
                 QTableWidgetItem(_format(trials.get(p.name))),
                 _readonly("error" if value is None else f"{value:g}"),
             ]
@@ -1017,6 +1055,14 @@ class ParametersPanel(_Panel):
             )
             cells[0].setToolTip("\n".join(t for t in (p.description, access) if t))
             cells[self.TRIAL].setToolTip("Try a value without changing the design (not saved)")
+            for column, limit in ((2, p.min), (3, p.max)):
+                tip = "A number or an expression; start with > or < to exclude the limit itself"
+                if isinstance(limit, str):
+                    try:
+                        tip = f"{limit} = {evaluate(limit, values):g}\n{tip}"
+                    except ValueError:
+                        tip = f"{limit} does not evaluate\n{tip}"
+                cells[column].setToolTip(tip)
             if p.name in trials:
                 cells[-1].setForeground(QBrush(QColor("#e0a000")))
             for column, cell in enumerate(cells):
@@ -1035,9 +1081,11 @@ class ParametersPanel(_Panel):
                 case 1:
                     self.document.parameters.update(name, default=parse_value(text))
                 case 2:
-                    self.document.parameters.update(name, min=float(text) if text else None)
+                    limit, exclusive = parse_limit(text, ">")
+                    self.document.parameters.update(name, min=limit, min_exclusive=exclusive)
                 case 3:
-                    self.document.parameters.update(name, max=float(text) if text else None)
+                    limit, exclusive = parse_limit(text, "<")
+                    self.document.parameters.update(name, max=limit, max_exclusive=exclusive)
                 case self.TRIAL:
                     self.document.set_trial(name, parse_value(text) if text else None)
 
@@ -1088,9 +1136,13 @@ class ParametersPanel(_Panel):
                 return True
             self._drag["dragging"] = True
             p = self._drag["p"]
-            value = dragged_value(
-                self._drag["start"], dx, event.modifiers(), p.integer, p.min, p.max
-            )
+            try:
+                low, high = p.limits(self.document.results.scope())
+            except Exception:  # noqa: BLE001 - a limit that does not evaluate: no clamp
+                low = high = None
+            value = dragged_value(self._drag["start"], dx, event.modifiers(), p.integer, low, high)
+            if (p.min_exclusive and value == low) or (p.max_exclusive and value == high):
+                return True  # the limit itself is excluded: stay one step inside
             self._drag["value"] = value
             self._guard(lambda: self.document.set_trial(p.name, value))  # shown live
             return True
@@ -1180,10 +1232,51 @@ class LayersPanel(_Panel):
             self.visibility_changed.emit(name, shown)
 
 
-class LayerDefinitionsPanel(_Panel):
-    """The process's layers: name, GDS mapping and rules (in the Process tab)."""
+def stack_place(levels: list[Level], layer: str) -> str:
+    """Where a layer is in the stack, as its Level cell shows it: the level's
+    number (1 at the bottom), ``poly1.anchor`` for a role, or nothing."""
+    for number, level in enumerate(levels, start=1):
+        if level.layer == layer:
+            return str(number)
+        for role, name in level.roles.items():
+            if name == layer:
+                return f"{level.layer}.{role}"
+    return ""
 
-    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Min width µm", "Min space µm")
+
+def moved_in_stack(levels: list[Level], layer: str, place: str) -> list[Level]:
+    """The stack with ``layer`` put at ``place`` (see :func:`stack_place`):
+    a number inserts it as that level, ``level_layer.role`` gives that level the
+    role, nothing takes it out (a level with its roles)."""
+    result = [
+        Level(lv.layer, {r: n for r, n in lv.roles.items() if n != layer})
+        for lv in levels
+        if lv.layer != layer
+    ]
+    place = place.strip()
+    if not place:
+        return result
+    if place.isdigit():
+        number = int(place)
+        if not 1 <= number <= len(result) + 1:
+            raise ValueError(f"a level number is between 1 and {len(result) + 1}")
+        result.insert(number - 1, Level(layer))
+        return result
+    owner, dot, role = place.partition(".")
+    for level in result:
+        if level.layer == owner and dot and role.isidentifier():
+            level.roles[role] = layer
+            return result
+    raise ValueError(
+        f"'{place}': a level number, or a level's layer and a role (e.g. poly1.anchor)"
+    )
+
+
+class LayerDefinitionsPanel(_Panel):
+    """The process's layers: name, GDS mapping and place in the layer stack (in
+    the Process tab)."""
+
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Level")
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -1197,11 +1290,25 @@ class LayerDefinitionsPanel(_Panel):
             QLabel("Layers"),
             ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
             ("remove", "Remove the selected layers", self._remove_layers),
-            help="The mask layers: their *GDS* layer and datatype for export, and the "
-            "*minimum width and spacing* the rule checks use.",
+            help="The mask layers and their *GDS* layer and datatype for export. "
+            "What they are checked with is in *Rules*.\n\n"
+            "*Level* places a layer in the layer stack: a number makes it a level "
+            "(1 at the bottom); `poly1.anchor` makes it level poly1's anchor layer. "
+            "Components draw relative to their level (`level-1`, `level.anchor`), "
+            "so the same component can be placed on any level.",
         )
         layout.addLayout(self.actions)
         layout.addWidget(self.layers)
+        row = QHBoxLayout()
+        row.setContentsMargins(6, 4, 6, 4)
+        row.addWidget(QLabel("Top components on level"))
+        self.default_level = QComboBox()
+        self.default_level.setToolTip(
+            "The level a component without a default level is on in its own tab and when exported"
+        )
+        self.default_level.activated.connect(self._default_level_chosen)
+        row.addWidget(self.default_level, 1)
+        layout.addLayout(row)
         self._layer_names: list[str] = []
 
     def refresh(self) -> None:
@@ -1209,17 +1316,25 @@ class LayerDefinitionsPanel(_Panel):
         self._layer_names = list(layers)
         self.layers.blockSignals(True)
         self.layers.setRowCount(len(layers))
+        levels = self.document.project.process.levels
         for row, layer in enumerate(layers.values()):
             values = [
                 layer.name,
                 layer.gds_layer,
                 layer.gds_datatype,
-                layer.min_width,
-                layer.min_space,
+                stack_place(levels, layer.name),
             ]
             for column, value in enumerate(values):
                 self.layers.setItem(row, column, QTableWidgetItem(_format(value)))
+            self.layers.item(row, 3).setToolTip(
+                "A level number (1 at the bottom), a level's role (poly1.anchor), or empty"
+            )
         self.layers.blockSignals(False)
+        self.default_level.clear()
+        self.default_level.addItems(["(the first level)", *(lv.layer for lv in levels)])
+        default = self.document.project.process.default_level
+        self.default_level.setCurrentText(default or "(the first level)")
+        self.default_level.setEnabled(bool(levels))
         # the name column also holds the check box and the colour swatch
         header = self.layers.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
@@ -1232,20 +1347,25 @@ class LayerDefinitionsPanel(_Panel):
         row = item.row()
         texts = [self.layers.item(row, c).text().strip() for c in range(len(self.LAYER_COLUMNS))]
 
-        def optional(text: str) -> float | None:
-            return float(text) if text else None
-
         def apply() -> None:
-            layer = Layer(
-                texts[0],
-                int(texts[1]),
-                int(texts[2]),
-                optional(texts[3]),
-                optional(texts[4]),
-            )
+            if item.column() == 3:
+                process = self.document.project.process
+                levels = moved_in_stack(process.levels, name, texts[3])
+                default = process.default_level
+                self.document.process.set_levels(
+                    levels, default if default in {lv.layer for lv in levels} else None
+                )
+                return
+            layer = Layer(texts[0], int(texts[1]), int(texts[2]))
             self.document.process.set_layer(name, layer)
 
         if not self._guard(apply):
+            self.refresh()
+
+    def _default_level_chosen(self, index: int) -> None:
+        levels = self.document.project.process.levels
+        default = None if index <= 0 else self.default_level.itemText(index)
+        if not self._guard(lambda: self.document.process.set_levels(list(levels), default)):
             self.refresh()
 
     def _remove_layers(self) -> None:
@@ -1319,42 +1439,79 @@ class ConstantsPanel(_Panel):
 
 
 class MessagesPanel(QListWidget):
-    """Errors and rule violations. Clicking a violation zooms to it."""
+    """Errors and rule violations. Clicking a violation zooms to it; its context
+    menu waives it (accepts it, with a reason) or removes its waiver."""
 
     zoom_requested = Signal(tuple)
+    waive_requested = Signal(object)  # a Violation
+    unwaive_requested = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
         self.itemActivated.connect(self._activated)
         self.itemClicked.connect(self._activated)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._context_menu)
 
-    counts_changed = Signal(int, int)  # errors, violations
+    counts_changed = Signal(int, int)  # errors, violations not waived
 
-    def show_messages(self, errors: list[str], violations) -> None:
+    def show_messages(self, errors: list[str], violations, checking: bool = False) -> None:
+        """Errors and rule violations; ``checking`` while the rules are still
+        being checked in the background."""
         self.clear()
         for text in errors:
             item = QListWidgetItem(icons.icon("error"), text)
             item.setToolTip(text)
             self.addItem(item)
+        open_ = [v for v in violations if not v.waived]
+        waived = len(violations) - len(open_)
         if violations:
-            summary = QListWidgetItem(
-                f"{len(violations)} rule violation(s) — click one to zoom to it"
-            )
+            text = f"{len(open_)} rule violation(s) — click one to zoom to it"
+            if waived:
+                text += f"; {waived} waived"
+            summary = QListWidgetItem(text)
             font = QFont()
             font.setBold(True)
             summary.setFont(font)
             self.addItem(summary)
-        for v in violations:
+        for v in sorted(violations, key=lambda v: bool(v.waived)):  # waived ones last
             x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
             where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
-            item = QListWidgetItem(
-                icons.icon("warning"), f"[{v.rule}] {v.layer}: {v.message}{where}"
-            )
+            if v.waived:
+                label = f"Waived: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
+                item = QListWidgetItem(icons.icon("ok"), label)
+                item.setForeground(QBrush(QColor("#8c8f99")))
+            else:
+                prefix = "" if v.is_error else "Warning: "
+                label = f"{prefix}[{v.rule}] {v.layer}: {v.message}{where}"
+                item = QListWidgetItem(icons.icon("warning"), label)
             item.setData(PATH_ROLE, v.bbox_um)
+            item.setData(VIOLATION_ROLE, v)
             self.addItem(item)
-        if not errors and not violations:
+        if checking:
+            self.addItem(QListWidgetItem("Checking the design rules…"))
+        elif not errors and not violations:
             self.addItem(QListWidgetItem(icons.icon("ok"), "No rule violations."))
-        self.counts_changed.emit(len(errors), len(violations))
+        self.counts_changed.emit(len(errors), len(open_))
+
+    def context_menu(self, item: QListWidgetItem | None) -> QMenu | None:
+        violation = item.data(VIOLATION_ROLE) if item is not None else None
+        if violation is None or violation.bbox_um is None:
+            return None
+        menu = QMenu(self)
+        if violation.waived or violation.stale_waiver:
+            action = menu.addAction("Remove the waiver")
+            action.triggered.connect(lambda: self.unwaive_requested.emit(violation))
+        else:
+            action = menu.addAction("Waive…")
+            action.setToolTip("Accept this violation, with a reason")
+            action.triggered.connect(lambda: self.waive_requested.emit(violation))
+        return menu
+
+    def _context_menu(self, position) -> None:
+        menu = self.context_menu(self.itemAt(position))
+        if menu is not None:
+            menu.exec(self.viewport().mapToGlobal(position))
 
     def _activated(self, item: QListWidgetItem) -> None:
         bbox = item.data(PATH_ROLE)

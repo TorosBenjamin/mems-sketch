@@ -6,21 +6,16 @@ from typing import ClassVar, Literal
 
 from pydantic import Field
 
-from mems_sketch.core.component import Geometry
-from mems_sketch.core.shapes.base import Point, Primitive, RenderContext, Value
+from mems_sketch.core.levels import LEVEL
+from mems_sketch.core.shapes.base import Primitive, Value
 
 
 class PolygonShape(Primitive):
     icon: ClassVar[str] = "polygon"
 
     kind: Literal["polygon"] = "polygon"
-    layer: str
+    layer: str = LEVEL  # see mems_sketch.core.levels
     points: list[tuple[Value, Value]] = Field(min_length=3)
-
-    def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
-        geometry = Geometry()
-        geometry.add_polygon(self.layer, [(ctx.ev(x), ctx.ev(y)) for x, y in self.points])
-        return geometry, {}
 
     def moved(self, x, y, inner) -> dict:
         return {"points": [(x(px), y(py)) for px, py in self.points]}

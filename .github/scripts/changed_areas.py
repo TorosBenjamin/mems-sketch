@@ -24,6 +24,7 @@ RULES = [
     (".github/workflows/app.yml", "none"),
     (".github/workflows/release-source.yml", "none"),
     (".github/workflows/release.yml", "none"),  # runs only on main
+    (".github/workflows/close-issues.yml", "none"),  # runs only on merges
     ("packaging/*", "none"),
     ("src/geom/*", "geom"),
     ("CMakeLists.txt", "geom"),

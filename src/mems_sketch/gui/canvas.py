@@ -52,9 +52,9 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.transform import Transform
 from mems_sketch.gui import icons
+from mems_sketch.gui import theme as themes
 from mems_sketch.gui.theme import ISLAND_RADIUS
 
-PALETTE = ["#4c78a8", "#f58518", "#54a24b", "#e45756", "#72b7b2", "#b279a2", "#eeca3b", "#9d755d"]
 POINT_SIZES = {  # marker size in pixels
     "declared": 9,  # the edited component's own points
     "selected": 7,  # points of the selected shape
@@ -63,59 +63,6 @@ POINT_SIZES = {  # marker size in pixels
     "anchor": 9,  # a point a tool has fixed (move base, rotation pivot, ruler start)
     "focus": 15,  # the point hovered or selected in the Points panel
 }
-# Colours per canvas theme. Grid lines are drawn with the ``grid`` colour at
-# increasing opacity for minor lines, every fifth line and the axes.
-THEMES = {
-    "light": {
-        "background": "#ffffff",
-        "grid": (0, 0, 0),
-        "grid_alpha": (16, 34, 90),
-        "highlight": "#f07800",  # selection: orange, as in Blender and Unity
-        "hover": "#f07800",
-        "violation": "#d7002a",
-        "added": "#1f9d45",  # history: material a version added
-        "removed": "#d7002a",  # and removed (hatched: it is not there any more)
-        "declared": "#008a3e",
-        "selected": "#f07800",
-        "pick": "#0a6fd6",
-        "snap": "#e0007a",
-        "anchor": "#e0007a",
-        "focus": "#7a3ee0",
-        "ruler": "#b35c00",
-        "guide": "#1b8a96",
-        "axis_x": "#e0443e",
-        "axis_y": "#3f9b3f",
-        "gizmo_free": "#6c707e",
-        "gizmo_ring": "#3574f0",
-        "overlay": "#1e1f22",  # overlay text
-        "overlay_muted": "#818594",
-    },
-    "dark": {
-        "background": "#1e1f22",
-        "grid": (255, 255, 255),
-        "grid_alpha": (12, 28, 70),
-        "highlight": "#ffa033",
-        "hover": "#ffa033",
-        "violation": "#ff2d55",
-        "added": "#3ddc84",
-        "removed": "#ff4d6a",
-        "declared": "#3ddc84",
-        "selected": "#ffa033",
-        "pick": "#00c8ff",
-        "snap": "#ff5fb0",
-        "anchor": "#ff5fb0",
-        "focus": "#b18cff",
-        "ruler": "#ffb000",
-        "guide": "#4cc2cf",
-        "axis_x": "#f0584f",
-        "axis_y": "#6cc36c",
-        "gizmo_free": "#dfe1e5",
-        "gizmo_ring": "#548af7",
-        "overlay": "#dfe1e5",
-        "overlay_muted": "#868a91",
-    },
-}
-DEFAULT_THEME = "light"
 # Canvas options (the window fills them from the settings; see gui/settings.py).
 DEFAULT_OPTIONS = {
     "fill_opacity": 45,  # %
@@ -148,7 +95,9 @@ WORLD = QRectF(-1e6, -1e6, 2e6, 2e6)
 
 
 def layer_color(index: int) -> QColor:
-    return QColor(PALETTE[index % len(PALETTE)])
+    """The colour of the ``index``-th layer: the interface theme's layer colours, in turn."""
+    palette = themes.current().canvas["layers"]
+    return QColor(palette[index % len(palette)])
 
 
 def geometry_path(geometry: Geometry, layer: str) -> QPainterPath:
@@ -260,7 +209,7 @@ class LayoutCanvas(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
-        self.theme = THEMES[DEFAULT_THEME]
+        self.theme = themes.get("light").canvas
         self.setBackgroundBrush(QColor(self.theme["background"]))
         self.setTransform(QTransform.fromScale(2, -2))
         # One item per layer of each placed geometry with polygons of its own,
@@ -320,8 +269,8 @@ class LayoutCanvas(QGraphicsView):
     # -- content -----------------------------------------------------------
 
     def set_theme(self, name: str) -> None:
-        """Switch between the ``light`` and ``dark`` canvas colours."""
-        self.theme = THEMES[name]
+        """Draw with the canvas colours of the theme ``name`` (an id, or ``system``)."""
+        self.theme = themes.get(name).canvas
         self.setBackgroundBrush(QColor(self.theme["background"]))
         self.viewport().update()
 
@@ -474,7 +423,7 @@ class LayoutCanvas(QGraphicsView):
             for layer, region in leaf.own.items():
                 if region.is_empty():
                     continue
-                color = colors.get(layer, QColor("#888888"))
+                color = colors.get(layer, QColor(self.theme["unknown_layer"]))
                 key = (leaf, layer, _placement_key(at), color.rgba(), alpha, width)
                 kept = old.get(key)
                 if kept:
@@ -611,7 +560,7 @@ class LayoutCanvas(QGraphicsView):
             for layer, region in leaf.own.items():
                 if region.is_empty():
                     continue
-                color = colors.get(layer, QColor("#888888"))
+                color = colors.get(layer, QColor(self.theme["unknown_layer"]))
                 item = _PlacedPathItem(own_path(leaf, layer), qtransform(at))
                 fill = QColor(color)
                 fill.setAlpha(150)
@@ -1101,7 +1050,7 @@ class LayoutCanvas(QGraphicsView):
         # lines cost Qt's raster engine about 15 times as much as opaque ones.
         background = QColor(self.theme["background"])
         minor, major, axis = (
-            QPen(_mixed(background, QColor(*self.theme["grid"]), alpha / 255), 0)
+            QPen(_mixed(background, QColor(self.theme["grid"]), alpha / 255), 0)
             for alpha in self.theme["grid_alpha"]
         )
         left, right = math.floor(rect.left() / step), math.ceil(rect.right() / step)

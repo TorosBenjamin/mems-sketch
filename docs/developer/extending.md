@@ -138,3 +138,25 @@ for every tree (`test_every_codec_reads_back_what_it_wrote` checks this);
 projects and geometry then work in the new format, including `convert`,
 `load`, `save` and import. For geometry export, add a `DocumentExporter`
 subclass in `export/document_formats.py`.
+
+## A theme
+
+A theme is a JSON file of colours (the user guide's
+[Your own theme](../user/the-window.md#your-own-theme) describes it). A
+package adds themes under the `mems_sketch.themes` entry-point group. Each
+entry point names the theme's id and gives a path to its JSON file, the theme
+as a dictionary, or a function returning either:
+
+```toml
+[project.entry-points."mems_sketch.themes"]
+ocean = "my_themes:OCEAN"  # OCEAN = Path(__file__).with_name("ocean.json")
+```
+
+`gui/theme.py` defines the colours a theme has (`UiColors`, `CanvasColors`,
+`IconColors`) and checks every theme against them when it is loaded: a theme
+with an unknown or missing colour is left out and reported in Settings, never
+half applied. Interface code takes every colour from the theme
+(`theme.color("muted")`, the canvas's `self.theme`, `icons.color`);
+`test_no_colours_are_written_into_the_interface_code` keeps it that way. A new
+colour goes into the model and into both built-in themes.
+

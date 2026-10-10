@@ -35,7 +35,7 @@ from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_vari
 from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme
 from mems_sketch.gui.canvas import COMPONENT_MIME
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
@@ -178,7 +178,7 @@ def _blank_icon() -> QIcon:
 def _readonly(text: str) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-    item.setForeground(QBrush(QColor("#8c8f99")))
+    item.setForeground(QBrush(theme.color("muted")))
     return item
 
 
@@ -828,7 +828,7 @@ class ShapeTree(QTreeWidget):
         item.setData(0, DETAIL_ROLE, "interface only")
         item.setIcon(0, icons.icon("lock"))
         item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-        item.setForeground(0, QBrush(QColor("#8c8f99")))
+        item.setForeground(0, QBrush(theme.color("muted")))
         item.setToolTip(
             0,
             "Its shapes are how it is built: they are hidden, like the internals of a "
@@ -854,7 +854,7 @@ class ShapeTree(QTreeWidget):
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(0, Qt.CheckState.Checked if shape.enabled else Qt.CheckState.Unchecked)
         if not shape.enabled:
-            item.setForeground(0, QBrush(QColor("#8c8f99")))
+            item.setForeground(0, QBrush(theme.color("muted")))
         self._placeholder(item, shape, self.document.active)
         labels = SLOT_LABELS.get(shape.kind)
         for slot, children in enumerate(child_lists(shape)):
@@ -904,7 +904,7 @@ class ShapeTree(QTreeWidget):
         item.setData(0, DETAIL_ROLE, detail(shape))
         item.setIcon(0, shape_icon(shape))
         item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # not selectable: it belongs to ``owner``
-        item.setForeground(0, QBrush(QColor("#8c8f99")))
+        item.setForeground(0, QBrush(theme.color("muted")))
         font = QFont()
         font.setItalic(True)
         item.setFont(0, font)
@@ -1064,7 +1064,7 @@ class ParametersPanel(_Panel):
                         tip = f"{limit} does not evaluate\n{tip}"
                 cells[column].setToolTip(tip)
             if p.name in trials:
-                cells[-1].setForeground(QBrush(QColor("#e0a000")))
+                cells[-1].setForeground(QBrush(theme.color("warning")))
             for column, cell in enumerate(cells):
                 self.table.setItem(row, column, cell)
         self.table.blockSignals(False)
@@ -1480,7 +1480,7 @@ class MessagesPanel(QListWidget):
             if v.waived:
                 label = f"Waived: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
                 item = QListWidgetItem(icons.icon("ok"), label)
-                item.setForeground(QBrush(QColor("#8c8f99")))
+                item.setForeground(QBrush(theme.color("muted")))
             else:
                 prefix = "" if v.is_error else "Warning: "
                 label = f"{prefix}[{v.rule}] {v.layer}: {v.message}{where}"

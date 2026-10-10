@@ -47,6 +47,11 @@ engine (`mems_sketch._core`, `src/engine/`) evaluates the shape trees on the
 geometry library and hands back polygons on the 1 nm grid, which Python
 holds as `Geometry`: a `Region` per layer (`core/region.py`), whose
 booleans and offsets go back to the geometry library (`mems_sketch._geom`).
+Polygons cross between C++ and Python as int64 NumPy arrays, never point by
+point; the engine snaps each built region once and gives its box with it, and
+a region caches its box and a hash of its points. Rule checks are cached by
+that hash, and on a big design they run in the background
+(`gui/views.py`): the edit is on screen at once, the violations follow.
 Parameters and their checks stay with the Python model. Placements are plain
 `Transform` values (`core/transform.py`), and code outside the backend uses
 `Geometry`'s methods, never its regions.
@@ -100,7 +105,7 @@ wires the parts; each part only talks to the session:
 |---|---|
 | `core/project.py` | `Project`, `Library`, `Instance`: components, name resolution, parameters |
 | `engine.py` | `Engine` and `Build`: what everything outside the backend builds through |
-| `core/region.py` | `Region`, `Box`: polygons on the 1 nm grid; booleans and offsets through the geometry library |
+| `core/region.py` | `Region`, `Box`: polygons on the 1 nm grid as int64 arrays; booleans and offsets through the geometry library |
 | `core/transform.py` | `Transform`: placements as plain values |
 | `core/shapes/` | The shape tree: one module per kind in `kinds/`, their registry, points, node records, modifiers, rewriting |
 | `core/user_component.py` | `ComponentDef`, `ParamDef`, `PointDef` and their adapter to `Component` |

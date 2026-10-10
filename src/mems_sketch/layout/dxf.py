@@ -71,7 +71,7 @@ def _polyline(put, layer: str, ring: list[tuple[int, int]], dbu: float) -> None:
     put(8, layer)
     put(66, 1)
     put(70, 1)  # closed
-    for x, y in ring:
+    for x, y in ring.tolist():
         put(0, "VERTEX")
         put(8, layer)
         put(10, x * dbu)

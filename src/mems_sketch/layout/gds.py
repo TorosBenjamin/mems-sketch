@@ -12,6 +12,8 @@ import math
 import struct
 import time
 
+import numpy as np
+
 from mems_sketch.core.region import IntPolygon
 from mems_sketch.layout.model import Cell, Layout, Placement, hole_free
 
@@ -78,9 +80,8 @@ def _ints2(kind: int, *values: int) -> bytes:
     return _record(kind, struct.pack(f">{len(values)}h", *values))
 
 
-def _points(points: list[tuple[int, int]]) -> bytes:
-    flat = [v for point in points for v in point]
-    return _record(XY, struct.pack(f">{len(flat)}i", *flat))
+def _points(points) -> bytes:
+    return _record(XY, np.asarray(points, dtype=">i4").tobytes())
 
 
 def write(layout: Layout) -> bytes:
@@ -97,7 +98,7 @@ def write(layout: Layout) -> bytes:
         for (layer, datatype), polygons in cell.polygons.items():
             for polygon in polygons:
                 for piece in hole_free(polygon):
-                    ring = piece.hull + piece.hull[:1]
+                    ring = np.vstack([piece.hull, piece.hull[:1]])
                     out += [
                         _record(BOUNDARY),
                         _ints2(LAYER, layer),

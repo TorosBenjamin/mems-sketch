@@ -6,6 +6,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from mems_sketch.core.region import IntPolygon
 
 GdsLayer = tuple[int, int]  # layer, datatype
@@ -50,31 +52,22 @@ class Placement:
             for i in range(self.columns)
         ]
 
-    def apply(self, points: list[tuple[int, int]], at: tuple[int, int]) -> list[tuple[int, int]]:
-        """``points`` of the placed cell, in the parent's frame, for the copy at ``at``."""
+    def apply(self, points, at: tuple[int, int]) -> np.ndarray:
+        """``points`` (an (n, 2) array) of the placed cell, in the parent's frame,
+        for the copy at ``at``."""
+        x = points[:, 0].astype(float)
+        y = -points[:, 1].astype(float) if self.mirror else points[:, 1].astype(float)
         turns = self.quarter_turns
-        out = []
-        if turns is not None:
-            for x, y in points:
-                if self.mirror:
-                    y = -y
-                for _ in range(turns):
-                    x, y = -y, x
-                out.append((x + at[0], y + at[1]))
+        if turns is not None:  # exact
+            c, s = ((1, 0), (0, 1), (-1, 0), (0, -1))[turns]
+            mag = 1
         else:
             c, s = math.cos(math.radians(self.angle)), math.sin(math.radians(self.angle))
-            for x, y in points:
-                if self.mirror:
-                    y = -y
-                out.append(
-                    (
-                        round(self.mag * (c * x - s * y)) + at[0],
-                        round(self.mag * (s * x + c * y)) + at[1],
-                    )
-                )
-        if self.mirror:
-            out.reverse()  # keep the winding
-        return out
+            mag = self.mag
+        out = np.empty((len(points), 2), dtype=np.int64)
+        out[:, 0] = np.rint(mag * (c * x - s * y)) + at[0]
+        out[:, 1] = np.rint(mag * (s * x + c * y)) + at[1]
+        return out[::-1].copy() if self.mirror else out  # keep the winding
 
 
 @dataclass
@@ -145,4 +138,5 @@ def hole_free(polygon: IntPolygon, max_points: int = MAX_POINTS) -> list[IntPoly
         return [polygon]
     from mems_sketch import _geom
 
-    return [IntPolygon(ring, []) for ring in _geom.grid_hole_free([polygon], max_points)]
+    pieces = _geom.grid_hole_free([(polygon.hull, polygon.holes)], max_points)
+    return [IntPolygon(ring) for ring in pieces]

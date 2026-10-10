@@ -299,7 +299,14 @@ class MainWindow(QMainWindow):
             canvas.left_pans = self.tool.name == "hand"
             canvas.set_tool_cursor(self.tool.cursor)
             canvas.show_rulers(self.rulers.get(view.component, []))
+            view.checked.connect(lambda v=view: self._checked(v))
         return view
+
+    def _checked(self, view: ComponentView) -> None:
+        """A background rule check finished: show its violations."""
+        if view is self.view:
+            self._show_messages()
+            self.update_overlay()
 
     def _view_activated(self, view: ComponentView) -> None:
         """The user switched tabs (or panes): the panels follow the new current tab."""
@@ -977,7 +984,7 @@ class MainWindow(QMainWindow):
     def _show_messages(self, *extra: str) -> None:
         view = self.view
         errors = [*extra, *view.errors, *(p for p in self._problems if p not in view.errors)]
-        self.messages.show_messages(errors, view.violations)
+        self.messages.show_messages(errors, view.violations, checking=view.checking)
 
     def update_overlay(self) -> None:
         view = self.view

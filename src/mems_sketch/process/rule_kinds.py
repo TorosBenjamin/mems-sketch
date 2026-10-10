@@ -17,7 +17,7 @@ import math
 from collections.abc import Iterable, Sequence
 from typing import ClassVar
 
-from mems_sketch.core.region import Box, IntPolygon, Region
+from mems_sketch.core.region import Box, IntPolygon, Region, measures
 from mems_sketch.options import Option
 from mems_sketch.process.rules import Finding
 
@@ -35,7 +35,13 @@ def _pieces(polygons: Iterable[IntPolygon], dbu: float, message: str) -> list[Fi
 
 def _real(region: Region) -> list[IntPolygon]:
     """The pieces of ``region`` that are more than a rounding sliver."""
-    return [p for p in region.each_merged() if p.area() > SLIVER_NM * Region(p).perimeter() / 2]
+    pieces = region.each_merged()
+    areas, perimeters = measures(pieces)
+    return [
+        p
+        for p, a, length in zip(pieces, areas, perimeters, strict=True)
+        if a > SLIVER_NM * length / 2
+    ]
 
 
 def _dbu(value_um: float, dbu: float) -> int:

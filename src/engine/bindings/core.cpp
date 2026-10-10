@@ -1,7 +1,13 @@
 // mems_sketch._core: the mems-sketch engine for Python. So far its expressions,
 // which give the same values as mems_sketch.core.expressions, and its project
 // model (mems_sketch.engine.project_data makes the JSON it reads).
+#include <algorithm>
+#include <cstdint>
+#include <tuple>
+#include <map>
+
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 #include <nanobind/stl/map.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/set.h>
@@ -41,20 +47,67 @@ double evaluate(const nb::object& expression, const nb::object& variables) {
     return mems::Expression(text).evaluate(lookup_in(variables));
 }
 
-// A layer's region on a grid, as [(hull, [holes])] with points in grid units.
-nb::list grid_polygons(const mgeom::Region& region, double grid, double chord) {
+// A layer's region on a grid: ([(hull, [holes])], (left, bottom, right, top)),
+// each ring an (n, 2) int64 array of points in grid units, the box around them
+// in grid units too (None when the layer is empty).
+nb::tuple snapped_polygons(const mgeom::Region& region, double grid, double chord) {
     nb::list polygons;
+    std::int64_t left = 0, bottom = 0, right = 0, top = 0;
+    bool any = false;
     auto ring = [](const mgeom::GridRing& points) {
-        nb::list out;
-        for (const auto& p : points) out.append(nb::make_tuple(p.x, p.y));
-        return out;
+        auto* data = new std::int64_t[points.size() * 2];
+        for (size_t k = 0; k < points.size(); ++k) {
+            data[2 * k] = points[k].x;
+            data[2 * k + 1] = points[k].y;
+        }
+        nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<std::int64_t*>(p); });
+        return nb::ndarray<nb::numpy, std::int64_t, nb::shape<-1, 2>>(data, {points.size(), 2}, owner);
     };
     for (const auto& polygon : mgeom::snap(region, grid, chord).polygons) {
+        for (const auto& p : polygon.hull) {
+            if (!any) {
+                left = right = p.x;
+                bottom = top = p.y;
+                any = true;
+            }
+            left = std::min(left, p.x), right = std::max(right, p.x);
+            bottom = std::min(bottom, p.y), top = std::max(top, p.y);
+        }
         nb::list holes;
         for (const auto& hole : polygon.holes) holes.append(ring(hole));
         polygons.append(nb::make_tuple(ring(polygon.hull), holes));
     }
-    return polygons;
+    nb::object box = any ? nb::object(nb::make_tuple(left, bottom, right, top)) : nb::none();
+    return nb::make_tuple(polygons, box);
+}
+
+// Snapped regions by region, grid and chord: built components come from the
+// engine's cache as the same regions, so each is snapped once. The entries
+// keep their regions alive, so an identity is not reused while it is a key.
+struct SnapKey {
+    const void* region;
+    double grid, chord;
+    friend bool operator<(const SnapKey& a, const SnapKey& b) {
+        return std::tie(a.region, a.grid, a.chord) < std::tie(b.region, b.grid, b.chord);
+    }
+};
+struct SnapEntry {
+    mgeom::Region region;
+    nb::object result;
+};
+std::map<SnapKey, SnapEntry>& snap_cache() {
+    static auto* cache = new std::map<SnapKey, SnapEntry>();  // never destroyed: holds Python objects
+    return *cache;
+}
+
+nb::tuple grid_polygons(const mgeom::Region& region, double grid, double chord) {
+    auto& cache = snap_cache();
+    const SnapKey key{region.identity(), grid, chord};
+    if (auto found = cache.find(key); found != cache.end()) return nb::borrow<nb::tuple>(found->second.result);
+    nb::tuple result = snapped_polygons(region, grid, chord);
+    if (cache.size() >= 2048) cache.clear();
+    cache.emplace(key, SnapEntry{region, result});
+    return result;
 }
 
 nb::tuple transform_tuple(const mgeom::Transform& t) {
@@ -158,7 +211,7 @@ NB_MODULE(_core, m) {
                 }
                 nb::dict result;
                 for (const auto& [layer, region] : layers)
-                    result[nb::str(layer.c_str())] = grid_polygons(region, grid, chord);
+                    result[nb::str(layer.c_str())] = grid_polygons(region, grid, chord)[0];
                 return result;
             },
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
@@ -187,7 +240,7 @@ NB_MODULE(_core, m) {
                 return nb::make_tuple(layers_dict(built.layers, grid, chord), points_dict(built.points));
             },
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
-            "(layers, points): {layer: [(hull, [holes])]} with points in grid units, curves within "
+            "(layers, points): {layer: ([(hull, [holes])], box)} with points and box in grid units, curves within "
             "chord; and the declared points, µm.")
         .def(
             "records",
@@ -213,7 +266,13 @@ NB_MODULE(_core, m) {
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
             "({path: (layers, name, declared points, inner, shift)}, error or None): every node of the "
             "component's own shape tree as evaluated; transforms as (dx, dy, angle, mirror_x, scale).")
-        .def("clear", [](Engine& e) { e.cache->clear(); }, "Forget every cached build.")
+        .def(
+            "clear",
+            [](Engine& e) {
+                e.cache->clear();
+                snap_cache().clear();
+            },
+            "Forget every cached build.")
         .def_prop_ro("cached", [](const Engine& e) { return e.cache->size(); },
                      "How many component builds the cache holds.");
 

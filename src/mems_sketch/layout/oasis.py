@@ -75,7 +75,8 @@ def write(layout: Layout) -> bytes:
     return bytes(out)
 
 
-def _polygon(layer: int, datatype: int, ring: list[tuple[int, int]]) -> bytes:
+def _polygon(layer: int, datatype: int, points) -> bytes:
+    ring = [tuple(p) for p in points.tolist()]
     x0, y0 = ring[0]
     deltas = b"".join(_gdelta(b[0] - a[0], b[1] - a[1]) for a, b in itertools.pairwise(ring))
     point_list = _uint(4) + _uint(len(ring) - 1) + deltas  # all-angle; the first point is (x, y)

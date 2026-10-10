@@ -192,3 +192,34 @@ def test_switching_off_a_shape_inside_an_operation_in_the_list(window, qtbot):
     inner.setCheckState(0, Qt.CheckState.Unchecked)
     assert window.document.node(((0, 0), (1, 0))).enabled  # not while Qt is in the item
     qtbot.waitUntil(lambda: not window.document.node(((0, 0), (1, 0))).enabled)
+
+
+def test_rules_of_a_big_design_are_checked_in_the_background(window, qtbot, monkeypatch):
+    from mems_sketch.core.process import Rule
+    from mems_sketch.gui import views
+
+    monkeypatch.setattr(views, "BACKGROUND_CHECK_POINTS", 0)  # every design counts as big
+    window.document.project.process.add_rule(
+        Rule("narrow", "min_width", ["device"], {"value": 500})
+    )
+    window.add_primitive("rect")  # narrower than 500 µm
+    view = window.view
+    assert view.checking and view.violations == []
+    assert window.messages.item(0).text() == "Checking the design rules…"
+    qtbot.waitUntil(lambda: not view.checking, timeout=10_000)
+    assert "narrow" in [v.rule for v in view.violations]
+    assert f"{len(view.violations)} rule violation(s)" in window.messages.item(0).text()
+
+
+def test_a_background_check_overtaken_by_an_edit_is_dropped(window, qtbot, monkeypatch):
+    from mems_sketch.gui import views
+
+    monkeypatch.setattr(views, "BACKGROUND_CHECK_POINTS", 0)
+    window.add_primitive("rect")
+    view = window.view
+    first = view._generation
+    window.add_primitive("circle")
+    assert view._generation > first
+    qtbot.waitUntil(lambda: not view.checking, timeout=10_000)
+    expected = window.document.results.check(component=view.component)  # of the design as it is
+    assert [(v.rule, v.bbox_um) for v in view.violations] == [(v.rule, v.bbox_um) for v in expected]

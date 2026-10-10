@@ -114,10 +114,20 @@ nb::list to_python(const std::vector<P>& polygons) {
     return out;
 }
 
-// Grid polygons as plain Python values: (hull, [holes]) with each ring a
-// list of (x, y) integer tuples, as mems_sketch.core.region keeps them.
+// Grid polygons as Python values: (hull, [holes]) with each ring an (n, 2)
+// int64 array, as mems_sketch.core.region keeps them (any sequence of
+// (x, y) integer pairs is taken too).
+using GridIn = nb::ndarray<const std::int64_t, nb::shape<-1, 2>, nb::c_contig, nb::device::cpu>;
+
 GridRing ring_from_python(nb::handle ring) {
     GridRing out;
+    GridIn array;
+    if (nb::try_cast(ring, array, /*convert=*/false)) {  // the usual case: copied in one go
+        out.resize(array.shape(0));
+        const std::int64_t* data = array.data();
+        for (size_t k = 0; k < out.size(); ++k) out[k] = {data[2 * k], data[2 * k + 1]};
+        return out;
+    }
     for (nb::handle point : ring) {
         auto xy = nb::borrow<nb::sequence>(point);
         out.push_back({nb::cast<std::int64_t>(xy[0]), nb::cast<std::int64_t>(xy[1])});
@@ -136,18 +146,12 @@ std::vector<GridPolygon> grid_from_python(nb::handle polygons) {
     return out;
 }
 
-nb::list ring_to_python(const GridRing& ring) {
-    nb::list out;
-    for (const GridPoint& q : ring) out.append(nb::make_tuple(q.x, q.y));
-    return out;
-}
-
 nb::list grid_to_python(const std::vector<GridPolygon>& polygons) {
     nb::list out;
     for (const GridPolygon& p : polygons) {
         nb::list holes;
-        for (const auto& h : p.holes) holes.append(ring_to_python(h));
-        out.append(nb::make_tuple(ring_to_python(p.hull), holes));
+        for (const auto& h : p.holes) holes.append(to_array(h));
+        out.append(nb::make_tuple(to_array(p.hull), holes));
     }
     return out;
 }
@@ -484,7 +488,7 @@ NB_MODULE(_geom, m) {
                 rings = grid::hole_free(in, max_points);
             }
             nb::list out;
-            for (const GridRing& r : rings) out.append(ring_to_python(r));
+            for (const GridRing& r : rings) out.append(to_array(r));
             return out;
         },
         "polygons"_a, "max_points"_a = 8000,

@@ -163,9 +163,15 @@ def fingerprint(violation: Violation, geometry: Geometry) -> str:
     digest = hashlib.sha256()
     for layer in violation.layer.split(", "):
         region = geometry.layers.get(layer, Region())
-        shapes = sorted(str(tuple(p)) for p in (region & window).each_merged())
+        shapes = sorted(_text(p) for p in (region & window).each_merged())
         digest.update(f"{layer}:{';'.join(shapes)}|".encode())
     return digest.hexdigest()[:16]
+
+
+def _text(polygon) -> str:
+    """A polygon written out in full (as its points, outline then holes)."""
+    hull = [tuple(q) for q in polygon.hull.tolist()]
+    return str((hull, [[tuple(q) for q in h.tolist()] for h in polygon.holes]))
 
 
 def _same_box(a, b) -> bool:
@@ -209,6 +215,12 @@ def _apply_waivers(violations: list[Violation], waivers, geometry: Geometry) -> 
     return result
 
 
+# What a rule kind found, by the kind, its values and the geometry it checked
+# (a hash of it): a refresh that changed nothing on a rule's layers, or an
+# undo, finds the result here instead of checking again.
+_FINDINGS: dict[tuple, list[Finding]] = {}
+
+
 def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> list[Violation]:
     layers = ", ".join(rule.layers)
 
@@ -236,7 +248,13 @@ def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> lis
     except Exception as exc:  # noqa: BLE001 - a bad value is the rule's problem
         return problem(f"{exc}: not checked")
     regions = [geometry.layers.get(n, Region()) for n in rule.layers]
-    findings = kind().check(regions, DBU_UM, **values)
+    key = (rule.kind, type(kind), repr(sorted(values.items())), tuple(r.digest() for r in regions))
+    findings = _FINDINGS.get(key)
+    if findings is None:
+        findings = kind().check(regions, DBU_UM, **values)
+        if len(_FINDINGS) >= 256:
+            _FINDINGS.clear()
+        _FINDINGS[key] = findings
     return [
         Violation(
             name,

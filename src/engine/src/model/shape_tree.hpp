@@ -10,7 +10,8 @@
 namespace mems {
 
 struct ShapeTree {
-    nlohmann::ordered_json json;  // a list of nodes
+    nlohmann::ordered_json json;    // a list of nodes
+    nlohmann::ordered_json points;  // its declared points (PointDef), a list
 };
 
 }  // namespace mems

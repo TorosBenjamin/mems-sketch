@@ -4,8 +4,9 @@
 //
 // The kinds come one at a time (core-architecture.md, step 6). So far: rect,
 // polygon, circle, boolean, transform (and group), references to user
-// components, and the array modifier. Anything else raises NotSupported, so
-// callers can fall back to the Python backend.
+// components, the array modifier, alignment, point coordinates in
+// expressions and components' declared points. Anything else raises
+// NotSupported, so callers can fall back to the Python backend.
 #pragma once
 
 #include <map>
@@ -30,6 +31,13 @@ public:
 };
 
 using Layers = std::map<std::string, mgeom::Region, std::less<>>;
+using PointMap = std::map<std::string, mgeom::Point, std::less<>>;
+
+// A built component: its geometry per layer, merged, and its declared points.
+struct Built {
+    Layers layers;
+    PointMap points;
+};
 
 // Builds the components of one project. Each component built with the same
 // parameter values is built once (by fingerprint and values).
@@ -38,14 +46,14 @@ public:
     explicit Builder(const Project& project) : project_(project) {}
 
     // A component (as written at project level) with the given parameter values,
-    // defaults for the rest: its geometry per layer, merged.
-    const Layers& build(std::string_view component, const Values& params = {});
+    // defaults for the rest.
+    const Built& build(std::string_view component, const Values& params = {});
 
     const Project& project() const { return project_; }
 
 private:
     const Project& project_;
-    std::map<std::string, Layers> cache_;
+    std::map<std::string, Built> cache_;
 };
 
 }  // namespace mems

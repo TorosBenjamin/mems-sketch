@@ -41,7 +41,7 @@ const char* PROJECT = R"({
 TEST_CASE("a plate with holes and a placed component") {
     const Project project = Project::from_json(PROJECT);
     Builder builder(project);
-    const auto& layers = builder.build("top");
+    const auto& layers = builder.build("top").layers;
     REQUIRE(layers.size() == 2);  // the disabled metal rect adds nothing of its own
     CHECK(layers.at("device").area() == doctest::Approx(400 - 16 * std::numbers::pi).epsilon(1e-9));
     // The pad: a triangle 10 x 2, turned 90°, at x = 100.
@@ -64,7 +64,7 @@ TEST_CASE("built once per fingerprint and values") {
 TEST_CASE("what the engine does not build yet") {
     const Project project = Project::from_json(PROJECT);
     Builder builder(project);
-    CHECK_THROWS_AS(builder.build("aligned"), NotSupported);
+    CHECK_THROWS_AS(builder.build("aligned"), mems::BuildError);  // aligned to a shape that is not there
     CHECK_THROWS_AS(builder.build("spring"), NotSupported);
     CHECK_THROWS_AS(builder.build("comb_drive"), NotSupported);
 }

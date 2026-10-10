@@ -25,12 +25,12 @@ double explicit_segments(const Json& node, const Context& ctx) {
 
 }  // namespace
 
-Layers render_circle(const Json& node, const Context& ctx) {
+Result render_circle(const Json& node, const Context& ctx) {
     const double r = ctx.number(node, "radius");
     const double cx = ctx.number(node, "x", 0.0), cy = ctx.number(node, "y", 0.0);
     const std::string layer = node.at("layer").get<std::string>();
     const double segments = explicit_segments(node, ctx);
-    if (segments == 0.0 && r > ARC_TOLERANCE_UM) return {{layer, mgeom::Region::circle({cx, cy}, r)}};
+    if (segments == 0.0 && r > ARC_TOLERANCE_UM) return {Layers{{layer, mgeom::Region::circle({cx, cy}, r)}}, {}};
     // A polygon: as many segments as asked for, or 8 for a circle too small for arcs.
     const int n = segments != 0.0 ? std::max(8, std::min(static_cast<int>(segments), MAX_ARC_SEGMENTS)) : 8;
     if (r == 0.0) return {};
@@ -41,7 +41,7 @@ Layers render_circle(const Json& node, const Context& ctx) {
     }
     const auto region = mgeom::Region::polygon(points);
     if (region.empty()) return {};
-    return {{layer, region}};
+    return {Layers{{layer, region}}, {}};
 }
 
 }  // namespace mems

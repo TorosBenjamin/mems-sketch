@@ -16,6 +16,7 @@ import klayout.db as kdb
 import pytest
 
 from mems_sketch import (
+    Align,
     BooleanShape,
     CircleShape,
     ComponentDef,
@@ -28,6 +29,7 @@ from mems_sketch import (
 from mems_sketch.core.compiler import Compiler
 from mems_sketch.core.project import Project, new_project
 from mems_sketch.core.shapes import ArrayModifier
+from mems_sketch.core.user_component import PointDef
 from mems_sketch.engine import project_data
 from mems_sketch.storage import load
 
@@ -322,3 +324,160 @@ def test_random_shape_trees():
         names.append(name)
     for name in names:
         assert_same(project, name)
+
+
+# -- alignment and points -------------------------------------------------------
+
+
+def aligned() -> Project:
+    project = new_project("aligned")
+    project.components.update(
+        {
+            "post": ComponentDef(
+                name="post",
+                parameters=[ParamDef(name="h", default=12)],
+                shapes=[
+                    rect(name="stem", x0=0, y0=0, x1=4, y1="h"),
+                    CircleShape(
+                        name="cap",
+                        layer="metal",
+                        radius=3,
+                        align=Align(point="bottom", to="stem.top"),
+                    ),
+                ],
+                points=[
+                    PointDef(name="tip", at="cap.top"),
+                    PointDef(name="foot", x="stem.left.x", y="stem.bottom.y - 1"),
+                    PointDef(name="corner", at="top_right", x=1, y=-1),
+                    PointDef(name="origin"),
+                ],
+            ),
+            "frame": ComponentDef(
+                name="frame",
+                shapes=[
+                    rect(name="base", x0=0, y0=0, x1=60, y1=8),
+                    # aligned before it is drawn in the list: evaluated after what it needs
+                    rect(
+                        name="left",
+                        x0=0,
+                        y0=0,
+                        x1=6,
+                        y1=20,
+                        align=Align(point="bottom_left", to="base.top_left", dy=1),
+                    ),
+                    rect(
+                        name="beam",
+                        x0="left.right.x",
+                        y0="left.top.y - 4",
+                        x1="right.left.x",
+                        y1="left.top.y",
+                    ),
+                    rect(
+                        name="right",
+                        x0=0,
+                        y0=0,
+                        x1=6,
+                        y1=20,
+                        align=Align(point="bottom_right", to="base.top_right", dy=1),
+                    ),
+                    RefShape(
+                        name="p1", component="post", align=Align(point="foot", to="base.center")
+                    ),
+                    RefShape(
+                        name="p2",
+                        component="post",
+                        rotation=90,
+                        params={"h": 6},
+                        align=Align(point="tip", to="p1.tip", dx=10),
+                    ),
+                    TransformShape(
+                        rotation=30,
+                        x=100,
+                        children=[
+                            rect(
+                                name="inner",
+                                x0=0,
+                                y0=0,
+                                x1="base.right.x / 10",
+                                y1=2,
+                                align=Align(point="center", to="base.center"),
+                            )
+                        ],
+                    ),
+                    BooleanShape(
+                        op="subtract",
+                        a=[rect(name="slab", x0=0, y0=-30, x1=40, y1=-20)],
+                        b=[
+                            CircleShape(
+                                name="hole",
+                                layer="device",
+                                x="slab.center.x",
+                                y="slab.center.y",
+                                radius=2,
+                            )
+                        ],
+                    ),
+                    rect(
+                        name="teeth",
+                        x0=0,
+                        y0=-40,
+                        x1=2,
+                        y1=-36,
+                        modifiers=[
+                            ArrayModifier(columns="floor(self.right.x * 10)", dx="self.right.x * 2")
+                        ],
+                    ),
+                ],
+                points=[
+                    PointDef(name="mid", at="beam.center"),
+                    PointDef(name="post_tip", x="p2.tip.x", y="p2.tip.y"),
+                ],
+            ),
+        }
+    )
+    project.components["top"] = ComponentDef(
+        name="top",
+        shapes=[
+            RefShape(name="f", component="frame", mirror_x=True, x=5),
+            rect(name="mark", x0=0, y0=0, x1=1, y1=1, align=Align(point="center", to="f.post_tip")),
+        ],
+        points=[PointDef(name="mark", at="mark.center")],
+    )
+    return project
+
+
+@pytest.mark.parametrize("component", ["post", "frame", "top"])
+def test_alignment_and_points(component):
+    project = aligned()
+    assert assert_same(project, component, tolerance=CURVED_NM) == "same"
+    python = Compiler().session(project).points(component, {})
+    core = _core.Project(json.dumps(project_data(project))).points(component, {})
+    assert sorted(core) == sorted(python)
+    for name, (x, y) in python.items():
+        assert core[name] == pytest.approx((x, y), abs=2e-3), name
+
+
+def test_point_errors_alike():
+    project = aligned()
+    project.components["loop"] = ComponentDef(
+        name="loop",
+        shapes=[
+            rect(name="a", x0=0, y0=0, x1=1, y1=1, align=Align(to="b.center")),
+            rect(name="b", x0=0, y0=0, x1=1, y1=1, align=Align(to="a.center")),
+        ],
+    )
+    project.components["nowhere"] = ComponentDef(
+        name="nowhere",
+        shapes=[rect(name="a", x0=0, y0=0, x1=1, y1=1, align=Align(to="ghost.center"))],
+    )
+    project.components["no_point"] = ComponentDef(
+        name="no_point",
+        shapes=[rect(name="a", x0=0, y0=0, x1=1, y1=1), rect(x0=0, y0=0, x1="a.middle.x", y1=1)],
+    )
+    project.components["bad_at"] = ComponentDef(
+        name="bad_at",
+        shapes=[rect(name="a", x0=0, y0=0, x1=1, y1=1)],
+        points=[PointDef(name="p", at="ghost.top")],
+    )
+    for name in ("loop", "nowhere", "no_point", "bad_at"):
+        assert assert_same(project, name).startswith("both fail"), name

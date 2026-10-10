@@ -8,7 +8,7 @@
 
 namespace mems {
 
-Layers render_ref(const Json& node, const Context& ctx) {
+Result render_ref(const Json& node, const Context& ctx) {
     const Project& project = ctx.builder.project();
     const std::string target = project.qualify(node.at("component").get<std::string>(), ctx.component);
     const ComponentDef* definition = project.definition(target);
@@ -32,9 +32,10 @@ Layers render_ref(const Json& node, const Context& ctx) {
     }
     const mgeom::Transform placement{ctx.number(node, "x", 0.0), ctx.number(node, "y", 0.0),
                                      ctx.number(node, "rotation", 0.0), node.value("mirror_x", false), 1.0};
-    Layers result;
-    for (const auto& [layer, region] : ctx.builder.build(target, values))
-        result.emplace(layer, region.transformed(placement));
+    const Built& built = ctx.builder.build(target, values);
+    Result result;
+    for (const auto& [layer, region] : built.layers) result.layers.emplace(layer, region.transformed(placement));
+    for (const auto& [name, point] : built.points) result.points.emplace(name, placement.apply(point));
     return result;
 }
 

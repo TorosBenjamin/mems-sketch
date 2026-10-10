@@ -96,6 +96,21 @@ NB_MODULE(_core, m) {
             },
             "component"_a, "params"_a = nb::dict(),
             "A user component's parameter values with the process constants.")
+        .def(
+            "points",
+            [](const mems::Project& p, std::string_view component, const nb::dict& params) {
+                const mems::Values values = values_in(params);
+                mems::PointMap points;
+                {
+                    nb::gil_scoped_release release;
+                    mems::Builder builder(p);
+                    points = builder.build(component, values).points;
+                }
+                nb::dict result;
+                for (const auto& [name, point] : points) result[nb::str(name.c_str())] = nb::make_tuple(point.x, point.y);
+                return result;
+            },
+            "component"_a, "params"_a = nb::dict(), "A component's declared points, µm.")
         .def("fingerprint", nb::overload_cast<std::string_view>(&mems::Project::fingerprint, nb::const_),
              "component"_a)
         .def(
@@ -107,7 +122,7 @@ NB_MODULE(_core, m) {
                 {
                     nb::gil_scoped_release release;  // geometry takes a while; Python may go on
                     mems::Builder builder(p);
-                    layers = builder.build(component, values);
+                    layers = builder.build(component, values).layers;
                 }
                 nb::dict result;
                 for (const auto& [layer, region] : layers)

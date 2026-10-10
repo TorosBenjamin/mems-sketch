@@ -5,9 +5,12 @@
 
 namespace mems {
 
-Layers render_boolean(const Json& node, const Context& ctx) {
+Result render_boolean(const Json& node, const Context& ctx) {
     const std::string op = node.at("op").get<std::string>();
-    const Layers a = ctx.children(node.at("a")), b = ctx.children(node.at("b"));
+    // Evaluated together: names in one operand are visible in the other.
+    const auto operands = ctx.children({&node.at("a"), &node.at("b")});
+    const Layers& a = operands[0];
+    const Layers& b = operands[1];
     std::set<std::string> layers;
     for (const auto& [layer, region] : a) layers.insert(layer);
     for (const auto& [layer, region] : b) layers.insert(layer);
@@ -23,7 +26,7 @@ Layers render_boolean(const Json& node, const Context& ctx) {
         else throw BuildError("unknown boolean operation '" + op + "'");
         if (!out.empty()) result.emplace(layer, std::move(out));
     }
-    return result;
+    return {result, {}};
 }
 
 }  // namespace mems

@@ -1,7 +1,6 @@
 """The canvas stays fast on big designs: cached rendering, a light hover outline,
 draft quality while zooming, and a frame-rate limit for mouse moves."""
 
-import klayout.db as kdb
 import pytest
 
 pytest.importorskip("PySide6")
@@ -11,6 +10,7 @@ from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPixmapCa
 from PySide6.QtWidgets import QApplication, QGraphicsItem
 
 from mems_sketch.core.component import Geometry
+from mems_sketch.core.region import Region
 from mems_sketch.gui.canvas import LayoutCanvas
 
 CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
@@ -26,14 +26,15 @@ def canvas(qtbot):
     return c
 
 
-def plate_with_holes() -> kdb.Region:
+def plate_with_holes() -> Region:
     """A 100 µm square with a 10 × 10 grid of square holes."""
-    region = kdb.Region(kdb.Box(0, 0, 100_000, 100_000))
-    for i in range(10):
-        for j in range(10):
-            x, y = 5_000 + i * 10_000, 5_000 + j * 10_000
-            region -= kdb.Region(kdb.Box(x, y, x + 2_000, y + 2_000))
-    return region
+    holes = [
+        [(x, y), (x, y + 2_000), (x + 2_000, y + 2_000), (x + 2_000, y)]
+        for x in range(5_000, 100_000, 10_000)
+        for y in range(5_000, 100_000, 10_000)
+    ]
+    hull = [(0, 0), (100_000, 0), (100_000, 100_000), (0, 100_000)]
+    return Region.from_polygons([(hull, holes)], merged=True)
 
 
 def subpaths(path: QPainterPath) -> int:

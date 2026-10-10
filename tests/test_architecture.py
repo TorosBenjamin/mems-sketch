@@ -41,14 +41,13 @@ def test_importing_the_backend_loads_no_gui():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-# The geometry backend: the only code that may use a geometry library's types.
-# Everything else (the GUI, editing, storage, the command line) goes through
-# Geometry's methods and plain values (Transform, µm tuples), so that the C++
-# engine can replace the backend underneath it (core-architecture.md, step 1).
-GEOMETRY_LIBRARIES = ("klayout",)
+# The GUI, editing, storage and the command line go through Geometry's methods
+# and plain values (Transform, µm tuples), never a geometry library's types
+# (core-architecture.md, step 1); none is a dependency, so none may come back.
+GEOMETRY_LIBRARIES = ("klayout", "gdstk", "shapely")
 # What builds geometry is reached only through mems_sketch.engine.
-BUILDERS = ("mems_sketch.core.compiler", "mems_sketch.core.shapes.render")
-BUILDER_NAMES = {"Compiler", "Session", "Evaluator"}
+BUILDERS = ("mems_sketch._core", "mems_sketch._geom")
+BUILDER_NAMES: set[str] = set()
 OUTSIDE_THE_BACKEND = ("gui", "editing", "storage", "cli.py")
 
 

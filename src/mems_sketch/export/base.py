@@ -70,11 +70,11 @@ def register_exporter(cls: type[Exporter]) -> type[Exporter]:
 
 
 def available_exporters() -> dict[str, type[Exporter]]:
-    from mems_sketch.export import document_formats, klayout_formats
+    from mems_sketch.export import document_formats, layout_formats
 
     # The built-in ones even from a source tree (or an install older than them).
     found: dict[str, type[Exporter]] = {
-        cls.format_name: cls for cls in (*klayout_formats.BUILTIN, *document_formats.BUILTIN)
+        cls.format_name: cls for cls in (*layout_formats.BUILTIN, *document_formats.BUILTIN)
     }
     for ep in entry_points(group=ENTRY_POINT_GROUP):
         try:

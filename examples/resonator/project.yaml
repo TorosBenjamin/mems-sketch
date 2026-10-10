@@ -1,5 +1,14 @@
-format: mems-sketch/1
+format: mems-sketch/2
 name: resonator
 top: top
-libraries:
-  std: ../libraries/mems_std
+libraries: {std: ../libraries/mems_std}
+process: std.surface
+overrides:
+  rules:
+    device_anchored:
+      enabled: false
+      reason: the drawing does not model its anchors or the etch
+    device_release:
+      enabled: false
+      reason: the drawing does not model its anchors or the etch
+components: {top: components/top, suspension: components/suspension}

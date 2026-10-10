@@ -43,7 +43,8 @@ add_library(mgeom
     src/modify.cpp
     src/wire.cpp
     src/construct.cpp
-    src/snap.cpp)
+    src/snap.cpp
+    src/grid.cpp)
 add_library(mgeom::mgeom ALIAS mgeom)
 target_include_directories(mgeom
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -91,7 +92,8 @@ if(MGEOM_BUILD_TESTS)
         tests/test_measure.cpp
         tests/test_modify.cpp
         tests/test_wire.cpp
-        tests/test_snap.cpp)
+        tests/test_snap.cpp
+        tests/test_grid.cpp)
     target_link_libraries(mgeom_tests PRIVATE mgeom doctest::doctest)
     add_test(NAME mgeom_tests COMMAND mgeom_tests)
 

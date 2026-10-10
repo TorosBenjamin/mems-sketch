@@ -1,6 +1,4 @@
-import klayout.db as kdb
 import pytest
-from pydantic import ValidationError
 
 from mems_sketch import (
     ComponentDef,
@@ -61,7 +59,7 @@ def make_design() -> Project:
     return design
 
 
-def area_um2(region: kdb.Region) -> float:
+def area_um2(region) -> float:
     return region.area() / to_dbu(1) ** 2
 
 
@@ -107,9 +105,9 @@ def test_nested_refs_to_user_and_builtin_components():
 
 def test_parameter_limits_are_enforced():
     design = make_design()
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         design.add(Instance("f", "finger_array", {"n": 0}))
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         design.add(Instance("f", "finger_array", {"n": 2.5}))
 
 
@@ -121,9 +119,9 @@ def test_invalid_definitions_are_rejected():
         design.define_component(ComponentDef(name="x", shapes=[RefShape(component="nope")]))
     with pytest.raises(ValueError, match="circular"):
         design.define_component(ComponentDef(name="a", shapes=[RefShape(component="a")]))
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         ParamDef(name="i", default=1)
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         ParamDef(name="w", default=0, min=1)
     assert set(design.components) == {"top", "finger_array", "triangle"}  # nothing half-added
 
@@ -169,7 +167,7 @@ def test_parameter_defaults_can_be_expressions():
     )
     design.add(Instance("b1", "bar", {"w": 3}))
     assert area_um2(design.render().layers["device"]) == pytest.approx(30 * 3)
-    with pytest.raises(ValidationError):  # the resolved default is still range-checked
+    with pytest.raises(ValueError):  # the resolved default is still range-checked
         design.add(Instance("b2", "bar", {"w": 20}))
 
 
@@ -181,3 +179,25 @@ def test_process_constants_are_visible_as_dotted_names():
     assert process.scope() == {"process.min_gap": 2.0, "process.finger_gap": 3.0}
     assert names_in("2 * process.min_gap + max(w, 1)") == {"process.min_gap", "w"}
     assert resolve_variables({"g": "process.finger_gap + 1"}, process.scope()) == {"g": 4.0}
+
+
+def test_limits_can_be_expressions_and_exclusive():
+    design = make_design()
+    design.define_component(
+        ComponentDef(
+            name="pad",
+            parameters=[
+                ParamDef(name="size", default=40, min=0, min_exclusive=True),
+                ParamDef(name="enclosure", default=5, max="size / 2", max_exclusive=True),
+            ],
+            shapes=[RectShape(layer="device", x0=0, y0=0, x1="size", y1="size")],
+        )
+    )
+    design.add(Instance("a", "pad", {"size": 30, "enclosure": 14.9}))
+    with pytest.raises(ValueError, match="must be less than 15, not 15"):
+        design.add(Instance("b", "pad", {"size": 30, "enclosure": 15}))
+    with pytest.raises(ValueError, match="must be more than 0"):
+        design.add(Instance("c", "pad", {"size": 0}))
+    with pytest.raises(ValueError, match="must be more than 0"):
+        ParamDef(name="w", default=0, min=0, min_exclusive=True)
+    ParamDef(name="w", default=100, max="size")  # checked where the values are known

@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from mems_sketch.core.component import is_builtin
+from mems_sketch.core.component import builtin_definitions, is_builtin
 from mems_sketch.core.expressions import ExpressionError, names_in
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import (
@@ -74,26 +74,34 @@ class ComponentEdits(Commands):
         self.session.edit(f"Delete component {name}", lambda p: p.remove_component(name))
 
     def copy(self, component: str, name: str | None = None) -> str:
-        """Copy a library (or local) component into the project, to edit it there.
+        """Copy a library, built-in (or local) component into the project, to edit
+        it there.
 
         The copy keeps using what the original used: references inside it are
-        written as seen from the project (``lib.plate``). Built-ins have no
+        written as seen from the project (``lib.plate``). Imported cells have no
         shapes to copy; place them instead.
         """
         project = self.session.project
         qualified = project.qualify(component)
         if project.definition(qualified) is None:
-            raise ValueError(f"'{component}' is built in: it has no shapes to copy; place it")
+            raise ValueError(f"'{component}' is imported: it has no shapes to copy; place it")
         library, _, path = qualified.rpartition(".")
-        # A local copy stays with its owner; a library component becomes shared.
-        owner = path.rpartition("/")[0] if not library else ""
+        builtin = not library and qualified not in project.components
+        # A local copy stays with its owner; a library or built-in one becomes shared.
+        owner = path.rpartition("/")[0] if not library and not builtin else ""
         stem = path.rpartition("/")[2]
         taken = {k.rpartition("/")[2] for k in project.components if k.rpartition("/")[0] == owner}
         name = name or (stem if stem not in taken and not is_builtin(stem) else None)
         name = name or fresh_name(f"{stem}_copy", taken)
         root = self._check_name(name, owner or None)
         prefix = f"{library}." if library else ""
-        pool = project.libraries[library].components if library else project.components
+        pool = (
+            project.libraries[library].components
+            if library
+            else builtin_definitions()
+            if builtin
+            else project.components
+        )
         # The component and its private components, each with where it goes.
         subtree = {
             prefix + key: root + key[len(path) :]
@@ -126,8 +134,8 @@ class ComponentEdits(Commands):
         if name in self.session.project.libraries:
             raise ValueError(f"a library named '{name}' is already loaded")
         library = load_library(name, folder)
-        if not library.components:
-            raise ValueError(f"{folder} has no components")
+        if not library.components and not library.processes:
+            raise ValueError(f"{folder} has no components or processes")
         self.session.edit(f"Add library {name}", lambda p: p.libraries.__setitem__(name, library))
         return name
 
@@ -188,6 +196,17 @@ class ComponentEdits(Commands):
 
         description = f"Make {name} the top component" if name else "Make the project a library"
         self.session.edit(description, change)
+
+    def set_level(self, name: str, level: str | None) -> None:
+        """The level of the layer stack a local component is on unless placed
+        elsewhere; ``None``: the level of whatever places it."""
+
+        def change(project: Project) -> None:
+            if level is not None and level not in {lv.layer for lv in project.process.levels}:
+                raise ValueError(f"'{level}' is not a level of the layer stack")
+            project.components[name].level = level
+
+        self.session.edit(f"Put {name} on {level or 'the level it is placed on'}", change)
 
     def _check_name(self, name: str, owner: str | None = None) -> str:
         """The path of a new component ``name`` (private to ``owner``), if it is free."""
@@ -279,7 +298,7 @@ class ComponentEdits(Commands):
         project, active = self.session.project, self.session.active
         found = project.definition(project.qualify(node.component, active))
         if found is None:
-            raise ValueError(f"'{node.component}' is a built-in component: it has no shapes")
+            raise ValueError(f"'{node.component}' is an imported cell: it has no shapes")
         definition, context = found
         values = _parameter_values(definition, node.params)
         shapes = map_expressions(
@@ -322,7 +341,17 @@ class ComponentEdits(Commands):
         return path
 
 
-_NOT_EXPRESSIONS = {"kind", "name", "layer", "component", "op", "ends", "corners", "mapping"}
+_NOT_EXPRESSIONS = {
+    "kind",
+    "name",
+    "layer",
+    "level",
+    "component",
+    "op",
+    "ends",
+    "corners",
+    "mapping",
+}
 
 
 def _parameter_values(definition: ComponentDef, given: dict[str, Value]) -> dict[str, Value]:

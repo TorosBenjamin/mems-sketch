@@ -49,9 +49,9 @@ Value value_of(const Json& j) {
     throw ModelError("a value is neither a number nor an expression: " + j.dump());
 }
 
-std::optional<double> optional_number(const Json& j, const char* key) {
+std::optional<Value> optional_value(const Json& j, const char* key) {
     if (!j.contains(key) || j[key].is_null()) return std::nullopt;
-    return j[key].get<double>();
+    return value_of(j[key]);
 }
 
 // The components the ref shapes in ``node`` name, wherever they are nested.
@@ -71,13 +71,16 @@ void collect_references(const Json& node, std::set<std::string>& found) {
 ComponentDef component_from(const Json& j) {
     ComponentDef def;
     def.name = j.at("name").get<std::string>();
+    if (j.contains("level") && !j["level"].is_null()) def.level = j["level"].get<std::string>();
     const Json parameters = j.value("parameters", Json::array());
     for (const auto& p : parameters) {
         ParamDef param;
         param.name = p.at("name").get<std::string>();
         param.default_value = p.contains("default") ? value_of(p["default"]) : Value{0.0};
-        param.min = optional_number(p, "min");
-        param.max = optional_number(p, "max");
+        param.min = optional_value(p, "min");
+        param.max = optional_value(p, "max");
+        param.min_exclusive = p.value("min_exclusive", false);
+        param.max_exclusive = p.value("max_exclusive", false);
         param.integer = p.value("integer", false);
         param.internal = p.value("internal", false);
         def.parameters.push_back(std::move(param));
@@ -88,7 +91,7 @@ ComponentDef component_from(const Json& j) {
     Json canonical = j;
     canonical.erase("waivers");  // they accept violations; the geometry does not depend on them
     def.canonical = canonical.dump();
-    def.shapes = std::make_shared<const ShapeTree>(ShapeTree{j.value("shapes", Json::array())});
+    def.shapes = std::make_shared<const ShapeTree>(ShapeTree{j.value("shapes", Json::array()), j.value("points", Json::array())});
     return def;
 }
 
@@ -129,6 +132,18 @@ Project Project::from_json(std::string_view text) {
     const Json process = j.value("process", Json::object());
     const Json constants = process.value("constants", Json::object());
     for (const auto& [name, value] : constants.items()) p.constants_.emplace_back(name, value_of(value));
+    const Json levels = process.value("levels", Json::array());
+    for (const auto& entry : levels) {
+        Level level{entry.at("layer").get<std::string>(), {}};
+        const Json roles = entry.value("roles", Json::object());
+        for (const auto& [role, layer] : roles.items()) level.roles[role] = layer.get<std::string>();
+        p.levels_.push_back(std::move(level));
+    }
+    if (p.levels_.empty()) {  // the default stack (mems_sketch.core.process.DEFAULT_LEVELS)
+        p.levels_ = {Level{"device", {{"anchor", "anchor"}}}, Level{"metal", {}}};
+    } else if (process.contains("default_level") && !process["default_level"].is_null()) {
+        p.default_level_ = process["default_level"].get<std::string>();
+    }
     const Json components = j.value("components", Json::object());
     for (const auto& [name, def] : components.items()) {
         p.local_.order.push_back(name);
@@ -147,11 +162,29 @@ Project Project::from_json(std::string_view text) {
     for (const auto& [name, cell] : imports.items()) {
         // Its layers sorted, as Python's fingerprint has them.
         std::map<std::string, std::string> layers = cell.value("layers", std::map<std::string, std::string>{});
-        p.imports_[name] = {cell.value("digest", ""), cell.value("cell", ""), Json(layers).dump()};
+        Import imported{cell.value("digest", ""), cell.value("cell", ""), Json(layers).dump(), {},
+                        cell.value("error", "")};
+        const Json geometry = cell.value("geometry", Json::object());
+        auto ring = [](const Json& points) {
+            Ring result;
+            for (const auto& point : points) result.emplace_back(point.at(0).get<double>(), point.at(1).get<double>());
+            return result;
+        };
+        for (const auto& [layer, polygons] : geometry.items()) {
+            auto& out = imported.geometry[layer];
+            for (const auto& polygon : polygons) {
+                ImportedPolygon one{ring(polygon.at(0)), {}};
+                for (const auto& hole : polygon.at(1)) one.holes.push_back(ring(hole));
+                out.push_back(std::move(one));
+            }
+        }
+        p.imports_[name] = std::move(imported);
     }
     const Json builtins = j.value("builtins", Json::object());
-    for (const auto& [name, version] : builtins.items())
-        p.builtins_[name] = version.get<std::string>();
+    for (const auto& [name, def] : builtins.items()) {
+        p.builtins_.order.push_back(name);
+        p.builtins_.components[name] = component_from(def);
+    }
     return p;
 }
 
@@ -207,15 +240,24 @@ std::string Project::qualify(std::string_view name, const std::optional<std::str
         if (scope.empty()) break;
         scope = owner_of(scope);
     }
-    if (imports_.count(name) || builtins_.count(name)) return std::string(name);
+    if (imports_.count(name) || builtins_.components.count(name)) return std::string(name);
     throw UnknownComponent("unknown component " + in_quotes(name));
+}
+
+const ImportedGeometry* Project::imported(std::string_view qualified) const {
+    const auto found = imports_.find(qualified);
+    if (found == imports_.end()) return nullptr;
+    if (!found->second.error.empty()) throw ModelError(in_quotes(std::string(qualified)) + ": " + found->second.error);
+    return &found->second.geometry;
 }
 
 const ComponentDef* Project::definition(std::string_view qualified) const {
     const auto [library, path] = split(qualified);
     const Library& here = pool(library);
-    const auto found = here.components.find(path);
-    return found == here.components.end() ? nullptr : &found->second;
+    if (const auto found = here.components.find(path); found != here.components.end()) return &found->second;
+    if (library || imports_.count(path)) return nullptr;
+    const auto builtin = builtins_.components.find(path);  // a component like any other
+    return builtin == builtins_.components.end() ? nullptr : &builtin->second;
 }
 
 void Project::check_references() const {
@@ -229,7 +271,7 @@ void Project::check_references() const {
                 throw ModelError("circular component reference: " + cycle + qualified);
             }
             const ComponentDef* def = definition(qualified);
-            if (!def) return;  // built-in or imported
+            if (!def) return;  // imported
             state[qualified] = 1;
             path.push_back(qualified);
             for (const auto& reference : def->references) {
@@ -267,7 +309,7 @@ void Project::check_references() const {
 std::map<std::string, double> Project::variables(std::string_view component, const Values& given) const {
     const std::string qualified = qualify(component);
     const ComponentDef* def = definition(qualified);
-    if (!def) throw ModelError(in_quotes(qualified) + " is not built by the engine yet: built-in and imported components are Python's");
+    if (!def) throw ModelError(in_quotes(qualified) + " is not built by the engine yet: imported components are Python's");
     const auto& constants = scope();
     Variables known(constants.begin(), constants.end());
 
@@ -295,16 +337,25 @@ std::map<std::string, double> Project::variables(std::string_view component, con
         if (!declared.count(name))
             throw ModelError("component " + in_quotes(qualified) + " has no parameter " + in_quotes(name));
     }
+    Variables all = known;  // what limits see: the constants and every value
+    for (const auto& [name, value] : values) all[name] = value;
+    auto limit = [&](const std::optional<Value>& v) -> std::optional<double> {
+        if (!v) return std::nullopt;
+        if (const double* number = std::get_if<double>(&*v)) return *number;
+        return Expression(std::get<std::string>(*v)).evaluate(all);
+    };
     std::map<std::string, double> result(constants.begin(), constants.end());
     for (const auto& param : def->parameters) {
         const double v = values.at(param.name);
         const std::string what = "parameter " + in_quotes(param.name) + " of " + in_quotes(qualified);
         if (param.integer && !(std::isfinite(v) && v == std::trunc(v)))
             throw ModelError(what + " must be an integer, not " + format_number(v));
-        if (param.min && !(v >= *param.min))
-            throw ModelError(what + " must be at least " + format_number(*param.min) + ", not " + format_number(v));
-        if (param.max && !(v <= *param.max))
-            throw ModelError(what + " must be at most " + format_number(*param.max) + ", not " + format_number(v));
+        if (const auto low = limit(param.min); low && !(param.min_exclusive ? v > *low : v >= *low))
+            throw ModelError(what + (param.min_exclusive ? " must be more than " : " must be at least ") +
+                             format_number(*low) + ", not " + format_number(v));
+        if (const auto high = limit(param.max); high && !(param.max_exclusive ? v < *high : v <= *high))
+            throw ModelError(what + (param.max_exclusive ? " must be less than " : " must be at most ") +
+                             format_number(*high) + ", not " + format_number(v));
         result[param.name] = v + 0.0;
     }
     return result;
@@ -333,8 +384,6 @@ std::string Project::fingerprint(const std::string& qualified, std::vector<std::
         visiting.pop_back();
         std::sort(children.begin(), children.end());
         digest = hash_of({"user", def->canonical}, children);
-    } else if (const auto builtin = builtins_.find(qualified); builtin != builtins_.end()) {
-        digest = hash_of({"builtin", qualified, builtin->second});
     } else {
         throw UnknownComponent("unknown component " + in_quotes(qualified));
     }

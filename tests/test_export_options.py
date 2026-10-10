@@ -4,13 +4,13 @@ take them from the declaration (requirement OUT-8)."""
 from pathlib import Path
 from typing import ClassVar
 
-import klayout.db as kdb
 import pytest
+from helpers import flat_box, read_gds
 
 from mems_sketch.cli import main
 from mems_sketch.export import base
 from mems_sketch.export.base import ExportOption, export, options_of, resolve_options
-from mems_sketch.export.klayout_formats import GdsExporter
+from mems_sketch.export.layout_formats import GdsExporter
 from mems_sketch.storage import load
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
@@ -78,16 +78,16 @@ def test_a_plugin_gets_its_options(probe, resonator, tmp_path):
 
 def test_gds_on_a_coarser_grid(resonator, tmp_path):
     path = export(resonator, tmp_path / "out.gds", options={"grid_um": 0.01, "top_cell": "CHIP"})
-    layout = kdb.Layout()
-    layout.read(str(path))
+    layout = read_gds(path)
     assert layout.dbu == pytest.approx(0.01)
-    assert layout.top_cell().name == "CHIP"
-    fine = export(resonator, tmp_path / "fine.gds")
-    reference = kdb.Layout()
-    reference.read(str(fine))
+    assert layout.top_cells() == ["CHIP"]
+    reference = read_gds(export(resonator, tmp_path / "fine.gds"))
     assert reference.dbu == pytest.approx(0.001)
-    coarse_area = layout.top_cell().dbbox().area()
-    assert coarse_area == pytest.approx(reference.top_cell().dbbox().area(), rel=1e-3)
+
+    def area(box):
+        return (box[2] - box[0]) * (box[3] - box[1])
+
+    assert area(flat_box(layout)) == pytest.approx(area(flat_box(reference)), rel=1e-3)
 
 
 def test_the_grid_is_a_whole_multiple_of_1_nm(resonator, tmp_path):

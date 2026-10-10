@@ -49,8 +49,8 @@ tested against the latest `development`.
    ```
 
    With Open CASCADE in `build/deps/`, `pip install -e .` also builds both
-   into the package, as `mems_sketch._geom` and `mems_sketch._core`; without
-   it the package is pure Python and needs no compiler.
+   into the package, as `mems_sketch._geom` and `mems_sketch._core`. The
+   package needs them: they build every geometry.
 
 4. **Push and open a pull request into `development`:**
 

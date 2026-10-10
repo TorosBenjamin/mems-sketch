@@ -1,11 +1,11 @@
-import klayout.db as kdb
 import pytest
-from pydantic import ValidationError
+from helpers import flat_box, read_gds
 
-from mems_sketch import Instance, Layer, Project, export, load, save
+from mems_sketch import Instance, Layer, Project, RectShape, TransformShape, export, load, save
 from mems_sketch.core.component import resolve_params, to_dbu
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.core.process import layer_rules
+from mems_sketch.core.region import Box
 from mems_sketch.export.base import available_exporters
 from mems_sketch.process import rules
 
@@ -39,7 +39,7 @@ def test_params_resolve_expressions_and_validate():
         design.component(comb.component), comb.params, design.resolved_variables()
     )
     assert params.finger_width == 2.0 and params.gap == 3.0
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError, match="'enclosure' of 'anchor' must be less than 2"):
         design.add(Instance("bad", "anchor", {"size": 4, "enclosure": 3}))
 
 
@@ -52,9 +52,10 @@ def test_render_and_variable_change_updates_geometry():
 
 def test_rotation_and_placement():
     design = Project()
-    design.add(Instance("r", "rectangle", {"width": 100, "height": 10}, x=50, y=0, rotation=90))
+    bar = RectShape(layer="device", x0=-50, y0=-5, x1=50, y1=5)
+    design.add(TransformShape(name="r", children=[bar], x=50, y=0, rotation=90))
     box = design.render().layers["device"].bbox()
-    assert box == kdb.Box(to_dbu(45), to_dbu(-50), to_dbu(55), to_dbu(50))
+    assert box == Box(to_dbu(45), to_dbu(-50), to_dbu(55), to_dbu(50))
 
 
 def test_rules_flag_narrow_features_and_unknown_layers():
@@ -63,7 +64,7 @@ def test_rules_flag_narrow_features_and_unknown_layers():
     design.set_variable("w", 1.0)  # fingers now narrower than min_width
     found = {v.kind for v in rules.check(design)}
     assert "min_width" in found
-    design.add(Instance("m", "rectangle", {"layer": "metal"}))
+    design.add(RectShape(name="m", layer="metal", x0=0, y0=0, x1=10, y1=10))
     assert any(v.rule == "layer" and v.layer == "metal" for v in rules.check(design))
 
 
@@ -81,9 +82,13 @@ def test_project_folder_round_trip(tmp_path):
 def test_export_formats(tmp_path, suffix):
     design = make_design()
     path = export(design, tmp_path / f"accel{suffix}")
-    layout = kdb.Layout()
-    layout.read(str(path))
-    assert layout.top_cell().bbox().width() > 0
+    if suffix == ".gds":
+        x0, _, x1, _ = flat_box(read_gds(path))
+        assert x1 - x0 > 0
+    else:  # read by other tools only: the format's start, and the shapes in it
+        data = path.read_bytes()
+        assert data.startswith(b"%SEMI-OASIS" if suffix == ".oas" else b"0\nSECTION")
+        assert len(data) > 500
 
 
 def test_exporters_are_pluggable():

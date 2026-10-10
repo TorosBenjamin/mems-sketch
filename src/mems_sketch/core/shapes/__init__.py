@@ -47,7 +47,6 @@ from mems_sketch.core.shapes.base import (
     Operation,
     Point,
     Primitive,
-    RenderContext,
     Repeat,
     Value,
     check_point_reference,
@@ -89,6 +88,7 @@ from mems_sketch.core.shapes.points import (
     point_names,
     point_values,
 )
+from mems_sketch.core.shapes.records import NodeRecord, frame_of, transform_of
 from mems_sketch.core.shapes.registry import (
     BY_KIND,
     PRIMITIVE_KINDS,
@@ -98,12 +98,6 @@ from mems_sketch.core.shapes.registry import (
     default_shape,
     kind_class,
     wrap_shapes,
-)
-from mems_sketch.core.shapes.render import (
-    Evaluator,
-    NodeRecord,
-    frame_of,
-    transform_of,
 )
 from mems_sketch.core.shapes.rewrite import (
     map_expressions,
@@ -145,7 +139,6 @@ __all__ = [
     "CircleShape",
     "Corner",
     "CornersModifier",
-    "Evaluator",
     "FilletShape",
     "GroupShape",
     "GuideShape",
@@ -165,7 +158,6 @@ __all__ = [
     "Primitive",
     "RectShape",
     "RefShape",
-    "RenderContext",
     "Repeat",
     "Shape",
     "TransformShape",

@@ -14,6 +14,12 @@ RenderKind find_kind(std::string_view kind) {
         {"transform", render_transform},
         {"group", render_transform},  // the earlier name of transform
         {"ref", render_ref},
+        {"arc", render_arc},
+        {"path", render_path},
+        {"guide", render_guide},
+        {"offset", render_offset},
+        {"fillet", render_fillet},
+        {"layer_map", render_layer_map},
     };
     const auto found = kinds.find(kind);
     return found == kinds.end() ? nullptr : found->second;

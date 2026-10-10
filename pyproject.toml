@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Parametric MEMS layout design: components, rule checks and pluggable export."
 requires-python = ">=3.11"
 dependencies = [
-    "klayout>=0.29",
     "numpy>=1.24",  # the geometry library's outlines and snapped polygons are arrays
     "pydantic>=2.6",
     "pyyaml>=6",
@@ -25,9 +24,9 @@ mems-sketch = "mems_sketch.gui.app:main"
 # Exporters are discovered through this entry-point group, so a separate
 # package can add a format without touching this repository.
 [project.entry-points."mems_sketch.exporters"]
-gds = "mems_sketch.export.klayout_formats:GdsExporter"
-oasis = "mems_sketch.export.klayout_formats:OasisExporter"
-dxf = "mems_sketch.export.klayout_formats:DxfExporter"
+gds = "mems_sketch.export.layout_formats:GdsExporter"
+oasis = "mems_sketch.export.layout_formats:OasisExporter"
+dxf = "mems_sketch.export.layout_formats:DxfExporter"
 json = "mems_sketch.export.document_formats:JsonExporter"
 xml = "mems_sketch.export.document_formats:XmlExporter"
 mat = "mems_sketch.export.document_formats:MatExporter"

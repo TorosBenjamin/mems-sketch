@@ -4,11 +4,11 @@ declarations, and remembers them."""
 import shutil
 from pathlib import Path
 
-import klayout.db as kdb
 import pytest
 
 pytest.importorskip("PySide6")
 
+from helpers import read_gds
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -94,10 +94,9 @@ def test_export_asks_for_the_options(window, resonator, monkeypatch, tmp_path):
 
     monkeypatch.setattr(ExportOptionsDialog, "exec", accept)
     window.export_file()
-    layout = kdb.Layout()
-    layout.read(str(target) + ".gds")
+    layout = read_gds(f"{target}.gds")
     assert layout.dbu == pytest.approx(0.005)
-    assert layout.top_cell().name == "CHIP"
+    assert layout.top_cells() == ["CHIP"]
     assert window.settings.value("export/gds/grid_um") == "0.005"
 
 

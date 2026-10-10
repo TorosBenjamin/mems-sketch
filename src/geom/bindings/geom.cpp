@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "mgeom/cell.hpp"
+#include "mgeom/grid.hpp"
 #include "mgeom/measure.hpp"
 #include "mgeom/region.hpp"
 #include "mgeom/snap.hpp"
@@ -111,6 +112,55 @@ nb::list to_python(const std::vector<P>& polygons) {
         out.append(nb::make_tuple(to_array(p.hull), holes));
     }
     return out;
+}
+
+// Grid polygons as plain Python values: (hull, [holes]) with each ring a
+// list of (x, y) integer tuples, as mems_sketch.core.region keeps them.
+GridRing ring_from_python(nb::handle ring) {
+    GridRing out;
+    for (nb::handle point : ring) {
+        auto xy = nb::borrow<nb::sequence>(point);
+        out.push_back({nb::cast<std::int64_t>(xy[0]), nb::cast<std::int64_t>(xy[1])});
+    }
+    return out;
+}
+
+std::vector<GridPolygon> grid_from_python(nb::handle polygons) {
+    std::vector<GridPolygon> out;
+    for (nb::handle polygon : polygons) {
+        auto parts = nb::borrow<nb::sequence>(polygon);
+        GridPolygon p{ring_from_python(parts[0]), {}};
+        for (nb::handle hole : parts[1]) p.holes.push_back(ring_from_python(hole));
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+nb::list ring_to_python(const GridRing& ring) {
+    nb::list out;
+    for (const GridPoint& q : ring) out.append(nb::make_tuple(q.x, q.y));
+    return out;
+}
+
+nb::list grid_to_python(const std::vector<GridPolygon>& polygons) {
+    nb::list out;
+    for (const GridPolygon& p : polygons) {
+        nb::list holes;
+        for (const auto& h : p.holes) holes.append(ring_to_python(h));
+        out.append(nb::make_tuple(ring_to_python(p.hull), holes));
+    }
+    return out;
+}
+
+// A grid operation with the GIL released while it runs.
+template <typename F>
+nb::list grid_call(F&& f) {
+    std::vector<GridPolygon> result;
+    {
+        nb::gil_scoped_release release;
+        result = f();
+    }
+    return grid_to_python(result);
 }
 
 std::string box_repr(const Box& b) {
@@ -392,6 +442,54 @@ NB_MODULE(_geom, m) {
           nb::call_guard<nb::gil_scoped_release>(),
           "The region on a grid (µm): curves split at chord, points rounded to the grid, "
           "cleaned up, with a report of what the rounding changed.");
+
+    // Grid polygons (integer coordinates): exact and fast booleans and offsets.
+    nb::enum_<grid::Op>(m, "GridOp")
+        .value("unite", grid::Op::unite)
+        .value("intersect", grid::Op::intersect)
+        .value("subtract", grid::Op::subtract)
+        .value("exclusive", grid::Op::exclusive);
+    m.def(
+        "grid_merged",
+        [](nb::handle polygons) {
+            auto in = grid_from_python(polygons);
+            return grid_call([&] { return grid::merged(in); });
+        },
+        "polygons"_a,
+        "(hull, [holes]) polygons of integer (x, y) points, united: no overlaps, hulls "
+        "counter-clockwise, holes clockwise.");
+    m.def(
+        "grid_boolean",
+        [](nb::handle a, nb::handle b, grid::Op op) {
+            auto pa = grid_from_python(a);
+            auto pb = grid_from_python(b);
+            return grid_call([&] { return grid::boolean(pa, pb, op); });
+        },
+        "a"_a, "b"_a, "op"_a, "a op b, of (hull, [holes]) polygons of integer points.");
+    m.def(
+        "grid_offset",
+        [](nb::handle polygons, double delta, Join join) {
+            auto in = grid_from_python(polygons);
+            return grid_call([&] { return grid::offset(in, delta, join); });
+        },
+        "polygons"_a, "delta"_a, "join"_a = Join::miter,
+        "Grown (delta > 0) or shrunk by delta grid units.");
+    m.def(
+        "grid_hole_free",
+        [](nb::handle polygons, size_t max_points) {
+            auto in = grid_from_python(polygons);
+            std::vector<GridRing> rings;
+            {
+                nb::gil_scoped_release release;
+                rings = grid::hole_free(in, max_points);
+            }
+            nb::list out;
+            for (const GridRing& r : rings) out.append(ring_to_python(r));
+            return out;
+        },
+        "polygons"_a, "max_points"_a = 8000,
+        "The polygons as rings without holes: each hole joined to its hull by a zero-width cut "
+        "(no new points); polygons over max_points points split along grid lines first.");
 
     // Cells.
     nb::class_<PyCell>(m, "Cell",

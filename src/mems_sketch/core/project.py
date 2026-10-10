@@ -23,24 +23,25 @@ Component names are resolved like this, from the component holding the reference
   the project's local components
 
 The project is plain data. Turning it into geometry is the job of
-:mod:`mems_sketch.core.compiler`; the ``render`` helpers here are shortcuts.
+:mod:`mems_sketch.engine`; the ``render`` helpers here are shortcuts.
 """
 
 from __future__ import annotations
 
 import contextlib
+import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mems_sketch.core.component import Component, Geometry, is_builtin
+from mems_sketch.core.component import Component, Geometry, builtin_definitions, is_builtin
 from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.process import Layer, Process, Value, default_process
 from mems_sketch.core.shapes import RefShape, Shape, child_lists, find, walk
-from mems_sketch.core.user_component import ComponentDef, ParamDef
+from mems_sketch.core.user_component import ComponentDef, ParamDef, name_shapes
 
 if TYPE_CHECKING:
-    from mems_sketch.core.compiler import Compiler
+    from mems_sketch.engine import Engine
 
 __all__ = ["Instance", "Layer", "Library", "Process", "Project", "new_project"]
 
@@ -68,11 +69,16 @@ def Instance(
 
 @dataclass
 class Library:
-    """A read-only set of components loaded from a folder and referenced as ``name.component``."""
+    """A read-only set of components and processes loaded from a folder, referenced
+    as ``name.component`` and ``name.process``."""
 
     name: str
     components: dict[str, ComponentDef] = field(default_factory=dict)
     path: Path | None = None
+    processes: dict[str, Process] = field(default_factory=dict)
+
+
+MAIN_PROCESS = "main"  # the name of a project's own process
 
 
 @dataclass
@@ -83,12 +89,64 @@ class Project:
     top: str | None = DEFAULT_TOP  # None: a library, with no design of its own
     libraries: dict[str, Library] = field(default_factory=dict)
     imports: dict[str, ImportedCell] = field(default_factory=dict)  # see core/imports.py
+    # Its own processes (a library's are shared), and which process it uses: one
+    # of its own, or a library's (``std.polymumps``). ``process`` is the one in
+    # use: its own is that very object; a library's is a copy with the project's
+    # changes, each with an optional reason by rule name (requirement PRJ-8).
+    processes: dict[str, Process] = field(default_factory=dict)
+    process_name: str = MAIN_PROCESS
+    reasons: dict[str, str] = field(default_factory=dict)
+    # What loading it noticed, e.g. component files its manifest does not list.
+    load_notes: list[str] = field(default_factory=list, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.top is not None and self.top not in self.components:
             self.components[self.top] = ComponentDef(name=self.top)
+        if "." not in self.process_name:
+            if self.process_name in self.processes:
+                self.process = self.processes[self.process_name]
+            else:
+                self.processes[self.process_name] = self.process
 
     # -- process -----------------------------------------------------------
+
+    @property
+    def base_process(self) -> Process | None:
+        """The library's process this project uses (unchanged), or None when it
+        uses one of its own."""
+        library, dot, name = self.process_name.partition(".")
+        if not dot:
+            return None
+        if library not in self.libraries:
+            raise ValueError(f"the process '{self.process_name}' needs library '{library}'")
+        processes = self.libraries[library].processes
+        if name not in processes:
+            raise ValueError(f"library '{library}' has no process '{name}'")
+        return processes[name]
+
+    def process_names(self) -> list[str]:
+        """Every process the project could use: its own, then the libraries'."""
+        names = list(self.processes)
+        for library in self.libraries.values():
+            names += [f"{library.name}.{name}" for name in library.processes]
+        return names
+
+    def use_process(self, name: str) -> None:
+        """Use another process: one of its own, or a copy of a library's (without
+        the changes made to the one used before)."""
+        if "." in name:
+            previous = self.process_name
+            self.process_name = name
+            try:
+                self.process = copy.deepcopy(self.base_process)
+            except ValueError:
+                self.process_name = previous
+                raise
+        elif name in self.processes:
+            self.process_name, self.process = name, self.processes[name]
+        else:
+            raise ValueError(f"there is no process '{name}'")
+        self.reasons = {}
 
     @property
     def layers(self) -> dict[str, Layer]:
@@ -180,14 +238,17 @@ class Project:
         return path
 
     def definition(self, qualified: str) -> tuple[ComponentDef, str] | None:
-        """The definition of a user component and the context its references are
-        written in (its unique name), or None for a built-in."""
+        """The definition of a component and the context its references are
+        written in (its unique name), or None for an imported cell. A built-in
+        is a component like any other (it places nothing)."""
         library, path = _split(qualified)
         pool = self._pool(library)
         if library is not None and library not in self.libraries:
             raise KeyError(f"unknown component '{qualified}'")
         if path in pool:
             return pool[path], qualified
+        if library is None and path not in self.imports and is_builtin(path):
+            return builtin_definitions()[path], path
         return None
 
     def references_of(self, qualified: str) -> list[tuple[Shape, str]]:
@@ -343,8 +404,8 @@ class Project:
             if state.get(qualified) == "visiting":
                 raise ValueError(f"circular component reference: {' -> '.join([*path, qualified])}")
             found = self.definition(qualified)
-            if found is None:
-                return  # built-in
+            if found is None or (qualified not in self.components and is_builtin(qualified)):
+                return  # imported, or built-in
             definition, context = found
             state[qualified] = "visiting"
             for ref in definition.references():
@@ -408,9 +469,9 @@ class Project:
         self, component: str | None = None, params: dict[str, Any] | None = None
     ) -> dict[str, float]:
         """Parameter values of a local component (defaults unless given) plus ``process.*``."""
-        from mems_sketch.core.compiler import Compiler
+        from mems_sketch.engine import Engine
 
-        return Compiler().session(self).variables(self._target(component), params)
+        return Engine().load(self).variables(self._target(component), params)
 
     resolved_variables = resolved_parameters
 
@@ -428,6 +489,7 @@ class Project:
         shapes = self.shapes_of(component)
         check_shape_names([*shapes, shape])
         shapes.append(shape)
+        name_shapes(shapes)
         try:
             self.render(component)  # in context: it may align to its siblings
         except Exception:
@@ -466,50 +528,40 @@ class Project:
         self,
         component: str | None = None,
         params: dict[str, Any] | None = None,
-        compiler: Compiler | None = None,
+        engine: Engine | None = None,
     ) -> Geometry:
-        """Merged geometry of a component (default: top) with the given or default parameters."""
-        from mems_sketch.core.compiler import Compiler
+        """Merged geometry of a component (default: top) with the given or default
+        parameters (``engine``: one to build with, e.g. to share its cache)."""
+        from mems_sketch.engine import Engine
 
-        return (compiler or Compiler()).session(self).render(self._target(component), params)
+        return (engine or Engine()).load(self).build(self._target(component), params).geometry
 
     def render_shape(
         self,
         shape: Shape,
         component: str | None = None,
         variables: dict[str, float] | None = None,
-        compiler: Compiler | None = None,
     ) -> Geometry:
         """Geometry of one shape evaluated in a component's scope (default: top)."""
-        from mems_sketch.core.compiler import Compiler
+        from mems_sketch.engine import Engine
 
-        session = (compiler or Compiler()).session(self)
+        engine = Engine().load(self)
         name = self._target(component)
-        variables = session.variables(name) if variables is None else variables
-        return session.render_shapes([shape], variables, name)
+        variables = engine.variables(name) if variables is None else variables
+        return engine.shapes([shape], variables, name)
 
     def component(self, name: str) -> Component:
-        """A buildable component, resolved from the project namespace."""
-        from mems_sketch.core.compiler import Compiler
+        """A component's parameters as placements see them, resolved from the project
+        namespace."""
+        from mems_sketch.engine import Engine
 
-        return Compiler().session(self).component(name)
+        return Engine().load(self).component(name)
 
     def validate(self) -> list[str]:
         """Problems that stop components from building with their defaults (empty if none)."""
-        problems = []
-        try:
-            self.check_references()
-        except ValueError as exc:
-            return [str(exc)]
-        from mems_sketch.core.compiler import Compiler
+        from mems_sketch.engine import Engine
 
-        session = Compiler().session(self)
-        for name in self.components:
-            try:
-                session.render(name)
-            except Exception as exc:  # noqa: BLE001 - collected for the caller
-                problems.append(f"{name}: {exc}")
-        return problems
+        return Engine().load(self).problems()
 
 
 class PrivateComponentError(KeyError):

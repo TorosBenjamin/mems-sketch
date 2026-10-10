@@ -15,8 +15,11 @@ The **Components** panel lists every component once:
   first;
 - **each library's** (blue), read-only;
 - **Imported** layouts, if any (see [files](files.md#importing-layouts));
-- **Built-in** ones (orange): `rectangle`, `anchor`, `comb_drive`,
-  `serpentine_spring`.
+- **Built-in** ones (orange): `anchor`, `comb_drive`, `serpentine_spring`.
+  They are ordinary components that ship with the tool: they draw on the
+  level they are placed on (an anchor's opening on that level's anchor
+  layer), their limits are shown like any other, and **Copy into the
+  project** makes an editable copy. A plain rectangle is the `rect` shape.
 
 Double-click opens a component in a tab. Drag one onto the canvas, or use
 **Place**, to put it into the component you are editing. Right-click for the
@@ -44,7 +47,10 @@ min, max, a trial value and the resolved value.
 - A **default** is a number or an expression over other parameters
   (`hole_r` defaulting to `pitch / 6`) and process constants
   (`process.min_gap`).
-- **Min**, **max** and *integer* limit what can be passed in.
+- **Min**, **max** and *integer* limit what can be passed in. A limit can be
+  an expression over the other parameters (an anchor's enclosure with max
+  `size / 2`). Start it with `>` or `<` to exclude the limit itself
+  (`> 0`: more than zero). The component's card shows each limit evaluated.
 - A parameter is **public** (whoever places the component can set it) or
   **internal** (the lock button): used only inside, typically a derived value.
   Where the component is placed, internal parameters are not offered.
@@ -115,6 +121,29 @@ design rules.
 
 ![The Process tab](../images/process.png)
 
+### The layer stack and component levels
+
+The layers' **Level** column places them in the **layer stack**: a number
+makes a layer a level (1 at the bottom), and `poly1.anchor` makes it level
+poly1's *anchor* layer. Any other role name works too (`via`, `dimple`).
+
+Every component is on a level, and its shapes are drawn relative to it:
+
+- a shape's layer `level` is the component's level (a new shape without a
+  layer is there too); `level+1` and `level-1` are the levels above and
+  below; `level.anchor` is the level's anchor layer;
+- a layer by name (`metal`) stays that layer wherever the component is.
+
+A component is on the level its placement chooses (*Level* in its
+properties: `poly2`, or `level+1` relative to the component placing it).
+Without one, it is on its own default level (**Level** in its right-click
+menu in Components), and without that, on the level of the component that
+places it. So one comb drive can be placed on poly1 here and on poly2 there,
+and its anchors follow. A level that runs off the bottom or top of the stack,
+or a role the level does not have, is an error on that placement.
+**Top components on level** below the layers chooses where a component
+without a default is in its own tab.
+
 ### Design rules
 
 Each rule is a **kind** of check on some layers, with values. Values are
@@ -144,27 +173,25 @@ Rules are checked on the final geometry after every change; **Messages**
 lists the violations and the canvas boxes them in red. More kinds can be
 installed as plugins (`mems-sketch-cli rules` lists them).
 
-### Rule decks
+### Processes from a library
 
-A **rule deck** is a set of rules with parameters of its own, in a file of
-its own, shared between projects: typically one per fab process, kept by
-whoever looks after the process. Its rules use its parameters by name
-(`value: min_feature`), and the parameters can use the process constants.
+A process (layers, layer stack, constants and rules) can be shared like
+components: a library can hold processes, typically one per fab process, kept
+by whoever looks after it. Choose the one the project uses under **Process**
+at the top of *Rules*: the project's own, or `library.process`.
 
-- **Use** a deck with **+** under *Rule decks*; its rules are listed under
-  *Rules* as `deck.rule` and checked like the project's own.
-- **Set a deck parameter** for this project in the deck's *Parameters*
-  (`min_feature=1.5`); the others keep the deck's values. Writing the deck's
-  value again goes back to it.
-- **Change a deck rule** for this project by editing it like any other: the
-  change is an *override*, marked *(changed)*, with a **reason** of its own.
-  Untick it to turn it off. **Reset** takes the deck's rule again.
-- When the deck's file changes, **Reload** reads it again; the project keeps
-  its parameters and overrides, and follows the deck everywhere else.
-- **Save** writes the project's own rules as a new deck, to start one.
+On a library's process:
 
-A deck file that cannot be read does not stop the project from opening, but
-its rules are reported as not checked: an error, never a pass.
+- **Change a constant or a rule** for this project by editing it like any
+  other; the rule is marked *(changed)* and can say why under **Reason**.
+  Untick a rule to turn it off. **Reset** takes the process's rule again.
+- **Add rules** of your own; they are marked *(added)*.
+- The **layers and the layer stack** belong to the fab and cannot change
+  here: use a process of the project's own for that.
+
+When the library's process changes, the project follows it everywhere except
+where it changed it. The changes are kept in `project.yaml`, each with its
+reason.
 
 ### Waivers
 

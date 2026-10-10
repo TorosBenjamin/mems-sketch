@@ -1,21 +1,25 @@
-"""Components built by the C++ engine against the Python backend
+"""Components built by the C++ engine against what the Python backend built
 (core-architecture.md, step 6): the same geometry on every layer, within 1 nm,
 and within the chord tolerance (5 nm) where there are curves: the Python
-backend draws circles as segments, the engine keeps them exact until output.
+backend drew circles as segments, the engine keeps them exact until output.
 
-Every component the engine builds is compared; what it does not build yet
-must say so (NotSupported). Skipped when the engine is not built, unless
-MGEOM_REQUIRED is set (CI)."""
+The Python backend is gone; what it built for every case here was recorded
+(``data/python_backend.json.gz``) while it was there, keyed by the case's
+components and parameters. A case not in the recording cannot be added here:
+give it its own expected values instead. Skipped when the engine is not
+built, unless MGEOM_REQUIRED is set (CI)."""
 
+import gzip
+import hashlib
 import json
 import os
 import random
 from pathlib import Path
 
-import klayout.db as kdb
 import pytest
 
 from mems_sketch import (
+    Align,
     BooleanShape,
     CircleShape,
     ComponentDef,
@@ -25,9 +29,23 @@ from mems_sketch import (
     RefShape,
     TransformShape,
 )
-from mems_sketch.core.compiler import Compiler
+from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.project import Project, new_project
-from mems_sketch.core.shapes import ArrayModifier
+from mems_sketch.core.region import Region
+from mems_sketch.core.shapes import (
+    ArrayModifier,
+    Corner,
+    CornersModifier,
+    MirrorModifier,
+    PolarArrayModifier,
+)
+from mems_sketch.core.shapes.kinds.arc import ArcShape
+from mems_sketch.core.shapes.kinds.fillet import FilletShape
+from mems_sketch.core.shapes.kinds.guide import GuideShape
+from mems_sketch.core.shapes.kinds.layer_map import LayerMapShape
+from mems_sketch.core.shapes.kinds.offset import OffsetShape
+from mems_sketch.core.shapes.kinds.path import PathShape
+from mems_sketch.core.user_component import PointDef
 from mems_sketch.engine import project_data
 from mems_sketch.storage import load
 
@@ -43,27 +61,63 @@ except ImportError:
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 STRAIGHT_NM, CURVED_NM = 1, 3  # sliver half-widths: 2 nm, and 6 nm (chord 5 nm + rounding)
+# Curves the Python backend has made from segments before an operation (an
+# offset of a circle, KLayout's rounded corners): its 5 nm grow with them.
+SEGMENTED_NM = 6
 
 
-def engine_regions(project: Project, component: str, params=None) -> dict[str, kdb.Region]:
-    core = _core.Project(json.dumps(project_data(project)))
-    result = {}
-    for layer, polygons in core.build(component, params or {}).items():
-        region = kdb.Region()
-        for hull, holes in polygons:
-            polygon = kdb.Polygon([kdb.Point(x, y) for x, y in hull])
-            for hole in holes:
-                polygon.insert_hole([kdb.Point(x, y) for x, y in hole])
-            region.insert(polygon)
-        result[layer] = region.merged()
-    return result
+RECORDING = Path(__file__).parent / "data" / "python_backend.json.gz"
+_recorded: dict[str, object] | None = None
 
 
-def python_regions(project: Project, component: str, params=None) -> dict[str, kdb.Region]:
-    geometry = Compiler().session(project).render(component, params)
-    return {
-        layer: region.merged() for layer, region in geometry.layers.items() if not region.is_empty()
+def case_key(project: Project, component: str, params=None, what: str = "geometry") -> str:
+    """Everything a case's result depends on, hashed."""
+
+    def dump(components):
+        return {n: d.model_dump(mode="json") for n, d in sorted(components.items())}
+
+    data = {
+        "components": dump(project.components),
+        "libraries": {n: dump(lib.components) for n, lib in sorted(project.libraries.items())},
+        "constants": project.process.constants,
+        "levels": [(lv.layer, lv.roles) for lv in project.process.levels],
+        "default_level": project.process.default_level,
+        "component": component,
+        "params": params or {},
+        "what": what,
     }
+    return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def recorded(key: str):
+    global _recorded
+    if _recorded is None:
+        _recorded = json.loads(gzip.decompress(RECORDING.read_bytes()))
+    if key not in _recorded:
+        pytest.fail("no recorded Python result for this case: give it expected values of its own")
+    return _recorded[key]
+
+
+def engine_regions(project: Project, component: str, params=None) -> dict[str, Region]:
+    core = _core.Project(json.dumps(project_data(project)))
+    return {
+        layer: Region.from_polygons(polygons, merged=True)
+        for layer, polygons in core.build(component, params or {}).items()
+    }
+
+
+def python_regions(project: Project, component: str, params=None) -> dict[str, Region]:
+    """What the Python backend built (raises ValueError where it refused)."""
+    result = recorded(case_key(project, component, params))
+    if result is None:
+        raise ValueError("the Python backend refused it")
+    return {
+        layer: Region.from_polygons(polygons, merged=True) for layer, polygons in result.items()
+    }
+
+
+def python_points(project: Project, component: str) -> dict[str, tuple[float, float]]:
+    return {n: tuple(p) for n, p in recorded(case_key(project, component, {}, "points")).items()}
 
 
 def assert_same(project: Project, component: str, params=None, tolerance=CURVED_NM):
@@ -77,7 +131,8 @@ def assert_same(project: Project, component: str, params=None, tolerance=CURVED_
     engine = engine_regions(project, component, params)
     assert sorted(engine) == sorted(python), (component, sorted(engine), sorted(python))
     for layer in python:
-        difference = (python[layer] ^ engine[layer]).sized(-tolerance)
+        # A nm more: shrinking rounds to the grid, which can leave a speck.
+        difference = (python[layer] ^ engine[layer]).sized(-tolerance - 1)
         assert difference.is_empty(), (component, layer, difference.bbox(), difference.area())
         # The area differs by at most a sliver that wide along every edge.
         allowance = 2 * tolerance * python[layer].perimeter() + 50
@@ -97,16 +152,31 @@ def all_components(project: Project) -> list[str]:
 def test_the_examples(folder):
     """Every example component the engine builds matches; the others say why not."""
     project = load(EXAMPLES / folder)
-    built = 0
     for name in all_components(project):
-        try:
-            engine_regions(project, name)
-        except _core.NotSupported:
-            continue
-        assert_same(project, name)
-        built += 1
-    if folder == "libraries/mems_std":
-        assert built >= 1  # the perforated plate: boolean, circle, array
+        assert assert_same(project, name) == "same", name
+
+
+BUILT_IN_CASES = [  # (component, parameters, built: else both refuse)
+    ("anchor", {}, True),
+    ("anchor", {"size": 10, "enclosure": 4.9}, True),
+    ("anchor", {"size": 10, "enclosure": 5}, False),  # an exclusive limit
+    ("comb_drive", {}, True),
+    (
+        "comb_drive",
+        {"fingers": 7, "finger_width": 1.5, "gap": 0.7, "finger_length": 13, "overlap": 5},
+        True,
+    ),
+    ("comb_drive", {"overlap": 40}, False),
+    ("serpentine_spring", {}, True),
+    ("serpentine_spring", {"turns": 5, "beam_width": 2.2, "span": 31, "pitch": 7.3}, True),
+    ("serpentine_spring", {"pitch": 3}, False),  # not more than the beam width
+]
+
+
+@pytest.mark.parametrize("name, params, built", BUILT_IN_CASES)
+def test_built_in_components(name, params, built):
+    result = assert_same(new_project("built-ins"), name, params, tolerance=STRAIGHT_NM)
+    assert (result == "same") == built, result
 
 
 def rect(layer="device", **corners):
@@ -322,3 +392,593 @@ def test_random_shape_trees():
         names.append(name)
     for name in names:
         assert_same(project, name)
+
+
+# -- alignment and points -------------------------------------------------------
+
+
+def aligned() -> Project:
+    project = new_project("aligned")
+    project.components.update(
+        {
+            "post": ComponentDef(
+                name="post",
+                parameters=[ParamDef(name="h", default=12)],
+                shapes=[
+                    rect(name="stem", x0=0, y0=0, x1=4, y1="h"),
+                    CircleShape(
+                        name="cap",
+                        layer="metal",
+                        radius=3,
+                        align=Align(point="bottom", to="stem.top"),
+                    ),
+                ],
+                points=[
+                    PointDef(name="tip", at="cap.top"),
+                    PointDef(name="foot", x="stem.left.x", y="stem.bottom.y - 1"),
+                    PointDef(name="corner", at="top_right", x=1, y=-1),
+                    PointDef(name="origin"),
+                ],
+            ),
+            "frame": ComponentDef(
+                name="frame",
+                shapes=[
+                    rect(name="base", x0=0, y0=0, x1=60, y1=8),
+                    # aligned before it is drawn in the list: evaluated after what it needs
+                    rect(
+                        name="left",
+                        x0=0,
+                        y0=0,
+                        x1=6,
+                        y1=20,
+                        align=Align(point="bottom_left", to="base.top_left", dy=1),
+                    ),
+                    rect(
+                        name="beam",
+                        x0="left.right.x",
+                        y0="left.top.y - 4",
+                        x1="right.left.x",
+                        y1="left.top.y",
+                    ),
+                    rect(
+                        name="right",
+                        x0=0,
+                        y0=0,
+                        x1=6,
+                        y1=20,
+                        align=Align(point="bottom_right", to="base.top_right", dy=1),
+                    ),
+                    RefShape(
+                        name="p1", component="post", align=Align(point="foot", to="base.center")
+                    ),
+                    RefShape(
+                        name="p2",
+                        component="post",
+                        rotation=90,
+                        params={"h": 6},
+                        align=Align(point="tip", to="p1.tip", dx=10),
+                    ),
+                    TransformShape(
+                        rotation=30,
+                        x=100,
+                        children=[
+                            rect(
+                                name="inner",
+                                x0=0,
+                                y0=0,
+                                x1="base.right.x / 10",
+                                y1=2,
+                                align=Align(point="center", to="base.center"),
+                            )
+                        ],
+                    ),
+                    BooleanShape(
+                        op="subtract",
+                        a=[rect(name="slab", x0=0, y0=-30, x1=40, y1=-20)],
+                        b=[
+                            CircleShape(
+                                name="hole",
+                                layer="device",
+                                x="slab.center.x",
+                                y="slab.center.y",
+                                radius=2,
+                            )
+                        ],
+                    ),
+                    rect(
+                        name="teeth",
+                        x0=0,
+                        y0=-40,
+                        x1=2,
+                        y1=-36,
+                        modifiers=[
+                            ArrayModifier(columns="floor(self.right.x * 10)", dx="self.right.x * 2")
+                        ],
+                    ),
+                ],
+                points=[
+                    PointDef(name="mid", at="beam.center"),
+                    PointDef(name="post_tip", x="p2.tip.x", y="p2.tip.y"),
+                ],
+            ),
+        }
+    )
+    project.components["top"] = ComponentDef(
+        name="top",
+        shapes=[
+            RefShape(name="f", component="frame", mirror_x=True, x=5),
+            rect(name="mark", x0=0, y0=0, x1=1, y1=1, align=Align(point="center", to="f.post_tip")),
+        ],
+        points=[PointDef(name="mark", at="mark.center")],
+    )
+    return project
+
+
+@pytest.mark.parametrize("component", ["post", "frame", "top"])
+def test_alignment_and_points(component):
+    project = aligned()
+    assert assert_same(project, component, tolerance=CURVED_NM) == "same"
+    python = python_points(project, component)
+    core = _core.Project(json.dumps(project_data(project))).points(component, {})
+    assert sorted(core) == sorted(python)
+    for name, (x, y) in python.items():
+        assert core[name] == pytest.approx((x, y), abs=2e-3), name
+
+
+def test_point_errors_alike():
+    project = aligned()
+    project.components["loop"] = ComponentDef(
+        name="loop",
+        shapes=[
+            rect(name="a", x0=0, y0=0, x1=1, y1=1, align=Align(to="b.center")),
+            rect(name="b", x0=0, y0=0, x1=1, y1=1, align=Align(to="a.center")),
+        ],
+    )
+    project.components["nowhere"] = ComponentDef(
+        name="nowhere",
+        shapes=[rect(name="a", x0=0, y0=0, x1=1, y1=1, align=Align(to="ghost.center"))],
+    )
+    project.components["no_point"] = ComponentDef(
+        name="no_point",
+        shapes=[rect(name="a", x0=0, y0=0, x1=1, y1=1), rect(x0=0, y0=0, x1="a.middle.x", y1=1)],
+    )
+    project.components["bad_at"] = ComponentDef(
+        name="bad_at",
+        shapes=[rect(name="a", x0=0, y0=0, x1=1, y1=1)],
+        points=[PointDef(name="p", at="ghost.top")],
+    )
+    for name in ("loop", "nowhere", "no_point", "bad_at"):
+        assert assert_same(project, name).startswith("both fail"), name
+
+
+# -- the other kinds ----------------------------------------------------------------
+
+CROSS = [rect(x0=0, y0=0, x1=10, y1=5), rect(x0=4, y0=0, x1=6, y1=20)]
+TRIANGLE = PolygonShape(layer="device", points=[(0, 0), (20, 0), (10, 5)])
+STAR = PolygonShape(
+    layer="device",
+    points=[(0, 10), (3, 3), (10, 0), (3, -3), (0, -10), (-3, -3), (-10, 0), (-3, 3)],
+)
+FRAME = BooleanShape(
+    op="subtract", a=[rect(x0=0, y0=0, x1=20, y1=20)], b=[rect(x0=5, y0=5, x1=15, y1=15)]
+)
+
+# (name, shapes, tolerance in nm)
+KIND_CASES = [
+    (
+        "arc",
+        [
+            ArcShape(
+                layer="device",
+                x=1,
+                y=2,
+                inner_radius=5,
+                outer_radius=9,
+                start_angle=10,
+                end_angle=200,
+            )
+        ],
+        CURVED_NM,
+    ),
+    ("ring", [ArcShape(layer="device", inner_radius=5, outer_radius=9)], CURVED_NM),
+    ("pie", [ArcShape(layer="device", outer_radius=9, start_angle=-30, end_angle=45)], CURVED_NM),
+    (
+        "arc_segments",
+        [ArcShape(layer="device", inner_radius=5, outer_radius=9, end_angle=90, segments=12)],
+        STRAIGHT_NM,
+    ),
+    (
+        "path",
+        [PathShape(layer="device", points=[(0, 0), (50, 0), (50, 30), (80, 40)], width=4)],
+        STRAIGHT_NM,
+    ),
+    (
+        "path_square",
+        [PathShape(layer="device", points=[(0, 0), (50, 0), (50, 30)], width=4, ends="square")],
+        STRAIGHT_NM,
+    ),
+    (
+        "path_sharp_turn",
+        [PathShape(layer="device", points=[(0, 0), (50, 0), (0, 10)], width=4)],
+        STRAIGHT_NM,
+    ),
+    # KLayout draws round ends with its own, coarser segments.
+    (
+        "path_round",
+        [PathShape(layer="device", points=[(0, 0), (50, 0), (50, 30)], width=4, ends="round")],
+        10,
+    ),
+    ("offset", [OffsetShape(distance=2, children=[rect(x0=0, y0=0, x1=10, y1=5)])], STRAIGHT_NM),
+    ("offset_shrink", [OffsetShape(distance=-1, children=CROSS)], STRAIGHT_NM),
+    (
+        "offset_bevel",
+        [OffsetShape(distance=2, corners="bevel", children=[rect(x0=0, y0=0, x1=10, y1=5)])],
+        STRAIGHT_NM,
+    ),
+    (
+        "offset_shrink_bevel",
+        [OffsetShape(distance=-1, corners="bevel", children=CROSS)],
+        STRAIGHT_NM,
+    ),
+    ("offset_sharp_corners", [OffsetShape(distance=1, children=[TRIANGLE])], STRAIGHT_NM),
+    ("offset_star", [OffsetShape(distance=0.8, children=[STAR])], STRAIGHT_NM),
+    ("offset_star_shrink", [OffsetShape(distance=-0.5, children=[STAR])], STRAIGHT_NM),
+    ("offset_holed", [OffsetShape(distance=1, children=[FRAME])], STRAIGHT_NM),
+    ("offset_holed_shrink", [OffsetShape(distance=-1.5, children=[FRAME])], STRAIGHT_NM),
+    (
+        "offset_circle",
+        [OffsetShape(distance=1.5, children=[CircleShape(layer="device", radius=4)])],
+        SEGMENTED_NM,
+    ),
+    (
+        "offset_pie",
+        [
+            OffsetShape(
+                distance=1,
+                children=[ArcShape(layer="device", outer_radius=9, start_angle=-30, end_angle=45)],
+            )
+        ],
+        # Where the arc meets a straight edge, KLayout's miter follows its last
+        # segment, a little off the arc's tangent the engine follows.
+        20,
+    ),
+    ("fillet", [FilletShape(radius=2, children=[rect(x0=0, y0=0, x1=10, y1=8)])], SEGMENTED_NM),
+    (
+        "fillet_inner",
+        [
+            FilletShape(
+                radius=1,
+                inner_radius=0.5,
+                children=[rect(x0=0, y0=0, x1=10, y1=3), rect(x0=0, y0=0, x1=3, y1=10)],
+            )
+        ],
+        SEGMENTED_NM,
+    ),
+    (
+        "layer_map",
+        [
+            LayerMapShape(
+                mapping={"device": "metal"},
+                children=[
+                    rect(x0=0, y0=0, x1=3, y1=3),
+                    rect(layer="anchor", x0=5, y0=0, x1=6, y1=1),
+                ],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "layer_map_keep",
+        [
+            LayerMapShape(
+                mapping={"device": "metal", "anchor": "metal"},
+                keep_unmapped=True,
+                children=[
+                    rect(x0=0, y0=0, x1=3, y1=3),
+                    rect(layer="anchor", x0=2, y0=0, x1=6, y1=1),
+                    rect(layer="device_2", x0=0, y0=9, x1=1, y1=10),
+                ],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "guide",
+        [
+            GuideShape(name="axis", x0=10, y0=0, x1=10, y1=20),
+            rect(x0=0, y0=0, x1=2, y1=2, align=Align(point="center", to="axis.center")),
+        ],
+        STRAIGHT_NM,
+    ),
+]
+
+
+@pytest.mark.parametrize("name, shapes, tolerance", KIND_CASES, ids=[c[0] for c in KIND_CASES])
+def test_the_other_kinds(name, shapes, tolerance):
+    project = new_project("kinds")
+    project.components[name] = ComponentDef(name=name, shapes=shapes)
+    assert assert_same(project, name, tolerance=tolerance) == "same"
+
+
+def test_kind_errors_alike():
+    project = new_project("kind errors")
+    cases = {
+        "arc_radii": [ArcShape(layer="device", inner_radius=9, outer_radius=5)],
+        "arc_angles": [ArcShape(layer="device", outer_radius=5, start_angle=90, end_angle=10)],
+        "path_width": [PathShape(layer="device", points=[(0, 0), (5, 0)], width=0)],
+        "guide_point": [GuideShape(x0=1, y0=1, x1=1, y1=1)],
+        "fillet_negative": [FilletShape(radius=-1, children=[rect(x0=0, y0=0, x1=4, y1=4)])],
+    }
+    for name, shapes in cases.items():
+        project.components[name] = ComponentDef(name=name, shapes=shapes)
+        assert assert_same(project, name).startswith("both fail"), name
+
+
+# -- the other modifiers ------------------------------------------------------------
+
+BLADE = {"x0": 10, "y0": -1, "x1": 20, "y1": 1}
+MODIFIER_CASES = [
+    ("polar", [rect(**BLADE, modifiers=[PolarArrayModifier(count=6)])], STRAIGHT_NM),
+    (
+        "polar_step",
+        [rect(**BLADE, modifiers=[PolarArrayModifier(count=3, step=30, x=5, y=5)])],
+        STRAIGHT_NM,
+    ),
+    (
+        "polar_upright",
+        [rect(**BLADE, modifiers=[PolarArrayModifier(count=5, rotate=False)])],
+        STRAIGHT_NM,
+    ),
+    (
+        "polar_index",
+        [rect(x0=10, y0=-1, x1="12 + 2 * i", y1=1, modifiers=[PolarArrayModifier(count=4)])],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_x",
+        [
+            PolygonShape(
+                layer="device",
+                points=[(1, 0), (5, 0), (2, 4)],
+                modifiers=[MirrorModifier(axis="x", x=-1)],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_y",
+        [
+            PolygonShape(
+                layer="device",
+                points=[(1, 0), (5, 0), (2, 4)],
+                modifiers=[MirrorModifier(axis="y", y=-2, keep=False)],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_both",
+        [
+            PolygonShape(
+                layer="device",
+                points=[(1, 1), (5, 1), (2, 4)],
+                modifiers=[MirrorModifier(axis="both")],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_guide",
+        [
+            GuideShape(name="axis", x0=0, y0=0, x1=10, y1=5),
+            PolygonShape(
+                layer="device",
+                points=[(1, 3), (5, 6), (2, 9)],
+                modifiers=[MirrorModifier(about="axis")],
+            ),
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_point",
+        [
+            rect(name="hub", x0=-1, y0=-1, x1=1, y1=1),
+            rect(x0=3, y0=0, x1=6, y1=2, modifiers=[MirrorModifier(about="hub.center")]),
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_self",
+        [
+            rect(
+                x0=3,
+                y0=0,
+                x1=6,
+                y1=2,
+                modifiers=[MirrorModifier(about="self.top_left", keep=False)],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "mirror_self_x",
+        [rect(x0=3, y0=0, x1=6, y1=2, modifiers=[MirrorModifier(axis="x", x="self.left.x")])],
+        STRAIGHT_NM,
+    ),
+    (
+        "corners_round",
+        [
+            rect(
+                x0=0,
+                y0=0,
+                x1=10,
+                y1=6,
+                modifiers=[
+                    CornersModifier(
+                        corners=[
+                            Corner(at="self.top_right", radius=2),
+                            Corner(at="self.bottom_left", radius=1),
+                        ]
+                    )
+                ],
+            )
+        ],
+        SEGMENTED_NM,
+    ),
+    (
+        "corners_chamfer",
+        [
+            rect(
+                x0=0,
+                y0=0,
+                x1=10,
+                y1=6,
+                modifiers=[
+                    CornersModifier(corners=[Corner(x=10, y=0, radius=1.5, style="chamfer")])
+                ],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+    (
+        "corners_neighbour",
+        [
+            GuideShape(name="cut", x0=4, y0=2, x1=4, y1=8),  # where the slot's corner is
+            BooleanShape(
+                op="subtract",
+                a=[rect(x0=0, y0=0, x1=10, y1=6)],
+                b=[rect(name="slot", x0=4, y0=2, x1=12, y1=8)],
+                modifiers=[
+                    CornersModifier(
+                        corners=[
+                            Corner(x="cut.start.x", y="cut.start.y", radius=0.5),
+                            Corner(at="self.top_left", radius=1),
+                        ]
+                    )
+                ],
+            ),
+        ],
+        SEGMENTED_NM,
+    ),
+    (
+        "stacked",
+        [
+            rect(
+                x0=10,
+                y0=0,
+                x1=14,
+                y1=3,
+                modifiers=[
+                    ArrayModifier(columns=2, dx=6),
+                    MirrorModifier(axis="y"),
+                    PolarArrayModifier(count=3, step=120),
+                ],
+            )
+        ],
+        STRAIGHT_NM,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "name, shapes, tolerance", MODIFIER_CASES, ids=[c[0] for c in MODIFIER_CASES]
+)
+def test_the_other_modifiers(name, shapes, tolerance):
+    project = new_project("modifiers")
+    project.components[name] = ComponentDef(name=name, shapes=shapes)
+    assert assert_same(project, name, tolerance=tolerance) == "same"
+
+
+def test_modifier_errors_alike():
+    project = new_project("modifier errors")
+    cases = {
+        "polar_count": [rect(**BLADE, modifiers=[PolarArrayModifier(count=2.5)])],
+        "mirror_nowhere": [rect(**BLADE, modifiers=[MirrorModifier(about="ghost.center")])],
+        "mirror_flat_guide": [
+            GuideShape(name="g", x0=1, y0=1, x1=1, y1=1),
+            rect(**BLADE, modifiers=[MirrorModifier(about="g")]),
+        ],
+        "not_a_corner": [
+            rect(x0=0, y0=0, x1=10, y1=6, modifiers=[CornersModifier(corners=[Corner(x=5, y=0)])])
+        ],
+        "too_round": [
+            rect(
+                x0=0,
+                y0=0,
+                x1=10,
+                y1=6,
+                modifiers=[CornersModifier(corners=[Corner(at="self.top_right", radius=7)])],
+            )
+        ],
+        "negative_radius": [
+            rect(
+                x0=0,
+                y0=0,
+                x1=10,
+                y1=6,
+                modifiers=[CornersModifier(corners=[Corner(at="self.top_right", radius=-1)])],
+            )
+        ],
+    }
+    for name, shapes in cases.items():
+        project.components[name] = ComponentDef(name=name, shapes=shapes)
+        assert assert_same(project, name).startswith("both fail"), name
+
+
+def stacked() -> Project:
+    """Components on levels of a layer stack: relative layers, roles, a default
+    level, placements on other levels, a relative layer_map."""
+    project = new_project("stacked")
+    for number, name in enumerate(["anchor0", "poly0", "anchor1", "poly1", "via12", "poly2"]):
+        project.add_layer(Layer(name, number + 10))
+    project.process.levels = [
+        Level("poly0", {"anchor": "anchor0"}),
+        Level("poly1", {"anchor": "anchor1"}),
+        Level("poly2", {"via": "via12"}),
+    ]
+    square = {"x0": 0, "y0": 0, "x1": 10, "y1": 10}
+    project.components["post"] = ComponentDef(
+        name="post",
+        shapes=[RectShape(**square), RectShape(layer="level.anchor", x0=2, y0=2, x1=8, y1=8)],
+    )
+    project.components["high"] = ComponentDef(
+        name="high", level="poly2", shapes=[RectShape(**square), rect(**square)]
+    )
+    project.components["pair"] = ComponentDef(
+        name="pair",
+        shapes=[
+            RefShape(component="post"),
+            RefShape(component="post", level="level+1", x=20),
+            RefShape(component="high", x=40),
+            RefShape(component="high", level="poly0", x=60),
+            LayerMapShape(
+                children=[RectShape(x0=80, y0=0, x1=90, y1=10)], mapping={"level": "level+2.via"}
+            ),
+        ],
+    )
+    project.components["too_high"] = ComponentDef(
+        name="too_high", shapes=[RefShape(component="pair", level="level+2")]
+    )
+    project.components["no_role"] = ComponentDef(
+        name="no_role", level="poly2", shapes=[RectShape(layer="level.anchor", **square)]
+    )
+    project.components["on_a_role"] = ComponentDef(
+        name="on_a_role", shapes=[RefShape(component="post", level="level.anchor")]
+    )
+    project.top_component.shapes = [RefShape(component="pair")]
+    return project
+
+
+@pytest.mark.parametrize("default", [None, "poly0", "poly1"])
+def test_levels(default):
+    project = stacked()
+    project.process.default_level = default
+    for name in ("post", "high", "pair", "top"):
+        if default == "poly1" and name in ("pair", "top"):  # its high post: above the top
+            assert assert_same(project, name).startswith("both fail"), name
+        else:
+            assert assert_same(project, name) == "same", name
+    for name in ("too_high", "no_role", "on_a_role"):
+        assert assert_same(project, name).startswith("both fail"), name
+    project.process.levels = []  # the default stack: device (anchor), metal
+    assert assert_same(project, "post") == "same"

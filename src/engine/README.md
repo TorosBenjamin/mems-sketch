@@ -19,9 +19,11 @@ is rebuilt; the Python package reaches it as **`mems_sketch._core`**, behind
   reference checks, parameter values and fingerprints.
   `tests/test_engine_model.py` compares it with Python's.
 - **Building** (`include/mems/build.hpp`): components evaluated into the
-  geometry library's regions, per layer. So far the kinds rect, polygon,
-  circle, boolean, transform and references to user components, and the
-  array modifier; anything else raises `NotSupported`.
+  geometry library's regions, per layer: every shape kind and modifier,
+  alignment, point coordinates in expressions, components' declared
+  points, and components on levels of the layer stack (`src/model/levels.cpp`).
+  Built-in components too, from their definitions; imported cells are still
+  Python's (`NotSupported`).
   `tests/test_engine_build.py` compares the geometry with the Python
   backend's on the examples, hand-written components and random shape
   trees.

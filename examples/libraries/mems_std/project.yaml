@@ -1,3 +1,6 @@
-format: mems-sketch/1
+format: mems-sketch/2
 name: mems_std
 top: null
+process: surface
+processes: {surface: processes/surface}
+components: {perforated_plate: components/perforated_plate}

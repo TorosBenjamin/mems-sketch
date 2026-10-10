@@ -10,13 +10,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, ClassVar, NamedTuple
 
-import klayout.db as kdb
 from pydantic import BaseModel, ConfigDict
 
 from mems_sketch.core.expressions import evaluate
+from mems_sketch.core.region import DBU_UM, Box, IntPolygon, Region
 from mems_sketch.core.transform import Transform
-
-DBU_UM = 0.001  # database unit: 1 nm, in micrometres
 
 
 def to_dbu(value_um: float) -> int:
@@ -34,28 +32,24 @@ class Polygon(NamedTuple):
 
 
 class Geometry:
-    """Polygons grouped by layer name. Coordinates are given in micrometres.
+    """Polygons grouped by layer name, on the 1 nm grid; coordinates in µm.
 
     Code outside the geometry backend (the GUI, editing, storage) uses only
-    these methods, never the regions in :attr:`layers`, so that the backend
-    can change underneath it.
+    these methods, never the regions in :attr:`layers` (:mod:`mems_sketch.core.region`).
     """
 
     def __init__(self) -> None:
-        self.layers: dict[str, kdb.Region] = {}
+        self.layers: dict[str, Region] = {}
 
-    def region(self, layer: str) -> kdb.Region:
-        return self.layers.setdefault(layer, kdb.Region())
+    def region(self, layer: str) -> Region:
+        return self.layers.setdefault(layer, Region())
 
     def add_layer(self, layer: str) -> None:
         """A layer, empty until something is added to it."""
         self.region(layer)
 
     def add_rect(self, layer: str, x0: float, y0: float, x1: float, y1: float) -> None:
-        box = kdb.Box(
-            to_dbu(min(x0, x1)), to_dbu(min(y0, y1)), to_dbu(max(x0, x1)), to_dbu(max(y0, y1))
-        )
-        self.region(layer).insert(box)
+        self.region(layer).insert(Box(to_dbu(x0), to_dbu(y0), to_dbu(x1), to_dbu(y1)))
 
     def add_polygon(
         self,
@@ -63,16 +57,13 @@ class Geometry:
         points_um: Iterable[tuple[float, float]],
         holes: Iterable[Iterable[tuple[float, float]]] = (),
     ) -> None:
-        polygon = kdb.Polygon(_points(points_um))
-        for hole in holes:
-            polygon.insert_hole(_points(hole))
-        self.region(layer).insert(polygon)
+        self.region(layer).insert(IntPolygon(_points(points_um), [_points(hole) for hole in holes]))
 
     def merge(self, other: Geometry, transform: Transform | None = None) -> None:
         """Add ``other``'s polygons, placed by ``transform`` (snapped to the database grid)."""
-        trans = None if transform is None or transform.is_identity else _ictrans(transform)
         for layer, region in other.layers.items():
-            self.region(layer).insert(region.transformed(trans) if trans else region)
+            placed = region if transform is None else region.transformed(transform)
+            self.region(layer).insert(placed)
 
     def transformed(self, transform: Transform) -> Geometry:
         result = Geometry()
@@ -100,39 +91,41 @@ class Geometry:
     def polygons(self, layer: str | None = None) -> list[Polygon]:
         """The merged polygons of a layer, or of all layers together."""
         if layer is None:
-            region = kdb.Region()
+            region = Region()
             for r in self.layers.values():
                 region.insert(r)
         else:
-            region = self.layers.get(layer, kdb.Region())
-        return [
-            Polygon(
-                _ring(polygon.each_point_hull()),
-                [_ring(polygon.each_point_hole(h)) for h in range(polygon.holes())],
-            )
-            for polygon in region.each_merged()
-        ]
+            region = self.layers.get(layer, Region())
+        return [Polygon(hull, holes) for hull, holes in region.points_um()]
 
     def bbox(self) -> tuple[float, float, float, float] | None:
         """``(left, bottom, right, top)`` in µm of all layers, or None when empty."""
-        box = kdb.Box()
+        box = Box()
         for region in self.layers.values():
-            box += region.bbox()
+            box = box + region.bbox()
         if box.empty():
             return None
         return box.left * DBU_UM, box.bottom * DBU_UM, box.right * DBU_UM, box.top * DBU_UM
 
     def touches(self, x: float, y: float, reach: float = 0.0) -> bool:
-        """Some polygon is within ``reach`` µm of the point (a square around it, at
-        least one database unit wide)."""
+        """Some polygon is within ``reach`` µm of the point (at least one database
+        unit)."""
         r = max(1, to_dbu(reach))
         cx, cy = to_dbu(x), to_dbu(y)
-        probe = kdb.Region(kdb.Box(cx - r, cy - r, cx + r, cy + r))
-        return any(not (region & probe).is_empty() for region in self.layers.values())
+        for region in self.layers.values():
+            box = region.bbox()
+            if box.empty() or not (
+                box.left - r <= cx <= box.right + r and box.bottom - r <= cy <= box.top + r
+            ):
+                continue
+            for polygon in region.each():
+                if _near(polygon, cx, cy, r):
+                    return True
+        return False
 
     def pieces(self) -> int:
         """How many separate pieces the geometry has, all layers together."""
-        region = kdb.Region()
+        region = Region()
         for r in self.layers.values():
             region.insert(r)
         return region.merged().count()
@@ -141,28 +134,36 @@ class Geometry:
         """What is in this geometry and not in ``other``, layer by layer (merged)."""
         result = Geometry()
         for name, region in self.layers.items():
-            rest = (region - other.layers.get(name, kdb.Region())).merged()
+            rest = region - other.layers.get(name, Region())
             if not rest.is_empty():
                 result.layers[name] = rest
         return result
 
 
-def _points(points_um: Iterable[tuple[float, float]]) -> list[kdb.Point]:
-    return [kdb.Point(to_dbu(x), to_dbu(y)) for x, y, *_ in points_um]
+def _points(points_um: Iterable[tuple[float, float]]) -> list[tuple[int, int]]:
+    return [(to_dbu(x), to_dbu(y)) for x, y, *_ in points_um]
 
 
-def _ring(points: Iterable[kdb.Point]) -> Ring:
-    return [(p.x * DBU_UM, p.y * DBU_UM) for p in points]
-
-
-def _ictrans(transform: Transform) -> kdb.ICplxTrans:
-    return kdb.ICplxTrans(
-        transform.mag,
-        transform.angle,
-        transform.mirror,
-        to_dbu(transform.dx),
-        to_dbu(transform.dy),
-    )
+def _near(polygon: IntPolygon, x: int, y: int, reach: int) -> bool:
+    """The point is inside the polygon, or within ``reach`` of its outline."""
+    inside = False
+    for ring in (polygon.hull, *polygon.holes):
+        n = len(ring)
+        for k in range(n):
+            (x0, y0), (x1, y1) = ring[k], ring[(k + 1) % n]
+            if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+                inside = not inside
+            dx, dy = x1 - x0, y1 - y0
+            length2 = dx * dx + dy * dy
+            t = (
+                0.0
+                if length2 == 0
+                else max(0.0, min(1.0, ((x - x0) * dx + (y - y0) * dy) / length2))
+            )
+            px, py = x0 + t * dx - x, y0 + t * dy - y
+            if px * px + py * py <= reach * reach:
+                return True
+    return inside
 
 
 class Params(BaseModel):
@@ -172,12 +173,16 @@ class Params(BaseModel):
 
 
 class Component:
-    """Subclass, set ``type_name`` and ``Params``, implement :meth:`build`, then register."""
+    """Something a ``ref`` can place: set ``type_name`` and ``Params``, implement
+    :meth:`build` (user components, imported cells)."""
 
     type_name: ClassVar[str]
     Params: ClassVar[type[Params]]
     # Parameters only the component itself uses: a placement cannot set them.
     internal: frozenset[str] = frozenset()
+    # The level of the layer stack it is on unless placed elsewhere (None: the
+    # level of whatever places it); see mems_sketch.core.levels.
+    default_level: str | None = None
 
     def public_params(self) -> dict[str, Any]:
         """The parameters a placement may set (name -> pydantic field info)."""
@@ -193,22 +198,6 @@ class Component:
                 f"{'is' if len(hidden) == 1 else 'are'} internal: "
                 "it cannot be set where the component is placed"
             )
-
-    def build(self, params: Params) -> Geometry:
-        raise NotImplementedError
-
-    def points(self, params: Params) -> dict[str, tuple[float, float]]:
-        """Named alignment points in the component's own coordinates (µm).
-
-        Override to offer points besides the bounding-box ones every shape
-        has, e.g. where a spring attaches. Names must not be bounding-box
-        point names (``center``, ``top``, ``bottom_left``, ...).
-        """
-        return {}
-
-    def compile(self, params: Params) -> tuple[Geometry, dict[str, tuple[float, float]]]:
-        """Geometry and alignment points together (one evaluation for user components)."""
-        return self.build(params), self.points(params)
 
 
 def resolve_params(
@@ -227,33 +216,17 @@ def resolve_params(
     return component.Params(**values)
 
 
-_REGISTRY: dict[str, type[Component]] = {}
+def builtin_definitions() -> dict:
+    """The built-in components' definitions by name (mems_sketch.components)."""
+    from mems_sketch.components import builtin_components
+
+    return builtin_components()
 
 
-def register_component(cls: type[Component]) -> type[Component]:
-    if cls.type_name in _REGISTRY:
-        raise ValueError(f"component type '{cls.type_name}' is already registered")
-    _REGISTRY[cls.type_name] = cls
-    return cls
-
-
-def is_builtin(type_name: str) -> bool:
-    _ensure_builtin_components()
-    return type_name in _REGISTRY
-
-
-def get_component(type_name: str) -> Component:
-    _ensure_builtin_components()
-    try:
-        return _REGISTRY[type_name]()
-    except KeyError:
-        raise KeyError(f"unknown component type '{type_name}'") from None
+def is_builtin(name: str) -> bool:
+    return "/" not in name and name in builtin_definitions()
 
 
 def component_types() -> list[str]:
-    _ensure_builtin_components()
-    return sorted(_REGISTRY)
-
-
-def _ensure_builtin_components() -> None:
-    import mems_sketch.components.library  # noqa: F401  (registers on import)
+    """The built-in components' names."""
+    return sorted(n for n in builtin_definitions() if "/" not in n)

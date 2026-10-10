@@ -76,9 +76,45 @@ TEST_CASE("offset") {
     SUBCASE("growing, with each join") {
         CHECK(r.offset(1, Join::miter).area() == approx(6 * 4));
         CHECK(r.offset(1, Join::round).area() == approx(8 + 2 * (4 + 2) + pi));
-        CHECK(r.offset(1, Join::bevel).area() == approx(8 + 2 * (4 + 2) + 4 * 0.5));
+        // Each corner cut at 1 from it: a triangle of legs 1 - tan(22.5°) less than square.
+        const double cut = 1 - std::tan(pi / 8);
+        CHECK(r.offset(1, Join::bevel).area() == approx(6 * 4 - 4 * cut * cut / 2));
         CHECK(r.offset(1, Join::round).corners().empty());  // arcs run smoothly
         CHECK(r.offset(1, Join::bevel).corners().size() == 8);
+    }
+
+    SUBCASE("a sharp corner is cut, not spiked") {
+        // A turn of more than 90° at the base corners: each offset edge runs on
+        // by the distance, and they are joined straight (as KLayout sizes).
+        const Point triangle[] = {{0, 0}, {20, 0}, {10, 5}};
+        const Box box = Region::polygon(triangle).offset(1).bbox();
+        CHECK(box.x0 == approx(-3 / std::sqrt(5.0)));  // not -(1 + √5): the miter's spike
+        CHECK(box.y1 == approx(5 + std::sqrt(1.25)));  // the apex turns less than 90°: sharp
+    }
+
+    SUBCASE("growing around a hole that shrinks to nothing in places") {
+        // The hole's 2-wide arm closes; Open CASCADE's offset of it collapses.
+        const Region cross = Region::rect(0, 0, 10, 5) | Region::rect(4, 0, 6, 20);
+        const Region frame = Region::rect(-3, -3, 13, 23) - cross;
+        for (Join join : {Join::miter, Join::bevel, Join::round}) {
+            const Region grown = frame.offset(1, join);
+            CHECK(grown.valid());
+            CHECK((cross - grown).area() == approx(8 * 3).epsilon(0.02));  // what is left of the hole
+        }
+    }
+
+    SUBCASE("a bevel cuts at the distance from the corner") {
+        // For any turn: tangent to the round join in its middle.
+        const Point triangle[] = {{0, 0}, {20, 0}, {10, 5}};
+        const Region round = Region::polygon(triangle).offset(1, Join::round);
+        const Region bevel = Region::polygon(triangle).offset(1, Join::bevel);
+        CHECK(bevel.area() > round.area());
+        CHECK((round - bevel).empty());
+    }
+
+    SUBCASE("shrinking a shape with concave corners") {
+        const Region cross = Region::rect(0, 0, 10, 5) | Region::rect(4, 0, 6, 20);
+        CHECK(cross.offset(-1).area() == approx(8 * 3));  // the 2-wide arm shrinks away
     }
 
     SUBCASE("shrinking") {

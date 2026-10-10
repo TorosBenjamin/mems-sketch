@@ -2,8 +2,8 @@ import json
 import shutil
 from pathlib import Path
 
-import klayout.db as kdb
 import pytest
+from helpers import read_gds
 
 from mems_sketch.cli import main
 
@@ -27,7 +27,7 @@ def resonator(tmp_path) -> Path:
 
 def test_new_and_info(tmp_path, capsys):
     assert main(["new", str(tmp_path / "p")]) == 0
-    assert (tmp_path / "p" / "components" / "top.yaml").exists()
+    assert (tmp_path / "p" / "components" / "top" / "component.yaml").exists()
     assert main(["new", str(tmp_path / "p")]) == 2  # refuses to overwrite
     assert main(["info", str(tmp_path / "p")]) == 0
     assert "device" in capsys.readouterr().out
@@ -48,9 +48,8 @@ def test_check_a_single_component(resonator):
 def test_export_writes_the_drawn_geometry(resonator, tmp_path):
     out = tmp_path / "out.gds"
     assert main(["export", str(resonator), str(out)]) == 0
-    layout = kdb.Layout()
-    layout.read(str(out))
-    assert kdb.Region(layout.top_cell().begin_shapes_rec(layout.layer(1, 0))).area() > 0
+    layout = read_gds(out)
+    assert sum(p.area() for p in layout.flat(layout.top_cells()[0], (1, 0))) > 0
 
 
 def test_errors_exit_with_status_2(resonator, capsys):

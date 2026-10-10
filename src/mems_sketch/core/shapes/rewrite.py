@@ -109,6 +109,7 @@ _NOT_EXPRESSIONS = frozenset(
         "kind",
         "name",
         "layer",
+        "level",
         "component",
         "op",
         "ends",

@@ -2,13 +2,18 @@
 // geometry library, per layer, the way mems_sketch.core.shapes evaluates
 // them (the equivalence test, tests/test_engine_build.py, checks it).
 //
-// The kinds come one at a time (core-architecture.md, step 6). So far: rect,
-// polygon, circle, boolean, transform (and group), references to user
-// components, and the array modifier. Anything else raises NotSupported, so
-// callers can fall back to the Python backend.
+// Every shape kind (rect, polygon, circle, arc, path, guide, boolean,
+// transform, offset, fillet, layer_map, references to user components), every
+// modifier (array, polar_array, mirror, corners), alignment, point
+// coordinates in expressions, components' declared points and levels of the
+// layer stack (core-architecture.md, step 6). Built-in components are built
+// from their definitions like any other. Imported cells are still Python's:
+// placing one raises NotSupported, so callers can fall back to the Python
+// backend.
 #pragma once
 
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -30,22 +35,84 @@ public:
 };
 
 using Layers = std::map<std::string, mgeom::Region, std::less<>>;
+using PointMap = std::map<std::string, mgeom::Point, std::less<>>;
+
+// A built component: its geometry per layer, merged, and its declared points.
+struct Built {
+    Layers layers;
+    PointMap points;
+};
+
+// Where a node is in a shape tree: for each level, which of its parent's child
+// lists (0 at the top) and its index there (mems_sketch.core.shapes.NodePath).
+using NodePath = std::vector<std::pair<int, int>>;
+
+// One node as evaluated (its first copy, when repeated), in the frame of the
+// list holding it: its geometry and points, the frame its children are in
+// (``inner``), and the move its alignment made (``shift``).
+struct NodeRecord {
+    Layers layers;
+    std::string name;  // its name, or its kind
+    PointMap declared;
+    mgeom::Transform inner, shift;
+};
+using Records = std::map<NodePath, NodeRecord>;
+
+// Built components by a key of everything they depend on (fingerprint, values,
+// level, layer stack), so one cache serves every version of a project: after
+// an edit only what the edit changed is built again.
+class BuildCache {
+public:
+    explicit BuildCache(size_t max_entries = 4096) : max_entries_(max_entries) {}
+    const Built* find(const std::string& key) const;
+    const Built& put(const std::string& key, Built built);
+    void clear() { built_.clear(); }
+    size_t size() const { return built_.size(); }
+
+private:
+    size_t max_entries_;
+    std::map<std::string, Built> built_;
+};
 
 // Builds the components of one project. Each component built with the same
 // parameter values is built once (by fingerprint and values).
 class Builder {
 public:
-    explicit Builder(const Project& project) : project_(project) {}
+    explicit Builder(const Project& project, std::shared_ptr<BuildCache> cache = std::make_shared<BuildCache>())
+        : project_(project), cache_(std::move(cache)) {}
 
     // A component (as written at project level) with the given parameter values,
-    // defaults for the rest: its geometry per layer, merged.
-    const Layers& build(std::string_view component, const Values& params = {});
+    // defaults for the rest, on its own level of the layer stack (its default
+    // level, else the process's).
+    const Built& build(std::string_view component, const Values& params = {});
+
+    // A component by unique name on a given level (or none: no layer stack).
+    const Built& build_on(const std::string& qualified, const Values& params, const OptionalLevel& level);
+
+    // Every node of a component's own shape tree as evaluated, by path: what
+    // the editor shows and moves. When evaluating fails, the nodes evaluated
+    // so far, and the error in ``error``.
+    Records records(std::string_view component, const Values& params, std::string* error = nullptr);
 
     const Project& project() const { return project_; }
 
+    // The level of the component being built, and the layer a shape's ``layer``
+    // names on it (``level-1``, ``level.anchor``, ``metal``).
+    const OptionalLevel& level() const { return level_; }
+    std::string layer(const std::string& spec) const { return project_.layer(spec, level_); }
+
+    // While records are made: the path of the node being evaluated, and where
+    // nodes are recorded (none inside the components it places).
+    NodePath& path() { return path_; }
+    Records* recording() { return recording_; }
+
 private:
     const Project& project_;
-    std::map<std::string, Layers> cache_;
+    std::shared_ptr<BuildCache> cache_;
+    OptionalLevel level_;  // while a component is built
+    NodePath path_;
+    Records* recording_ = nullptr;
+    std::map<std::string, Built, std::less<>> imported_;
 };
 
 }  // namespace mems

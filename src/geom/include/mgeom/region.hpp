@@ -59,7 +59,10 @@ public:
 
     // Grow (distance > 0) or shrink (< 0) every boundary by distance (µm).
     // Pieces that shrink away disappear; pieces that grow into each other
-    // merge; a shape may split or close into a ring.
+    // merge; a shape may split or close into a ring. Corners the offset opens
+    // up are joined: miter sharp up to a 90° turn and, beyond, cut straight
+    // after running on by the distance (no spikes; as KLayout's sizing);
+    // bevel cut straight across at the distance from the corner; round an arc.
     Region offset(double distance, Join join = Join::miter) const;
 
     // Every corner rounded: convex ones with convex_radius, concave ones with

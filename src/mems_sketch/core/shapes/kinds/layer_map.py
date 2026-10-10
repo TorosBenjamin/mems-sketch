@@ -6,8 +6,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 
 from pydantic import model_validator
 
-from mems_sketch.core.component import Geometry
-from mems_sketch.core.shapes.base import Operation, Point, RenderContext
+from mems_sketch.core.shapes.base import Operation
 
 if TYPE_CHECKING:
     from mems_sketch.core.shapes.registry import Shape
@@ -18,7 +17,8 @@ class LayerMapShape(Operation):
 
     ``mapping`` sends source layer -> target layer; several sources may merge
     into one target. Layers not in ``mapping`` are dropped unless
-    ``keep_unmapped`` is set.
+    ``keep_unmapped`` is set. Both sides may be relative to the component's
+    level (``level``, ``level-1.anchor``; see :mod:`mems_sketch.core.levels`).
     """
 
     icon: ClassVar[str] = "layer_map"
@@ -34,14 +34,6 @@ class LayerMapShape(Operation):
         if not self.mapping:
             raise ValueError("layer_map needs at least one mapping")
         return self
-
-    def render(self, ctx: RenderContext) -> tuple[Geometry, dict[str, Point]]:
-        geometry = Geometry()
-        for layer, region in ctx.children([self.children])[0].layers.items():
-            target = self.mapping.get(layer, layer if self.keep_unmapped else None)
-            if target is not None:
-                geometry.region(target).insert(region)
-        return geometry, {}
 
     def summary(self) -> str:
         return "layers " + ", ".join(f"{a}→{b}" for a, b in self.mapping.items())

@@ -27,12 +27,11 @@ from dataclasses import dataclass, field
 from importlib.metadata import entry_points
 from typing import Any, ClassVar, Protocol
 
-import klayout.db as kdb
-
 from mems_sketch.core.component import DBU_UM, Geometry
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.process import ERROR, WARNING, Rule
 from mems_sketch.core.project import Project
+from mems_sketch.core.region import Box, Region
 from mems_sketch.options import Option
 
 ENTRY_POINT_GROUP = "mems_sketch.rules"
@@ -52,7 +51,7 @@ class RuleKind(Protocol):
     roles: ClassVar[tuple[str, ...]]
     parameters: ClassVar[tuple[Option, ...]]
 
-    def check(self, regions: Sequence[kdb.Region], dbu: float, **values: Any) -> list[Finding]: ...
+    def check(self, regions: Sequence[Region], dbu: float, **values: Any) -> list[Finding]: ...
 
 
 @dataclass(frozen=True)
@@ -138,8 +137,6 @@ def check(
     for rule in project.process.rules.values():
         if rule.enabled:
             violations += _check_rule(rule.name, rule, kinds, geometry, project, scope, scope_error)
-    for deck_name, use in project.process.decks.items():
-        violations += _check_deck(deck_name, use, kinds, geometry, project, scope, scope_error)
     definition = project.components.get(component) if component else None
     if definition is not None and definition.waivers:
         violations = _apply_waivers(violations, definition.waivers, geometry)
@@ -162,11 +159,11 @@ def fingerprint(violation: Violation, geometry: Geometry) -> str:
     )
     x0, y0, x1, y1 = (round(c / DBU_UM) for c in violation.bbox_um)
     grow = round(reach / DBU_UM) + 1
-    window = kdb.Region(kdb.Box(x0 - grow, y0 - grow, x1 + grow, y1 + grow))
+    window = Region(Box(x0 - grow, y0 - grow, x1 + grow, y1 + grow))
     digest = hashlib.sha256()
     for layer in violation.layer.split(", "):
-        region = geometry.layers.get(layer, kdb.Region())
-        shapes = sorted(str(p) for p in (region & window).merged().each())
+        region = geometry.layers.get(layer, Region())
+        shapes = sorted(str(tuple(p)) for p in (region & window).each_merged())
         digest.update(f"{layer}:{';'.join(shapes)}|".encode())
     return digest.hexdigest()[:16]
 
@@ -212,25 +209,6 @@ def _apply_waivers(violations: list[Violation], waivers, geometry: Geometry) -> 
     return result
 
 
-def _check_deck(deck_name, use, kinds, geometry, project, scope, scope_error) -> list[Violation]:
-    if use.error:  # a deck that cannot be read never passes (requirement DRC-10)
-        return [Violation(deck_name, "", f"rule deck '{deck_name}': {use.error}: not checked")]
-    deck_scope, deck_error = dict(scope), scope_error
-    if deck_error is None:
-        try:
-            deck_scope.update(use.variables(scope))
-        except Exception as exc:  # noqa: BLE001 - reported as a violation of every rule
-            deck_error = f"the parameters of rule deck '{deck_name}' have an error: {exc}"
-    violations: list[Violation] = []
-    for name in use.deck.rules:
-        rule = use.rule(name)
-        if rule.enabled:
-            violations += _check_rule(
-                f"{deck_name}.{name}", rule, kinds, geometry, project, deck_scope, deck_error
-            )
-    return violations
-
-
 def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> list[Violation]:
     layers = ", ".join(rule.layers)
 
@@ -257,7 +235,7 @@ def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> lis
         values = rule_values(kind, rule, scope)
     except Exception as exc:  # noqa: BLE001 - a bad value is the rule's problem
         return problem(f"{exc}: not checked")
-    regions = [geometry.layers.get(n, kdb.Region()) for n in rule.layers]
+    regions = [geometry.layers.get(n, Region()) for n in rule.layers]
     findings = kind().check(regions, DBU_UM, **values)
     return [
         Violation(

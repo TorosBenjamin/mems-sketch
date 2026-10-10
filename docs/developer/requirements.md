@@ -56,21 +56,36 @@ but should not have to program. Scripting is there for those who want it.
 
 ### Projects and files
 
-- **PRJ-1** (Must, exists) A project is a **folder of small text files**:
-  `project.yaml` (name, top component, libraries, imports), `process.yaml`
-  (layers, constants), one YAML file per component under `components/`
-  (private components in their owner's folder), and copies of imported
-  files under `imports/`.
+- **PRJ-1** (Must, exists) A project is a **folder of small text files**.
+  `project.yaml` is its manifest: name, top component, libraries, the process
+  it uses and its overrides, imports, and where its processes and shared
+  components are. Each component is a folder with a `component.yaml` (and
+  room for whatever else belongs to it); a component lists its private
+  components, which are folders inside its own. Each process is a folder with
+  a `process.yaml`. Imported files are copied under `imports/`. Names come
+  from the manifest and the component files, never from file or folder
+  names, so a listed file that is missing is an error and an unlisted one is
+  reported.
 - **PRJ-2** (Must, exists) The YAML is **canonical**: saving the same project
   twice gives byte-identical files. Values equal to their default are left
   out, keys keep a fixed order, whole numbers have no `.0`, lists of plain
   values are on one line, and unchanged files are not rewritten. Changing one
   value changes one line.
-- **PRJ-3** (Must, exists) Files are versioned (`format: mems-sketch/1`).
-  Older files keep loading: `repeat:` reads as an array modifier, `group` as
-  `transform`, and a layer's old `undercut` is ignored.
+- **PRJ-3** (Must, exists) Files are versioned (`format: mems-sketch/2`).
+  Component files are written for reading: parameters, points and shapes
+  are maps by name (a parameter with only a default is `name: default`); a
+  placement names its component as `ref:` with its parameter values beside
+  its other fields. Every shape has a name; a shape made without one gets
+  one (`rect1`).
+- **PRJ-8** (Must, exists) **Processes are shared like components:** a library
+  can hold processes (layers, layer stack, constants and rules) as well as
+  components. A project uses one process: its own or one from a library. On
+  a library's process, the project may change constants and rules and add
+  rules, each change listed with an optional reason, but not change layers or
+  the stack, which belong to the fab. When the library's process changes, the
+  project follows it except where it changed it.
 - **PRJ-4** (Must, exists) A project without a top component is a
-  **library**. A project lists libraries by name and relative path; their
+  **library** (its manifest is a project's: the same file). A project lists libraries by name and relative path; their
   components are placed as `name.component` and are read-only. A library
   component can be copied into the project, where it stays editable and
   keeps using the library's other components.
@@ -100,6 +115,12 @@ but should not have to program. Scripting is there for those who want it.
   by default, e.g. 54.74° for KOH etching of (100) silicon. 3D output, cross-
   sections and meshes use it. It describes the shape of the walls only;
   simulating the etch stays out of scope.
+- **PRC-6** (Must, exists) **The layer stack is a list of levels**, bottom to
+  top (e.g. poly0, poly1, poly2, metal). Each level has its main layer and
+  can name **roles** for other layers that belong to it (poly1: `anchor`
+  is anchor1, `via` is poly1_poly2_via). One level is the project's
+  **default level**. Relative layers ([CMP-10](#components-and-parameters))
+  count levels, so adding a layer to a level never moves anything.
 
 ### Components and parameters
 
@@ -107,9 +128,12 @@ but should not have to program. Scripting is there for those who want it.
   project's top component, so any project can be placed in another. A
   component has parameters, points and a shape tree. It never stores
   geometry: it is evaluated from its parameters.
-- **CMP-2** (Must, exists) **Built-in components:** `rectangle`, `anchor`,
-  `comb_drive`, `serpentine_spring`, with their parameters and points
+- **CMP-2** (Must, exists) **Built-in components** are an ordinary
+  component library that ships with the tool: `anchor`, `comb_drive`,
+  `serpentine_spring`, with their parameters and points
   (`serpentine_spring`: `start`, `end`; `comb_drive`: `moving`, `fixed`).
+  They use relative layers ([CMP-10](#components-and-parameters)), not a
+  layer parameter. `rectangle` is retired: `rect` does the same.
 - **CMP-3** (Must, exists) Components are **shared** or **private** to
   another (`comb/finger`), and are resolved by name from the inside out: the
   component's own private components, its owner's, the shared ones, then
@@ -120,6 +144,10 @@ but should not have to program. Scripting is there for those who want it.
   expression over other parameters and process constants), an optional
   min, max and integer flag, and is **public** (set where the component is
   placed) or **internal** (used only inside, not offered where placed).
+  **Min and max may be expressions** over the other parameters and process
+  constants (`enclosure`: max `size / 2`), and either may be **exclusive**
+  (the value must differ from it). The editor shows each limit next to its
+  parameter, evaluated.
 - **CMP-6** (Must, exists) Values passed to a placed component are
   **evaluated where it is placed**. Parameters left out take their defaults.
   Values outside min/max or not whole when integer are errors.
@@ -134,6 +162,24 @@ but should not have to program. Scripting is there for those who want it.
   **read-only** and show their interface (geometry, description, public
   parameters, points), not how they are built, unless the user asks to see
   it.
+- **CMP-10** (Must, exists) **Every component is on a layer.** A placed
+  component's layer is, first match wins: the one set on the placement; the
+  component's own default layer, if it declares one; the layer of the
+  component that places it. A top component without a default is on the
+  default level ([PRC-6](#process)). Inside a component, each shape and each
+  placement is on the component's layer (the default), a number of levels
+  above or below it (`+1`, `-1`), one of its level's roles (`anchor`), or a
+  named layer (`metal`). A relative layer that runs off the bottom or top of
+  the stack is an error on that placement, naming the component and layer.
+- **CMP-11** (Should, new) A component can have **checks** for what one
+  parameter's limits cannot say: an expression that must hold and a message
+  shown when it does not.
+- **CMP-12** (Must, new) **Libraries use the importing project's stack.** A
+  library has no layers of its own; its components normally use only
+  relative layers and roles, so they work in any project with enough levels.
+  A library made for one process may name layers, and then says which
+  process; a named layer the project lacks is an error naming the library
+  and the layer.
 
 ### Expressions
 
@@ -158,7 +204,8 @@ but should not have to program. Scripting is there for those who want it.
 
 - **SHP-1** (Must, exists) **Primitives:** `rect`; `polygon`; `circle`; `arc`
   (an annular sector, a ring at 360°); `path` (a centreline with a width and
-  flush, square or round ends). Each is on one layer.
+  flush, square or round ends). Each is on one layer
+  ([CMP-10](#components-and-parameters)).
 - **SHP-2** (Must, exists) **References:** `ref` places a component with
   parameter values, position, rotation and mirroring.
 - **SHP-3** (Must, exists) **Operations**, as nodes in the tree that keep
@@ -373,17 +420,12 @@ behaviours every frontend must keep.
   `release` (DRC-11). Every rule and value can be changed, and any rule can
   be turned off. A rule turned off stays listed as off, so a check never
   passes because a rule silently went away.
-- **DRC-8** (Should, new) **Rule decks:** a set of rules with parameters of
-  its own (e.g. `min_feature`, `undercut`) in a file of its own, shared
-  between projects the way libraries are (PRJ), typically one per fab
-  process. A project uses decks, and can:
-  - set a deck parameter for itself (a different `undercut` for a different
-    etch);
-  - override or turn off one of a deck's rules;
-  - add rules of its own.
-
-  Overrides are listed with an optional reason. When a deck changes, a
-  project follows it everywhere except where it overrides it.
+- **DRC-8** (Should, exists) **Shared rules come with the process**
+  ([PRJ-8](#projects-and-files)): a fab's rules and the constants they use
+  are shared as a process in a library. A project using it can change a
+  constant (a different `undercut` for a different etch), change or turn off
+  one of its rules and add rules of its own, each with an optional reason.
+  There are no separate rule decks.
 - **DRC-9** (Must, new) **Rule kinds are plugins**, like exporters (OUT-7): a
   kind declares its parameters (as exporters declare their options, OUT-8)
   and checks the geometry as exported (DRC-3), returning violations with
@@ -391,7 +433,7 @@ behaviours every frontend must keep.
   entry-point group, so a team can install its own; the built-in kinds are
   plugins too. The rules editor and the command line are built from the
   declarations.
-- **DRC-10** (Must, new) **No code in project files:** projects and decks
+- **DRC-10** (Must, new) **No code in project files:** projects and processes
   only name rule kinds and give them values. A rule whose kind is not
   installed is reported as not checked, an error, and never passes.
 - **DRC-11** (Should, new) **Built-in rule kinds:**
@@ -674,8 +716,9 @@ ten times larger than that, so the numbers hold with room to spare.
 - **C-2** The geometry backend is **C++**: a geometry library on **Open
   CASCADE**, with the mems-sketch engine on top
   ([core architecture](core-architecture.md)).
-- **C-3** GDS, OASIS and DXF, and rule checks, use **KLayout**'s Python
-  package. The C++ backend does not link KLayout.
+- **C-3** GDS, OASIS and DXF are read and written in plain Python
+  (`mems_sketch.layout`); rule checks use the geometry library's grid
+  booleans and offsets (Clipper2). No layout library is a dependency.
 - **C-4** **Licences:** a GPL dependency (gmsh) is optional, as an extra or
   a plugin. The rest of the tool does not depend on it.
 
@@ -740,10 +783,10 @@ ten times larger than that, so the numbers hold with room to spare.
   outlines snapped to a grid with the snapping report (OUT-3), solids and
   triangles, and OCC's own BREP and STEP writers. Snapping is done once, in
   the library, so every grid-based format reports the same changes. Adding
-  a format then needs no C++, and the backend does not link KLayout.
+  a format then needs no C++.
 
 - **R-1: Rules are data; rule kinds are code in plugins.** A project or a
-  deck only names rule kinds and gives them values (DRC-10). Allowing code in
+  process only names rule kinds and gives them values (DRC-10). Allowing code in
   project files (`check: "region.area() > 5"`) would mean that opening
   someone's project runs their code, and rules would stop being plain data
   that diffs and merges like the rest of the project. New kinds of check are
@@ -764,5 +807,14 @@ ten times larger than that, so the numbers hold with room to spare.
    export there.
 4. **Default export grid and chord tolerance** (OUT-2): 1 nm and 5 nm. Each
    export can change them, so the defaults only need to be sensible.
-5. **Platforms** (QC-4): Windows and Linux; macOS if it costs little, which
+5. **Layers of components** (CMP-10, CMP-12, PRC-6): a component is on a
+   layer, which a placement can always change, and its shapes sit relative
+   to it. This replaces a layer map per library: the same library comb can
+   be placed on poly1 in one place and poly2 in another. Relative layers
+   count levels of the stack rather than entries in a list of layers, so a
+   via or dimple layer between two structural layers does not shift them.
+6. **Limits** (CMP-5, CMP-11): min and max stay, because the editor shows
+   them where the value is edited, but they may be expressions and
+   exclusive; component checks cover the rest.
+7. **Platforms** (QC-4): Windows and Linux; macOS if it costs little, which
    it does (the same build on another CI runner).

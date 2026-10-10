@@ -3,13 +3,13 @@
 
 from typing import ClassVar
 
-import klayout.db as kdb
 import pytest
 
 from mems_sketch import Layer, Project, RectShape
 from mems_sketch.cli import main
 from mems_sketch.core.component import Geometry, to_dbu
 from mems_sketch.core.process import Rule, default_process
+from mems_sketch.core.region import Box, Region
 from mems_sketch.options import Option
 from mems_sketch.process import rules
 from mems_sketch.process.rules import Finding, check, rule_values
@@ -17,8 +17,8 @@ from mems_sketch.storage import load, save
 from mems_sketch.storage.project_files import process_data, process_from_data
 
 
-def box(x0, y0, x1, y1) -> kdb.Region:
-    return kdb.Region(kdb.Box(to_dbu(x0), to_dbu(y0), to_dbu(x1), to_dbu(y1)))
+def box(x0, y0, x1, y1) -> Region:
+    return Region(Box(to_dbu(x0), to_dbu(y0), to_dbu(x1), to_dbu(y1)))
 
 
 def project(*rule_list: Rule, constants=None) -> Project:
@@ -31,7 +31,7 @@ def project(*rule_list: Rule, constants=None) -> Project:
     return p
 
 
-def violations(rule: Rule, constants=None, **layers: kdb.Region):
+def violations(rule: Rule, constants=None, **layers: Region):
     geometry = Geometry()
     geometry.layers.update(layers)
     return check(project(rule, constants=constants), geometry)
@@ -154,7 +154,7 @@ def test_rules_turned_off_and_severity():
         Rule("w", "min_width", ["device"], severity="fatal")
 
 
-def test_rules_in_the_process_file_and_older_files():
+def test_rules_in_the_process_file():
     process = default_process()
     data = process_data(process)
     assert data["rules"]["device_release"] == {
@@ -164,10 +164,6 @@ def test_rules_in_the_process_file_and_older_files():
         "severity": "warning",
     }
     assert process_from_data(data).rules == process.rules
-    older = {"layers": {"device": {"gds": [1, 0], "min_width": 2, "min_space": 3}}}
-    migrated = process_from_data(older).rules
-    assert migrated["device_min_width"].values == {"value": 2.0}
-    assert migrated["device_min_space"].kind == "min_space"
 
 
 def test_a_project_keeps_its_rules(tmp_path):

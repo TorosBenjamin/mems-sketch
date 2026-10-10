@@ -4,12 +4,11 @@ Scripting entry point::
 
     from mems_sketch import Project, Layer, Instance, load, save, export
 
-A project is a folder of YAML files (the source of truth); the compiler turns
+A project is a folder of YAML files (the source of truth); the engine turns
 it into geometry, which can be checked and exported.
 """
 
-from mems_sketch.core.compiler import Compiler
-from mems_sketch.core.component import Component, Geometry, Params, register_component
+from mems_sketch.core.component import Component, Geometry, Params
 from mems_sketch.core.process import Layer, Process
 from mems_sketch.core.project import Instance, Library, Project
 from mems_sketch.core.shapes import (
@@ -47,7 +46,6 @@ __all__ = [
     "BooleanShape",
     "Build",
     "CircleShape",
-    "Compiler",
     "Component",
     "ComponentDef",
     "Corner",
@@ -79,7 +77,6 @@ __all__ = [
     "export",
     "load",
     "load_library",
-    "register_component",
     "register_exporter",
     "save",
 ]

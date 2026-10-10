@@ -1,0 +1,18 @@
+description: Pad on the component's level with an anchor opening inset by the enclosure
+parameters:
+  size: {default: 40, min: 0, min_exclusive: true, description: Pad edge length (µm)}
+  enclosure:
+    default: 3
+    min: 0
+    max: size / 2
+    max_exclusive: true
+    description: Overlap of the pad around the anchor (µm)
+shapes:
+  pad: {kind: rect, x0: -size/2, y0: -size/2, x1: size/2, y1: size/2}
+  opening:
+    kind: rect
+    layer: level.anchor
+    x0: -(size/2 - enclosure)
+    y0: -(size/2 - enclosure)
+    x1: size/2 - enclosure
+    y1: size/2 - enclosure

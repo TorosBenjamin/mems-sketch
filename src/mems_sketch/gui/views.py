@@ -115,8 +115,7 @@ class ComponentView(QWidget):
 
     def _check(self, drawn: Geometry | None) -> None:
         """The design rules, after the change is on screen: on a big design they take a
-        moment, and the edit should show at once (the check cannot run in the
-        background: klayout keeps Python's interpreter lock while it works)."""
+        moment, and the edit should show at once."""
         self.violations = []
         if drawn is None:
             return

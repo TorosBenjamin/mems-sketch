@@ -3,11 +3,11 @@
 
 namespace mems {
 
-Layers render_rect(const Json& node, const Context& ctx) {
+Result render_rect(const Json& node, const Context& ctx) {
     const auto region = mgeom::Region::rect(ctx.number(node, "x0"), ctx.number(node, "y0"), ctx.number(node, "x1"),
                                             ctx.number(node, "y1"));
     if (region.empty()) return {};
-    return {{node.at("layer").get<std::string>(), region}};
+    return {Layers{{ctx.layer(node), region}}, {}};
 }
 
 }  // namespace mems

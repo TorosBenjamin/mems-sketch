@@ -8,19 +8,18 @@
 
 namespace mems {
 
-Layers render_ref(const Json& node, const Context& ctx) {
+Result render_ref(const Json& node, const Context& ctx) {
     const Project& project = ctx.builder.project();
     const std::string target = project.qualify(node.at("component").get<std::string>(), ctx.component);
-    const ComponentDef* definition = project.definition(target);
-    if (!definition)
-        throw NotSupported("'" + target + "' is a built-in or imported component: Python builds those for now");
+    const ComponentDef* definition = project.definition(target);  // none: an imported cell
     // Values a placement may not set: the component's internal parameters.
     Values values;
     std::vector<std::string> hidden;
     const Json params = node.value("params", Json::object());  // a copy: kept for the loop
     for (const auto& [name, value] : params.items()) {
-        for (const auto& param : definition->parameters)
-            if (param.name == name && param.internal) hidden.push_back(name);
+        if (definition)
+            for (const auto& param : definition->parameters)
+                if (param.name == name && param.internal) hidden.push_back(name);
         values.emplace_back(name, ctx.value(value));
     }
     if (!hidden.empty()) {
@@ -32,9 +31,20 @@ Layers render_ref(const Json& node, const Context& ctx) {
     }
     const mgeom::Transform placement{ctx.number(node, "x", 0.0), ctx.number(node, "y", 0.0),
                                      ctx.number(node, "rotation", 0.0), node.value("mirror_x", false), 1.0};
-    Layers result;
-    for (const auto& [layer, region] : ctx.builder.build(target, values))
-        result.emplace(layer, region.transformed(placement));
+    OptionalLevel level;
+    try {
+        OptionalLevel spec;
+        if (node.contains("level") && !node["level"].is_null()) spec = node["level"].get<std::string>();
+        level = project.place(spec, definition ? definition->level : std::nullopt, ctx.builder.level());
+    } catch (const ModelError& error) {
+        const std::string name = node.contains("name") && node["name"].is_string() ? node["name"].get<std::string>()
+                                                                                    : node["component"].get<std::string>();
+        throw BuildError("'" + name + "': " + error.what());
+    }
+    const Built& built = ctx.builder.build_on(target, values, level);
+    Result result;
+    for (const auto& [layer, region] : built.layers) result.layers.emplace(layer, region.transformed(placement));
+    for (const auto& [name, point] : built.points) result.points.emplace(name, placement.apply(point));
     return result;
 }
 

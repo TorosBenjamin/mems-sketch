@@ -1,4 +1,4 @@
-"""The design rules, in the Process tab: the rule decks the project uses, and
+"""The design rules, in the Process tab: the process the project uses, and
 one row per rule, edited in place.
 
 A rule is a rule kind (a plugin, see :mod:`mems_sketch.process.rules`) on some
@@ -7,41 +7,34 @@ deleting it, so it shows as off rather than disappearing. Values are written
 ``name=value``, separated by commas; a value can be a number or an expression
 over the process constants (``undercut=process.undercut``).
 
-The rules of a deck (a shared file) are listed after the project's own, named
-``deck.rule``. Editing one changes it for this project only: an override,
-listed with its reason, which *Reset* removes. A deck's parameters are set the
-same way: what the project sets wins over the deck's value.
+A project can use a process from a library (requirement PRJ-8). Editing one
+of that process's rules changes it for this project only, listed with its
+reason; *Reset* takes the process's rule again.
 """
 
 from __future__ import annotations
 
 import dataclasses
-from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
-    QFileDialog,
+    QComboBox,
+    QHBoxLayout,
     QHeaderView,
-    QInputDialog,
     QLabel,
     QMenu,
-    QSplitter,
     QTableWidgetItem,
     QVBoxLayout,
-    QWidget,
 )
 
-from mems_sketch.core.process import SEVERITIES, Rule, RuleValue
+from mems_sketch.core.process import SEVERITIES, Rule, RuleValue, rule_changes
 from mems_sketch.editing import EditSession
 from mems_sketch.gui.panels import _action_bar, _format, _Panel, _readonly, _table, parse_value
 from mems_sketch.process.rules import available_rule_kinds
 
 COLUMNS = ("Rule", "Kind", "Layers", "Values", "Severity", "Note", "From", "Reason")
 NAME, KIND, LAYERS, VALUES, SEVERITY, NOTE, SOURCE, REASON = range(len(COLUMNS))
-DECK_COLUMNS = ("Deck", "File", "Parameters")
-DECK_NAME, DECK_FILE, DECK_PARAMETERS = range(len(DECK_COLUMNS))
-DECK_FILTER = "Rule decks (*.yaml *.yml)"
 
 
 def format_values(values: dict[str, RuleValue]) -> str:
@@ -80,59 +73,43 @@ def parse_values(text: str, kind: str) -> dict[str, RuleValue]:
 
 
 class RulesPanel(_Panel):
-    """The project's rule decks and design rules (requirements DRC-1, DRC-6 to DRC-8)."""
+    """The process the project uses and its design rules (requirements DRC-1,
+    DRC-6 to DRC-8, PRJ-8)."""
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.decks = _table(DECK_COLUMNS)
-        self.decks.itemChanged.connect(self._deck_changed)
+        self.process = QComboBox()
+        self.process.setToolTip(
+            "The process the project uses: one of its own, or a library's (library.process), "
+            "whose layers then stay as they are there"
+        )
+        self.process.activated.connect(self._process_chosen)
         self.rules = _table(COLUMNS)
         self.rules.itemChanged.connect(self._rule_changed)
-        self.deck_actions = _action_bar(
-            QLabel("Rule decks"),
-            ("add", "Use a rule deck…", self._use_deck),
-            ("recompile", "Read the selected decks' files again", self._reload_decks),
-            ("save", "Save the project's own rules as a rule deck…", self._save_as_deck),
-            ("remove", "Stop using the selected decks", self._remove_decks),
-            help="Shared sets of rules with parameters of their own, such as a fab's, "
-            "kept in files of their own. Their rules are listed under *Rules* and checked "
-            "like the project's. Set a deck parameter here for this project only "
-            "(*name=value*); the deck's other values follow its file.",
-        )
         self.actions = _action_bar(
             QLabel("Rules"),
             ("add", "Add a rule", self._show_kinds),
-            ("undo", "Reset the selected deck rules to the deck's", self._reset_rules),
+            ("undo", "Reset the selected rules to the process's", self._reset_rules),
             ("remove", "Remove the selected rules", self._remove_rules),
             help="What the layers are checked with after every change. Each rule is a "
             "*kind* of check on some layers with its values, written *name=value*; a "
             "value can be an expression such as *process.undercut*. Untick a rule to "
             "turn it off: it stays listed as off. *Errors* fail `check` on the command "
-            "line; *warnings* only with `--strict`. A deck's rules can be changed for "
-            "this project (give a *reason*); *Reset* takes the deck's again.",
+            "line; *warnings* only with `--strict`. On a library's process, a changed or "
+            "added rule can say why (*Reason*); *Reset* takes the process's rule again.",
         )
-        top, bottom = QWidget(), QWidget()
-        for widget, bar, table in (
-            (top, self.deck_actions, self.decks),
-            (bottom, self.actions, self.rules),
-        ):
-            box = QVBoxLayout(widget)
-            box.setContentsMargins(0, 0, 0, 0)
-            box.setSpacing(0)
-            box.addLayout(bar)
-            box.addWidget(table)
-        split = QSplitter(Qt.Orientation.Vertical)
-        split.addWidget(top)
-        split.addWidget(bottom)
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 4)
-        split.setSizes([90, 360])  # decks are few; rules many
+        row = QHBoxLayout()
+        row.setContentsMargins(6, 4, 6, 4)
+        row.addWidget(QLabel("Process"))
+        row.addWidget(self.process, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(split)
-        self._rows: list[tuple[str | None, str]] = []  # (deck, rule) per row; deck None: own
-        self._deck_names: list[str] = []
+        layout.setSpacing(0)
+        layout.addLayout(row)
+        layout.addLayout(self.actions)
+        layout.addWidget(self.rules)
+        self._rows: list[str] = []
 
     # -- adding --------------------------------------------------------------
 
@@ -148,40 +125,27 @@ class RulesPanel(_Panel):
     def _show_kinds(self) -> None:
         self.kind_menu().exec(QCursor.pos())
 
-    def _use_deck(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Use a rule deck", "", DECK_FILTER)
-        if path:
-            self._guard(lambda: self.document.process.use_deck(path))
-
-    def _save_as_deck(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save the rules as a rule deck", "", DECK_FILTER
-        )
-        if not path:
-            return
-        if not Path(path).suffix:
-            path += ".yaml"
-        name, ok = QInputDialog.getText(
-            self, "Rule deck", "Name of the deck:", text=Path(path).stem
-        )
-        if ok and name.strip():
-            self._guard(lambda: self.document.process.save_rules_as_deck(path, name.strip()))
+    def _process_chosen(self, index: int) -> None:
+        name = self.process.itemText(index)
+        if name != self.document.project.process_name and not self._guard(
+            lambda: self.document.process.use(name)
+        ):
+            self.refresh()
 
     # -- showing -------------------------------------------------------------
 
     def refresh(self) -> None:
-        process = self.document.project.process
-        self._refresh_decks()
-        rows: list[tuple[str | None, str, Rule]] = [(None, n, r) for n, r in process.rules.items()]
-        for deck_name, use in process.decks.items():
-            rows += [(deck_name, n, use.rule(n)) for n in use.deck.rules]
+        project = self.document.project
+        process, base = project.process, project.base_process
+        self.process.clear()
+        self.process.addItems(project.process_names())
+        self.process.setCurrentText(project.process_name)
         kinds = available_rule_kinds()
-        self._rows = [(deck, name) for deck, name, _ in rows]
+        self._rows = list(process.rules)
         self.rules.blockSignals(True)
-        self.rules.setRowCount(len(rows))
-        for row, (deck, name, rule) in enumerate(rows):
-            shown = f"{deck}.{name}" if deck else name
-            item = QTableWidgetItem(shown)
+        self.rules.setRowCount(len(self._rows))
+        for row, (name, rule) in enumerate(process.rules.items()):
+            item = QTableWidgetItem(name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if rule.enabled else Qt.CheckState.Unchecked)
             item.setToolTip("Untick to turn the rule off")
@@ -195,50 +159,31 @@ class RulesPanel(_Panel):
             self.rules.setItem(row, VALUES, QTableWidgetItem(format_values(rule.values)))
             self.rules.setItem(row, SEVERITY, QTableWidgetItem(rule.severity))
             self.rules.setItem(row, NOTE, QTableWidgetItem(rule.message))
-            override = process.decks[deck].overrides.get(name) if deck else None
-            source = "project" if deck is None else f"{deck} (changed)" if override else deck
+            if base is None:
+                source = "project"
+            elif name not in base.rules:
+                source = "project (added)"
+            elif rule_changes(base.rules[name], rule):
+                source = f"{project.process_name} (changed)"
+            else:
+                source = project.process_name
             self.rules.setItem(row, SOURCE, _readonly(source))
-            reason = QTableWidgetItem(override.reason if override else "")
-            if override is None:  # only a change of a deck rule has a reason
-                reason = _readonly("")
+            own = source == project.process_name or base is None  # nothing to give a reason for
+            reason = _readonly("") if own else QTableWidgetItem(project.reasons.get(name, ""))
             self.rules.setItem(row, REASON, reason)
         self.rules.blockSignals(False)
         # the name column also holds the check box
         header = self.rules.horizontalHeader()
         header.setSectionResizeMode(NAME, QHeaderView.ResizeMode.Interactive)
         metrics = self.rules.fontMetrics()
-        names = [self.rules.item(r, NAME).text() for r in range(len(rows))]
-        widest = max((metrics.horizontalAdvance(n) for n in names), default=40)
+        widest = max((metrics.horizontalAdvance(n) for n in self._rows), default=40)
         self.rules.setColumnWidth(NAME, max(widest, metrics.horizontalAdvance("Rule")) + 48)
-
-    def _refresh_decks(self) -> None:
-        decks = self.document.project.process.decks
-        self._deck_names = list(decks)
-        self.decks.blockSignals(True)
-        self.decks.setRowCount(len(decks))
-        for row, (name, use) in enumerate(decks.items()):
-            self.decks.setItem(row, DECK_NAME, _readonly(name))
-            file_item = _readonly(str(use.deck.path or ""))
-            if use.error:
-                file_item.setText(f"{use.deck.path} — {use.error}")
-            self.decks.setItem(row, DECK_FILE, file_item)
-            values = {**use.deck.parameters, **use.parameters}
-            item = QTableWidgetItem(format_values(values))
-            item.setToolTip(
-                "Set here for this project: "
-                + (format_values(use.parameters) or "nothing")
-                + "\nThe deck's: "
-                + (format_values(use.deck.parameters) or "no parameters")
-            )
-            self.decks.setItem(row, DECK_PARAMETERS, item)
-        self.decks.blockSignals(False)
 
     # -- editing -------------------------------------------------------------
 
     def _rule_changed(self, item: QTableWidgetItem) -> None:
-        deck, name = self._rows[item.row()]
-        process = self.document.project.process
-        rule = process.decks[deck].rule(name) if deck else process.rules[name]
+        name = self._rows[item.row()]
+        rule = self.document.project.process.rules[name]
         text = item.text().strip()
         column = item.column()
 
@@ -259,15 +204,8 @@ class RulesPanel(_Panel):
 
         def apply() -> None:
             edits = self.document.process
-            if deck is not None:
-                if column == REASON:
-                    edits.override_rule(deck, name, {}, reason=text)
-                    return
-                change = changes()
-                if column == NAME and item.text() != f"{deck}.{name}":
-                    raise ValueError("a deck's rules keep their names")
-                change = change.pop("values", None) or change  # values by parameter name
-                edits.override_rule(deck, name, change)
+            if column == REASON:
+                edits.set_reason(name, text)
             elif column == NAME:
                 enabled = changes()["enabled"]
                 if enabled != rule.enabled and text == name:
@@ -280,49 +218,13 @@ class RulesPanel(_Panel):
         if not self._guard(apply):
             self.refresh()
 
-    def _deck_changed(self, item: QTableWidgetItem) -> None:
-        deck = self._deck_names[item.row()]
-        use = self.document.project.process.decks[deck]
-
-        def apply() -> None:
-            given = dict(parse_assignments(item.text()))
-            for name in use.deck.parameters:
-                if name not in given:
-                    value = None  # left out: the deck's own
-                else:
-                    value = parse_value(given[name])
-                    if value == use.deck.parameters[name]:
-                        value = None
-                if value != use.parameters.get(name):
-                    self.document.process.set_deck_parameter(deck, name, value)
-            unknown = sorted(set(given) - set(use.deck.parameters))
-            if unknown:
-                raise ValueError(f"rule deck '{deck}' has no parameter '{unknown[0]}'")
-
-        if not self._guard(apply):
-            self.refresh()
-
     def _selected_rows(self, table) -> list[int]:
         return sorted({i.row() for i in table.selectedItems()}, reverse=True)
 
     def _remove_rules(self) -> None:
         for row in self._selected_rows(self.rules):
-            deck, name = self._rows[row]
-            if deck is not None:
-                self.error.emit(f"{deck}.{name} belongs to the rule deck: untick it to turn it off")
-                continue
-            self._guard(lambda n=name: self.document.process.remove_rule(n))
+            self._guard(lambda n=self._rows[row]: self.document.process.remove_rule(n))
 
     def _reset_rules(self) -> None:
         for row in self._selected_rows(self.rules):
-            deck, name = self._rows[row]
-            if deck is not None:
-                self._guard(lambda d=deck, n=name: self.document.process.reset_rule(d, n))
-
-    def _reload_decks(self) -> None:
-        for row in self._selected_rows(self.decks):
-            self._guard(lambda n=self._deck_names[row]: self.document.process.reload_deck(n))
-
-    def _remove_decks(self) -> None:
-        for row in self._selected_rows(self.decks):
-            self._guard(lambda n=self._deck_names[row]: self.document.process.remove_deck(n))
+            self._guard(lambda n=self._rows[row]: self.document.process.reset_rule(n))

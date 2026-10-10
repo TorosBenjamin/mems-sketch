@@ -1,0 +1,34 @@
+description: Square plate with a grid of round release holes
+parameters:
+  size: {default: 160, min: 10, description: Edge length (µm)}
+  pitch: {default: 20, min: 2, description: Hole pitch (µm)}
+  hole_r:
+    default: pitch / 6
+    min: 0.5
+    internal: true
+    description: Hole radius (µm), follows the pitch
+shapes:
+  plate:
+    kind: boolean
+    op: subtract
+    a:
+      outline:
+        kind: rect
+        layer: device
+        x0: -size/2
+        y0: -size/2
+        x1: size/2
+        y1: size/2
+    b:
+      holes:
+        kind: circle
+        layer: device
+        x: -size/2 + pitch/2
+        y: -size/2 + pitch/2
+        radius: hole_r
+        modifiers:
+        - kind: array
+          columns: floor(size/pitch)
+          rows: floor(size/pitch)
+          dx: pitch
+          dy: pitch

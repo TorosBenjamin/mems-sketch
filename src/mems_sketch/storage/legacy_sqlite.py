@@ -2,7 +2,8 @@
 
 These files are read-only now; open one and save it as a project folder.
 Global variables become parameters of the top component, and the top-level
-shapes (or v1/v2 instances) become its shapes.
+shapes (or v1/v2 instances) become its shapes. The retired ``rectangle``
+component becomes a ``rect`` in a transform where it was placed.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pydantic import TypeAdapter
 
 from mems_sketch.core.process import Layer, layer_rules
 from mems_sketch.core.project import Project
-from mems_sketch.core.shapes import RefShape, Shape
+from mems_sketch.core.shapes import RectShape, RefShape, Shape, TransformShape
 from mems_sketch.core.user_component import ComponentDef, ParamDef
 
 READABLE_VERSIONS = {1, 2, 3}
@@ -57,6 +58,8 @@ def load_legacy(path: str | Path) -> Project:
             top.shapes.extend(_SHAPE.validate_json(definition) for (definition,) in rows)
         else:
             top.shapes.extend(_legacy_instances(conn))
+        for definition in project.components.values():
+            definition.shapes = [_without_rectangles(shape) for shape in definition.shapes]
         return project
     finally:
         conn.close()
@@ -78,3 +81,34 @@ def _legacy_instances(conn: sqlite3.Connection) -> list[Shape]:
         )
         for name, component, params, x, y, rotation, mirror_x in rows
     ]
+
+
+def _without_rectangles(shape: Shape) -> Shape:
+    """``shape`` with every placement of the retired ``rectangle`` component (a
+    centred width × height rectangle on a layer) made a rect in a transform."""
+    if isinstance(shape, RefShape) and shape.component == "rectangle":
+        params = shape.params
+        w, h = params.get("width", 100.0), params.get("height", 50.0)
+        half_w, half_h = (f"({v}) / 2" if isinstance(v, str) else v / 2 for v in (w, h))
+        negative = (f"-{v}" if isinstance(v, str) else -v for v in (half_w, half_h))
+        x0, y0 = negative
+        rect = RectShape(
+            layer=str(params.get("layer", "device")), x0=x0, y0=y0, x1=half_w, y1=half_h
+        )
+        return TransformShape(
+            name=shape.name,
+            children=[rect],
+            x=shape.x,
+            y=shape.y,
+            rotation=shape.rotation,
+            mirror_x=shape.mirror_x,
+            modifiers=shape.modifiers,
+            align=shape.align,
+            enabled=shape.enabled,
+        )
+    fields = type(shape).child_fields
+    if not fields:
+        return shape
+    return shape.model_copy(
+        update={f: [_without_rectangles(child) for child in getattr(shape, f)] for f in fields}
+    )

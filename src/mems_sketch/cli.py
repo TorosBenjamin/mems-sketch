@@ -1,4 +1,4 @@
-"""Command-line interface to the compiler: project files in, results out.
+"""Command-line interface to the engine: project files in, results out.
 
     mems-sketch-cli new     my_project
     mems-sketch-cli info    my_project
@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from mems_sketch.core.component import Geometry
+from mems_sketch.core.process import changes_between
 from mems_sketch.core.project import Project, new_project
 from mems_sketch.engine import Build, Engine
 from mems_sketch.export.base import (
@@ -151,6 +152,19 @@ def _info(args: argparse.Namespace) -> int:
     project = load(args.project)
     kind = f"top: {project.top}" if project.top else "library, no top component"
     print(f"project {project.name} ({kind})")
+    for note in project.load_notes:
+        print(f"note: {note}")
+    print(f"process: {project.process_name}")
+    if project.base_process is not None:
+        constants, changed, added = changes_between(project.base_process, project.process)
+        for name, value in constants.items():
+            print(f"  changed process.{name} = {value}")
+        for name in [*changed, *added]:
+            reason = project.reasons.get(name)
+            print(
+                f"  {'changed' if name in changed else 'added'} rule {name}"
+                + (f": {reason}" if reason else "")
+            )
     print("layers:")
     for layer in project.layers.values():
         print(f"  {layer.name:<12} gds {layer.gds_layer}/{layer.gds_datatype}")
@@ -158,18 +172,6 @@ def _info(args: argparse.Namespace) -> int:
         print("rules:")
     for rule in project.process.rules.values():
         _print_rule(rule.name, rule)
-    for deck_name, use in project.process.decks.items():
-        print(f"rule deck {deck_name}: {use.deck.path}{'  ' + use.error if use.error else ''}")
-        for name, value in use.parameters.items():
-            print(
-                f"  {name} = {_number(value)}  (the deck's: {_number(use.deck.parameters[name])})"
-            )
-        for name in use.deck.rules:
-            override = use.overrides.get(name)
-            reason = f": {override.reason}" if override and override.reason else ""
-            _print_rule(
-                f"{deck_name}.{name}", use.rule(name), "  changed" + reason if override else ""
-            )
     if project.process.constants:
         print("process constants:")
         for name, value in project.process.constants.items():

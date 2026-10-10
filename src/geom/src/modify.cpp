@@ -76,6 +76,7 @@ struct FaceCorner {
     gp_Pnt point;
     bool convex;
     double turn;  // radians, positive to the left seen from +z
+    gp_Vec in, out;  // unit directions of the boundary arriving and leaving
 };
 
 std::vector<FaceCorner> corners_of(const TopoDS_Face& face) {
@@ -112,7 +113,7 @@ std::vector<FaceCorner> corners_of(const TopoDS_Face& face) {
                 1.0, 1e-3 * std::min(edge_length(edges[k]), edge_length(edges[(k + n - 1) % n])));
             const gp_Pnt probe = p.Translated(bisector * step);
             BRepClass_FaceClassifier inside(face, probe, Precision::Confusion());
-            result.push_back({starts[k], p, inside.State() == TopAbs_IN, turn});
+            result.push_back({starts[k], p, inside.State() == TopAbs_IN, turn, in.Normalized(), out.Normalized()});
         }
     }
     return result;
@@ -121,11 +122,11 @@ std::vector<FaceCorner> corners_of(const TopoDS_Face& face) {
 // --- Offset ---------------------------------------------------------------
 
 // A single closed boundary, offset as a face of its own: outwards (it
-// encloses more) for distance > 0. The result is the boundaries of what the
-// offset encloses; none when it shrinks away.
-std::vector<TopoDS_Wire> offset_loop(const TopoDS_Wire& wire, double distance_nm, Join join) {
+// encloses more) for distance > 0, with round joins. The result is the
+// boundaries of what the offset encloses; none when it shrinks away.
+std::vector<TopoDS_Wire> offset_loop(const TopoDS_Wire& wire, double distance_nm) {
     const TopoDS_Face face = BRepBuilderAPI_MakeFace(wire, /*OnlyPlane=*/true).Face();
-    BRepOffsetAPI_MakeOffset offset(face, join == Join::miter ? GeomAbs_Intersection : GeomAbs_Arc);
+    BRepOffsetAPI_MakeOffset offset(face, GeomAbs_Arc);
     try {
         offset.Perform(distance_nm);
     } catch (const Standard_Failure&) {
@@ -140,44 +141,48 @@ std::vector<TopoDS_Wire> offset_loop(const TopoDS_Wire& wire, double distance_nm
     for (TopExp_Explorer w(offset.Shape(), TopAbs_WIRE); w.More(); w.Next()) {
         loops.push_back(TopoDS::Wire(w.Current()));
     }
-    if (join != Join::bevel) return loops;
+    return loops;
+}
 
-    // A bevel is the round join with each joining arc replaced by its chord.
-    // The joining arcs are those of the offset's radius around a vertex of
-    // the original boundary.
-    std::vector<gp_Pnt> vertices;
-    for (TopExp_Explorer v(wire, TopAbs_VERTEX); v.More(); v.Next()) {
-        vertices.push_back(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())));
-    }
-    const double r = std::abs(distance_nm);
-    std::vector<TopoDS_Wire> bevelled;
-    for (const TopoDS_Wire& loop : loops) {
-        BRepBuilderAPI_MakeWire make;
-        for (BRepTools_WireExplorer e(loop); e.More(); e.Next()) {
-            const TopoDS_Edge& edge = e.Current();
-            BRepAdaptor_Curve curve(edge);
-            bool joint = false;
-            if (curve.GetType() == GeomAbs_Circle && std::abs(curve.Circle().Radius() - r) < 1e-6 * r) {
-                const gp_Pnt c = curve.Circle().Location();
-                for (const gp_Pnt& v : vertices) {
-                    if (c.Distance(v) < 1e-6 * r) {
-                        joint = true;
-                        break;
-                    }
-                }
-            }
-            if (!joint) {
-                make.Add(edge);
-                continue;
-            }
-            TopoDS_Vertex v1, v2;
-            TopExp::Vertices(edge, v1, v2, /*CumOri=*/true);
-            make.Add(BRepBuilderAPI_MakeEdge(v1, v2).Edge());
+// Every point within d (nm) of a face's boundary: a band along each edge (a
+// rectangle along a line, a ring sector along an arc) and a disk at each end.
+// Built from simple shapes, so it does not fail where an offset collapses
+// (a hole shrinking to nothing): the face grown by d is the face and this.
+Region boundary_band(const TopoDS_Face& face, double d) {
+    const double du = d / kNmPerUm;
+    std::vector<Region> parts;
+    for (TopExp_Explorer e(face, TopAbs_EDGE); e.More(); e.Next()) {
+        const TopoDS_Edge& edge = TopoDS::Edge(e.Current());
+        BRepAdaptor_Curve curve(edge);
+        TopoDS_Vertex v1, v2;
+        TopExp::Vertices(edge, v1, v2);
+        const Point p = from_occ(BRep_Tool::Pnt(v1)), q = from_occ(BRep_Tool::Pnt(v2));
+        parts.push_back(Region::circle(p, du));
+        if (curve.GetType() == GeomAbs_Line) {
+            const double dx = q.x - p.x, dy = q.y - p.y, length = std::hypot(dx, dy);
+            if (length == 0) continue;
+            const double nx = -dy / length * du, ny = dx / length * du;
+            const Point band[] = {{p.x + nx, p.y + ny}, {q.x + nx, q.y + ny}, {q.x - nx, q.y - ny}, {p.x - nx, p.y - ny}};
+            parts.push_back(Region::polygon(band));
+        } else if (curve.GetType() == GeomAbs_Circle) {
+            const gp_Circ circle = curve.Circle();
+            const Point c = from_occ(circle.Location());
+            const double radius = circle.Radius() / kNmPerUm;
+            auto angle = [&](const Point& at) { return std::atan2(at.y - c.y, at.x - c.x) * 180 / std::numbers::pi; };
+            // Sweep counter-clockwise from p to q, or from q to p: the way that
+            // passes the edge's middle.
+            const Point mid = from_occ(curve.Value((curve.FirstParameter() + curve.LastParameter()) / 2));
+            double from = angle(p), to = angle(q), middle = angle(mid);
+            auto ccw = [](double a, double b) { return std::fmod(std::fmod(b - a, 360.0) + 360.0, 360.0); };
+            if (ccw(from, middle) > ccw(from, to)) std::swap(from, to);
+            double sweep = ccw(from, to);
+            if (sweep == 0) sweep = 360;  // a full circle
+            parts.push_back(Region::arc(c, std::max(0.0, radius - du), radius + du, from, from + sweep));
+        } else {
+            throw GeometryError("cannot offset a boundary that is neither lines nor arcs");
         }
-        if (!make.IsDone()) throw GeometryError("cannot bevel the corners of an offset");
-        bevelled.push_back(make.Wire());
     }
-    return bevelled;
+    return Region::unite(parts);
 }
 
 Region region_of_loop(const TopoDS_Wire& wire) {
@@ -198,6 +203,15 @@ Region enclosed(const std::vector<TopoDS_Wire>& loops) {
 Region Region::offset(double distance, Join join) const {
     if (!std::isfinite(distance)) throw GeometryError("an offset needs a finite distance");
     if (empty() || distance == 0.0) return *this;
+    if (distance < 0) {
+        // Shrinking is growing the outside: what stays is what the grown outside
+        // does not reach. The shape's concave corners are the outside's convex
+        // ones, and get the same joins.
+        const Box box = bbox();
+        const double margin = 2 * std::abs(distance) + 1.0;
+        const Region frame = rect(box.x0 - margin, box.y0 - margin, box.x1 + margin, box.y1 + margin);
+        return *this - (frame - *this).offset(-distance, join);
+    }
     const double d = distance * kNmPerUm;
     std::vector<Region> pieces;
     for (const TopoDS_Face& face : faces_of(copied(impl_->shape))) {
@@ -206,13 +220,40 @@ Region Region::offset(double distance, Join join) const {
         for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) {
             if (!w.Current().IsSame(outer)) holes.push_back(TopoDS::Wire(w.Current()));
         }
-        // The outer boundary moves by d; each hole's by -d (material grows
-        // into holes as it grows outwards).
-        Region piece = enclosed(offset_loop(outer, d, join));
-        for (const TopoDS_Wire& hole : holes) {
-            piece = piece - enclosed(offset_loop(hole, -d, join));
+        // The round offset: the outer boundary moves out by d, each hole's in
+        // (material grows into holes as it grows outwards).
+        Region piece = enclosed(offset_loop(outer, d));
+        for (const TopoDS_Wire& hole : holes) piece = piece - enclosed(offset_loop(hole, -d));
+        if (!piece.valid()) {  // an offset that collapsed (a hole shrinking to nothing)
+            piece = RegionAccess::make(compound_of({face})) | boundary_band(face, d);
         }
         pieces.push_back(piece);
+        if (join == Join::round) continue;
+        // Each convex corner filled out beyond the round join: up to the point
+        // where the offset edges meet (miter, for a turn of up to 90°); else
+        // with the edges running on by d and joined straight (miter), or cut
+        // straight across at d from the corner (bevel). Pieces from the
+        // original corners, so the union is right however the joins overlap.
+        for (const FaceCorner& corner : corners_of(face)) {
+            if (!corner.convex) continue;
+            const gp_Vec inside = (corner.out - corner.in);  // into the material, roughly
+            gp_Vec n_in(corner.in.Y(), -corner.in.X(), 0), n_out(corner.out.Y(), -corner.out.X(), 0);
+            if (n_in.Dot(inside) > 0) n_in.Reverse();  // outwards
+            if (n_out.Dot(inside) > 0) n_out.Reverse();
+            const double turn = std::abs(corner.turn);
+            const gp_Pnt v = corner.point;
+            const gp_Pnt a = v.Translated(n_in * d), b = v.Translated(n_out * d);
+            std::vector<Point> patch = {from_occ(v), from_occ(a)};
+            if (join == Join::miter && turn <= std::numbers::pi / 2 + 1e-9) {
+                patch.push_back(from_occ(a.Translated(corner.in * (d * std::tan(turn / 2)))));
+            } else {
+                const double run = join == Join::miter ? d : d * std::tan(turn / 4);
+                patch.push_back(from_occ(a.Translated(corner.in * run)));
+                patch.push_back(from_occ(b.Translated(corner.out * -run)));
+            }
+            patch.push_back(from_occ(b));
+            pieces.push_back(polygon(patch));
+        }
     }
     return unite(pieces);
 }

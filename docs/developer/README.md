@@ -3,7 +3,7 @@
 For working on mems-sketch, or using it from code. For using the editor, see
 the [user guide](../user/README.md).
 
-1. **[Architecture](architecture.md)**: backend and frontends, the compiler
+1. **[Architecture](architecture.md)**: backend and frontends, the engine
    and its cache, editing sessions, the package layout.
 2. **[Python API](scripting.md)**: building and changing projects from
    scripts, and from MATLAB.

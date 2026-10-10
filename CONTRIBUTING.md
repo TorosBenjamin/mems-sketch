@@ -63,8 +63,13 @@ tested against the latest `development`.
    changes).
 
 5. **Merge when CI is green and the branch is up to date.** GitHub requires
-   both: CI (lint and tests on Python 3.11 and 3.12) must pass, and the
-   branch must contain the latest `development`. If `development` moved on,
+   both: the **CI** check must pass, and the branch must contain the latest
+   `development`. CI runs only what the change can affect
+   (`.github/scripts/changed_areas.py`): a change to the GUI runs the GUI's
+   tests, one to the Python package all Python tests, one to the engine or
+   the geometry library also their C++ builds and tests, and one to the
+   documentation alone runs nothing. Its last job, **CI**, passes when
+   everything that ran passed. If `development` moved on,
    bring it in and let CI run again:
 
    ```bash

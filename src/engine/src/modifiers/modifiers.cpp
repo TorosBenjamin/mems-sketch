@@ -63,7 +63,7 @@ Variables with_self(const Json& modifier, const Result& own, const Variables& va
                     const std::vector<std::string>& extra_names) {
     const auto names = self_names(modifier, extra_names);
     if (names.empty()) return variables;
-    const Points self{"self", bbox_of(own.layers), own.points, {}};
+    const Points self{"self", bbox_of(own.layers, own.instances), own.points, {}};
     Variables result = variables;
     for (const auto& name : names) {
         const size_t dot = name.rfind('.');
@@ -76,7 +76,7 @@ Variables with_self(const Json& modifier, const Result& own, const Variables& va
 mgeom::Point point_of(const std::string& reference, const Result& own, const Scope& scope, const std::string& what) {
     const std::string node = reference.substr(0, reference.find('.'));
     const std::string point = reference.substr(reference.find('.') + 1);
-    if (node == "self") return Points{"self", bbox_of(own.layers), own.points, {}}.point(point);
+    if (node == "self") return Points{"self", bbox_of(own.layers, own.instances), own.points, {}}.point(point);
     const auto found = scope.find(node);
     if (found == scope.end()) throw BuildError(what + ": no shape named '" + node + "' is visible");
     return found->second.point(point);

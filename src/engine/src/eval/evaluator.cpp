@@ -126,6 +126,7 @@ mgeom::Transform alignment(const Json& node, const Points& own, const Variables&
 
 struct NodeResult {
     Layers layers;
+    Instances instances;
     Points points;
     mgeom::Transform shift, inner;  // its alignment's move; the frame of its children
 };
@@ -159,13 +160,15 @@ NodeResult render_node(const Json& node, Builder& builder, const std::string& co
     first["i"] = 0.0;
     first["j"] = 0.0;
     Result made = produce(first);
-    NodeResult result{std::move(made.layers), Points{label_of(node), {}, std::move(made.points), {}}, {}, {}};
-    result.points.box = bbox_of(result.layers);
+    NodeResult result{std::move(made.layers), std::move(made.instances),
+                      Points{label_of(node), {}, std::move(made.points), {}}, {}, {}};
+    result.points.box = bbox_of(result.layers, result.instances);
     if (node.contains("align") && !node["align"].is_null()) {
         result.shift = alignment(node, result.points, first, scope, builder, component);
         for (auto& [layer, region] : result.layers) region = region.transformed(result.shift);
+        result.instances = placed(result.instances, result.shift);
         for (auto& [name, point] : result.points.declared) point = result.shift.apply(point);
-        result.points.box = bbox_of(result.layers);
+        result.points.box = bbox_of(result.layers, result.instances);
     }
     if (builder.recording()) result.inner = result.shift * placement_of(node, Context{builder, component, first, scope});
     return result;
@@ -214,15 +217,69 @@ Points Points::seen_through(const mgeom::Transform& t) const {
     return result;
 }
 
+namespace {
+
+void include(mgeom::Box& box, const mgeom::Box& b) {
+    if (b.empty()) return;
+    box.x0 = std::min(box.x0, b.x0), box.y0 = std::min(box.y0, b.y0);
+    box.x1 = std::max(box.x1, b.x1), box.y1 = std::max(box.y1, b.y1);
+}
+
+// Whether a transform keeps boxes boxes: quarter turns (and mirrors, scales).
+bool keeps_boxes(const mgeom::Transform& t) {
+    const double turns = t.angle_deg / 90.0;
+    return std::abs(turns - std::nearbyint(turns)) < 1e-12;
+}
+
+}  // namespace
+
 mgeom::Box bbox_of(const Layers& layers) {
     mgeom::Box box;
-    for (const auto& [layer, region] : layers) {
-        const mgeom::Box b = region.bbox();
-        if (b.empty()) continue;
-        box.x0 = std::min(box.x0, b.x0), box.y0 = std::min(box.y0, b.y0);
-        box.x1 = std::max(box.x1, b.x1), box.y1 = std::max(box.y1, b.y1);
+    for (const auto& [layer, region] : layers) include(box, region.bbox());
+    return box;
+}
+
+mgeom::Box box_of(const Instance& instance) {
+    const mgeom::Box& b = instance.built->box;
+    if (b.empty()) return b;
+    if (!keeps_boxes(instance.transform)) {  // turned by another angle: the box of the turned geometry
+        mgeom::Box box;
+        for (const auto& [layer, region] : instance.built->flat()) include(box, region.transformed(instance.transform).bbox());
+        return box;
+    }
+    mgeom::Box box;
+    for (const mgeom::Point& corner : {mgeom::Point{b.x0, b.y0}, mgeom::Point{b.x1, b.y0}, mgeom::Point{b.x1, b.y1},
+                                       mgeom::Point{b.x0, b.y1}}) {
+        const mgeom::Point p = instance.transform.apply(corner);
+        include(box, mgeom::Box{p.x, p.y, p.x, p.y});
     }
     return box;
+}
+
+mgeom::Box bbox_of(const Layers& layers, const Instances& instances) {
+    mgeom::Box box = bbox_of(layers);
+    for (const auto& instance : instances) include(box, box_of(instance));
+    return box;
+}
+
+Instances placed(const Instances& instances, const mgeom::Transform& t) {
+    Instances result;
+    result.reserve(instances.size());
+    for (const auto& instance : instances) result.push_back({instance.built, t * instance.transform});
+    return result;
+}
+
+Layers flatten(const Layers& own, const Instances& instances) {
+    LayerSet set;
+    set.add(own);
+    for (const auto& instance : instances)
+        for (const auto& [layer, region] : instance.built->flat()) set.add(layer, region.transformed(instance.transform));
+    return set.merged();
+}
+
+const Layers& Built::flat() const {
+    std::call_once(flat_once_, [this] { flat_ = instances.empty() ? layers : flatten(layers, instances); });
+    return flat_;
 }
 
 // -- Context and LayerSet ---------------------------------------------------------
@@ -261,7 +318,15 @@ double Context::number(const Json& node, const char* key) const {
 }
 
 std::vector<Layers> Context::children(const std::vector<const Json*>& lists, const Scope* replaced) const {
-    return render_lists(lists, builder, component, variables, replaced ? *replaced : scope).layers;
+    Rendered rendered = render_lists(lists, builder, component, variables, replaced ? *replaced : scope);
+    for (size_t k = 0; k < rendered.layers.size(); ++k)
+        if (!rendered.instances[k].empty()) rendered.layers[k] = flatten(rendered.layers[k], rendered.instances[k]);
+    return std::move(rendered.layers);
+}
+
+Result Context::parts(const Json& list, const Scope* replaced) const {
+    Rendered rendered = render_lists({&list}, builder, component, variables, replaced ? *replaced : scope);
+    return {std::move(rendered.layers.front()), {}, std::move(rendered.instances.front())};
 }
 
 void LayerSet::add(const Layers& layers) {
@@ -299,6 +364,7 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
         }
     }
     std::vector<std::optional<Layers>> results(entries.size());
+    std::vector<Instances> placements(entries.size());
     std::vector<bool> visiting(entries.size(), false);
     Rendered rendered;
 
@@ -326,23 +392,29 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
             throw BuildError("'" + label_of(node) + "': " + error.what());
         }
         if (Records* records = builder.recording(); records && !records->count(path))
-            records->emplace(path, NodeRecord{result.layers, result.points.name, result.points.declared, result.inner,
-                                              result.shift});
+            records->emplace(path, NodeRecord{result.layers, result.instances, result.points.name,
+                                              result.points.declared, result.inner, result.shift});
         visiting[k] = false;
         results[k] = std::move(result.layers);
+        placements[k] = std::move(result.instances);
         if (const std::string name = name_of(node); !name.empty()) rendered.local.insert_or_assign(name, std::move(result.points));
     };
     for (size_t k = 0; k < entries.size(); ++k) visit(k);
 
     std::vector<LayerSet> sets(lists.size());
-    for (size_t k = 0; k < entries.size(); ++k) sets[entries[k].slot].add(*results[k]);
+    rendered.instances.resize(lists.size());
+    for (size_t k = 0; k < entries.size(); ++k) {
+        sets[entries[k].slot].add(*results[k]);
+        auto& into = rendered.instances[entries[k].slot];
+        into.insert(into.end(), placements[k].begin(), placements[k].end());
+    }
     for (const auto& set : sets) rendered.layers.push_back(set.merged());
     return rendered;
 }
 
 // -- the builder ------------------------------------------------------------------
 
-const Built& Builder::build(std::string_view component, const Values& params) {
+std::shared_ptr<const Built> Builder::build(std::string_view component, const Values& params) {
     const std::string qualified = project_.qualify(component);
     const ComponentDef* definition = project_.definition(qualified);
     return build_on(qualified, params, project_.top_level(definition ? definition->level : std::nullopt));
@@ -363,7 +435,8 @@ mgeom::Region region_of(const ImportedPolygon& polygon) {
 
 }  // namespace
 
-const Built& Builder::build_on(const std::string& qualified, const Values& params, const OptionalLevel& level) {
+std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, const Values& params,
+                                              const OptionalLevel& level) {
     const ComponentDef* definition = project_.definition(qualified);
     if (!definition) {
         const ImportedGeometry* geometry = project_.imported(qualified);
@@ -373,7 +446,11 @@ const Built& Builder::build_on(const std::string& qualified, const Values& param
         LayerSet layers;
         for (const auto& [layer, polygons] : *geometry)
             for (const auto& polygon : polygons) layers.add(layer, region_of(polygon));
-        return imported_.emplace(qualified, Built{layers.merged(), {}}).first->second;
+        auto built = std::make_shared<Built>();
+        built->key = "import:" + project_.fingerprint(qualified);
+        built->layers = layers.merged();
+        built->box = bbox_of(built->layers);
+        return imported_.emplace(qualified, std::move(built)).first->second;
     }
     // What it places is never recorded: records are of one component's own nodes.
     struct Nested {
@@ -392,7 +469,7 @@ const Built& Builder::build_on(const std::string& qualified, const Values& param
         std::snprintf(buffer, sizeof buffer, "%.17g", value);
         key += "|" + name + "=" + buffer;
     }
-    if (const Built* found = cache_->find(key)) return *found;
+    if (auto found = cache_->find(key)) return found;
     struct Restore {  // the level of the component that placed this one, after it
         OptionalLevel& level;
         OptionalLevel saved;
@@ -403,8 +480,13 @@ const Built& Builder::build_on(const std::string& qualified, const Values& param
     Rendered rendered = render_lists({&definition->shapes->json}, *this, qualified, variables, Scope{});
 
     // Its declared points, measured from its top-level shapes or its own box.
-    Built built{std::move(rendered.layers.front()), {}};
-    const Points whole{definition->name, bbox_of(built.layers), {}, {}};
+    auto made = std::make_shared<Built>();
+    Built& built = *made;
+    built.key = key;
+    built.layers = std::move(rendered.layers.front());
+    built.instances = std::move(rendered.instances.front());
+    built.box = bbox_of(built.layers, built.instances);
+    const Points whole{definition->name, built.box, {}, {}};
     Variables first = variables;
     first["i"] = 0.0;
     first["j"] = 0.0;
@@ -426,19 +508,19 @@ const Built& Builder::build_on(const std::string& qualified, const Values& param
         }
         built.points[name] = {base.x + ctx.number(point, "x", 0.0), base.y + ctx.number(point, "y", 0.0)};
     }
-    return cache_->put(key, std::move(built));
+    return cache_->put(std::move(made));
 }
 
-const Built* BuildCache::find(const std::string& key) const {
+std::shared_ptr<const Built> BuildCache::find(const std::string& key) const {
     const auto found = built_.find(key);
-    return found == built_.end() ? nullptr : &found->second;
+    return found == built_.end() ? nullptr : found->second;
 }
 
-const Built& BuildCache::put(const std::string& key, Built built) {
-    // Past the limit, start again: what is in use is built again as it is asked for.
-    // (Only between builds: what a build in progress holds stays.)
+std::shared_ptr<const Built> BuildCache::put(std::shared_ptr<const Built> built) {
+    // Past the limit, start again: what is in use is built again as it is asked for
+    // (what is still placed somewhere stays alive with its instances).
     if (built_.size() >= max_entries_) built_.clear();
-    return built_.insert_or_assign(key, std::move(built)).first->second;
+    return built_.insert_or_assign(built->key, std::move(built)).first->second;
 }
 
 Records Builder::records(std::string_view component, const Values& params, std::string* error) {

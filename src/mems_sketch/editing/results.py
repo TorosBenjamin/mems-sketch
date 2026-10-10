@@ -110,14 +110,15 @@ class Results:
         return result
 
     def highlight(self, paths: list[NodePath], component: str | None = None) -> Geometry | None:
-        """Outline geometry of the given nodes, placed as they appear in the component."""
+        """Outline geometry of the given nodes, placed as they appear in the component
+        (what they place stays placed, not flattened)."""
         record = self.inspection(component)
         result = Geometry()
         for path in paths:
             if path not in record:
                 continue
             result.merge(record[path].geometry, frame_of(record, path))
-        return None if result.is_empty() else result.merged()
+        return None if result.is_empty() else result
 
     def pieces(self, path: NodePath, component: str | None = None) -> int:
         """How many separate pieces a node's geometry has (all layers together), e.g.

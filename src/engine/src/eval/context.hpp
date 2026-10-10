@@ -33,10 +33,15 @@ struct Points {
 
 using Scope = std::map<std::string, Points, std::less<>>;
 
-// What one copy of a node makes: geometry, and the points it declares.
+// What one copy of a node makes: its own geometry, the components it places
+// whole, and the points it declares.
 struct Result {
     Layers layers;
     PointMap points;
+    Instances instances;
+
+    // Everything flattened, for operations that work on the geometry.
+    Layers flat() const { return instances.empty() ? layers : flatten(layers, instances); }
 };
 
 struct Context {
@@ -56,9 +61,14 @@ struct Context {
     std::string layer(const Json& node) const { return builder.layer(node.value("layer", std::string("level"))); }
 
     // Sibling child lists evaluated together (names in one are visible in the
-    // others), each merged per layer; ``scope`` replaces the visible points.
+    // others), each flattened and merged per layer; ``scope`` replaces the
+    // visible points.
     std::vector<Layers> children(const std::vector<const Json*>& lists, const Scope* scope = nullptr) const;
     Layers children(const Json& list) const { return children({&list}).front(); }
+
+    // One child list as it is: own geometry merged per layer, and the
+    // components placed whole in it (for what passes them on, a transform).
+    Result parts(const Json& list, const Scope* scope = nullptr) const;
 };
 
 // Collects regions per layer and unites them once at the end.
@@ -74,10 +84,14 @@ private:
 
 mgeom::Box bbox_of(const Layers& layers);
 
+// Instances moved, rotated or mirrored: ``t`` applied after their own placement.
+Instances placed(const Instances& instances, const mgeom::Transform& t);
+
 // Sibling lists evaluated in the order their alignments need; their geometry,
 // merged per list, and the points of their named nodes.
 struct Rendered {
     std::vector<Layers> layers;
+    std::vector<Instances> instances;  // per list, what it places whole
     Scope local;
 };
 Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, const std::string& component,

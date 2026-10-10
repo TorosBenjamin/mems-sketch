@@ -1,6 +1,7 @@
 // A placed component (mems_sketch.core.shapes.kinds.ref): built with the
 // parameter values the reference gives (expressions over the placing
-// component's values), then moved, rotated and mirrored.
+// component's values), and placed whole: an instance of what was built,
+// moved, rotated and mirrored.
 #include <algorithm>
 
 #include "kinds.hpp"
@@ -41,10 +42,10 @@ Result render_ref(const Json& node, const Context& ctx) {
                                                                                     : node["component"].get<std::string>();
         throw BuildError("'" + name + "': " + error.what());
     }
-    const Built& built = ctx.builder.build_on(target, values, level);
+    auto built = ctx.builder.build_on(target, values, level);
     Result result;
-    for (const auto& [layer, region] : built.layers) result.layers.emplace(layer, region.transformed(placement));
-    for (const auto& [name, point] : built.points) result.points.emplace(name, placement.apply(point));
+    for (const auto& [name, point] : built->points) result.points.emplace(name, placement.apply(point));
+    result.instances.push_back({std::move(built), placement});
     return result;
 }
 

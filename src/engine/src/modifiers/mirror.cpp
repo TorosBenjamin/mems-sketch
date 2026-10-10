@@ -56,9 +56,16 @@ Result apply_mirror(const Json& modifier, const Produce& produce, const Variable
         }
     }
     LayerSet layers;
-    if (modifier.value("keep", true)) layers.add(original.layers);
-    for (const auto& image : images) layers.add(placed(original.layers, image));
-    return {layers.merged(), original.points};
+    Instances instances;
+    if (modifier.value("keep", true)) {
+        layers.add(original.layers);
+        instances = original.instances;
+    }
+    for (const auto& image : images) {
+        layers.add(placed(original.layers, image));
+        for (auto& instance : placed(original.instances, image)) instances.push_back(std::move(instance));
+    }
+    return {layers.merged(), original.points, std::move(instances)};
 }
 
 }  // namespace mems

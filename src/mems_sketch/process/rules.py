@@ -80,6 +80,12 @@ def register_rule_kind(cls: type[RuleKind]) -> type[RuleKind]:
     return cls
 
 
+def registered_at_runtime() -> bool:
+    """Whether a rule kind was registered with :func:`register_rule_kind` (only
+    this process knows it: rules are then checked here)."""
+    return bool(_runtime)
+
+
 def available_rule_kinds() -> dict[str, type[RuleKind]]:
     from mems_sketch.process import rule_kinds
 

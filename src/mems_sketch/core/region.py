@@ -51,6 +51,13 @@ class IntPolygon:
         yield self.hull
         yield self.holes
 
+    def __getstate__(self) -> tuple:
+        return self.hull, self.holes  # not the edges: worked out again when needed
+
+    def __setstate__(self, state: tuple) -> None:
+        self.hull, self.holes = state
+        self._edges = None
+
     def __getitem__(self, index: int):
         return (self.hull, self.holes)[index]
 

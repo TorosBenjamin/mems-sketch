@@ -15,10 +15,10 @@ Result render_transform(const Json& node, const Context& ctx) {
     const mgeom::Transform inverse = placement.inverted();
     for (const auto& [name, points] : ctx.scope) inner.emplace(name, points.seen_through(inverse));
     const Json children = node.value("children", Json::array());
-    const std::vector<Layers> lists = ctx.children({&children}, &inner);  // kept: the loop reads it
+    const Result parts = ctx.parts(children, &inner);  // what it places whole stays placed
     Layers result;
-    for (const auto& [layer, region] : lists.front()) result.emplace(layer, region.transformed(placement));
-    return {result, {}};
+    for (const auto& [layer, region] : parts.layers) result.emplace(layer, region.transformed(placement));
+    return {result, {}, placed(parts.instances, placement)};
 }
 
 }  // namespace mems

@@ -249,7 +249,7 @@ def test_points_and_alignment_round_trip(tmp_path):
     project.add(Instance("c1", "c"))
     project.add(metal("pad", 0, 0, 2, 2, align=Align(point="left", to="c1.tip", dx=1)))
     save(project, tmp_path / "p")
-    text = (tmp_path / "p" / "components" / "top.yaml").read_text()
+    text = (tmp_path / "p" / "components" / "top" / "component.yaml").read_text()
     assert "align: {point: left, to: c1.tip, dx: 1}" in text or "to: c1.tip" in text
     again = load(tmp_path / "p")
     assert moved(again) == moved(project) == [(11, 3, 13, 5)]

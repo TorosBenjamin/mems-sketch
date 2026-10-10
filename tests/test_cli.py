@@ -27,7 +27,7 @@ def resonator(tmp_path) -> Path:
 
 def test_new_and_info(tmp_path, capsys):
     assert main(["new", str(tmp_path / "p")]) == 0
-    assert (tmp_path / "p" / "components" / "top.yaml").exists()
+    assert (tmp_path / "p" / "components" / "top" / "component.yaml").exists()
     assert main(["new", str(tmp_path / "p")]) == 2  # refuses to overwrite
     assert main(["info", str(tmp_path / "p")]) == 0
     assert "device" in capsys.readouterr().out

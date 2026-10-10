@@ -138,8 +138,6 @@ def check(
     for rule in project.process.rules.values():
         if rule.enabled:
             violations += _check_rule(rule.name, rule, kinds, geometry, project, scope, scope_error)
-    for deck_name, use in project.process.decks.items():
-        violations += _check_deck(deck_name, use, kinds, geometry, project, scope, scope_error)
     definition = project.components.get(component) if component else None
     if definition is not None and definition.waivers:
         violations = _apply_waivers(violations, definition.waivers, geometry)
@@ -210,25 +208,6 @@ def _apply_waivers(violations: list[Violation], waivers, geometry: Geometry) -> 
                 )
             )
     return result
-
-
-def _check_deck(deck_name, use, kinds, geometry, project, scope, scope_error) -> list[Violation]:
-    if use.error:  # a deck that cannot be read never passes (requirement DRC-10)
-        return [Violation(deck_name, "", f"rule deck '{deck_name}': {use.error}: not checked")]
-    deck_scope, deck_error = dict(scope), scope_error
-    if deck_error is None:
-        try:
-            deck_scope.update(use.variables(scope))
-        except Exception as exc:  # noqa: BLE001 - reported as a violation of every rule
-            deck_error = f"the parameters of rule deck '{deck_name}' have an error: {exc}"
-    violations: list[Violation] = []
-    for name in use.deck.rules:
-        rule = use.rule(name)
-        if rule.enabled:
-            violations += _check_rule(
-                f"{deck_name}.{name}", rule, kinds, geometry, project, deck_scope, deck_error
-            )
-    return violations
 
 
 def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> list[Violation]:

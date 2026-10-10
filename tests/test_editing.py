@@ -479,8 +479,9 @@ def test_a_script_can_edit_and_save_a_project(tmp_path):
 
     again = EditSession.open_project(tmp_path / "resonator")
     assert "suspension/spring_with_anchor" in again.project.components  # private to suspension
-    saved = tmp_path / "resonator" / "components" / "suspension" / "spring_with_anchor.yaml"
-    assert saved.read_text().startswith("name: spring_with_anchor\n")
+    owner = tmp_path / "resonator" / "components" / "suspension"
+    assert (owner / "spring_with_anchor" / "component.yaml").is_file()
+    assert "spring_with_anchor: spring_with_anchor" in (owner / "component.yaml").read_text()
     after = again.results.geometry(component="suspension")
     assert before.layers.keys() == after.layers.keys()
     assert all((before.layers[k] ^ after.layers[k]).is_empty() for k in before.layers)
@@ -529,7 +530,7 @@ def test_libraries_can_be_added_and_removed_with_undo(resonator, tmp_path):
     assert "extra" in resonator.project.libraries
     resonator.undo()
     assert "extra" not in resonator.project.libraries
-    with pytest.raises(ValueError, match="no components"):
+    with pytest.raises(ValueError, match="no project.yaml"):
         resonator.components.add_library(tmp_path)
 
 
@@ -576,5 +577,5 @@ def test_create_a_library_and_what_it_refuses(tmp_path):
     with pytest.raises(ValueError, match="needs a name"):
         EditSession().create(tmp_path / "blank", " ")
     (tmp_path / "empty").mkdir()
-    with pytest.raises(ValueError, match="no components"):
+    with pytest.raises(ValueError, match="no project.yaml"):
         EditSession().create(tmp_path / "x", "x", libraries=[tmp_path / "empty"])

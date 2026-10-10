@@ -101,10 +101,10 @@ def rect(name=None, x0=0):
     return RectShape(name=name, layer="device", x0=x0, y0=0, x1=x0 + 10, y1=10)
 
 
-def test_an_inserted_unnamed_shape_is_one_addition():
-    old = project(rect(), rect(x0=20), rect(x0=40))
-    new = project(rect(), rect(x0=5), rect(x0=20), rect(x0=40))
-    assert texts(diff_projects(old, new)) == [("top", "shape rect added")]
+def test_an_inserted_shape_is_one_addition():
+    old = project(rect(), rect(x0=20), rect(x0=40))  # rect1, rect2, rect3
+    new = project(rect("rect1"), rect("rect4", x0=5), rect("rect2", x0=20), rect("rect3", x0=40))
+    assert texts(diff_projects(old, new)) == [("top", "shape rect4 added")]
 
 
 def test_a_changed_shape_says_what_changed():

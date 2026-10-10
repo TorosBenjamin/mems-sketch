@@ -1431,7 +1431,9 @@ class MainWindow(QMainWindow):
         self.save_editor_state()
         if self._run(lambda: self._open(path))[0]:
             self._remember_dir(path)
-            if self.document.path is None:
+            if self.document.project.load_notes:
+                self.statusBar().showMessage("; ".join(self.document.project.load_notes), 15000)
+            elif self.document.path is None:
                 self.statusBar().showMessage(
                     f"Opened {Path(path).name} as a copy: use Save as… to store it as a "
                     "project folder",

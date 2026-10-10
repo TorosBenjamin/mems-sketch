@@ -126,8 +126,8 @@ class ComponentEdits(Commands):
         if name in self.session.project.libraries:
             raise ValueError(f"a library named '{name}' is already loaded")
         library = load_library(name, folder)
-        if not library.components:
-            raise ValueError(f"{folder} has no components")
+        if not library.components and not library.processes:
+            raise ValueError(f"{folder} has no components or processes")
         self.session.edit(f"Add library {name}", lambda p: p.libraries.__setitem__(name, library))
         return name
 

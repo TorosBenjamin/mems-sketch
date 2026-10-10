@@ -112,7 +112,7 @@ wires the parts; each part only talks to the session:
 | `components/library.py` | Built-ins: `rectangle`, `anchor`, `comb_drive`, `serpentine_spring` |
 | `process/rules.py` | Design-rule checks: the project's rules checked by rule kinds, which are plugins (`mems_sketch.rules` entry points) |
 | `process/rule_kinds.py` | The built-in rule kinds: widths, spacing, areas, pieces, enclosure, separation, anchored, release |
-| `storage/` | Project folders (`project_files.py`), one-file documents (`document.py`) in every format (`formats/`), git (`git.py`), the legacy SQLite importer |
+| `storage/` | Project folders (`project_files.py`: the manifest, processes, component folders), component files (`component_format.py`), one-file documents (`document.py`) in every format (`formats/`), git (`git.py`), the legacy SQLite importer |
 | `export/` | Exporter plugins: GDSII, OASIS, DXF; geometry as JSON, XML, .mat |
 | `editing/` | `EditSession`, the command groups, results and history |
 | `cli.py` | `mems-sketch-cli` |

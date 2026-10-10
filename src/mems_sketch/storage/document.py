@@ -3,11 +3,14 @@
 A **project document** holds a whole project: what its folder's files hold,
 in one tree, with the imported files' content inline::
 
-    format: mems-sketch/1
-    name, top, libraries        as in project.yaml (library paths relative to the file)
-    process                     as in process.yaml
+    format: mems-sketch/2
+    name, top, libraries, process, overrides    as in project.yaml (library
+                                                paths relative to the file)
+    processes: {main: {...}}                    as process.yaml
     imports: {padframe: {file, cell, layers, data: <bytes>}}
-    components: {top: {...}, comb/finger: {...}}   as the component files
+    components: {top: {...}, comb: {..., private: {finger: {...}}}}
+                                                as component.yaml, private
+                                                components inside their owner
 
 It is made from the same pieces the folder is (``storage/project_files``), so
 it follows the model without its own mapping, and converting a folder to a
@@ -39,17 +42,20 @@ from typing import Any
 from mems_sketch.core.component import Geometry, Polygon
 from mems_sketch.core.project import Project
 from mems_sketch.storage import formats
+from mems_sketch.storage.component_format import component_data
 from mems_sketch.storage.formats import Matrix, rows
 from mems_sketch.storage.project_files import (
     FORMAT,
     PROJECT_FILE,
-    component_data,
-    component_from_data,
+    apply_overrides,
     imported_from_data,
     imports_data,
     load_library,
+    manifest_data,
+    private_names,
     process_data,
     process_from_data,
+    read_components,
 )
 
 GEOMETRY_FORMAT = "mems-sketch-geometry/1"
@@ -72,18 +78,22 @@ def is_document(path: str | Path) -> bool:
 
 def project_data(project: Project, folder: str | Path | None = None) -> dict[str, Any]:
     """The project as one tree; library paths relative to ``folder`` (the document's)."""
-    data: dict[str, Any] = {"format": FORMAT, "name": project.name, "top": project.top}
-    if project.libraries:
-        data["libraries"] = {
-            n: _library_path(lib.path, folder) for n, lib in project.libraries.items()
-        }
-    data["process"] = process_data(project.process, folder)
+    libraries = {n: _library_path(lib.path, folder) for n, lib in project.libraries.items()}
+    data = {k: v for k, v in manifest_data(project, libraries).items() if v != {}}
+    data["processes"] = {name: process_data(p) for name, p in project.processes.items()}
     if project.imports:
         entries = imports_data(project)
         data["imports"] = {
             name: {**entry, "data": project.imports[name].data} for name, entry in entries.items()
         }
-    data["components"] = {name: _without_name(d) for name, d in project.components.items()}
+
+    def component(name: str) -> dict[str, Any]:
+        private = {
+            child: component(f"{name}/{child}") for child in private_names(project.components, name)
+        }
+        return component_data(project.components[name], private)
+
+    data["components"] = {n: component(n) for n in project.components if "/" not in n}
     return data
 
 
@@ -97,13 +107,12 @@ def project_from_data(data: Any, folder: str | Path | None = None) -> Project:
         raise DocumentError(f"not a {FORMAT} project document")
     base = Path(folder) if folder is not None else Path.cwd()
     try:
-        return Project(
+        components, _ = read_components(
+            data.get("components") or {}, lambda entry, _where: (entry, None), None
+        )
+        project = Project(
             name=str(data.get("name", "untitled")),
-            process=process_from_data(data.get("process") or {}, base),
-            components={
-                str(n): component_from_data(str(n), d or {})
-                for n, d in (data.get("components") or {}).items()
-            },
+            components=components,
             top=data.get("top"),
             libraries={
                 n: load_library(n, p if Path(p).is_absolute() else base / p)
@@ -113,7 +122,13 @@ def project_from_data(data: Any, folder: str | Path | None = None) -> Project:
                 n: imported_from_data(n, e, e.get("data") or b"")
                 for n, e in (data.get("imports") or {}).items()
             },
+            processes={
+                str(n): process_from_data(d or {}) for n, d in (data.get("processes") or {}).items()
+            },
+            process_name=str(data.get("process") or "main"),
         )
+        apply_overrides(project, data.get("overrides") or {})
+        return project
     except DocumentError:
         raise
     except Exception as exc:
@@ -129,12 +144,6 @@ def write_project(project: Project, path: str | Path) -> Path:
 def read_project(path: str | Path) -> Project:
     path = Path(path)
     return project_from_data(formats.read(path), path.parent)
-
-
-def _without_name(definition) -> dict[str, Any]:
-    data = component_data(definition)
-    data.pop("name", None)  # the key names it
-    return data
 
 
 def _library_path(path: Path | None, folder: str | Path | None) -> str:
@@ -206,7 +215,7 @@ def geometry_from_data(data: Any) -> tuple[Geometry, dict[str, tuple[int, int] |
     """The geometry in a geometry document, and each layer's GDS numbers (None
     where the document gives none)."""
     if not isinstance(data, dict) or data.get("format") != GEOMETRY_FORMAT:
-        if isinstance(data, dict) and data.get("format") == FORMAT:
+        if isinstance(data, dict) and str(data.get("format", "")).startswith("mems-sketch/"):
             raise DocumentError("this is a project file: open it instead of importing it")
         raise DocumentError(f"not a {GEOMETRY_FORMAT} document")
     if data.get("unit", UNIT) != UNIT:

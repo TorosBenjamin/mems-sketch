@@ -29,6 +29,7 @@ The project is plain data. Turning it into geometry is the job of
 from __future__ import annotations
 
 import contextlib
+import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -37,7 +38,7 @@ from mems_sketch.core.component import Component, Geometry, is_builtin
 from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.process import Layer, Process, Value, default_process
 from mems_sketch.core.shapes import RefShape, Shape, child_lists, find, walk
-from mems_sketch.core.user_component import ComponentDef, ParamDef
+from mems_sketch.core.user_component import ComponentDef, ParamDef, name_shapes
 
 if TYPE_CHECKING:
     from mems_sketch.core.compiler import Compiler
@@ -68,11 +69,16 @@ def Instance(
 
 @dataclass
 class Library:
-    """A read-only set of components loaded from a folder and referenced as ``name.component``."""
+    """A read-only set of components and processes loaded from a folder, referenced
+    as ``name.component`` and ``name.process``."""
 
     name: str
     components: dict[str, ComponentDef] = field(default_factory=dict)
     path: Path | None = None
+    processes: dict[str, Process] = field(default_factory=dict)
+
+
+MAIN_PROCESS = "main"  # the name of a project's own process
 
 
 @dataclass
@@ -83,12 +89,64 @@ class Project:
     top: str | None = DEFAULT_TOP  # None: a library, with no design of its own
     libraries: dict[str, Library] = field(default_factory=dict)
     imports: dict[str, ImportedCell] = field(default_factory=dict)  # see core/imports.py
+    # Its own processes (a library's are shared), and which process it uses: one
+    # of its own, or a library's (``std.polymumps``). ``process`` is the one in
+    # use: its own is that very object; a library's is a copy with the project's
+    # changes, each with an optional reason by rule name (requirement PRJ-8).
+    processes: dict[str, Process] = field(default_factory=dict)
+    process_name: str = MAIN_PROCESS
+    reasons: dict[str, str] = field(default_factory=dict)
+    # What loading it noticed, e.g. component files its manifest does not list.
+    load_notes: list[str] = field(default_factory=list, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.top is not None and self.top not in self.components:
             self.components[self.top] = ComponentDef(name=self.top)
+        if "." not in self.process_name:
+            if self.process_name in self.processes:
+                self.process = self.processes[self.process_name]
+            else:
+                self.processes[self.process_name] = self.process
 
     # -- process -----------------------------------------------------------
+
+    @property
+    def base_process(self) -> Process | None:
+        """The library's process this project uses (unchanged), or None when it
+        uses one of its own."""
+        library, dot, name = self.process_name.partition(".")
+        if not dot:
+            return None
+        if library not in self.libraries:
+            raise ValueError(f"the process '{self.process_name}' needs library '{library}'")
+        processes = self.libraries[library].processes
+        if name not in processes:
+            raise ValueError(f"library '{library}' has no process '{name}'")
+        return processes[name]
+
+    def process_names(self) -> list[str]:
+        """Every process the project could use: its own, then the libraries'."""
+        names = list(self.processes)
+        for library in self.libraries.values():
+            names += [f"{library.name}.{name}" for name in library.processes]
+        return names
+
+    def use_process(self, name: str) -> None:
+        """Use another process: one of its own, or a copy of a library's (without
+        the changes made to the one used before)."""
+        if "." in name:
+            previous = self.process_name
+            self.process_name = name
+            try:
+                self.process = copy.deepcopy(self.base_process)
+            except ValueError:
+                self.process_name = previous
+                raise
+        elif name in self.processes:
+            self.process_name, self.process = name, self.processes[name]
+        else:
+            raise ValueError(f"there is no process '{name}'")
+        self.reasons = {}
 
     @property
     def layers(self) -> dict[str, Layer]:
@@ -428,6 +486,7 @@ class Project:
         shapes = self.shapes_of(component)
         check_shape_names([*shapes, shape])
         shapes.append(shape)
+        name_shapes(shapes)
         try:
             self.render(component)  # in context: it may align to its siblings
         except Exception:

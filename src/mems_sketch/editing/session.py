@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from mems_sketch.core.component import Component
-from mems_sketch.core.project import Project, new_project
+from mems_sketch.core.project import MAIN_PROCESS, Project, new_project
 from mems_sketch.core.shapes import (
     NodePath,
     RefShape,
@@ -38,7 +38,7 @@ from mems_sketch.core.shapes import (
     node_at,
     walk,
 )
-from mems_sketch.core.user_component import ComponentDef, ParamDef
+from mems_sketch.core.user_component import ComponentDef, ParamDef, name_shapes
 from mems_sketch.editing.components import ComponentEdits, library_name
 from mems_sketch.editing.corners import CornerEdits
 from mems_sketch.editing.events import Event
@@ -111,6 +111,8 @@ class EditSession:
         was_valid = not self.problems(before)
         try:
             result = change(self.project)
+            for definition in self.project.components.values():
+                name_shapes(definition.shapes)  # every shape has a name (PRJ-3)
             if was_valid:
                 problems = self.problems()
                 if problems:
@@ -194,15 +196,16 @@ class EditSession:
         if folder.exists() and not folder.is_dir():
             raise ValueError(f"{folder} is a file, not a folder")
         project = new_project(name.strip(), library=library)
-        if process_from is not None:
-            project.process = load(process_from).process
+        if process_from is not None:  # a copy, as the new project's own process
+            own = copy.deepcopy(load(process_from).process)
+            project.processes, project.process = {MAIN_PROCESS: own}, own
         for path in libraries:
             key = library_name(path)
             if key in project.libraries:
                 raise ValueError(f"two libraries would both be called '{key}'")
             project.libraries[key] = load_library(key, Path(path))
-            if not project.libraries[key].components:
-                raise ValueError(f"{path} has no components")
+            if not project.libraries[key].components and not project.libraries[key].processes:
+                raise ValueError(f"{path} has no components or processes")
         self._reset(project, None)
         return self.save(folder)
 

@@ -154,7 +154,7 @@ def test_rules_turned_off_and_severity():
         Rule("w", "min_width", ["device"], severity="fatal")
 
 
-def test_rules_in_the_process_file_and_older_files():
+def test_rules_in_the_process_file():
     process = default_process()
     data = process_data(process)
     assert data["rules"]["device_release"] == {
@@ -164,10 +164,6 @@ def test_rules_in_the_process_file_and_older_files():
         "severity": "warning",
     }
     assert process_from_data(data).rules == process.rules
-    older = {"layers": {"device": {"gds": [1, 0], "min_width": 2, "min_space": 3}}}
-    migrated = process_from_data(older).rules
-    assert migrated["device_min_width"].values == {"value": 2.0}
-    assert migrated["device_min_space"].kind == "min_space"
 
 
 def test_a_project_keeps_its_rules(tmp_path):

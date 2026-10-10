@@ -121,8 +121,9 @@ def test_the_stack_is_saved_and_checked_on_load(tmp_path):
     loaded = load(tmp_path / "p")
     assert loaded.process.levels == STACK
     assert loaded.process.default_level == "poly1"
-    text = (tmp_path / "p" / "process.yaml").read_text()
-    (tmp_path / "p" / "process.yaml").write_text(text.replace("via12\n", "nothing\n", 1))
+    path = tmp_path / "p" / "processes" / "main" / "process.yaml"
+    text = path.read_text()
+    path.write_text(text.replace("via: via12", "via: nothing", 1))
     with pytest.raises(ProjectFormatError, match="'nothing'"):
         load(tmp_path / "p")
 

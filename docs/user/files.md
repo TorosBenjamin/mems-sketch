@@ -6,16 +6,21 @@ A project is a folder of small text files, meant to live in git:
 
 ```
 my_project/
-  project.yaml        name, top component, libraries, imported layouts
-  process.yaml        process constants, layers (GDS numbers) and design rules
+  project.yaml        the manifest: name, top component, libraries, the process
+                      used, and where its processes and components are
+  processes/main/
+    process.yaml      process constants, layers (GDS numbers), layer stack, rules
   components/
-    top.yaml          one file per component; the design is the top component
-    comb.yaml
-    comb/
-      finger.yaml     a component private to comb
+    top/component.yaml        one folder per component; the design is the top one
+    comb/component.yaml
+    comb/finger/component.yaml   a component private to comb
   imports/
     padframe.gds      a copy of each imported layout
 ```
+
+A library is a project folder too, usually without a top component. It can
+hold processes as well as components, so a fab's process (its layers, stack,
+constants and rules) is shared the way components are.
 
 Files are always written the same way: values equal to their default are left
 out, keys keep a fixed order, and unchanged files are not rewritten. Changing

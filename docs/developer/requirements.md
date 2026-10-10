@@ -56,21 +56,36 @@ but should not have to program. Scripting is there for those who want it.
 
 ### Projects and files
 
-- **PRJ-1** (Must, exists) A project is a **folder of small text files**:
-  `project.yaml` (name, top component, libraries, imports), `process.yaml`
-  (layers, constants), one YAML file per component under `components/`
-  (private components in their owner's folder), and copies of imported
-  files under `imports/`.
+- **PRJ-1** (Must, exists) A project is a **folder of small text files**.
+  `project.yaml` is its manifest: name, top component, libraries, the process
+  it uses and its overrides, imports, and where its processes and shared
+  components are. Each component is a folder with a `component.yaml` (and
+  room for whatever else belongs to it); a component lists its private
+  components, which are folders inside its own. Each process is a folder with
+  a `process.yaml`. Imported files are copied under `imports/`. Names come
+  from the manifest and the component files, never from file or folder
+  names, so a listed file that is missing is an error and an unlisted one is
+  reported.
 - **PRJ-2** (Must, exists) The YAML is **canonical**: saving the same project
   twice gives byte-identical files. Values equal to their default are left
   out, keys keep a fixed order, whole numbers have no `.0`, lists of plain
   values are on one line, and unchanged files are not rewritten. Changing one
   value changes one line.
-- **PRJ-3** (Must, exists) Files are versioned (`format: mems-sketch/1`).
-  Older files keep loading: `repeat:` reads as an array modifier, `group` as
-  `transform`, and a layer's old `undercut` is ignored.
+- **PRJ-3** (Must, exists) Files are versioned (`format: mems-sketch/2`).
+  Component files are written for reading: parameters, points and shapes
+  are maps by name (a parameter with only a default is `name: default`); a
+  placement names its component as `ref:` with its parameter values beside
+  its other fields. Every shape has a name; a shape made without one gets
+  one (`rect1`).
+- **PRJ-8** (Must, exists) **Processes are shared like components:** a library
+  can hold processes (layers, layer stack, constants and rules) as well as
+  components. A project uses one process: its own or one from a library. On
+  a library's process, the project may change constants and rules and add
+  rules, each change listed with an optional reason, but not change layers or
+  the stack, which belong to the fab. When the library's process changes, the
+  project follows it except where it changed it.
 - **PRJ-4** (Must, exists) A project without a top component is a
-  **library**. A project lists libraries by name and relative path; their
+  **library** (its manifest is a project's: the same file). A project lists libraries by name and relative path; their
   components are placed as `name.component` and are read-only. A library
   component can be copied into the project, where it stays editable and
   keeps using the library's other components.
@@ -405,17 +420,12 @@ behaviours every frontend must keep.
   `release` (DRC-11). Every rule and value can be changed, and any rule can
   be turned off. A rule turned off stays listed as off, so a check never
   passes because a rule silently went away.
-- **DRC-8** (Should, new) **Rule decks:** a set of rules with parameters of
-  its own (e.g. `min_feature`, `undercut`) in a file of its own, shared
-  between projects the way libraries are (PRJ), typically one per fab
-  process. A project uses decks, and can:
-  - set a deck parameter for itself (a different `undercut` for a different
-    etch);
-  - override or turn off one of a deck's rules;
-  - add rules of its own.
-
-  Overrides are listed with an optional reason. When a deck changes, a
-  project follows it everywhere except where it overrides it.
+- **DRC-8** (Should, exists) **Shared rules come with the process**
+  ([PRJ-8](#projects-and-files)): a fab's rules and the constants they use
+  are shared as a process in a library. A project using it can change a
+  constant (a different `undercut` for a different etch), change or turn off
+  one of its rules and add rules of its own, each with an optional reason.
+  There are no separate rule decks.
 - **DRC-9** (Must, new) **Rule kinds are plugins**, like exporters (OUT-7): a
   kind declares its parameters (as exporters declare their options, OUT-8)
   and checks the geometry as exported (DRC-3), returning violations with
@@ -423,7 +433,7 @@ behaviours every frontend must keep.
   entry-point group, so a team can install its own; the built-in kinds are
   plugins too. The rules editor and the command line are built from the
   declarations.
-- **DRC-10** (Must, new) **No code in project files:** projects and decks
+- **DRC-10** (Must, new) **No code in project files:** projects and processes
   only name rule kinds and give them values. A rule whose kind is not
   installed is reported as not checked, an error, and never passes.
 - **DRC-11** (Should, new) **Built-in rule kinds:**
@@ -775,7 +785,7 @@ ten times larger than that, so the numbers hold with room to spare.
   a format then needs no C++, and the backend does not link KLayout.
 
 - **R-1: Rules are data; rule kinds are code in plugins.** A project or a
-  deck only names rule kinds and gives them values (DRC-10). Allowing code in
+  process only names rule kinds and gives them values (DRC-10). Allowing code in
   project files (`check: "region.area() > 5"`) would mean that opening
   someone's project runs their code, and rules would stop being plain data
   that diffs and merges like the rest of the project. New kinds of check are

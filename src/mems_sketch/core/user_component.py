@@ -30,6 +30,7 @@ Example (a plate with a grid of release holes)::
 from __future__ import annotations
 
 import keyword
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -197,6 +198,13 @@ class ComponentDef(_Model):
             raise ValueError(f"'{name}' is not a valid component name")
         return name
 
+    @model_validator(mode="after")
+    def _shapes_named(self):
+        if any(shape.name is None for shape in walk(self.shapes)):
+            self.shapes = [shape.model_copy(deep=True) for shape in self.shapes]  # not the caller's
+            name_shapes(self.shapes)
+        return self
+
     @property
     def short_name(self) -> str:
         """The name without its owners: ``finger`` for ``comb/finger``."""
@@ -273,6 +281,22 @@ class ComponentDef(_Model):
             )
             for p in self.points
         ]
+
+
+def name_shapes(shapes: list[Shape]) -> None:
+    """Give every unnamed shape a name: its kind (a placement: its component's
+    name) and the lowest number not taken, ``rect1``, ``anchor2``."""
+    taken = {shape.name for shape in walk(shapes) if shape.name}
+    for shape in walk(shapes):
+        if shape.name is None:
+            stem = shape.kind
+            if isinstance(getattr(shape, "component", None), str):
+                stem = re.split(r"[./]", shape.component)[-1]
+            n = 1
+            while f"{stem}{n}" in taken:
+                n += 1
+            shape.name = f"{stem}{n}"
+            taken.add(shape.name)
 
 
 class UserComponent(Component):

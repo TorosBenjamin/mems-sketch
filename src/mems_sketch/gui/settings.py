@@ -211,8 +211,9 @@ SETTINGS: tuple[Setting, ...] = (
         "Draft quality while zooming and resizing",
         "Canvas",
         "Performance",
-        "Draw without smoothing during a zoom or resize, then in full quality once it "
-        "stops: much faster on big designs.",
+        "On designs too big to redraw smoothly, draw without smoothing during a zoom "
+        "or resize, then in full quality once it stops. Smaller designs always stay "
+        "in full quality.",
         keywords=("antialiasing", "fps", "lag", "speed"),
     ),
     # -- Snapping -----------------------------------------------------------

@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
+from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -66,7 +66,7 @@ from mems_sketch.gui.statusbar import ToolStatus
 from mems_sketch.gui.toolbar import build_toolbar
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool
 from mems_sketch.gui.toolwindows import ToolWindows
-from mems_sketch.gui.views import ComponentView, EditorArea
+from mems_sketch.gui.views import ComponentView, EditorArea, builds
 
 PANEL_HELP = {  # the "?" in each tool window's header
     "components": "Every component, each listed once: the project's, each library's and "
@@ -143,11 +143,27 @@ CANVAS_OPTIONS = {
 }
 
 
+# A design that has taken longer than this (s) to build is built in the background
+# after a change: the editor goes on, showing the last result until the new one is
+# there (requirement QS-8). A quicker one is built at once.
+BACKGROUND_BUILD_S = 0.15
+# A background build says so (and greys out what shows built geometry) only when it
+# takes longer than this (ms): a quick one does not make the window flicker.
+UPDATING_SHOWN_MS = 200
+
+
 class MainWindow(QMainWindow):
+    _build_done = Signal(object)  # a background build's Future (from the worker thread)
+
     def __init__(self, document: EditSession | None = None) -> None:
         super().__init__()
         self.document = document or EditSession()
         self._problems: list[str] = []
+        # The longest each component has taken to build since the project was opened:
+        # one that can take long is built in the background, even when a change
+        # happens to be quick to build (that one is soon there).
+        self.build_seconds: dict[str, float] = {}
+        self._build_done.connect(self._take_build)
         self._restoring = False  # while opening a project, the editor state is not saved
         # Per component: distances (x0, y0, x1, y1) and angles (vertex, arm, arm).
         self.rulers: dict[str, list[tuple[float, ...]]] = {}
@@ -930,7 +946,8 @@ class MainWindow(QMainWindow):
     # -- refresh -----------------------------------------------------------
 
     def refresh(self) -> None:
-        """Recompile every open tab and update the panels (after any change)."""
+        """Recompile every open tab and update the panels (after any change). A big
+        design is built in the background: the tabs show the last result meanwhile."""
         self.tool.design_changed()  # what it was doing was based on the previous state
         for view in self.area.views():
             if not self.document.exists(view.component):
@@ -941,14 +958,75 @@ class MainWindow(QMainWindow):
         self.layers.refresh()
         if self.area.process_view is not None:
             self.area.process_view.refresh()
+        if self._slow():
+            self._build_in_background()
+        else:
+            self._refresh_built()
+
+    def _refresh_built(self) -> None:
+        """Show what the components build to, in the tabs and the panels."""
         for view in self.area.views():
             view.rendered = True
+            view.updating = False
             view.refresh(self.layers.colors, self.layers.visible)
             self._caption(view)
+        self.properties.setEnabled(True)
+        self.points.setEnabled(True)
         self.area.update_titles()
         self.draw_rulers()
-        self._problems = self.document.problems()
+        self._problems = self.document.results.problems()
+        self._took(self.document.results.build_seconds)
         self._refresh_panels()
+
+    def _build_in_background(self) -> None:
+        """Build the open tabs on another thread; show the result when it is there.
+        What needs it waits meanwhile: the tabs keep the last picture, and the panels
+        that show built geometry are greyed out."""
+        views = self.area.views()
+        for view in views:
+            view.updating = True
+        version = self.document.results.version
+        QTimer.singleShot(UPDATING_SHOWN_MS, lambda: self._show_updating(version))
+        self.area.update_titles()
+        self.history.refresh()
+        self.undo_action.setEnabled(self.document.can_undo())
+        self.redo_action.setEnabled(self.document.can_redo())
+        self._update_title()
+        future = self.document.results.build_in_background([v.component for v in views], builds())
+        future.add_done_callback(self._report_build)
+
+    def _show_updating(self, version: int) -> None:
+        """A background build is taking a while: say so where it will show."""
+        if self.document.results.version != version or self.document.results.ready():
+            return
+        for view in self.area.views():
+            self._caption(view)
+        self.properties.setEnabled(False)
+        self.points.setEnabled(False)
+
+    def _report_build(self, future) -> None:
+        """In the worker thread: hand the finished build to the window's thread."""
+        try:
+            self._build_done.emit(future)
+        except RuntimeError:  # the window was closed meanwhile
+            pass
+
+    def _take_build(self, future) -> None:
+        if future.cancelled() or future.exception() is not None or future.result():
+            self._refresh_built()  # with what it built (or, if it failed, saying why)
+        # else: the design changed meanwhile, and the newer build shows when it is done
+
+    def _took(self, seconds: dict[str, float]) -> None:
+        """How long components took to build: whether the next change builds the open
+        tabs in the background, and whether an edit waits to see that it builds."""
+        for component, took in seconds.items():
+            self.build_seconds[component] = max(took, self.build_seconds.get(component, 0.0))
+        self.document.check_builds = not self._slow()
+
+    def _slow(self) -> bool:
+        """Whether a component of an open tab has taken long to build."""
+        times = self.build_seconds
+        return any(times.get(v.component, 0.0) > BACKGROUND_BUILD_S for v in self.area.views())
 
     def implementation_hidden(self, view: ComponentView | None = None) -> bool:
         """A read-only component shows its interface only (unless the user asked to see
@@ -981,7 +1059,7 @@ class MainWindow(QMainWindow):
 
     def _caption(self, view: ComponentView) -> None:
         """The canvas caption: the component and whether it can be edited."""
-        details = []
+        details = ["updating…"] if view.updating else []
         if view.read_only:
             details.append("read-only")
         if view.component == self.document.project.top:
@@ -1429,6 +1507,7 @@ class MainWindow(QMainWindow):
         def create() -> None:
             self.document.create(folder, name, **options)  # raises before anything changes
             self.area.close_all()
+            self.build_seconds = {}
             self.rulers = {}
             self.layers.visible = {}
             self.refresh()
@@ -1505,6 +1584,7 @@ class MainWindow(QMainWindow):
         try:
             self.document.open(path)  # raises before anything changes if the file is bad
             self.area.close_all()
+            self.build_seconds = {}
             self.rulers = {}
             self.layers.visible = {}
             self.components.collapsed = set()

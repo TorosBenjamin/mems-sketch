@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <tuple>
 #include <map>
+#include <mutex>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -53,7 +54,14 @@ double evaluate(const nb::object& expression, const nb::object& variables) {
 nb::tuple polygons_tuple(const mgeom::Snapped& snapped);
 
 nb::tuple snapped_polygons(const mgeom::Region& region, double grid, double chord) {
-    return polygons_tuple(mgeom::snap(region, grid, chord));
+    mgeom::Snapped snapped;
+    {
+        // Snapping a big region takes a while (seconds for 10,000 round holes): the
+        // other threads go on meanwhile (the editor, while a build is in the background).
+        nb::gil_scoped_release release;
+        snapped = mgeom::snap(region, grid, chord);
+    }
+    return polygons_tuple(snapped);
 }
 
 nb::tuple polygons_tuple(const mgeom::Snapped& snapped) {
@@ -196,11 +204,14 @@ struct BuiltHandle {
 };
 
 // A project loaded for building, with a build cache it may share with other
-// versions of the project (mems_sketch.engine.Engine).
+// versions of the project (mems_sketch.engine.Engine). Its builder works on
+// one build at a time: calls from several threads take turns (``busy``),
+// while engines of other versions build at the same time.
 struct Engine {
     std::shared_ptr<mems::BuildCache> cache;
     std::shared_ptr<const mems::Project> project;
     std::unique_ptr<mems::Builder> builder;
+    std::unique_ptr<std::mutex> busy = std::make_unique<std::mutex>();
 
     Engine(std::shared_ptr<mems::BuildCache> c, std::string_view json)
         : cache(std::move(c)),
@@ -311,6 +322,7 @@ NB_MODULE(_core, m) {
                 std::shared_ptr<const mems::Built> built;
                 {
                     nb::gil_scoped_release release;  // geometry takes a while; Python may go on
+                    const std::lock_guard lock(*e.busy);
                     built = e.builder->build(component, values);
                     built->flat();
                 }
@@ -326,6 +338,7 @@ NB_MODULE(_core, m) {
                 std::shared_ptr<const mems::Built> built;
                 {
                     nb::gil_scoped_release release;
+                    const std::lock_guard lock(*e.busy);
                     built = e.builder->build(component, values);
                 }
                 nb::dict cells;
@@ -343,6 +356,7 @@ NB_MODULE(_core, m) {
                 std::shared_ptr<const mems::Built> built;
                 {
                     nb::gil_scoped_release release;
+                    const std::lock_guard lock(*e.busy);
                     built = e.builder->build(component, values);
                 }
                 return output_of(*built, grid, chord);
@@ -360,6 +374,7 @@ NB_MODULE(_core, m) {
                 BuiltHandle handle;
                 {
                     nb::gil_scoped_release release;
+                    const std::lock_guard lock(*e.busy);
                     handle.built = e.builder->build(component, values);
                 }
                 return handle;
@@ -375,6 +390,7 @@ NB_MODULE(_core, m) {
                 std::string error;
                 {
                     nb::gil_scoped_release release;
+                    const std::lock_guard lock(*e.busy);
                     records = e.builder->records(component, values, &error);
                 }
                 nb::dict result, cells;

@@ -54,6 +54,17 @@ that hash, and on a big design they run in the background, in a process of
 their own (`gui/views.py`): the edit is on screen at once, the violations
 follow.
 
+A big design is also built in the background (requirement QS-8): when a
+component of an open tab has taken longer than `BACKGROUND_BUILD_S` to build,
+a change builds the open tabs on a thread of its own
+(`Results.build_in_background`, on a copy of the project), and the tabs keep
+the last result until the new one is there. What asks for a result meanwhile
+waits for that build instead of building again; a build of a version that is
+no longer current is not used. Such an edit is not refused for not building
+(`EditSession.check_builds` is off): the messages panel says why instead,
+while references and cycles are still checked at once. The engine's cache is
+shared between threads, and one engine builds one thing at a time.
+
 A component placed whole stays placed: the engine keeps a reference (copied
 by modifiers, turned by transforms) as an *instance* of what it built, and
 `Geometry` has its own polygons plus `instances` of other geometries. One

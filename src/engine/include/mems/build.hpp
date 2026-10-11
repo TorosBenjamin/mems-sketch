@@ -97,17 +97,20 @@ using Records = std::map<NodePath, NodeRecord>;
 
 // Built components by a key of everything they depend on (fingerprint, values,
 // level, layer stack), so one cache serves every version of a project: after
-// an edit only what the edit changed is built again.
+// an edit only what the edit changed is built again. Builders on several
+// threads may share one (the editor builds in the background).
 class BuildCache {
 public:
     explicit BuildCache(size_t max_entries = 4096) : max_entries_(max_entries) {}
     std::shared_ptr<const Built> find(const std::string& key) const;
+    // What the cache keeps for the key: ``built``, or what another thread put first.
     std::shared_ptr<const Built> put(std::shared_ptr<const Built> built);
-    void clear() { built_.clear(); }
-    size_t size() const { return built_.size(); }
+    void clear();
+    size_t size() const;
 
 private:
     size_t max_entries_;
+    mutable std::mutex mutex_;
     std::map<std::string, std::shared_ptr<const Built>> built_;
 };
 

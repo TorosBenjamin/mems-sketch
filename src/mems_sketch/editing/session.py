@@ -73,6 +73,11 @@ class EditSession:
         self.path: Path | None = None
         self.dirty = False
         self._engine = Engine()
+        # Whether an edit is refused when the project would no longer build. Building
+        # a big design takes seconds, so the editor turns this off for one and shows
+        # what does not build instead (references are checked either way).
+        self.check_builds = True
+        self._valid: bool | None = None  # whether the project builds, once known
         # (description, other project state, active before the change, active after it)
         self._undo: list[tuple[str, Project, str, str]] = []
         self._redo: list[tuple[str, Project, str, str]] = []
@@ -103,14 +108,15 @@ class EditSession:
         change: Callable[[Project], object],
         done: Callable[[], None] | None = None,
     ) -> object:
-        """Apply ``change``; roll back and re-raise if a valid project would become invalid,
-        or if its references would stop resolving or form a cycle (a component placing
-        itself cannot be drawn, so that is refused even in a project with problems).
+        """Apply ``change``; roll back and re-raise if a valid project would become invalid
+        (with :attr:`check_builds`), or if its references would stop resolving or form a
+        cycle (a component placing itself cannot be drawn, so that is refused even in a
+        project with problems).
 
         ``done`` runs after a successful change, before views are told.
         """
         before, active = self._snapshot(), self.active
-        was_valid = not self.problems(before)
+        was_valid = self.check_builds and self._builds(before)
         references_valid = was_valid or _references_valid(before)
         try:
             result = change(self.project)
@@ -125,6 +131,7 @@ class EditSession:
         except Exception:
             self.project, self.active = before, active
             raise
+        self._valid = True if was_valid else None
         if not self.exists(self.active):
             self.active = self.project.default_component()
         self._undo.append((description, before, active, self.active))
@@ -135,6 +142,12 @@ class EditSession:
         self._set_dirty(True)
         self.changed.emit()
         return result
+
+    def _builds(self, project: Project) -> bool:
+        """Whether ``project`` (the session's, as it is) builds; known after an edit."""
+        if self._valid is None:
+            self._valid = not self.problems(project)
+        return self._valid
 
     def _snapshot(self) -> Project:
         # Libraries are read-only: share them instead of copying (the dict is
@@ -172,7 +185,7 @@ class EditSession:
             self._restore(state, after)
 
     def _restore(self, project: Project, active: str) -> None:
-        self.project = project
+        self.project, self._valid = project, None
         self.active = active if self.exists(active) else project.default_component()
         self._set_dirty(self._fingerprints() != self._saved)
         self.changed.emit()
@@ -260,7 +273,7 @@ class EditSession:
         )
 
     def _reset(self, project: Project, path: Path | None) -> None:
-        self.project = project
+        self.project, self._valid = project, None
         self.active = project.default_component()
         self.path = path
         self._undo.clear()

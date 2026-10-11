@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import QEvent, QModelIndex, QObject, QSize, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QModelIndex, QObject, QSize, Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -183,6 +183,14 @@ def make_table(columns: Sequence[str], stretch: int = 0, scroll: bool = False) -
     table.setFrameShape(QTableWidget.Shape.NoFrame)
     elide_with_tooltips(table)
     return table
+
+
+def select_row(view: QAbstractItemView, row: int) -> None:
+    """Select just ``row`` and make it current. Not ``selectRow``: that follows the
+    keys held down, and after Shift+Enter selects every row up to it."""
+    flags = QItemSelectionModel.SelectionFlag
+    index = view.model().index(row, 0)
+    view.selectionModel().setCurrentIndex(index, flags.ClearAndSelect | flags.Rows)
 
 
 class EmptyState(QWidget):

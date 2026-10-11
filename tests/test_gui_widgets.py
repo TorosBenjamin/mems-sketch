@@ -331,9 +331,7 @@ def test_fields_in_a_rules_fold_out_keep_their_border(window, qtbot):
     window.open_process()
     panel = window.area.process_view.rules
     details = panel.open_details("device_anchored")
-    assert details is not None, [
-        panel.rules.item(r, 0).text() for r in range(panel.rules.rowCount())
-    ]
+    assert details is not None
     qtbot.wait(20)
     image = details.note.grab().toImage()
     edge = image.pixelColor(image.width() // 2, 0).name()

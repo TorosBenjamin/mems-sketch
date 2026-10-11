@@ -70,6 +70,7 @@ class ExportOptionsDialog(QDialog):
         form = widgets.form()
         for option in options:
             editor = self._editor(option, values.get(option.name, option.default))
+            editor.setToolTip(option.help)
             self.editors[option.name] = editor
             if not isinstance(editor, QCheckBox):
                 editor.setMinimumWidth(FIELD_WIDTH)

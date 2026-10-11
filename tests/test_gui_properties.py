@@ -446,3 +446,60 @@ def test_the_alignment_points_are_lists_that_open_on_a_click(window, qtbot):
     target.setCurrentText("anchor.left")
     target.activated.emit(target.currentIndex())
     assert window.document.shapes[0].align.to == "anchor.left"
+
+
+def _focus(qtbot, widget):
+    widget.window().activateWindow()
+    widget.setFocus()
+    qtbot.waitUntil(widget.hasFocus)
+
+
+def test_leaving_a_renamed_title_applies_it(window, qtbot):
+    editor = window.properties
+    _focus(qtbot, editor.name_edit)
+    editor.name_edit.setText("beam")
+    _focus(qtbot, window.canvas)  # clicked out of it, without Enter
+    qtbot.waitUntil(lambda: window.document.shapes[0].name == "beam")
+    window.tree.select_paths([])  # the form goes; the name stays
+    assert window.document.shapes[0].name == "beam"
+
+
+def test_an_edit_is_kept_when_another_shape_is_picked(window, qtbot):
+    window.document.nodes.add(RectShape(name="other", layer="device", x0=50, y0=0, x1=60, y1=4))
+    window.tree.select_paths([((0, 0),)])
+    y1 = fields(window)["To y"]
+    _focus(qtbot, y1)
+    y1.setText("9")
+    _focus(qtbot, window.canvas)
+    window.tree.select_paths([((1, 0),)])  # another shape: the form is built again
+    qtbot.waitUntil(lambda: window.document.shapes[0].y1 == 9)
+
+
+def test_moving_to_the_next_field_applies_and_keeps_the_focus_there(window, qtbot):
+    edits = fields(window)
+    _focus(qtbot, edits["To x"])
+    edits["To x"].setText("30")
+    _focus(qtbot, edits["To y"])
+    qtbot.waitUntil(lambda: window.document.shapes[0].x1 == 30)
+    focused = window.focusWidget()
+    assert focused is fields(window)["To y"]  # the new form's field, at the same place
+
+
+def test_leaving_an_unchanged_field_adds_no_undo_step(window, qtbot):
+    window.document._undo.clear()
+    edits = fields(window)
+    _focus(qtbot, edits["To x"])
+    _focus(qtbot, window.canvas)
+    qtbot.wait(20)
+    assert not window.document.can_undo()
+
+
+def test_leaving_a_field_that_cannot_be_evaluated_says_why(window, qtbot):
+    messages = []
+    window.properties.error.connect(messages.append)
+    edits = fields(window)
+    _focus(qtbot, edits["To x"])
+    edits["To x"].setText("nonexistent + 1")
+    _focus(qtbot, window.canvas)
+    qtbot.wait(20)
+    assert messages and window.document.shapes[0].x1 == "pitch * 2"

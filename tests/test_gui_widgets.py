@@ -361,3 +361,14 @@ def test_selecting_a_row_for_the_user_ignores_keys_held_down(qtbot):
     widgets.select_row(table, 3)
     assert [r.row() for r in table.selectionModel().selectedRows()] == [3]
     assert table.currentRow() == 3
+
+
+def test_clicking_out_of_the_wider_editor_applies_it(qtbot):
+    _area, field = _field_in_panel(qtbot, "abs(width - rim_width) + abs(width + rim_width) / 2")
+    applied = []
+    field.returnPressed.connect(lambda: applied.append(field.text()))
+    field.setFocus()
+    qtbot.waitUntil(lambda: field.expanded is not None)
+    field.expanded.setPlainText("width * 2")
+    field.expanded.hide()  # what clicking elsewhere does to the popup
+    assert applied == ["width * 2"] and field.expanded is None

@@ -163,5 +163,5 @@ def test_read_only_tabs_cannot_be_dragged(window, tmp_path):
     assert window.selection == [] and not window.document.can_undo()
     window.settings.set("editor/show_implementation", True)
     drag(window, (5, 5), (30, 5))
-    assert "read-only" in window.statusBar().currentMessage()
+    assert any("read-only" in t for t in window.toasts.texts())
     assert not window.document.can_undo()

@@ -417,7 +417,7 @@ def test_a_new_library_has_no_top_and_its_tab_shows_a_component(window, tmp_path
     assert window.document.project.top is None
     assert [v.component for v in window.area.views()] == ["component1"]
     window._edit_top()  # no top component to open
-    assert "library" in window.statusBar().currentMessage()
+    assert any("library" in t for t in window.toasts.texts())
 
 
 def test_the_shape_list_shows_details_and_alignment_icons(resonator):

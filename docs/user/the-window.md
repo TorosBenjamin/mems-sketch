@@ -67,6 +67,24 @@ width while drawing, the angle step for Rotate), the snapping toggles (shape
 points, grid) and the gizmo toggle, then problems (click to open Messages),
 grid step, zoom and cursor position.
 
+## Notes and motion
+
+What a command did shows as a note at the bottom of the editor: "Exported
+resonator.gds" (with **Show in folder**), "Aligned A to B", "Undid Move". A
+note goes by itself after a few seconds; pointing at it keeps it. An error
+stays until you close it, with **Show messages** to see it in Messages. The
+status bar keeps the hint for the tool you are using.
+
+The canvas glides to a place rather than jumping: **Fit** (F), the zoom
+buttons, and a problem chosen in Messages. Scrolling or panning takes over at
+once. A shape you pick in the Shapes panel, in Search Everywhere or in History
+glows on the canvas for a moment, and comes into view if it was outside.
+Clicking a shape on the canvas selects it without the glow: you are already
+looking at it.
+
+**Settings → Appearance → Reduce motion** turns the animations off: the view
+jumps, notes appear and go at once, and picked shapes do not glow.
+
 ## Settings
 
 **☰ → File → Settings…** (Ctrl+Alt+S): appearance (light, dark, as the

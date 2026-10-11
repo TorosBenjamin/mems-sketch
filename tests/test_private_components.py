@@ -211,3 +211,44 @@ def test_private_components_are_saved_in_their_owners_folder(doc, tmp_path):
     save(again, tmp_path / "p")
     assert not (comb / "finger").exists()  # emptied and removed
     assert (tmp_path / "p" / "components" / "finger" / "component.yaml").is_file()
+
+
+def test_a_new_private_component_cannot_hide_one_placed_there():
+    """Ctrl+K "pillar" next to a placed shared pillar would switch that placement
+    to the new component (or make it place itself)."""
+    project = Project(
+        components={
+            "top": ComponentDef(
+                name="top", shapes=[RefShape(name="p", component="pillar"), rect()]
+            ),
+            "pillar": ComponentDef(name="pillar", shapes=[rect()]),
+        }
+    )
+    session = EditSession(project)
+    session.active = "top"
+    for selection in ([((0, 1),)], [((0, 0),), ((0, 1),)]):
+        with pytest.raises(ValueError, match="would hide the component pillar placed in top"):
+            session.components.make(selection, "pillar")
+    with pytest.raises(ValueError, match="would hide"):
+        session.components.new("pillar", "top")
+    assert sorted(session.project.components) == ["pillar", "top"]
+    session.components.make([((0, 1),)], "post")  # any other name
+    assert session.project.qualify("pillar", "top") == "pillar"
+
+
+def test_a_project_with_problems_still_refuses_a_cycle():
+    project = Project(
+        components={
+            "top": ComponentDef(
+                name="top", shapes=[rect(), RectShape(layer="device", x0=0, y0=0, x1="nope", y1=1)]
+            ),
+            "a": ComponentDef(name="a", shapes=[rect()]),
+        }
+    )
+    session = EditSession(project)
+    session.active = "a"
+    assert session.problems()
+    with pytest.raises(ValueError, match="circular"):
+        session.nodes.add_component("a")
+    session.active = "top"
+    session.nodes.add_component("a")  # other edits still work

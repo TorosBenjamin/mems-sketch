@@ -206,6 +206,9 @@ but should not have to program. Scripting is there for those who want it.
   expression's value is exact to about 16 significant digits before any
   geometry is built.
 
+These grow into a language, Sketch, with types and units, geometry as values,
+measurements and checks: see its design, [The Sketch language](language.md).
+
 ### Shapes
 
 - **SHP-1** (Must, exists) **Primitives:** `rect`; `polygon`; `circle`; `arc`

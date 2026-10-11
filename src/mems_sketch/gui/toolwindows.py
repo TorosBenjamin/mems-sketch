@@ -134,6 +134,7 @@ class ToolWindows(QWidget):
         self.center.setStretchFactor(0, 1)
         self._splitters = {"main": self.main, "left": self.left_side, "center": self.center}
         for name, splitter in self._splitters.items():
+            splitter.setObjectName("islands")  # the frame shows between them
             splitter.setChildrenCollapsible(False)
             splitter.setHandleWidth(GAP)
             splitter.setSizes(DEFAULT_SIZES[name])

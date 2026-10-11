@@ -495,7 +495,7 @@ QScrollBar::handle {{ background: {scroll}; border-radius: {radius_control}px; m
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
-QSplitter::handle {{ background: {frame}; }}
+QSplitter#islands::handle {{ background: {frame}; }}  /* the gaps between islands */
 QToolTip {{
     background: {tooltip}; color: {text}; border: 1px solid {border_strong}; padding: 4px 6px;
     border-radius: {radius_control}px;

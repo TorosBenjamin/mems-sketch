@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
-    QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -81,7 +80,7 @@ class PointsPanel(_Panel):
         self.form_host.setLayout(QVBoxLayout())
         self.form_host.layout().setContentsMargins(8, 6, 8, 6)
         self.form: QWidget | None = None
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter = widgets.splitter(Qt.Orientation.Vertical)
         splitter.addWidget(self.tree)
         splitter.addWidget(self.form_host)
         splitter.setStretchFactor(0, 3)

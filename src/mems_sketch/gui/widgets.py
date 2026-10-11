@@ -8,6 +8,7 @@
   cell as its tooltip.
 - :class:`EmptyState`: a centred message (and an action) where a panel has
   nothing to show.
+- :func:`splitter`: parts of a panel that can be resized, divided by a hairline.
 
 Sizes come from the theme's metrics (:func:`mems_sketch.gui.theme.metric`).
 """
@@ -17,12 +18,15 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QLabel,
     QPushButton,
     QSizePolicy,
+    QSplitter,
+    QSplitterHandle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTableWidget,
@@ -194,3 +198,43 @@ class EmptyState(QWidget):
         self.button.setVisible(text is not None)
         self.button.setText(text or "")
         self.button.setToolTip(tip)
+
+
+class _HairlineHandle(QSplitterHandle):
+    """A splitter handle that is easy to grab but draws only a 1 px line, ``inset``
+    px short of both ends."""
+
+    def __init__(self, orientation: Qt.Orientation, parent: QSplitter, inset: int) -> None:
+        super().__init__(orientation, parent)
+        self.inset = inset
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        color = theme.color("border_strong")
+        inset = self.inset
+        if self.orientation() == Qt.Orientation.Horizontal:  # side by side: a vertical line
+            painter.fillRect(self.width() // 2, inset, 1, self.height() - 2 * inset, color)
+        else:
+            painter.fillRect(inset, self.height() // 2, self.width() - 2 * inset, 1, color)
+
+
+class HairlineSplitter(QSplitter):
+    """A splitter whose handles draw a hairline (see :func:`splitter`)."""
+
+    def __init__(self, orientation: Qt.Orientation, inset: int = 0) -> None:
+        super().__init__(orientation)
+        self.inset = inset
+        self.setObjectName("panel-split")
+        self.setHandleWidth(theme.metric("space_m") - 1)  # odd: the line sits in the middle
+
+    def createHandle(self) -> QSplitterHandle:
+        return _HairlineHandle(self.orientation(), self, self.inset)
+
+
+def splitter(orientation: Qt.Orientation, inset: int = 0) -> QSplitter:
+    """Resizable parts of a panel or page, divided by a hairline (the frame-coloured
+    gaps are only between islands). In a panel the island's edge already keeps the
+    line off the sides; a page that reaches its island's edges gives an ``inset``."""
+    split = HairlineSplitter(orientation, inset)
+    split.setChildrenCollapsible(False)
+    return split

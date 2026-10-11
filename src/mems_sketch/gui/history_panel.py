@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
-    QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -132,7 +131,7 @@ class HistoryPanel(_Panel):
         self.no_changes = widgets.EmptyState("No changes")
         lower_layout.addWidget(self.no_changes, 1)
 
-        self.split = QSplitter(Qt.Orientation.Vertical)
+        self.split = widgets.splitter(Qt.Orientation.Vertical)
         self.split.addWidget(self.versions)
         self.split.addWidget(lower)
         self.split.setSizes([160, 300])

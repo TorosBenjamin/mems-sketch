@@ -137,3 +137,32 @@ def test_the_history_panel_explains_why_there_is_no_history_in_its_middle(qtbot,
     panel.reload()
     assert panel.note.isVisible() and isinstance(panel.note, QWidget)
     assert panel.note.label.alignment() & Qt.AlignmentFlag.AlignHCenter
+
+
+def test_parts_of_a_panel_are_divided_by_a_hairline_not_a_bar(window):
+    from PySide6.QtWidgets import QSplitter
+
+    window.open_process()
+    window.tool_windows.open("points")
+    window.tool_windows.open("history")
+    splitters = window.findChildren(QSplitter)
+    inner = [s for s in splitters if s.objectName() != "islands"]
+    assert {s.objectName() for s in inner} == {"panel-split"}
+    assert len(inner) >= 4  # Points, History, the Process page, the editor area
+    line = theme.color("border_strong").name()
+    for split in (s for s in inner if s.count() > 1):  # a 1 px line in the handle's middle
+        image = split.handle(1).grab().toImage()
+        x, y = image.width() // 2, image.height() // 2
+        assert image.pixelColor(x, y).name() == line
+        if split.orientation() == Qt.Orientation.Vertical:  # parts above each other
+            assert image.pixelColor(x, y - 1).name() != line  # 1 px thick
+        else:  # side by side
+            assert image.pixelColor(x - 1, y).name() != line
+    # The Process page reaches the editor's edges: its dividers stop short of them.
+    page = window.area.process_view.findChild(QSplitter, "panel-split")
+    image = page.handle(1).grab().toImage()
+    middle, inset = image.height() // 2, theme.metric("space_m")
+    assert image.pixelColor(inset, middle).name() == line
+    assert image.pixelColor(inset - 1, middle).name() != line
+    assert image.pixelColor(image.width() - inset, middle).name() != line
+    assert sum(s.objectName() == "islands" for s in splitters) == 3  # the gaps between islands

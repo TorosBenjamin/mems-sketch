@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.core.expressions import evaluate
+from mems_sketch.core.levels import Stack
 from mems_sketch.core.shapes import (
     MODIFIER_KINDS,
     CornersModifier,
@@ -52,8 +53,9 @@ from mems_sketch.core.shapes import (
 )
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
+from mems_sketch.gui.canvas import layer_color
 from mems_sketch.gui.help import HelpButton
-from mems_sketch.gui.panels import component_icon, parse_value, read_only_kind
+from mems_sketch.gui.panels import component_icon, parse_value, read_only_kind, swatch_icon
 from mems_sketch.gui.value_edit import ElidedLineEdit, ValueEdit
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
@@ -264,17 +266,8 @@ class PropertyEditor(QScrollArea):
             self._editors[field] = box.isChecked
             return box
         if field == "layer":
-            combo = _combo()
-            combo.setEditable(True)
-            combo.addItems(layer_choices(self.document.project.process.levels))
-            combo.addItems(list(self.document.project.layers))
-            combo.setCurrentText(value)
-            combo.setToolTip(
-                "level: the component's level of the layer stack; level-1, level+1: the "
-                "levels below and above; level.anchor: a layer of the level by role; "
-                "or a layer by name"
-            )
-            self._editors[field] = lambda: combo.currentText().strip()
+            combo = self._layer_picker(value)
+            self._editors[field] = lambda: combo.currentData()
             return self._applies(combo)
         if field == "level":  # where a placed component is
             combo = _combo()
@@ -296,6 +289,39 @@ class PropertyEditor(QScrollArea):
             return self._applies(combo)
         optional = type(None) in args
         return self._value_editor(field, value, optional)
+
+    def _layer_picker(self, value: str) -> QComboBox:
+        """The layers a shape can be on, each with the colour of the layer it lands
+        on: relative ones first (``level+1 · metal``), then the layers by name."""
+        project = self.document.project
+        process = project.process
+        stack = Stack.of(process.levels, process.default_level)
+        definition = self.document.active_definition
+        try:
+            current = stack.top_level(getattr(definition, "default_level", None))
+        except ValueError:
+            current = None
+        colors = {name: layer_color(i) for i, name in enumerate(project.layers)}
+        combo = _combo()
+        choices = [*layer_choices(process.levels), *project.layers]
+        if value and value not in choices:  # kept as it is, whatever it is
+            choices.append(value)
+        for spec in choices:
+            try:
+                lands = stack.layer(spec, current)
+            except ValueError:
+                lands = None
+            label = spec if lands in (None, spec) else f"{spec} · {lands}"
+            color = colors.get(lands)
+            icon = swatch_icon(color) if color is not None else icons.icon("layers")
+            combo.addItem(icon, label, spec)
+        combo.setCurrentIndex(max(combo.findData(value), 0))
+        combo.setToolTip(
+            "level: the component's level of the layer stack; level-1, level+1: the "
+            "levels below and above; level.anchor: a layer of the level by role; or a "
+            "layer by name. The colour is the layer it is on in this component's tab."
+        )
+        return combo
 
     def _applies(self, combo: QComboBox) -> QComboBox:
         """Apply when an item is chosen (or, when typed in, on Enter)."""

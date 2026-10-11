@@ -702,6 +702,7 @@ class ShapeTree(QTreeWidget):
         self.setColumnCount(3)
         self.setHeaderHidden(True)
         self.setItemDelegateForColumn(0, DetailDelegate(self))
+        self.setProperty("visibility", True)  # the check box is an eye: shown or hidden
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         header = self.header()
         header.setStretchLastSection(False)
@@ -1154,7 +1155,8 @@ class LayersPanel(_Panel):
         self.colors: dict[str, QColor] = {}
         self.layers = widgets.make_table(("Layer", "GDS"), stretch=0)
         self.layers.itemChanged.connect(self._layer_changed)
-        self.layers.setToolTip("Tick to show a layer; click a layer to draw on it")
+        self.layers.setProperty("visibility", True)  # the check box is an eye
+        self.layers.setToolTip("Click the eye to show or hide a layer; click a layer to draw on it")
         self.layers.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

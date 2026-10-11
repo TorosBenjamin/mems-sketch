@@ -51,7 +51,7 @@ def test_errors_are_reported_not_raised(window):
     editor = window.properties
     editor._editors["x1"] = lambda: "nonexistent + 1"
     editor.apply()
-    assert "nonexistent" in window.statusBar().currentMessage()
+    assert any("nonexistent" in t for t in window.toasts.texts())
     assert window.document.shapes[0].x1 == 100
 
 

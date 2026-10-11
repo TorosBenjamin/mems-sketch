@@ -86,9 +86,8 @@ class Actions:
         act("Quit", w.close, QKeySequence.StandardKey.Quit, file)
 
         edit = self.edit = QMenu("&Edit", w)
-        document = w.document
-        self.undo = act("Undo", document.undo, QKeySequence.StandardKey.Undo, edit, "undo")
-        self.redo = act("Redo", document.redo, QKeySequence.StandardKey.Redo, edit, "redo")
+        self.undo = act("Undo", w.undo, QKeySequence.StandardKey.Undo, edit, "undo")
+        self.redo = act("Redo", w.redo, QKeySequence.StandardKey.Redo, edit, "redo")
         edit.addSeparator()
         self.duplicate = act("Duplicate", w.duplicate, "Ctrl+D", edit, "duplicate")
         self.delete = act("Delete", w.delete, QKeySequence.StandardKey.Delete, edit, "delete")
@@ -169,9 +168,9 @@ class Actions:
         operations.addAction(self.unpack)
 
         view = self.view = QMenu("&View", w)
-        act("Fit", lambda: w.canvas.fit(), "F", view, "fit")
-        act("Zoom in", lambda: w.canvas.zoom_by(1.25), "Ctrl+=", view, "zoom_in")
-        act("Zoom out", lambda: w.canvas.zoom_by(0.8), "Ctrl+-", view, "zoom_out")
+        act("Fit", lambda: w.canvas.fit(animated=True), "F", view, "fit")
+        act("Zoom in", lambda: w.canvas.zoom_by(1.25, animated=True), "Ctrl+=", view, "zoom_in")
+        act("Zoom out", lambda: w.canvas.zoom_by(0.8, animated=True), "Ctrl+-", view, "zoom_out")
         act("Recompile and check", w.refresh, "F5", view, "recompile")
         view.addSeparator()
         overlays = view.addMenu("Overlays")

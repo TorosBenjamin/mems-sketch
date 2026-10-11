@@ -385,7 +385,7 @@ class SelectTool(Tool):
                 lambda: self.document.nodes.set_align(path, Align(point=point, to=target))
             )
             if ok:
-                window.statusBar().showMessage(f"Aligned {point} to {target}", 5000)
+                window.notify(f"Aligned {point} to {target}", "success")
             return
         detach = bool(modifiers & ALT)
         window.run(lambda: self.document.moves.move(plan.roots, dx, dy, detach=detach))
@@ -720,7 +720,7 @@ class AlignTool(Tool):
             lambda: self.document.nodes.set_align(path, Align(point=point, to=picked))
         )
         if ok:
-            self.window.statusBar().showMessage(f"Aligned {point} to {picked}", 5000)
+            self.window.notify(f"Aligned {point} to {picked}", "success")
 
     def _nearest(self, x, y) -> str | None:
         label = self.snap(x, y, self.candidates, NONE, grid=False)[2]

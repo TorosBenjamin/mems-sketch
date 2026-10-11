@@ -27,7 +27,6 @@
 #include <GProp_GProps.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
-#include <Precision.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
 #include <NCollection_List.hxx>
@@ -125,20 +124,15 @@ TopoDS_Shape run_boolean(const NCollection_List<TopoDS_Shape>& shared_args,
         if (!op.IsDone() || op.HasErrors()) {
             throw GeometryError(std::string(name) + " failed in Open CASCADE");
         }
-        return unified(op.Shape());
+        TopoDS_Shape result = unified(op.Shape());
+        detail::check_precision(result, name);
+        return result;
     } catch (const Standard_Failure& e) {
         throw GeometryError(std::string(name) + " failed in Open CASCADE: " +
                             e.what());
     }
 }
 
-void add_tolerances(const TopoDS_Shape& shape, TopAbs_ShapeEnum kind, double& worst) {
-    for (TopExp_Explorer e(shape, kind); e.More(); e.Next()) {
-        const double t = kind == TopAbs_VERTEX ? BRep_Tool::Tolerance(TopoDS::Vertex(e.Current()))
-                                               : BRep_Tool::Tolerance(TopoDS::Edge(e.Current()));
-        worst = std::max(worst, t);
-    }
-}
 
 // The points of one wire, in its order, each edge split to within chord_nm.
 Ring ring_of(const TopoDS_Wire& wire, const TopoDS_Face& face, double chord_nm) {
@@ -465,6 +459,33 @@ FastCut cut_disjoint_holes(const std::vector<TopoDS_Face>& faces,
 
 }  // namespace
 
+double detail::worst_tolerance(const TopoDS_Shape& shape) {
+    double worst = 0.0;
+    for (TopExp_Explorer e(shape, TopAbs_VERTEX); e.More(); e.Next()) {
+        worst = std::max(worst, BRep_Tool::Tolerance(TopoDS::Vertex(e.Current())));
+    }
+    for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) {
+        worst = std::max(worst, BRep_Tool::Tolerance(TopoDS::Edge(e.Current())));
+    }
+    return worst;
+}
+
+void detail::check_precision(const TopoDS_Shape& shape, const std::string& what) {
+    const double worst = worst_tolerance(shape);
+    if (worst > kMaxToleranceNm) {
+        throw GeometryError(what + " lost precision: the result is only good to " +
+                            std::to_string(worst / kNmPerUm) + " µm");
+    }
+}
+
+TopoDS_Face detail::face_of_boundaries(const gp_Pln& plane, const TopoDS_Wire& outer,
+                                       const std::vector<TopoDS_Wire>& holes) {
+    BRepBuilderAPI_MakeFace make(plane, running(outer, plane, true), /*Inside=*/true);
+    for (const TopoDS_Wire& hole : holes) make.Add(running(hole, plane, false));
+    if (!make.IsDone()) throw GeometryError("cannot make a face of the boundaries");
+    return make.Face();
+}
+
 Region Region::operator-(const Region& other) const {
     if (empty() || other.empty()) return *this;
     // Independent copies, as for a boolean (see copied()).
@@ -564,12 +585,7 @@ std::vector<Polygon> Region::outlines(double chord) const {
     return result;
 }
 
-double Region::max_tolerance() const {
-    double worst = 0.0;
-    add_tolerances(impl_->shape, TopAbs_VERTEX, worst);
-    add_tolerances(impl_->shape, TopAbs_EDGE, worst);
-    return worst / kNmPerUm;
-}
+double Region::max_tolerance() const { return detail::worst_tolerance(impl_->shape) / kNmPerUm; }
 
 bool Region::valid() const {
     return empty() || BRepCheck_Analyzer(impl_->shape).IsValid();

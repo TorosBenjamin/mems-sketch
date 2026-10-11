@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
-    QFormLayout,
     QLineEdit,
     QSpinBox,
     QVBoxLayout,
@@ -20,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.export.base import ExportOption
+from mems_sketch.gui import widgets
 
 _HUGE = 1e12  # the range of a number option without limits
 
@@ -52,6 +52,9 @@ def remember(settings, format_name: str, options: tuple[ExportOption, ...], valu
         settings.set_value(_key(format_name, option), str(values[option.name]))
 
 
+FIELD_WIDTH = 200  # px
+
+
 class ExportOptionsDialog(QDialog):
     def __init__(
         self,
@@ -64,23 +67,27 @@ class ExportOptionsDialog(QDialog):
         self.setWindowTitle(f"Export as {title}")
         self.options = options
         self.editors: dict[str, QWidget] = {}
-        form = QFormLayout()
+        form = widgets.form()
         for option in options:
             editor = self._editor(option, values.get(option.name, option.default))
             editor.setToolTip(option.help)
             self.editors[option.name] = editor
+            if not isinstance(editor, QCheckBox):
+                editor.setMinimumWidth(FIELD_WIDTH)
+            shown = widgets.with_help(editor, option.help, stretch=False) if option.help else editor
             if isinstance(editor, QCheckBox):  # the check box carries its label
-                form.addRow(editor)
+                form.addRow(shown)
             else:
-                form.addRow(option.label, editor)
+                form.addRow(option.label, shown)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Export")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
+        layout = widgets.dialog_margins(QVBoxLayout(self))
         layout.addLayout(form)
+        layout.addStretch(1)
         layout.addWidget(buttons)
 
     @staticmethod
@@ -109,7 +116,7 @@ class ExportOptionsDialog(QDialog):
             combo.setCurrentText(str(value))
             return combo
         line = QLineEdit(str(value))
-        line.setPlaceholderText(option.help)
+        line.setPlaceholderText(option.placeholder)
         return line
 
     def values(self) -> dict[str, Any]:

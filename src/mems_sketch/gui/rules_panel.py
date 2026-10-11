@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -258,14 +258,12 @@ class RulesPanel(_Panel):
         self.refresh()
         selection = self.rules.selectionModel()
         selection.blockSignals(True)
-        self.rules.selectRow(self._rows.index(self._open))
+        widgets.select_row(self.rules, self._rows.index(self._open))
         selection.blockSignals(False)
 
     def open_details(self, name: str) -> RuleDetails:
         """Fold out the details of the rule ``name`` (as selecting it does)."""
-        flags = QItemSelectionModel.SelectionFlag  # not selectRow: it follows held keys
-        index = self.rules.model().index(self._rows.index(name), 0)
-        self.rules.selectionModel().select(index, flags.ClearAndSelect | flags.Rows)
+        widgets.select_row(self.rules, self._rows.index(name))
         return self.details
 
     def set_message(self, name: str, text: str) -> None:

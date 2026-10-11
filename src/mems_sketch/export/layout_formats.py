@@ -35,7 +35,11 @@ CHORD = ExportOption(
     decimals=4,
 )
 TOP_CELL = ExportOption(
-    "top_cell", "", "Top cell", "The top cell's name; empty: the project's name."
+    "top_cell",
+    "",
+    "Top cell",
+    "The top cell's name; empty: the project's name.",
+    placeholder="The project's name",
 )
 
 

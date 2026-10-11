@@ -5,7 +5,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHeaderView, QLabel, QWidget
+from PySide6.QtWidgets import QHeaderView, QLabel, QTableWidgetItem, QWidget
 
 from mems_sketch.gui import theme, widgets
 from mems_sketch.gui.app import MainWindow
@@ -336,3 +336,28 @@ def test_fields_in_a_rules_fold_out_keep_their_border(window, qtbot):
     image = details.note.grab().toImage()
     edge = image.pixelColor(image.width() // 2, 0).name()
     assert edge != theme.color("editor").name()  # a border, unlike a cell being edited
+
+
+def test_selecting_a_row_for_the_user_ignores_keys_held_down(qtbot):
+    from PySide6.QtCore import Qt as _Qt
+
+    # Shift+Enter opening the wider editor (a popup) leaves Shift held in QTest,
+    # as a user may hold it while the panel selects a row for them.
+    _area, field = _field_in_panel(qtbot, "12")
+    field.setFocus()
+    qtbot.wait(20)
+    qtbot.keyClick(field, _Qt.Key.Key_Return, _Qt.KeyboardModifier.ShiftModifier)
+    field.expanded.finish()
+    table = widgets.make_table(("Name",))
+    qtbot.addWidget(table)
+    table.setRowCount(4)
+    for row in range(4):
+        table.setItem(row, 0, QTableWidgetItem(f"p{row}"))
+    table.show()
+    qtbot.waitExposed(table)
+    table.selectRow(2)
+    selected = [r.row() for r in table.selectionModel().selectedRows()]
+    assert selected != [2]  # selectRow follows the held Shift
+    widgets.select_row(table, 3)
+    assert [r.row() for r in table.selectionModel().selectedRows()] == [3]
+    assert table.currentRow() == 3

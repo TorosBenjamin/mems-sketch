@@ -62,7 +62,11 @@ others:
   column taking the room left, the rest fitting their contents, no sideways
   scrolling, and cut-off text shown whole as the tooltip.
 - **Nothing to show:** `widgets.EmptyState(text)`, with `set_action(text, slot)`
-  for a button.
+  for a button; for a list or table that is empty for now,
+  `widgets.placeholder(view, text)`.
+- **Dialogs:** `widgets.form()` for labelled fields, `widgets.with_help(field,
+  text)` for a field and its **?**, `widgets.dialog_margins(layout)`, and
+  `widgets.SideList` for a column of pages (as in Settings).
 - **Sizes** come from the theme: `theme.metric("space_m")` and the like.
 
 ## An export format
@@ -72,7 +76,9 @@ A class with `format_name`, `file_extension` and
 
 - `title`: its name in **File → Export…** (default: the format name);
 - `options`: the settings it takes, as `ExportOption`s. Each value is passed to
-  `export` as a keyword argument; values not given take their defaults;
+  `export` as a keyword argument; values not given take their defaults. The
+  export dialog shows an option's `help` by its **?**, and a text option's
+  `placeholder` (what leaving it empty means) in its empty field;
 - `wants_context = True`: it also receives `component=` and `params=`.
 
 ```python

@@ -976,7 +976,7 @@ class ParametersPanel(_Panel):
         for row in range(self.table.rowCount()):
             cell = self.table.item(row, 0)
             if cell is not None and cell.text() == name:
-                self.table.selectRow(row)
+                widgets.select_row(self.table, row)
                 self.table.scrollToItem(cell)
                 return
 

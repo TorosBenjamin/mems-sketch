@@ -11,6 +11,9 @@
 - :func:`splitter`: parts of a panel that can be resized, divided by a hairline.
 - :class:`Card` and :func:`page`: a page (the Process page) of sections, each a
   card with its title, actions and "?", at a readable width.
+- :func:`placeholder`: a muted message in a list or table while it is empty.
+- Dialogs: :class:`SideList` (the column of pages in Settings and New Project),
+  :func:`form` (labelled fields) and :func:`with_help` (a field and its "?").
 
 Sizes come from the theme's metrics (:func:`mems_sketch.gui.theme.metric`).
 """
@@ -19,14 +22,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QModelIndex, QObject, QSize, Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLayout,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -37,6 +44,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QToolButton,
     QToolTip,
+    QTreeView,
     QVBoxLayout,
     QWidget,
 )
@@ -175,6 +183,14 @@ def make_table(columns: Sequence[str], stretch: int = 0, scroll: bool = False) -
     table.setFrameShape(QTableWidget.Shape.NoFrame)
     elide_with_tooltips(table)
     return table
+
+
+def select_row(view: QAbstractItemView, row: int) -> None:
+    """Select just ``row`` and make it current. Not ``selectRow``: that follows the
+    keys held down, and after Shift+Enter selects every row up to it."""
+    flags = QItemSelectionModel.SelectionFlag
+    index = view.model().index(row, 0)
+    view.selectionModel().setCurrentIndex(index, flags.ClearAndSelect | flags.Rows)
 
 
 class EmptyState(QWidget):
@@ -328,3 +344,110 @@ def page(*sections: QWidget, header: QWidget | None = None, width: int = 1100) -
     area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     area.setWidget(centred)
     return area
+
+
+class _Placeholder(QLabel):
+    def __init__(self, view: QAbstractItemView, text: str) -> None:
+        super().__init__(text, view.viewport())
+        self.setObjectName("placeholder")
+        self.setWordWrap(True)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._view = view
+        model = view.model()
+        for signal in (model.rowsInserted, model.rowsRemoved, model.modelReset):
+            signal.connect(self._update)
+        view.viewport().installEventFilter(self)
+        self._update()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Resize:
+            self._update()
+        return False
+
+    def _update(self, *_args) -> None:
+        margin = theme.metric("space_xl")
+        self.setGeometry(self._view.viewport().rect().adjusted(margin, margin, -margin, -margin))
+        self.setVisible(not any(self._shown(row) for row in range(self._view.model().rowCount())))
+
+    def _shown(self, row: int) -> bool:
+        if isinstance(self._view, QTreeView):
+            return not self._view.isRowHidden(row, QModelIndex())
+        return not self._view.isRowHidden(row)
+
+    refresh = _update
+
+
+def placeholder(view: QAbstractItemView, text: str) -> QLabel:
+    """A muted message in the middle of ``view`` while it shows no rows. Change it
+    with ``setText``; after hiding rows, call its ``refresh()``."""
+    return _Placeholder(view, text)
+
+
+class SideList(QWidget):
+    """A dialog's column of pages (Settings, New Project): ``top`` (a search field),
+    then the pages with their icons, on the side colour rather than behind a line.
+    ``entries`` are ``(icon, text)``; the list is :attr:`list`."""
+
+    def __init__(
+        self, entries: Sequence[tuple[str, str]], top: QWidget | None = None, width: int = 190
+    ) -> None:
+        super().__init__()
+        self.setObjectName("dialog-side")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFixedWidth(width)
+        self.list = QListWidget()
+        self.list.setObjectName("side-list")
+        self.list.setFrameShape(QFrame.Shape.NoFrame)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        size = theme.metric("icon_size") + 2
+        self.list.setIconSize(QSize(size, size))
+        self.list.setSpacing(1)
+        for icon, text in entries:
+            self.add(icon, text)
+        layout = QVBoxLayout(self)
+        pad = theme.metric("space_m")
+        layout.setContentsMargins(pad, pad, pad, pad)
+        layout.setSpacing(pad)
+        if top is not None:
+            layout.addWidget(top)
+        layout.addWidget(self.list, 1)
+
+    def add(self, icon: str, text: str) -> QListWidgetItem:
+        item = QListWidgetItem(icons.icon(icon), text)
+        item.setSizeHint(QSize(0, theme.metric("row_height") + theme.metric("space_s")))
+        self.list.addItem(item)
+        return item
+
+
+def form() -> QFormLayout:
+    """A dialog's labelled fields: labels on the left, level with their fields."""
+    layout = QFormLayout()
+    layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    layout.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+    layout.setHorizontalSpacing(theme.metric("space_l"))
+    layout.setVerticalSpacing(theme.metric("space_m"))
+    return layout
+
+
+def with_help(field: QWidget, help: str, stretch: bool = True) -> QWidget:
+    """``field`` with a "?" after it that explains it."""
+    row = QWidget()
+    line = QHBoxLayout(row)
+    line.setContentsMargins(0, 0, 0, 0)
+    line.setSpacing(theme.metric("space_s"))
+    line.addWidget(field, 0 if stretch else 1)
+    line.addWidget(HelpButton(help))
+    if stretch:
+        line.addStretch(1)
+    return row
+
+
+def dialog_margins(layout: QLayout) -> QLayout:
+    """The theme's margins and spacing around a dialog's contents."""
+    pad = theme.metric("space_xl")
+    layout.setContentsMargins(pad, pad, pad, pad)
+    layout.setSpacing(theme.metric("space_l"))
+    return layout

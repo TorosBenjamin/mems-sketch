@@ -24,6 +24,7 @@ class Option:
     choices: tuple[str, ...] = field(default_factory=tuple)
     suffix: str = ""  # a unit, shown after the value
     decimals: int = 3  # for floats in forms
+    placeholder: str = ""  # shown in a form's empty text field: what empty means
 
     @property
     def value_type(self) -> type:

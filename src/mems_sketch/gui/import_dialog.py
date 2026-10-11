@@ -9,17 +9,16 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
-    QHeaderView,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
 
 from mems_sketch.core.imports import cells
 from mems_sketch.editing import EditSession
+from mems_sketch.gui import theme, widgets
 from mems_sketch.gui.help import HelpButton
 
 LEAVE_OUT = "(leave out)"
@@ -40,27 +39,28 @@ class ImportDialog(QDialog):
         self.cell = QComboBox()
         self.cell.addItems(names)
         self.cell.setToolTip("The cell to import, with its sub-cells (flattened)")
-        self.layers = QTableWidget(0, 2)
-        self.layers.setHorizontalHeaderLabels(["GDS layer", "Goes to"])
-        self.layers.verticalHeader().hide()
+        self.layers = widgets.make_table(("GDS layer", "Goes to"), stretch=1)
+        self.layers.setObjectName("import-layers")
         self.layers.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.layers.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        form = QFormLayout()
+        form = widgets.form()
         form.addRow("Component", self.name)
         form.addRow("Cell", self.cell)
-        layers_label = QLabel("Layers")
-        layout = QVBoxLayout(self)
+        layout = widgets.dialog_margins(QVBoxLayout(self))
         layout.addLayout(form)
-        heading = QFormLayout()
-        heading.addRow(
-            layers_label,
+        heading = QHBoxLayout()
+        heading.setSpacing(theme.metric("space_s"))
+        layers_label = QLabel("Layers")
+        layers_label.setObjectName("group-heading")
+        heading.addWidget(layers_label)
+        heading.addWidget(
             HelpButton(
                 "Each GDS layer goes to the project layer with the same GDS numbers. One "
                 "the project does not have gets a *new* layer, or can be left out."
-            ),
+            )
         )
+        heading.addStretch(1)
         layout.addLayout(heading)
-        layout.addWidget(self.layers)
+        layout.addWidget(self.layers, 1)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -70,7 +70,7 @@ class ImportDialog(QDialog):
         layout.addWidget(buttons)
         self.cell.currentTextChanged.connect(self._fill_layers)
         self._fill_layers(self.cell.currentText())
-        self.resize(420, 360)
+        self.resize(440, 400)
 
     def _fill_layers(self, cell: str) -> None:
         mapping = self.document.imports.default_layers(self.data, cell)

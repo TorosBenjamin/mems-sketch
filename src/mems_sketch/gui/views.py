@@ -156,7 +156,13 @@ class ComponentView(QWidget):
             self.guides = []  # construction lines are part of how it is built
         self.canvas.show_guides(self.guides, set(self.selection))
         self.selection = [p for p in self.selection if self._exists(p)]
-        self.canvas.show_geometry(geometry, colors, visible)
+        try:  # each shape outlined on its own (not the shapes of a closed component)
+            shapes = (
+                [] if self.implementation_hidden else self.document.results.shapes(self.component)
+            )
+        except Exception:  # noqa: BLE001 - it did not build: the errors say why
+            shapes = []
+        self.canvas.show_geometry(geometry, colors, visible, shapes)
         if not self._fitted and not geometry.is_empty():
             self._fitted = True
             self.canvas.fit()

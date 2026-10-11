@@ -932,6 +932,8 @@ class MainWindow(QMainWindow):
     def refresh(self) -> None:
         """Recompile every open tab and update the panels (after any change)."""
         self.tool.design_changed()  # what it was doing was based on the previous state
+        self._hovered = None  # it may be gone (deleted): the next move finds what is under
+        self.canvas.show_hover(None)
         for view in self.area.views():
             if not self.document.exists(view.component):
                 self.area.close_view(view)  # its component was deleted (or undone)
@@ -1000,7 +1002,7 @@ class MainWindow(QMainWindow):
         single = view.selection[0] if len(view.selection) == 1 else None
         shown = self.points_shown()
         box = results.node_box(single) if shown and single is not None else None
-        self.canvas.show_overlay(results.highlight(view.selection), markers, box)
+        self.canvas.show_overlay(results.highlights(view.selection), markers, box)
         self.canvas.show_guides(view.guides, set(view.selection))
         changes = (
             self.history.geometry(view.component) if self.tool_windows.is_open("history") else None
@@ -1160,11 +1162,15 @@ class MainWindow(QMainWindow):
         if path is None:
             return
         try:
-            geometry = self.document.results.preview(path, node)
+            geometry, outline, shapes = self.document.results.preview_outlined(path, node)
         except Exception:  # noqa: BLE001 - not valid: keep the last picture
             return
-        view.canvas.show_geometry(geometry, self.layers.colors, self.layers.visible)
-        view.canvas.show_overlay(None, [])  # the outline would show the old shape
+        if view.implementation_hidden:
+            shapes = []
+        view.canvas.show_geometry(geometry, self.layers.colors, self.layers.visible, shapes)
+        # The selection stays outlined, as it is now (the other selected shapes too).
+        others = self.document.results.highlights([p for p in view.selection if p != path])
+        view.canvas.show_overlay([*others, *([outline] if outline else [])], [])
 
     def _hit(self, view: ComponentView, x: float, y: float) -> NodePath | None:
         if self.implementation_hidden(view):

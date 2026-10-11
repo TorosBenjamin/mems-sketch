@@ -23,8 +23,8 @@
 * Editing a text too long for the field (or typing past its end, or
   Shift+Enter) opens :class:`ExpandedEdit` over it: as wide as the panel,
   wrapping onto more lines, with the same completion. Enter applies, as in the
-  field; Esc leaves the field as it was; clicking elsewhere keeps the text in
-  the field without applying it, as leaving the field does.
+  field; Esc leaves the field as it was; clicking elsewhere applies it, as
+  leaving a field of the Properties panel does.
 """
 
 from __future__ import annotations
@@ -583,7 +583,7 @@ class ExpandedEdit(QTextEdit):
             field.returnPressed.emit()
 
     def hideEvent(self, event) -> None:  # clicked elsewhere: the popup closes
-        self.finish()
+        self.finish(apply=True)  # as leaving a field does
         super().hideEvent(event)
 
     def _token(self) -> tuple[int, str]:

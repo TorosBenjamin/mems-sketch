@@ -98,6 +98,9 @@ its points, stay where they are.
 - **A long expression** (`abs(width - rim_width)`) opens a wider editor over
   its field when you edit it, as wide as the panel, wrapping onto more lines
   (Shift+Enter opens it for any field). Enter applies, Esc keeps the old value.
+- **Leaving a field applies it**, as Enter does: click another field, the
+  canvas or another shape and the edit is kept. Esc in the wider editor is the
+  way to drop an edit.
 - **The layer** is picked from a list with each layer's colour: the layers
   relative to the component's level first, each saying where it lands
   (`level+1 · metal`), then the layers by name.

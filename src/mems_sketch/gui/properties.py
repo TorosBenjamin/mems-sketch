@@ -21,8 +21,10 @@ from __future__ import annotations
 import contextlib
 import typing
 
-from PySide6.QtCore import QSize, Qt, Signal
+import shiboken6
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -56,7 +58,7 @@ from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import layer_color
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import component_icon, parse_value, read_only_kind, swatch_icon
-from mems_sketch.gui.value_edit import ElidedLineEdit, ValueEdit
+from mems_sketch.gui.value_edit import ElidedLineEdit, ExpandedEdit, ValueEdit
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
 _SPECIAL = {
@@ -160,6 +162,9 @@ class PropertyEditor(QScrollArea):
         self._editors: dict[str, typing.Callable[[], object]] = {}
         self._scope: dict[str, float] = {}
         self._show_placeholder("Select a shape to edit its properties.")
+        # Leaving a text field applies it, as Enter does: an edit is never lost by
+        # clicking elsewhere (another field, the canvas, another shape).
+        QApplication.instance().focusChanged.connect(self._focus_changed)
 
     # -- building ----------------------------------------------------------
 
@@ -890,6 +895,49 @@ class PropertyEditor(QScrollArea):
         except Exception:  # noqa: BLE001, S110 - not valid yet: keep the last preview
             pass
 
+    def _focus_changed(self, old: QWidget | None, new: QWidget | None) -> None:
+        """A text field of the form lost focus: apply what it says, if it changed."""
+        body = self.widget()
+        if (
+            not isinstance(old, QLineEdit)
+            or not shiboken6.isValid(old)
+            or body is None
+            or not body.isAncestorOf(old)
+            or old.isReadOnly()
+            or self.path is None
+        ):
+            return
+        if isinstance(new, ExpandedEdit) or getattr(old, "expanded", None) is not None:
+            return  # into the field's wider editor: still editing
+        path = self.path
+        try:
+            node = self._collect()
+        except Exception as exc:  # noqa: BLE001 - reported, as Enter would
+            self.error.emit(_message(exc))
+            return
+        with contextlib.suppress(KeyError):
+            if node == self.document.node(path):
+                return
+        # The field the focus went to, by its place in the form: the form is built
+        # again once applied, and the focus goes back to the same place.
+        fields = _focusable(body)
+        at = fields.index(new) if new in fields else None
+        # After the focus has moved, not inside the focus change being delivered.
+        QTimer.singleShot(0, lambda: self._apply_left(path, node, at))
+
+    def _apply_left(self, path: NodePath, node: Shape, at: int | None) -> None:
+        try:
+            self.document.nodes.replace(path, node)
+        except Exception as exc:  # noqa: BLE001 - reported to the user
+            self.error.emit(_message(exc))
+            return
+        self.applied.emit()
+        body = self.widget()
+        if at is not None and self.path == path and body is not None:
+            fields = _focusable(body)
+            if at < len(fields):
+                fields[at].setFocus(Qt.FocusReason.OtherFocusReason)
+
     def apply(self) -> None:
         if self.path is None:
             return
@@ -925,6 +973,15 @@ class ElidedLabel(QLabel):
     def _elide(self) -> None:
         shown = self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, self.width())
         super().setText(shown)
+
+
+def _focusable(body: QWidget) -> list[QWidget]:
+    """The widgets of a form that take the focus, in the order they were made."""
+    return [
+        w
+        for w in body.findChildren(QWidget)
+        if w.focusPolicy() != Qt.FocusPolicy.NoFocus and w.isVisible()
+    ]
 
 
 def _combo() -> QComboBox:

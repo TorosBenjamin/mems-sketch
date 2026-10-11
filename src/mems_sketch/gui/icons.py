@@ -185,8 +185,10 @@ ICONS = {
     'stroke="{blue}"/>',
     "folder": '<path d="M1.8 3.2h4.4l1.5 1.5h6.5v8.6H1.8z"/>',
     # -- editing ----------------------------------------------------------
-    "add": '<path d="M8 3v10M3 8h10" stroke="{green}"/>',
-    "remove": '<path d="M3 8h10" stroke="{red}"/>',
+    "add": '<path d="M8 3v10M3 8h10" stroke="{green}"/>',  # something added (history)
+    "remove": '<path d="M3 8h10" stroke="{red}"/>',  # and removed
+    "plus": '<path d="M8 3v10M3 8h10"/>',  # actions: add a row, a point, ...
+    "minus": '<path d="M3 8h10"/>',  # and remove the selected ones
     "delete": '<path d="M2.6 4h10.8M6.2 4V2.4h3.6V4M4 4l.7 9.6h6.6L12 4"/><path d="M6.6 6.6v4.6M9.4 '
     '6.6v4.6"/>',
     "duplicate": '<rect x="5.2" y="5.2" width="8.4" height="8.4" rx="1"/><path d="M10.8 5.2V2.4H2.4'

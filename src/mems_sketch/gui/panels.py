@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QMimeData, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
-    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -36,7 +35,7 @@ from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_vari
 from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
-from mems_sketch.gui import icons, theme
+from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.canvas import COMPONENT_MIME
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
@@ -108,30 +107,24 @@ def parse_limit(text: str, mark: str) -> tuple[float | str | None, bool]:
 def _action_bar(
     title: QLabel | None, *actions: tuple[str, str, object], help: str | None = None
 ) -> QHBoxLayout:
-    """A tool window's header row: an optional title, then small icon buttons and,
-    with ``help``, a "?" explaining it.
+    """A section's header row on a page (the Process page): an optional title, then
+    small icon buttons and, with ``help``, a "?" explaining it. Tool windows put
+    their buttons in the window's header instead (:func:`widgets.header_actions`).
 
     ``actions`` are ``(icon, tooltip, slot)``; the buttons are also returned in
     the layout's ``buttons`` attribute (by tooltip) for tests and shortcuts.
     """
     row = QHBoxLayout()
-    row.setContentsMargins(6, 2, 4, 2)
-    row.setSpacing(1)
+    row.setContentsMargins(theme.metric("space_m") - 2, 2, theme.metric("space_s"), 2)
+    row.setSpacing(theme.metric("space_xs"))
     if title is not None:
         title.setObjectName("muted")
         row.addWidget(title, 1)
     else:
         row.addStretch(1)
-    row.buttons = {}
-    for name, tip, slot in actions:
-        button = QToolButton()
-        icons.bind(button, name)
-        button.setIconSize(QSize(16, 16))
-        button.setToolTip(tip)
-        button.setAutoRaise(True)
-        button.clicked.connect(slot)
+    row.buttons = widgets.header_actions(*actions).buttons
+    for button in row.buttons.values():
         row.addWidget(button)
-        row.buttons[tip] = button
     if help:
         row.addWidget(HelpButton(help))
     return row
@@ -157,17 +150,10 @@ def shape_icon(shape: Shape) -> QIcon:
     return icons.icon(shape.icon_name())
 
 
-def _table(columns: Sequence[str]) -> QTableWidget:
-    table = QTableWidget(0, len(columns))
-    table.setHorizontalHeaderLabels(list(columns))
-    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-    table.horizontalHeader().setStretchLastSection(True)
-    table.horizontalHeader().setHighlightSections(False)
-    table.verticalHeader().hide()
-    table.verticalHeader().setDefaultSectionSize(26)
-    table.setShowGrid(False)
-    table.setFrameShape(QTableWidget.Shape.NoFrame)
-    return table
+def _table(columns: Sequence[str], stretch: int | None = None) -> QTableWidget:
+    """A table on the Process page: the last column (or ``stretch``) takes the room left."""
+    last = len(columns) - 1
+    return widgets.make_table(columns, last if stretch is None else stretch, scroll=True)
 
 
 def _blank_icon() -> QIcon:
@@ -237,13 +223,12 @@ class ComponentsPanel(_Panel):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.actions = _action_bar(
-            None,
-            ("add", "New component or library", self._add_menu),
+        self.actions = widgets.header_actions(
+            ("plus", "New component or library", self._add_menu),
             ("place", "Place the selected component in the edited one", self._place),
             ("collapse", "Collapse all", self._collapse_all),
         )
-        self.header_buttons = list(self.actions.buttons.values())  # shown in the dock header
+        self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.tree)
 
     # -- building ------------------------------------------------------------
@@ -988,8 +973,8 @@ class ParametersPanel(_Panel):
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.title = QLabel()
-        self.table = _table(self.COLUMNS)
+        self.title = self.header_context = widgets.header_context()  # the component
+        self.table = widgets.make_table(self.COLUMNS, stretch=self.COLUMNS.index("Default"))
         self.table.itemChanged.connect(self._changed)
         self.table.viewport().installEventFilter(self)
         self.table.setMouseTracking(True)  # for the drag cursor
@@ -998,14 +983,13 @@ class ParametersPanel(_Panel):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.actions = _action_bar(
-            self.title,
-            ("add", "Add parameter", lambda: self._guard(self.document.parameters.add)),
-            ("remove", "Remove the selected parameters", self._remove),
+        self.actions = widgets.header_actions(
+            ("plus", "Add parameter", lambda: self._guard(self.document.parameters.add)),
+            ("minus", "Remove the selected parameters", self._remove),
             ("lock", "Make the selected parameters internal (or public)", self._toggle_internal),
             ("clear", "Clear trial values", self._clear_trials),
         )
-        layout.addLayout(self.actions)
+        self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.table)
         self._names: list[str] = []
 
@@ -1027,8 +1011,8 @@ class ParametersPanel(_Panel):
         if self.hide_implementation:  # its interface: public ones only
             parameters = [p for p in parameters if not p.internal]
         read_only = self.document.read_only
-        suffix = " (read-only; trial values work)" if read_only else ""
-        self.title.setText(f"Parameters of <b>{self.document.active}</b>{suffix}")
+        suffix = " · read-only, trial values work" if read_only else ""
+        self.title.setText(f"{self.document.active}{suffix}")
         try:
             values = self.document.results.scope()
         except Exception:  # noqa: BLE001 - shown as "error" per row
@@ -1195,7 +1179,7 @@ class LayersPanel(_Panel):
         self.document = document
         self.visible: dict[str, bool] = {}
         self.colors: dict[str, QColor] = {}
-        self.layers = _table(("Layer", "GDS"))
+        self.layers = widgets.make_table(("Layer", "GDS"), stretch=0)
         self.layers.itemChanged.connect(self._layer_changed)
         self.layers.setToolTip("Tick to show a layer; click a layer to draw on it")
         self.layers.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -1289,8 +1273,8 @@ class LayerDefinitionsPanel(_Panel):
         layout.setSpacing(0)
         self.actions = _action_bar(
             QLabel("Layers"),
-            ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
-            ("remove", "Remove the selected layers", self._remove_layers),
+            ("plus", "Add layer", lambda: self._guard(self.document.process.add_layer)),
+            ("minus", "Remove the selected layers", self._remove_layers),
             help="The mask layers and their *GDS* layer and datatype for export. "
             "What they are checked with is in *Rules*.\n\n"
             "*Level* places a layer in the layer stack: a number makes it a level "
@@ -1427,8 +1411,8 @@ class ConstantsPanel(_Panel):
         layout.setSpacing(0)
         self.actions = _action_bar(
             QLabel("Constants"),
-            ("add", "Add constant", lambda: self._guard(self.document.process.add_constant)),
-            ("remove", "Remove the selected constants", self._remove_constants),
+            ("plus", "Add constant", lambda: self._guard(self.document.process.add_constant)),
+            ("minus", "Remove the selected constants", self._remove_constants),
             help="Numbers of the process, such as the device layer thickness. Every "
             "expression in every component can use them as *process.<name>*, e.g. "
             "*process.min_gap*.",

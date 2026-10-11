@@ -26,9 +26,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme
 from mems_sketch.gui.help import HelpButton
-from mems_sketch.gui.theme import HEADER_HEIGHT
 
 ANCHORS = ("left-top", "left-bottom", "bottom", "right")
 STRIPE_WIDTH = 38
@@ -67,8 +66,9 @@ class _Window:
 
 
 class _Host(QFrame):
-    """The island of one anchor: a header with the open window's title and its own
-    buttons (a panel's ``header_buttons``), and the window."""
+    """The island of one anchor: a header with the open window's title, what it is
+    showing (a panel's ``header_context``), its own buttons (``header_buttons``),
+    "?" and hide, and the window."""
 
     def __init__(self, hide) -> None:
         super().__init__()
@@ -80,13 +80,16 @@ class _Host(QFrame):
         header = QWidget()
         header.setObjectName("dock-title")
         header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        header.setFixedHeight(HEADER_HEIGHT)  # as tall as the editor tabs: edges line up
+        header.setFixedHeight(
+            theme.metric("header_height")
+        )  # as tall as the editor tabs: edges line up
         row = self.row = QHBoxLayout(header)
         row.setContentsMargins(10 - ISLAND_INSET, 0, 2, 0)
         row.setSpacing(1)
         self.title = QLabel()
         self.title.setObjectName("dock-title-label")
-        row.addWidget(self.title, 1)
+        row.addWidget(self.title)
+        row.addSpacing(theme.metric("space_m"))
         close = QToolButton()
         close.setAutoRaise(True)
         close.setToolTip("Hide")
@@ -131,6 +134,7 @@ class ToolWindows(QWidget):
         self.center.setStretchFactor(0, 1)
         self._splitters = {"main": self.main, "left": self.left_side, "center": self.center}
         for name, splitter in self._splitters.items():
+            splitter.setObjectName("islands")  # the frame shows between them
             splitter.setChildrenCollapsible(False)
             splitter.setHandleWidth(GAP)
             splitter.setSizes(DEFAULT_SIZES[name])
@@ -197,16 +201,22 @@ class ToolWindows(QWidget):
         self._groups[anchor].addWidget(button)
         host = self._hosts[anchor]
         host.stack.addWidget(widget)
-        buttons = QWidget()  # the panel's own buttons, shown in the header while it is open
+        # The panel's context and buttons, shown in the header while it is open.
+        buttons = QWidget()
         row = QHBoxLayout(buttons)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(1)
+        row.setSpacing(theme.metric("space_xs"))
+        context = getattr(widget, "header_context", None)
+        if context is not None:
+            row.addWidget(context, 1)  # cut off first when the header is narrow
+        else:
+            row.addStretch(1)
         for header_button in getattr(widget, "header_buttons", []):
             row.addWidget(header_button)
         if help:
             row.addWidget(HelpButton(help))
         buttons.hide()
-        host.row.insertWidget(host.row.count() - 1, buttons)  # before the hide button
+        host.row.insertWidget(host.row.count() - 1, buttons, 1)  # before the hide button
         self._windows[name] = _Window(name, title, widget, anchor, button, buttons)
 
     def names(self) -> list[str]:

@@ -332,10 +332,10 @@ def test_a_tool_window_header_carries_the_panels_own_buttons(window):
     window.tool_windows.close("components")
     window.tool_windows.open("components")
     assert all(b.isVisible() for b in buttons)
-    from mems_sketch.gui.theme import HEADER_HEIGHT
+    from mems_sketch.gui.theme import metric
 
     header = buttons[0].parentWidget().parentWidget()
-    assert header.height() == HEADER_HEIGHT  # lines up with the editor tabs
+    assert header.height() == metric("header_height")  # lines up with the editor tabs
 
 
 def test_the_process_item_has_its_own_right_click_entry(window):

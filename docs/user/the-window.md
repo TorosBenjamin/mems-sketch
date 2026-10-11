@@ -73,7 +73,8 @@ grid step, zoom and cursor position.
 system or [your own theme](#your-own-theme); the canvas can keep its own
 background), canvas (fill opacity,
 outlines, grid, overlays, gizmo size, zoom step), snapping, editor defaults
-and the keymap. The search field filters them; changes apply at once and are
+and the keymap: every command with a shortcut, its keys and the menu it is in.
+The search field filters them, shortcuts too; changes apply at once and are
 kept per user.
 
 ![Settings](../images/settings.png)

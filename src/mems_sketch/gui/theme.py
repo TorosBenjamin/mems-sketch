@@ -531,10 +531,22 @@ QLabel#heading {{ font-weight: 600; font-size: {font_heading}px; }}
 QWidget#view-header {{ background: {editor}; border-bottom: 1px solid {border}; }}
 QWidget#view-header QLabel {{ color: {muted}; }}
 QWidget#view-header QLabel#crumb-current {{ color: {text}; font-weight: 600; }}
-QListWidget#settings-pages {{ background: {window}; border-right: 1px solid {border}; }}
-QListWidget#settings-pages::item {{ border-radius: {radius_control}px; padding-left: 6px; }}
+QWidget#dialog-side {{ background: {frame}; }}
+QListWidget#side-list {{ background: transparent; }}
+QListWidget#side-list::item {{ border-radius: {radius_control}px; padding-left: 6px; }}
+QListWidget#side-list::item:hover:!selected {{ background: {hover}; }}
+QScrollArea#dialog-page, QWidget#dialog-page {{ background: {window}; }}
+QLabel#group-heading {{ color: {muted}; font-weight: 600; }}
+QLabel#placeholder {{ color: {muted}; background: transparent; }}
+QListWidget#library-list, QTableWidget#keymap, QTableWidget#import-layers {{
+    background: {editor}; border: 1px solid {input_border}; border-radius: {radius_control}px;
+}}
+QTableWidget#keymap QHeaderView::section, QTableWidget#import-layers QHeaderView::section {{
+    background: {editor};
+}}
 QDialog#find-action {{ background: {editor}; border: 1px solid {border_strong}; }}
 QTreeWidget#command-list {{ background: {editor}; }}
+QTreeWidget#command-list::item {{ padding: 3px 2px; }}
 QListWidget#command-list {{ background: {editor}; }}
 QListWidget#command-list::item {{ padding: 5px 8px; border-radius: {radius_control}px; }}
 """

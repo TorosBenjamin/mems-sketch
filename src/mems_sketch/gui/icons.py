@@ -215,6 +215,9 @@ ICONS = {
     '<path d="M3.4 4.6h3M9.6 4.6h3" stroke="{red}"/>',
     "snap_points": '<circle cx="8" cy="8" r="3.6"/><path d="M8 1.6v3M8 11.4v3M1.6 8h3M11.4 8h3"/>'
     '<circle cx="8" cy="8" r="1.1" fill="{blue}" stroke="none"/>',
+    "keyboard": '<rect x="1.5" y="4" width="13" height="8.4" rx="1.4"/>'
+    '<path d="M4 6.6h.01M6.7 6.6h.01M9.3 6.6h.01M12 6.6h.01M4 9.6h.01M12 9.6h.01M6.2 9.6h3.6" '
+    'stroke-width="1.4"/>',
     "grid": '<rect x="1.8" y="1.8" width="12.4" height="12.4" rx="1"/>'
     '<path d="M1.8 6h12.4M1.8 10h12.4M6 1.8v12.4M10 1.8v12.4"/>',
     "axes": '<path d="M3 13V3.2" stroke="{y}"/><path d="M3 13h9.8" stroke="{x}"/>'

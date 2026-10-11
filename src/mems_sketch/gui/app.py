@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
-from PySide6.QtGui import QCloseEvent, QColor
+from PySide6.QtGui import QCloseEvent, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -405,9 +405,10 @@ class MainWindow(QMainWindow):
 
     def show_settings(self, page: str | None = None) -> None:
         """The settings dialog (Ctrl+Alt+S); ``page`` opens a page, e.g. ``Keymap``."""
+        native = QKeySequence.SequenceFormat.NativeText
         shortcuts = [
-            (action.text().replace("&", ""), action.shortcut().toString())
-            for _path, action in menu_actions(self.actions_.root)
+            (action.text().replace("&", "").rstrip("…"), action.shortcut().toString(native), path)
+            for path, action in menu_actions(self.actions_.root)
             if not action.shortcut().isEmpty()
         ]
         dialog = PreferencesDialog(self.settings, shortcuts, self)

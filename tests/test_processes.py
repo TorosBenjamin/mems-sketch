@@ -119,3 +119,41 @@ def test_a_document_keeps_the_process_and_its_overrides(tmp_path):
     project.process.constants["undercut"] = 3
     save(project, tmp_path / "chip.json")
     assert load(tmp_path / "chip.json") == project
+
+
+# -- the process's grid (DRC-3) ---------------------------------------------------
+
+
+def test_the_grid_is_saved_with_the_process_only_when_it_is_not_the_default(tmp_path):
+    project = Project(name="chip")
+    save(project, tmp_path / "a")
+    assert "grid" not in (tmp_path / "a" / "processes" / "main" / "process.yaml").read_text()
+    project.process.grid_um, project.process.chord_um = 0.002, 0.01
+    save(project, tmp_path / "b")
+    again = load(tmp_path / "b")
+    assert (again.process.grid_um, again.process.chord_um) == (0.002, 0.01)
+
+
+def test_a_grid_that_is_not_a_positive_length_is_refused(tmp_path):
+    project = Project(name="chip")
+    save(project, tmp_path / "a")
+    path = tmp_path / "a" / "processes" / "main" / "process.yaml"
+    path.write_text(path.read_text() + "grid: -1\n")
+    with pytest.raises(ProjectFormatError, match="positive length"):
+        load(tmp_path / "a")
+
+
+def test_the_grid_belongs_to_the_process(tmp_path):
+    session = EditSession(using(tmp_path))
+    with pytest.raises(ValueError, match="belongs to process fab.surface"):
+        session.process.set_output(0.002, 0.005)
+
+
+def test_the_grid_of_a_projects_own_process_can_change(tmp_path):
+    session = EditSession(Project(name="chip"))
+    session.process.set_output(0.002, 0.01)
+    assert (session.project.process.grid_um, session.project.process.chord_um) == (0.002, 0.01)
+    session.undo()
+    assert session.project.process.grid_um == 0.001
+    with pytest.raises(ValueError, match="whole multiple of 1 nm"):
+        session.process.set_output(0.0015, 0.005)

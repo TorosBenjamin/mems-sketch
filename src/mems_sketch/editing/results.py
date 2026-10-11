@@ -77,8 +77,13 @@ class Results:
         engine = self.session.engine.trial(self._trial(path, node))
         return engine.build(component, self.session.trials_for(component)).records()
 
-    def _build(self, component: str) -> Build:
+    def build(self, component: str | None = None) -> Build:
+        """The engine's build of a component (default: the active one) with its trial
+        values: what outputs (exports, rule checks) are made from."""
+        component = component or self.session.active
         return self.session.engine.build(component, self.session.trials_for(component))
+
+    _build = build
 
     def _trial(self, path: NodePath, node: Shape):
         project, component = self.session.project, self.session.active
@@ -89,11 +94,18 @@ class Results:
             project, components={**project.components, component: definition}
         )
 
+    def checked(self, component: str | None = None) -> Geometry:
+        """What the rule checks look at: the component rounded onto the process's
+        grid as an export would write it (requirement DRC-3)."""
+        process = self.session.project.process
+        return self.build(component).output(process.grid_um, process.chord_um).geometry
+
     def check(
-        self, drawn: Geometry | None = None, component: str | None = None
+        self, geometry: Geometry | None = None, component: str | None = None
     ) -> list[rules.Violation]:
+        """The rule checks on ``geometry`` (default: :meth:`checked`)."""
         component = component or self.session.active
-        geometry = self.geometry(component=component) if drawn is None else drawn
+        geometry = self.checked(component) if geometry is None else geometry
         return rules.check(self.session.project, geometry, component)
 
     def node_regions(

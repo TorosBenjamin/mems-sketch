@@ -29,9 +29,9 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.shapes import BBOX_POINTS
 from mems_sketch.editing import EditSession
-from mems_sketch.gui import icons, theme
+from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.help import HelpButton
-from mems_sketch.gui.panels import _action_bar, _Panel
+from mems_sketch.gui.panels import _Panel
 from mems_sketch.gui.value_edit import ValueEdit
 
 KEY_ROLE = Qt.ItemDataRole.UserRole + 20  # ("declared", name) / ("default", name) / (shape, name)
@@ -60,7 +60,7 @@ class PointsPanel(_Panel):
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.title = QLabel()
+        self.title = self.header_context = widgets.header_context()  # the component
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Point", "Position"])
         self.tree.setMouseTracking(True)
@@ -89,12 +89,11 @@ class PointsPanel(_Panel):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.actions = _action_bar(
-            self.title,
-            ("add", "Add point", self._add),
-            ("remove", "Delete the selected point", self._remove),
+        self.actions = widgets.header_actions(
+            ("plus", "Add point", self._add),
+            ("minus", "Delete the selected point", self._remove),
         )
-        layout.addLayout(self.actions)
+        self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(splitter)
         self._positions: dict[Key, tuple[float, float] | None] = {}
         self._expanded: dict[str, set[str]] = {}  # per component: open groups
@@ -109,7 +108,7 @@ class PointsPanel(_Panel):
         self.tree.clear()
         definition = self.document.active_definition
         read_only = self.document.read_only
-        self.title.setText(f"Points of <b>{self.document.active}</b>")
+        self.title.setText(self.document.active)
         results = self.document.results
         try:
             declared = results.declared_points()
@@ -309,10 +308,7 @@ class PointsPanel(_Panel):
         layout = QFormLayout(form)
         layout.setContentsMargins(0, 0, 0, 0)
         if key is None:
-            hint = QLabel("No point selected")
-            hint.setObjectName("muted")
-            layout.addRow(hint)
-            return form
+            return widgets.EmptyState("Select a point to see where it is.")
         title = QLabel(reference(key))
         font = QFont(title.font())
         font.setBold(True)

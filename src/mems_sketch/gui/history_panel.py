@@ -39,8 +39,8 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.diff import ADDED, IMPORTS, PROCESS, PROJECT, REMOVED, Change
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.history import Comparison
-from mems_sketch.gui import icons
-from mems_sketch.gui.panels import _action_bar, _Panel
+from mems_sketch.gui import icons, widgets
+from mems_sketch.gui.panels import _Panel
 from mems_sketch.storage import git
 
 KEY_ROLE = Qt.ItemDataRole.UserRole + 30  # a version row: ("uncommitted",) or ("commit", sha)
@@ -78,20 +78,17 @@ class HistoryPanel(_Panel):
         self.key: Key = UNCOMMITTED
         self._geometry: dict[str, tuple[Geometry, Geometry] | str] = {}  # per component
         self._stale = True  # the commits need reading again when the panel shows
-        self.title = QLabel()  # what is being compared
-        header = _action_bar(self.title, ("recompile", "Refresh", self.reload))
-        self.note = QLabel()
-        self.note.setWordWrap(True)
-        self.note.setTextFormat(Qt.TextFormat.RichText)
-        self.note.setContentsMargins(8, 6, 8, 6)
-        self.note.setObjectName("muted")
-        self.init_button = QPushButton("Initialize git here")
-        self.init_button.setToolTip("Make the project's folder a git repository")
-        self.init_button.clicked.connect(self.init_repository)
-        init_row = QHBoxLayout()
-        init_row.setContentsMargins(8, 0, 8, 6)
-        init_row.addWidget(self.init_button)
-        init_row.addStretch(1)
+        # The tool window's header: the branch and what is being compared, and refresh.
+        self.title = self.header_context = widgets.header_context()
+        self.actions = widgets.header_actions(("recompile", "Refresh", self.reload))
+        self.header_buttons = list(self.actions)
+        self.note = widgets.EmptyState()  # why there is no history, in place of it
+        self.note.set_action(
+            "Initialize git here",
+            self.init_repository,
+            "Make the project's folder a git repository",
+        )
+        self.init_button = self.note.button
 
         self.versions = QTreeWidget()
         self.versions.setHeaderLabels(["Version", "When"])
@@ -132,6 +129,8 @@ class HistoryPanel(_Panel):
         lower_layout.setSpacing(0)
         lower_layout.addWidget(self.commit_box)
         lower_layout.addWidget(self.changes, 1)
+        self.no_changes = widgets.EmptyState("No changes")
+        lower_layout.addWidget(self.no_changes, 1)
 
         self.split = QSplitter(Qt.Orientation.Vertical)
         self.split.addWidget(self.versions)
@@ -140,9 +139,7 @@ class HistoryPanel(_Panel):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addLayout(header)
-        layout.addWidget(self.note)
-        layout.addLayout(init_row)
+        layout.addWidget(self.note, 1)
         layout.addWidget(self.split, 1)
         self.document.file_changed.connect(self._file_changed)
 
@@ -155,7 +152,7 @@ class HistoryPanel(_Panel):
         available = history.available
         self.split.setVisible(available)
         self.note.setVisible(not available)
-        self.note.setText(_rich(self._why_not()))
+        self.note.set_text(_rich(self._why_not()))
         self.init_button.setVisible(not available and history.can_init())
         self.versions.blockSignals(True)
         self.versions.clear()
@@ -310,10 +307,9 @@ class HistoryPanel(_Panel):
             self.commit_note.setText(f"Left out: staged outside the project ({names}).")
 
     def _list(self, comparison: Comparison) -> None:
+        self.changes.setVisible(bool(comparison.changes))
+        self.no_changes.setVisible(not comparison.changes)
         if not comparison.changes:
-            item = QTreeWidgetItem(["No changes"])
-            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.changes.addTopLevelItem(item)
             return
         groups: dict[str, QTreeWidgetItem] = {}
         bold = QFont(self.changes.font())

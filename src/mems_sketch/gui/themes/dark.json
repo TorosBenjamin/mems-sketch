@@ -62,5 +62,22 @@
     "on_accent": "#ffffff",
     "on_yellow": "#222222",
     "y": "#6cc36c"
+  },
+  "metrics": {
+    "radius_island": 10,
+    "radius_popup": 8,
+    "radius_card": 6,
+    "radius_control": 4,
+    "radius_small": 3,
+    "header_height": 32,
+    "row_height": 26,
+    "icon_size": 16,
+    "space_xs": 2,
+    "space_s": 4,
+    "space_m": 8,
+    "space_l": 12,
+    "space_xl": 16,
+    "font_heading": 13,
+    "font_title": 14
   }
 }

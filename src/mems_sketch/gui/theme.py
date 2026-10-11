@@ -5,12 +5,15 @@ panels, status bar) holding *islands*: every tool window and the editor, with
 rounded corners and no border lines between them.
 
 A theme is a JSON file of colours in three groups: ``ui`` (the window, filled
-into the style sheet below), ``canvas`` (the layout canvas) and ``icons``.
+into the style sheet below), ``canvas`` (the layout canvas) and ``icons``, and
+of ``metrics``: corner radii, heights, a spacing scale and font sizes.
 The built-in ``light`` and ``dark`` themes are in ``gui/themes/``. More come
 from packages, through the ``mems_sketch.themes`` entry-point group, and from
 the user's themes folder (:func:`user_folder`). A theme can name a ``parent``
-and give only the colours it changes. A theme sets colours only: the style
-sheet stays this module's, so a theme cannot break the layout.
+and give only the colours it changes. A theme sets values only: the style
+sheet stays this module's, so a theme cannot break the layout. Metrics in the
+style sheet (radii, font sizes) change at once; spacing and heights apply to
+panels built afterwards, so fully on the next start.
 
 ``apply(app, name)`` sets the Qt palette, the style sheet and the icon colours
 for a theme, or ``system`` (light or dark, following the desktop).
@@ -34,8 +37,6 @@ from PySide6.QtWidgets import QApplication
 
 from mems_sketch.gui import icons
 
-HEADER_HEIGHT = 32  # tool window headers and tab bars share this height, so edges line up
-ISLAND_RADIUS = 10  # px: the corners of the islands (and of the canvas in the editor's)
 SYSTEM = "system"  # follow the desktop: the built-in light or dark theme
 BUILT_IN = Path(__file__).with_name("themes")
 ENTRY_POINT_GROUP = "mems_sketch.themes"
@@ -139,7 +140,29 @@ class IconColors(_Colors):
     on_yellow: str  # and on the yellow one (warning)
 
 
-GROUPS = {"ui": UiColors, "canvas": CanvasColors, "icons": IconColors}
+class Metrics(BaseModel):
+    """Sizes in pixels: radii, heights, the spacing scale and font sizes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    radius_island: int = Field(ge=0, le=32)  # the islands (and the canvas in the editor's)
+    radius_popup: int = Field(ge=0, le=32)  # menus
+    radius_card: int = Field(ge=0, le=32)  # cards, tabs, the canvas's buttons
+    radius_control: int = Field(ge=0, le=32)  # fields, buttons, tooltips, list rows
+    radius_small: int = Field(ge=0, le=32)  # check boxes
+    header_height: int = Field(ge=20, le=64)  # tool window headers and editor tabs: edges line up
+    row_height: int = Field(ge=16, le=64)  # table rows
+    icon_size: int = Field(ge=12, le=32)  # icons in panel headers and toolbars
+    space_xs: int = Field(ge=0, le=64)  # the spacing scale: between buttons in a row
+    space_s: int = Field(ge=0, le=64)  # between a field and its label
+    space_m: int = Field(ge=0, le=64)  # inside a panel's edge
+    space_l: int = Field(ge=0, le=64)  # between groups
+    space_xl: int = Field(ge=0, le=64)  # around a page
+    font_heading: int = Field(ge=8, le=32)  # section headings
+    font_title: int = Field(ge=8, le=32)  # editable titles
+
+
+GROUPS = {"ui": UiColors, "canvas": CanvasColors, "icons": IconColors, "metrics": Metrics}
 
 
 class _File(BaseModel):
@@ -153,6 +176,7 @@ class _File(BaseModel):
     ui: dict[str, Any] = {}
     canvas: dict[str, Any] = {}
     icons: dict[str, Any] = {}
+    metrics: dict[str, Any] = {}
 
 
 @dataclass(frozen=True)
@@ -163,6 +187,7 @@ class Theme:
     ui: dict[str, str]
     canvas: dict[str, Any]
     icons: dict[str, str]
+    metrics: dict[str, int]
     source: str  # where it was found, for messages
 
 
@@ -234,7 +259,7 @@ def _resolve_all(files: dict[str, tuple[_File, str]]) -> dict[str, Theme]:
                 raise ThemeError(f"its parents go round in a circle: {' → '.join([*seen, up])}")
             seen.append(up)
             up = files[up][0].parent
-        merged: dict[str, dict[str, Any]] = {"ui": {}, "canvas": {}, "icons": {}}
+        merged: dict[str, dict[str, Any]] = {group: {} for group in GROUPS}
         dark = file.dark
         if file.parent is not None:
             if file.parent not in files:
@@ -243,11 +268,7 @@ def _resolve_all(files: dict[str, tuple[_File, str]]) -> dict[str, Theme]:
                 parent = build(file.parent)
             except ThemeError as e:
                 raise ThemeError(f"its parent {file.parent!r} cannot be used") from e
-            merged = {
-                "ui": dict(parent.ui),
-                "canvas": dict(parent.canvas),
-                "icons": dict(parent.icons),
-            }
+            merged = {group: dict(getattr(parent, group)) for group in GROUPS}
             dark = parent.dark if dark is None else dark
         for group in merged:
             merged[group].update(getattr(file, group))
@@ -331,6 +352,11 @@ def color(key: str) -> QColor:
     return QColor(current().ui[key])
 
 
+def metric(key: str) -> int:
+    """A size of the current theme, in pixels (``space_m``, ``header_height``, ...)."""
+    return current().metrics[key]
+
+
 STYLE = """
 QMainWindow {{ background: {frame}; }}
 QDialog {{ background: {window}; }}
@@ -340,12 +366,12 @@ QMainWindow::separator {{ background: {frame}; width: 5px; height: 5px; }}
 QWidget#tool-windows, QWidget#tool-window-stripe-left, QWidget#tool-window-stripe-right {{
     background: {frame};
 }}
-QWidget#island {{ background: {island}; border-radius: {radius}px; }}
+QWidget#island {{ background: {island}; border-radius: {radius_island}px; }}
 
 QToolBar {{ background: {frame}; border: none; spacing: 2px; padding: 3px 6px; }}
 QToolBar::separator {{ background: {border_strong}; width: 1px; height: 1px; margin: 4px 5px; }}
 QToolButton {{
-    background: transparent; border: none; border-radius: 5px; padding: 4px;
+    background: transparent; border: none; border-radius: {radius_control}px; padding: 4px;
 }}
 QToolButton:hover {{ background: {hover}; }}
 QToolButton:pressed {{ background: {pressed}; }}
@@ -356,13 +382,13 @@ QToolButton::menu-indicator {{ image: none; }}
 QToolBar#tools-toolbar QToolButton {{ padding: 5px; margin: 1px 2px; }}
 
 QMenuBar {{ background: {window}; }}
-QMenuBar::item {{ padding: 4px 8px; border-radius: 4px; }}
+QMenuBar::item {{ padding: 4px 8px; border-radius: {radius_control}px; }}
 QMenuBar::item:selected {{ background: {hover}; }}
 QMenu {{
-    background: {editor}; border: 1px solid {border_strong}; border-radius: 8px;
+    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_popup}px;
     padding: 5px;
 }}
-QMenu::item {{ padding: 5px 24px 5px 8px; border-radius: 4px; }}
+QMenu::item {{ padding: 5px 24px 5px 8px; border-radius: {radius_control}px; }}
 QMenu::item:selected {{ background: {selected}; }}
 QMenu::item:disabled {{ color: {muted}; }}
 QMenu::separator {{ height: 1px; background: {border_strong}; margin: 4px 6px; }}
@@ -379,11 +405,11 @@ QTabWidget::tab-bar {{ left: 6px; }}
 QTabBar {{ background: transparent; qproperty-drawBase: 0; }}  /* the island shows, rounded corners too */
 QTabBar::tab {{
     background: transparent; color: {text}; height: 22px; padding: 2px 10px; margin: 3px 2px;
-    border: 1px solid transparent; border-radius: 6px;
+    border: 1px solid transparent; border-radius: {radius_card}px;
 }}
 QTabBar::tab:selected {{ background: {selected_inactive}; border: 1px solid {border_strong}; }}
 QTabBar::tab:hover:!selected {{ background: {hover}; }}
-QToolButton#tab-close {{ padding: 1px; border-radius: 3px; }}
+QToolButton#tab-close {{ padding: 1px; border-radius: {radius_small}px; }}
 
 QTreeView, QTableView, QListView, QTableWidget, QTreeWidget, QListWidget {{
     background: {island}; alternate-background-color: {island}; border: none;
@@ -402,7 +428,7 @@ QTableView::item {{ padding: 0 4px; }}
 QTableCornerButton::section {{ background: {island}; border: none; }}
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
-    background: {editor}; border: 1px solid {border_strong}; border-radius: 4px;
+    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_control}px;
     padding: 3px 6px; selection-background-color: {selected}; selection-color: {text};
 }}
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QSpinBox:focus,
@@ -423,7 +449,7 @@ QComboBox QAbstractItemView {{
 }}
 
 QPushButton {{
-    background: {editor}; border: 1px solid {input_border}; border-radius: 4px;
+    background: {editor}; border: 1px solid {input_border}; border-radius: {radius_control}px;
     padding: 4px 12px;
 }}
 QPushButton:hover {{ background: {hover}; }}
@@ -440,14 +466,14 @@ QGroupBox#section {{
 }}
 QGroupBox#section::title {{ subcontrol-origin: margin; left: 0; top: 6px; padding: 0; }}
 QGroupBox#section::indicator {{
-    width: 13px; height: 13px; border: 1px solid {input_border}; border-radius: 3px;
+    width: 13px; height: 13px; border: 1px solid {input_border}; border-radius: {radius_small}px;
     background: {editor};
 }}
 QGroupBox#section::indicator:checked {{
     background: {accent}; border-color: {accent}; image: url({check});
 }}
 QCheckBox::indicator, QTreeView::indicator, QTableView::indicator {{
-    width: 13px; height: 13px; border: 1px solid {input_border}; border-radius: 3px;
+    width: 13px; height: 13px; border: 1px solid {input_border}; border-radius: {radius_small}px;
     background: {editor};
 }}
 QCheckBox::indicator:checked, QTreeView::indicator:checked, QTableView::indicator:checked {{
@@ -464,7 +490,7 @@ QGraphicsView {{ border: none; }}
 
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
 QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
-QScrollBar::handle {{ background: {scroll}; border-radius: 4px; min-height: 24px; min-width: 24px;
+QScrollBar::handle {{ background: {scroll}; border-radius: {radius_control}px; min-height: 24px; min-width: 24px;
     margin: 2px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
@@ -472,39 +498,40 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QSplitter::handle {{ background: {frame}; }}
 QToolTip {{
     background: {tooltip}; color: {text}; border: 1px solid {border_strong}; padding: 4px 6px;
-    border-radius: 4px;
+    border-radius: {radius_control}px;
 }}
 
 QLineEdit[expression="true"] {{ background: {expression}; }}
 QLineEdit[invalid="true"] {{ border: 1px solid {error}; }}
 QLineEdit#title-edit {{
-    background: transparent; border: 1px solid transparent; font-size: 14px; font-weight: 600;
+    background: transparent; border: 1px solid transparent; font-size: {font_title}px; font-weight: 600;
     padding: 2px 4px;
 }}
 QLineEdit#title-edit:hover {{ border: 1px solid {border_strong}; }}
 QLineEdit#title-edit:focus {{ border: 1px solid {accent}; background: {editor}; }}
 QFrame#modifier-card {{
-    background: {editor}; border: 1px solid {border_strong}; border-radius: 6px;
+    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_card}px;
 }}
 QFrame#modifier-card[off="true"] QLabel, QFrame#modifier-card[off="true"] QLineEdit {{
     color: {muted};
 }}
 QLabel#card-title {{ font-weight: 600; }}
 QWidget#canvas-buttons {{
-    background: {editor}; border: 1px solid {border_strong}; border-radius: 6px;
+    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_card}px;
 }}
-QLabel#muted {{ color: {muted}; }}
+QLabel#muted, QLabel#header-context {{ color: {muted}; }}
+QWidget#empty-state QLabel {{ color: {muted}; }}
 QLabel#muted[error="true"] {{ color: {error}; }}
-QLabel#heading {{ font-weight: 600; font-size: 13px; }}
+QLabel#heading {{ font-weight: 600; font-size: {font_heading}px; }}
 QWidget#view-header {{ background: {editor}; border-bottom: 1px solid {border}; }}
 QWidget#view-header QLabel {{ color: {muted}; }}
 QWidget#view-header QLabel#crumb-current {{ color: {text}; font-weight: 600; }}
 QListWidget#settings-pages {{ background: {window}; border-right: 1px solid {border}; }}
-QListWidget#settings-pages::item {{ border-radius: 4px; padding-left: 6px; }}
+QListWidget#settings-pages::item {{ border-radius: {radius_control}px; padding-left: 6px; }}
 QDialog#find-action {{ background: {editor}; border: 1px solid {border_strong}; }}
 QTreeWidget#command-list {{ background: {editor}; }}
 QListWidget#command-list {{ background: {editor}; }}
-QListWidget#command-list::item {{ padding: 5px 8px; border-radius: 4px; }}
+QListWidget#command-list::item {{ padding: 5px 8px; border-radius: {radius_control}px; }}
 """
 
 
@@ -555,7 +582,7 @@ def apply(app: QApplication, name: str) -> str:
             check=_svg_file(f"check-{theme}", CHECK_MARK, t["accent_text"]),
             arrow=_svg_file(f"arrow-{theme}", CHEVRON, t["text"]),
             arrow_disabled=_svg_file(f"arrow-{theme}-disabled", CHEVRON, t["muted"]),
-            radius=ISLAND_RADIUS,
+            **_current.metrics,
         )
     )
     return theme

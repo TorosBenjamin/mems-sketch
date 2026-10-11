@@ -49,6 +49,22 @@ with an anchor of `left-top`, `left-bottom`, `bottom` or `right`, and the
 panel's help text in `PANEL_HELP` (shown by its **?**). A panel talks only to
 the session and emits `error(str)` for problems.
 
+Build it from the shared pieces in `gui/widgets.py`, so it looks like the
+others:
+
+- **The header:** the panel sets `header_buttons` (from
+  `widgets.header_actions((icon, tooltip, slot), ...)`) and, if it shows
+  something particular, `header_context` (`widgets.header_context()`, e.g. the
+  component's name). Both go in the tool window's header, after its title; a
+  panel has no header row of its own. Use the neutral `plus` and `minus` icons
+  for adding and removing.
+- **Tables:** `widgets.make_table(columns, stretch=…)`: left-aligned titles, one
+  column taking the room left, the rest fitting their contents, no sideways
+  scrolling, and cut-off text shown whole as the tooltip.
+- **Nothing to show:** `widgets.EmptyState(text)`, with `set_action(text, slot)`
+  for a button.
+- **Sizes** come from the theme: `theme.metric("space_m")` and the like.
+
 ## An export format
 
 A class with `format_name`, `file_extension` and
@@ -141,7 +157,7 @@ subclass in `export/document_formats.py`.
 
 ## A theme
 
-A theme is a JSON file of colours (the user guide's
+A theme is a JSON file of colours and sizes (the user guide's
 [Your own theme](../user/the-window.md#your-own-theme) describes it). A
 package adds themes under the `mems_sketch.themes` entry-point group. Each
 entry point names the theme's id and gives a path to its JSON file, the theme
@@ -152,11 +168,11 @@ as a dictionary, or a function returning either:
 ocean = "my_themes:OCEAN"  # OCEAN = Path(__file__).with_name("ocean.json")
 ```
 
-`gui/theme.py` defines the colours a theme has (`UiColors`, `CanvasColors`,
-`IconColors`) and checks every theme against them when it is loaded: a theme
+`gui/theme.py` defines the colours and sizes a theme has (`UiColors`,
+`CanvasColors`, `IconColors`, `Metrics`) and checks every theme against them when it is loaded: a theme
 with an unknown or missing colour is left out and reported in Settings, never
 half applied. Interface code takes every colour from the theme
 (`theme.color("muted")`, the canvas's `self.theme`, `icons.color`);
 `test_no_colours_are_written_into_the_interface_code` keeps it that way. A new
-colour goes into the model and into both built-in themes.
+colour or size goes into the model and into both built-in themes.
 

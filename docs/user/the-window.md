@@ -96,6 +96,10 @@ only some colours:
 ```
 
 - `ui` colours the window, `canvas` the layout canvas and `icons` the icons.
+  `metrics` sets sizes in pixels: corner radii, header and row heights, the
+  spacing scale and font sizes (for example `"metrics": {"row_height": 30}` for
+  roomier tables). Radii and font sizes change at once; spacing and heights on
+  the next start.
   The built-in [light](../../src/mems_sketch/gui/themes/light.json) and
   [dark](../../src/mems_sketch/gui/themes/dark.json) themes list every colour.
 - Without a `parent`, a theme must give every colour.
@@ -104,9 +108,9 @@ only some colours:
 - Colours are `#rrggbb`, or `#aarrggbb` with transparency.
 
 The theme appears in *Interface theme* and *Canvas background* the next time
-Settings opens. A theme that cannot be used (a misspelt colour name, a parent
-that does not exist) is listed under the folder, with the reason. A theme
-changes colours only, never the layout.
+Settings opens. A theme that cannot be used (a misspelt colour name, a size
+out of range, a parent that does not exist) is listed under the folder, with
+the reason. A theme changes colours and sizes, never what is where.
 
 ## Undo and editor state
 

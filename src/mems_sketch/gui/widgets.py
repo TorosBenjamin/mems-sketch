@@ -9,6 +9,8 @@
 - :class:`EmptyState`: a centred message (and an action) where a panel has
   nothing to show.
 - :func:`splitter`: parts of a panel that can be resized, divided by a hairline.
+- :class:`Card` and :func:`page`: a page (the Process page) of sections, each a
+  card with its title, actions and "?", at a readable width.
 
 Sizes come from the theme's metrics (:func:`mems_sketch.gui.theme.metric`).
 """
@@ -21,9 +23,12 @@ from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QSplitterHandle,
@@ -37,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.gui import icons, theme
+from mems_sketch.gui.help import HelpButton
 
 Action = tuple[str, str, Callable]  # (icon, tooltip, slot)
 
@@ -106,9 +112,18 @@ def header_context() -> ElidedLabel:
     return label
 
 
+CELL_PADDING = 4  # px each side: the style sheet's ``QTableView::item`` padding
+
+
 class _ElidedTooltip(QStyledItemDelegate):
     """Shows a cell's full text as its tooltip when the cell is too narrow for it
-    (unless the cell has a tooltip of its own)."""
+    (unless the cell has a tooltip of its own), and asks for room for the style
+    sheet's cell padding, which Qt leaves out (columns fitting their contents
+    would otherwise cut off their longest text)."""
+
+    def sizeHint(self, option, index) -> QSize:
+        hint = super().sizeHint(option, index)
+        return QSize(hint.width() + 2 * CELL_PADDING, hint.height())
 
     def helpEvent(self, event, view, option, index) -> bool:
         if event.type() == QEvent.Type.ToolTip and not index.data(Qt.ItemDataRole.ToolTipRole):
@@ -201,40 +216,115 @@ class EmptyState(QWidget):
 
 
 class _HairlineHandle(QSplitterHandle):
-    """A splitter handle that is easy to grab but draws only a 1 px line, ``inset``
-    px short of both ends."""
-
-    def __init__(self, orientation: Qt.Orientation, parent: QSplitter, inset: int) -> None:
-        super().__init__(orientation, parent)
-        self.inset = inset
+    """A splitter handle that is easy to grab but draws only a 1 px line."""
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         color = theme.color("border_strong")
-        inset = self.inset
         if self.orientation() == Qt.Orientation.Horizontal:  # side by side: a vertical line
-            painter.fillRect(self.width() // 2, inset, 1, self.height() - 2 * inset, color)
+            painter.fillRect(self.width() // 2, 0, 1, self.height(), color)
         else:
-            painter.fillRect(inset, self.height() // 2, self.width() - 2 * inset, 1, color)
+            painter.fillRect(0, self.height() // 2, self.width(), 1, color)
 
 
 class HairlineSplitter(QSplitter):
     """A splitter whose handles draw a hairline (see :func:`splitter`)."""
 
-    def __init__(self, orientation: Qt.Orientation, inset: int = 0) -> None:
+    def __init__(self, orientation: Qt.Orientation) -> None:
         super().__init__(orientation)
-        self.inset = inset
         self.setObjectName("panel-split")
         self.setHandleWidth(theme.metric("space_m") - 1)  # odd: the line sits in the middle
 
     def createHandle(self) -> QSplitterHandle:
-        return _HairlineHandle(self.orientation(), self, self.inset)
+        return _HairlineHandle(self.orientation(), self)
 
 
-def splitter(orientation: Qt.Orientation, inset: int = 0) -> QSplitter:
-    """Resizable parts of a panel or page, divided by a hairline (the frame-coloured
-    gaps are only between islands). In a panel the island's edge already keeps the
-    line off the sides; a page that reaches its island's edges gives an ``inset``."""
-    split = HairlineSplitter(orientation, inset)
+def splitter(orientation: Qt.Orientation) -> QSplitter:
+    """Resizable parts of a panel, divided by a hairline (the frame-coloured gaps are
+    only between islands; the island's edge keeps the line off the panel's sides)."""
+    split = HairlineSplitter(orientation)
     split.setChildrenCollapsible(False)
     return split
+
+
+class Card(QFrame):
+    """A section of a page: a header with its title, its actions and "?", then
+    ``body`` (a vertical layout) for its contents."""
+
+    def __init__(self, title: str, help: str | None = None) -> None:
+        super().__init__()
+        self.setObjectName("card")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        outer = QVBoxLayout(self)
+        pad = theme.metric("space_m")
+        outer.setContentsMargins(pad, pad // 2, pad, pad)
+        outer.setSpacing(theme.metric("space_s"))
+        self.header = QHBoxLayout()
+        self.header.setSpacing(theme.metric("space_xs"))
+        self.title = QLabel(title)
+        self.title.setObjectName("card-heading")
+        self.header.addWidget(self.title)
+        self.header.addStretch(1)
+        self._help = HelpButton(help) if help else None
+        if self._help is not None:
+            self.header.addWidget(self._help)
+        outer.addLayout(self.header)
+        self.body = QVBoxLayout()
+        self.body.setSpacing(theme.metric("space_s"))
+        outer.addLayout(self.body)
+        self.actions = Actions(())
+
+    def add_actions(self, *actions: Action) -> Actions:
+        """Buttons in the card's header, before its "?"."""
+        self.actions = Actions(actions)
+        at = self.header.count() - (1 if self._help is not None else 0)
+        for button in self.actions:
+            self.header.insertWidget(at, button)
+            at += 1
+        return self.actions
+
+
+def fit_to_rows(table: QTableWidget, minimum: int = 1) -> None:
+    """Make a table on a page exactly as tall as its rows (at least ``minimum``),
+    so the page scrolls rather than the table."""
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    row = table.verticalHeader().defaultSectionSize()
+    header = table.horizontalHeader().sizeHint().height()
+    heights = sum(table.rowHeight(r) for r in range(table.rowCount()))  # some may be taller
+    missing = max(minimum - table.rowCount(), 0) * row
+    bar = (
+        table.horizontalScrollBar().sizeHint().height()
+        if table.horizontalScrollBar().isVisible()
+        else 0
+    )
+    table.setFixedHeight(header + heights + missing + 2 * table.frameWidth() + bar)
+
+
+def page(*sections: QWidget, header: QWidget | None = None, width: int = 1100) -> QScrollArea:
+    """A scrolling page: ``header``, then ``sections`` one under the other, at most
+    ``width`` px wide and centred."""
+    content = QWidget()
+    content.setObjectName("page")
+    content.setMaximumWidth(width)
+    column = QVBoxLayout(content)
+    margin = theme.metric("space_xl")
+    column.setContentsMargins(margin, theme.metric("space_l"), margin, margin)
+    column.setSpacing(theme.metric("space_l"))
+    if header is not None:
+        column.addWidget(header)
+    for section in sections:
+        column.addWidget(section)
+    column.addStretch(1)
+    centred = QWidget()
+    centred.setObjectName("page")
+    row = QHBoxLayout(centred)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addStretch(0)
+    row.addWidget(content, 1)
+    row.addStretch(0)
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    area.setWidget(centred)
+    return area

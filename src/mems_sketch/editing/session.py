@@ -103,12 +103,15 @@ class EditSession:
         change: Callable[[Project], object],
         done: Callable[[], None] | None = None,
     ) -> object:
-        """Apply ``change``; roll back and re-raise if a valid project would become invalid.
+        """Apply ``change``; roll back and re-raise if a valid project would become invalid,
+        or if its references would stop resolving or form a cycle (a component placing
+        itself cannot be drawn, so that is refused even in a project with problems).
 
         ``done`` runs after a successful change, before views are told.
         """
         before, active = self._snapshot(), self.active
         was_valid = not self.problems(before)
+        references_valid = was_valid or _references_valid(before)
         try:
             result = change(self.project)
             for definition in self.project.components.values():
@@ -117,6 +120,8 @@ class EditSession:
                 problems = self.problems()
                 if problems:
                     raise ValueError(problems[0])
+            elif references_valid:
+                self.project.check_references()
         except Exception:
             self.project, self.active = before, active
             raise
@@ -423,3 +428,11 @@ class EditSession:
 
     def shapes_in(self, project: Project) -> list[Shape]:
         return self.local(project).shapes
+
+
+def _references_valid(project: Project) -> bool:
+    try:
+        project.check_references()
+    except ValueError:
+        return False
+    return True

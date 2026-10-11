@@ -108,7 +108,6 @@ class ElidedLineEdit(QLineEdit):
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)
         self._layout()
-        self._update_cursor()
 
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)

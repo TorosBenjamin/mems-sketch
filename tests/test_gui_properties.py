@@ -143,6 +143,8 @@ def test_long_names_are_cut_and_do_not_widen_the_panel(window):
     assert QLabel.text(summary).endswith("…")  # shown cut; text() is all of it
     from_x.setFocus()
     assert not from_x._elided()  # all of it while editing
+    name.setFocus()  # the name too (giving it focus used to raise)
+    assert not name._elided()
 
 
 def test_internal_parameters_are_locked_and_not_offered_where_placed(window):

@@ -95,6 +95,12 @@ its points, stay where they are.
 - **Any number field takes a number or an expression.** An expression is
   tinted and shows its value; a red border means it cannot be evaluated.
   Typing offers the matching parameters, process constants and points.
+- **A long expression** (`abs(width - rim_width)`) opens a wider editor over
+  its field when you edit it, as wide as the panel, wrapping onto more lines
+  (Shift+Enter opens it for any field). Enter applies, Esc keeps the old value.
+- **The layer** is picked from a list with each layer's colour: the layers
+  relative to the component's level first, each saying where it lands
+  (`level+1 · metal`), then the layers by name.
 - **Drag a number** left or right to change it, as in Blender (Shift: finer,
   Ctrl: round steps; counts go in whole numbers). The canvas follows live and
   the change is one undo step. A click without dragging edits the text.
@@ -108,10 +114,10 @@ its points, stay where they are.
 
 **Shapes** lists the shapes of the component being edited, one line each: the
 name, then what it is in grey (a primitive's layer, the component a reference
-places). Checkboxes switch shapes off without deleting them; operations show
+places). The eye hides a shape without deleting it; operations show
 their operands under them. A placed component expands to show what is inside
 it, read-only (changing it would change every copy); double-click such a row
 to open the component with that shape selected.
 
-**Layers** shows which layers are visible, their colours and GDS numbers;
-clicking one makes it the drawing layer.
+**Layers** shows the layers with their colours and GDS numbers; the eye shows
+or hides one, and clicking one makes it the drawing layer.

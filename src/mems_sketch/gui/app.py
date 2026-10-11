@@ -11,6 +11,7 @@ import math
 import multiprocessing
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
@@ -31,7 +32,7 @@ from mems_sketch.core.component import component_types
 from mems_sketch.core.shapes import NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.export.base import available_exporters, options_of, title_of
-from mems_sketch.gui import icons, theme
+from mems_sketch.gui import icons, motion, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.editor_state import load_state, save_state
@@ -61,8 +62,9 @@ from mems_sketch.gui.search import (
     action_results,
     menu_actions,
 )
-from mems_sketch.gui.settings import PreferencesDialog, Settings
+from mems_sketch.gui.settings import PreferencesDialog, Settings, open_folder
 from mems_sketch.gui.statusbar import ToolStatus
+from mems_sketch.gui.toast import Toast, Toasts
 from mems_sketch.gui.toolbar import build_toolbar
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool
 from mems_sketch.gui.toolwindows import ToolWindows
@@ -166,6 +168,8 @@ class MainWindow(QMainWindow):
         self._state_timer.timeout.connect(self.save_editor_state)
 
         self.area = EditorArea(self.document)
+        self.toasts = Toasts(self, self.area)  # before anything can report an error
+        self._quiet_selection = False
         self.components = ComponentsPanel(self.document)
         self.tree = ShapeTree(self.document)
         self.properties = PropertyEditor(self.document)
@@ -184,6 +188,7 @@ class MainWindow(QMainWindow):
 
         self._build_actions()
         self._build_status_bar()
+        motion.set_enabled(not self.settings.get("appearance/reduce_motion"))
 
         self.document.changed.connect(self.refresh)
         self.document.active_changed.connect(self._active_changed)
@@ -368,6 +373,8 @@ class MainWindow(QMainWindow):
 
     def _setting_changed(self, key: str) -> None:
         """Apply a changed setting at once."""
+        if key == "appearance/reduce_motion":
+            motion.set_enabled(not self.settings.get(key))
         if key == "appearance/ui_theme":
             self.ui_theme = self._apply_ui_theme()
             self.refresh()  # panels and tabs pick up the new icon colours
@@ -561,7 +568,7 @@ class MainWindow(QMainWindow):
             try:
                 save_state(self.document.path, self.editor_state())
             except OSError as exc:  # e.g. a read-only folder: views are simply not remembered
-                self.statusBar().showMessage(f"Could not save the editor state: {exc}", 5000)
+                self.notify(f"Could not save the editor state: {exc}", "warning")
 
     def restore_editor_state(self) -> None:
         """Bring back how the project was being looked at the last time it was open."""
@@ -1096,10 +1103,23 @@ class MainWindow(QMainWindow):
     # -- selection ---------------------------------------------------------
 
     def _tree_selected(self, paths: list[NodePath]) -> None:
+        picked = [p for p in paths if p not in self.selection]
         self.selection = paths
+        if picked and not self._quiet_selection:  # chosen in a panel, search or history
+            regions = dict(getattr(self.view, "node_regions", ()))
+            self.canvas.pulse(*(regions[p] for p in picked if p in regions))
         self.properties.show_node(paths[0] if len(paths) == 1 else None)
         self.update_overlay()
         self.state_changed()
+
+    def _select_quietly(self, paths: list[NodePath]) -> None:
+        """Select what was clicked on the canvas: it is where the user looks, so it
+        does not glow as a shape picked in a panel does."""
+        self._quiet_selection = True
+        try:
+            self.tree.select_paths(paths)
+        finally:
+            self._quiet_selection = False
 
     def _cursor_moved(self, x: float, y: float) -> None:
         text = f"x {x:.3f}  y {y:.3f} µm"
@@ -1232,7 +1252,7 @@ class MainWindow(QMainWindow):
             if _box_contains(box, *start) and _box_contains(box, *end)
         ]
         paths = list(dict.fromkeys([*self.selection, *inside])) if additive else inside
-        self.tree.select_paths(paths)
+        self._select_quietly(paths)
 
     def select_click(self, hit: NodePath | None, additive: bool) -> None:
         """A click on ``hit`` (or on nothing): select it, or toggle it when ``additive``."""
@@ -1246,13 +1266,13 @@ class MainWindow(QMainWindow):
             )
         else:
             paths = [hit]
-        self.tree.select_paths(paths)
+        self._select_quietly(paths)
 
     def _zoom_to_bbox(self, bbox: tuple[float, float, float, float]) -> None:
         x0, y0, x1, y1 = bbox
         size = max(x1 - x0, y1 - y0, 5.0)
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        self.canvas.zoom_to(QRectF(cx - size * 2, cy - size * 2, size * 4, size * 4))
+        self.canvas.zoom_to(QRectF(cx - size * 2, cy - size * 2, size * 4, size * 4), animated=True)
 
     def _context_menu(self, view: ComponentView, x: float, y: float, at: QPoint) -> None:
         """The editor's right-click menu; a shape under the cursor is selected first."""
@@ -1260,7 +1280,7 @@ class MainWindow(QMainWindow):
             self.area.set_current(view)
         hit = self._hit(view, x, y)
         if hit is not None and hit not in self.selection:
-            self.tree.select_paths([hit])
+            self._select_quietly([hit])
         self.show_menu(self.actions_.context_menu(x, y), at)
 
     def show_menu(self, menu: QMenu, at: QPoint) -> None:
@@ -1290,9 +1310,36 @@ class MainWindow(QMainWindow):
 
     # -- commands ----------------------------------------------------------
 
+    def notify(
+        self,
+        text: str,
+        kind: str = "info",
+        action: tuple[str, Callable] | None = None,
+        seconds: float | None = None,
+        key: str = "",
+    ) -> Toast:
+        """A note over the editor about what just happened (see :mod:`toast`):
+        ``kind`` is info, success, warning or error (which stays until closed)."""
+        return self.toasts.show_toast(text, kind, action, seconds, key)
+
     def report_error(self, message: str) -> None:
-        self.statusBar().showMessage(message, 8000)
+        self.notify(message, "error", ("Show messages", self._show_messages_panel))
         self._show_messages(message)
+
+    def undo(self) -> None:
+        """Undo, saying what was undone."""
+        if self.document.can_undo():
+            self._step_history(self.document.undo_text(), self.document.undo, "Undid")
+
+    def redo(self) -> None:
+        if self.document.can_redo():
+            self._step_history(self.document.redo_text(), self.document.redo, "Redid")
+
+    def _step_history(self, text: str, step: Callable[[], None], done: str) -> None:
+        before = self.document.active
+        step()
+        where = f" in {self.document.active}" if self.document.active != before else ""
+        self.notify(f"{done} {text}{where}".strip(), "info", seconds=2, key="history-step")
 
     def _run(self, action) -> tuple[bool, object]:
         """Run a command; report failures to the user. Returns (succeeded, result)."""
@@ -1305,7 +1352,7 @@ class MainWindow(QMainWindow):
     def _select_result(self, action) -> None:
         ok, path = self._run(action)
         if ok and path:
-            self.tree.select_paths([path])
+            self._select_quietly([path])  # just made where the user is looking
 
     def add_primitive(self, kind: str) -> None:
         self._select_result(lambda: self.document.nodes.add_primitive(kind))
@@ -1470,12 +1517,14 @@ class MainWindow(QMainWindow):
         if self._run(lambda: self._open(path))[0]:
             self._remember_dir(path)
             if self.document.project.load_notes:
-                self.statusBar().showMessage("; ".join(self.document.project.load_notes), 15000)
+                self.notify("; ".join(self.document.project.load_notes), "warning", seconds=15)
             elif self.document.path is None:
-                self.statusBar().showMessage(
+                self.notify(
                     f"Opened {Path(path).name} as a copy: use Save as… to store it as a "
                     "project folder",
-                    10000,
+                    "info",
+                    ("Save as…", self.save_project_as),
+                    seconds=10,
                 )
 
     def ask_where_to_open(self, path: str) -> str | None:
@@ -1573,7 +1622,11 @@ class MainWindow(QMainWindow):
             changes = written.describe() if hasattr(written, "describe") else []
             if changes:  # snapping to the file's grid changed the shape (requirement OUT-3)
                 self.show_export_changes(path, changes)
-            self.statusBar().showMessage(f"Exported {path}", 5000)
+            self.notify(
+                f"Exported {Path(path).name}",
+                "success",
+                ("Show in folder", lambda: open_folder(Path(path).parent)),
+            )
 
     def show_export_changes(self, path: str, changes: list[str]) -> None:
         """Say what snapping to the export's grid changed in the shape of the design."""

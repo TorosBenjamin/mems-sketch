@@ -20,7 +20,18 @@ import weakref
 
 import numpy as np
 import shiboken6
-from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QLineF,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSize,
+    QSizeF,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -51,7 +62,7 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.transform import Transform
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, motion
 from mems_sketch.gui import theme as themes
 
 POINT_SIZES = {  # marker size in pixels
@@ -87,6 +98,7 @@ CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
 OUTLINE_PX = 1.0
+PULSE_PX = 3.0  # a picked shape's glow starts this wide, then thins and fades
 COMPONENT_MIME = "application/x-mems-sketch-component"  # a component dragged from the explorer
 # The world the user can pan over, in µm: ±1 m, inside the ±2.1 m that 32-bit
 # database units (nm) can hold. Cursor positions are kept inside it.
@@ -230,6 +242,8 @@ class LayoutCanvas(QGraphicsView):
         self._box_item: QGraphicsRectItem | None = None
         self._sketch_item: QGraphicsPathItem | None = None
         self._hover_item: QGraphicsPathItem | None = None
+        self._pulse_item: QGraphicsPathItem | None = None
+        self._glide_target: tuple[float, QPointF] | None = None  # where a glide is going
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
         self._caption: tuple[str, str] = ("", "")
@@ -335,9 +349,13 @@ class LayoutCanvas(QGraphicsView):
         box = self._overlay_box(Qt.Orientation.Horizontal)
         layout = box.layout()
         for name, tip, slot in (
-            ("zoom_in", "Zoom in", lambda: self.zoom_by(self.options["zoom_step"])),
-            ("zoom_out", "Zoom out", lambda: self.zoom_by(1 / self.options["zoom_step"])),
-            ("fit", "Fit (F)", self.fit),
+            ("zoom_in", "Zoom in", lambda: self.zoom_by(self.options["zoom_step"], animated=True)),
+            (
+                "zoom_out",
+                "Zoom out",
+                lambda: self.zoom_by(1 / self.options["zoom_step"], animated=True),
+            ),
+            ("fit", "Fit (F)", lambda: self.fit(animated=True)),
         ):
             button = QToolButton(box)
             icons.bind(button, name)
@@ -394,16 +412,112 @@ class LayoutCanvas(QGraphicsView):
         zoom.move(width - zoom.width() - 8, height - zoom.height() - 8)
         modes.move(width - modes.width() - 8, 8)
 
-    def zoom_by(self, factor: float) -> None:
-        """Zoom about the centre of the view."""
-        scale = self.pixels_per_um() * factor
-        if 1e-4 < scale < 1e5:
+    def zoom_by(self, factor: float, animated: bool = False) -> None:
+        """Zoom about the centre of the view (``animated``: gliding there; clicks
+        during a glide add up from where it is going)."""
+        gliding = self._glide_target if motion.running(self, "view") else None
+        scale = (gliding[0] if gliding else self.pixels_per_um()) * factor
+        if not 1e-4 < scale < 1e5:
+            return
+        if animated:
+            center = gliding[1] if gliding else self.mapToScene(self.viewport().rect().center())
+            self._glide(scale, center)
+            return
+        motion.stop(self, "view")
+        self._begin_draft()
+        anchor = self.transformationAnchor()
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.scale(factor, factor)
+        self.setTransformationAnchor(anchor)
+        self.view_changed.emit()
+
+    def _glide(self, scale: float, center: QPointF) -> None:
+        """Move the view to ``scale`` (pixels per µm) and ``center`` smoothly: the
+        zoom changes evenly (by ratio), so zooming in far does not rush at the end."""
+        self._glide_target = (scale, QPointF(center))
+        start_scale = self.pixels_per_um()
+        start = self.mapToScene(self.viewport().rect().center())
+        log_from, log_to = math.log(start_scale), math.log(scale)
+
+        def step(t: float) -> None:
+            s = math.exp(motion.mix(log_from, log_to, t))
+            # Hold the centre's share of the way in screen terms: at each zoom,
+            # pan by the same fraction of the distance as the zoom has covered.
+            k = (s - start_scale) / (scale - start_scale) if scale != start_scale else t
+            x = motion.mix(start.x(), center.x(), k)
+            y = motion.mix(start.y(), center.y(), k)
             self._begin_draft()
-            anchor = self.transformationAnchor()
-            self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
-            self.scale(factor, factor)
-            self.setTransformationAnchor(anchor)
+            self.setTransform(QTransform.fromScale(s, -s))
+            self.centerOn(QPointF(x, y))
+
+        motion.run(
+            self,
+            step,
+            motion.VIEW,
+            done=self.view_changed.emit,
+            easing=QEasingCurve.Type.InOutCubic,
+            key="view",
+        )
+
+    def stop_gliding(self) -> None:
+        """The user took over (wheel, pan): stay where the glide got to."""
+        if motion.running(self, "view"):
+            motion.stop(self, "view")
             self.view_changed.emit()
+
+    def pulse(self, *geometries: Geometry) -> None:
+        """Make ``geometries`` glow and fade (shapes picked in a panel or search), so
+        the eye finds them on the canvas; they move into view first if outside."""
+        if self._pulse_item is not None:
+            self.scene().removeItem(self._pulse_item)
+            self._pulse_item = None
+        motion.stop(self, "pulse")
+        shown = [g for g in geometries if g is not None and not g.is_empty()]
+        if not shown or not motion.enabled():
+            return
+        outline = QPainterPath()
+        for geometry in shown:
+            for leaf, at in geometry.leaves():
+                outline.addPath(qtransform(at).map(own_path(leaf, "")))
+        self.reveal(outline.boundingRect())
+        item = QGraphicsPathItem(outline)
+        item.setZValue(1002)
+        self.scene().addItem(item)
+        self._pulse_item = item
+        color = QColor(self.theme["highlight"])
+
+        def step(t: float) -> None:
+            pen = QPen(color, motion.mix(PULSE_PX, OUTLINE_PX, t))
+            pen.setCosmetic(True)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            item.setPen(pen)
+            item.setOpacity(0.85 * (1.0 - t))
+
+        def done() -> None:
+            if self._pulse_item is item:
+                self.scene().removeItem(item)
+                self._pulse_item = None
+
+        motion.run(
+            self, step, motion.PULSE, done=done, easing=QEasingCurve.Type.InQuad, key="pulse"
+        )
+
+    def reveal(self, rect: QRectF) -> None:
+        """Glide so ``rect`` (µm) is in view: a pan when it fits at this zoom, else
+        zoomed out to it. Nothing moves when it is already in view."""
+        if rect.isEmpty() and rect.width() == 0 and rect.height() == 0:
+            return
+        shown = self.mapToScene(self.viewport().rect()).boundingRect()
+        if shown.contains(rect):
+            return
+        margin = max(rect.width(), rect.height()) * 0.08 + 1
+        if (
+            rect.width() + 2 * margin < shown.width()
+            and rect.height() + 2 * margin < shown.height()
+        ):
+            self._glide(self.pixels_per_um(), rect.center())
+        else:
+            self.zoom_to(rect, animated=True)
 
     def show_geometry(
         self, geometry: Geometry, colors: dict[str, QColor], visible: dict[str, bool]
@@ -816,27 +930,33 @@ class LayoutCanvas(QGraphicsView):
                     rect = rect.united(item.sceneBoundingRect())
         return rect
 
-    def fit(self) -> None:
+    def fit(self, animated: bool = False) -> None:
         rect = self.content_rect()
         if rect.isEmpty():
             rect = QRectF(-100, -100, 200, 200)
-        self.zoom_to(rect)
+        self.zoom_to(rect, animated)
 
-    def zoom_to(self, rect: QRectF) -> None:
+    def zoom_to(self, rect: QRectF, animated: bool = False) -> None:
+        """Show ``rect`` (µm) with a margin (``animated``: gliding there)."""
         margin = max(rect.width(), rect.height()) * 0.08 + 1
-        self.fitInView(
-            rect.adjusted(-margin, -margin, margin, margin), Qt.AspectRatioMode.KeepAspectRatio
-        )
-        # fitInView resets the y flip; restore it while keeping the scale.
-        scale = abs(self.transform().m11())
-        center = rect.center()
+        wide = rect.adjusted(-margin, -margin, margin, margin)
+        view = self.viewport().rect().adjusted(2, 2, -2, -2)  # as fitInView leaves
+        if wide.width() <= 0 or wide.height() <= 0 or view.width() <= 0:
+            return
+        scale = min(view.width() / wide.width(), view.height() / wide.height())
+        scale = min(max(scale, 1.0001e-4), 0.9999e5)
+        if animated:
+            self._glide(scale, rect.center())
+            return
+        motion.stop(self, "view")
         self.setTransform(QTransform.fromScale(scale, -scale))
-        self.centerOn(center)
+        self.centerOn(rect.center())
         self.view_changed.emit()
 
     # -- interaction -------------------------------------------------------
 
     def wheelEvent(self, event) -> None:
+        self.stop_gliding()
         step = self.options["zoom_step"]
         factor = step if event.angleDelta().y() > 0 else 1 / step
         scale = abs(self.transform().m11()) * factor
@@ -882,6 +1002,7 @@ class LayoutCanvas(QGraphicsView):
             self._right_from = event.position()  # a click opens the menu; a drag pans
             return
         if self._pans(event):
+            self.stop_gliding()
             self._pan_from = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             return
@@ -905,6 +1026,7 @@ class LayoutCanvas(QGraphicsView):
             if (event.position() - self._right_from).manhattanLength() <= RIGHT_CLICK_SLOP_PX:
                 return
             self._pan_from, self._right_from = self._right_from, None  # it is a drag: pan
+            self.stop_gliding()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
         if self._pan_from is not None:
             delta = event.position() - self._pan_from
@@ -1020,7 +1142,7 @@ class LayoutCanvas(QGraphicsView):
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F:
-            self.fit()
+            self.fit(animated=True)
             return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Backspace):
             self.key_pressed.emit(event.key())

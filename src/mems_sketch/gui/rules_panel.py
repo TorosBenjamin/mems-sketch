@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.process import SEVERITIES, Rule, RuleValue, rule_changes
 from mems_sketch.editing import EditSession
-from mems_sketch.gui import icons, theme, widgets
+from mems_sketch.gui import icons, motion, theme, widgets
 from mems_sketch.gui.panels import _blank_icon, _format, _Panel, _readonly, _table, parse_value
 from mems_sketch.process.rules import available_rule_kinds
 
@@ -260,6 +260,23 @@ class RulesPanel(_Panel):
         selection.blockSignals(True)
         widgets.select_row(self.rules, self._rows.index(self._open))
         selection.blockSignals(False)
+        self._unfold()
+
+    def _unfold(self) -> None:
+        """Open the details row from nothing to its height, so the rows below are
+        seen moving down rather than jumping."""
+        if None not in self._rows:
+            return
+        row, details = self._rows.index(None), self.details
+        full = self.rules.rowHeight(row)
+
+        def step(t: float) -> None:
+            if self.details is not details or row >= self.rules.rowCount():
+                return  # refreshed meanwhile: the new rows have their own heights
+            self.rules.setRowHeight(row, max(1, round(full * t)))
+            widgets.fit_to_rows(self.rules)
+
+        motion.run(self, step, motion.SHORT, key="unfold")
 
     def open_details(self, name: str) -> RuleDetails:
         """Fold out the details of the rule ``name`` (as selecting it does)."""

@@ -565,6 +565,13 @@ QListWidget#library-list, QTableWidget#keymap, QTableWidget#import-layers {{
 QTableWidget#keymap QHeaderView::section, QTableWidget#import-layers QHeaderView::section {{
     background: {editor};
 }}
+QWidget#toast {{
+    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_card}px;
+}}
+QWidget#toast[kind="error"] {{ border: 1px solid {error}; }}
+QWidget#toast[kind="warning"] {{ border: 1px solid {warning}; }}
+QPushButton#toast-action {{ padding: 2px 10px; }}
+QToolButton#toast-close {{ padding: 2px; }}
 QDialog#find-action {{ background: {editor}; border: 1px solid {border_strong}; }}
 QTreeWidget#command-list {{ background: {editor}; }}
 QTreeWidget#command-list::item {{ padding: 3px 2px; }}

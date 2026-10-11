@@ -107,6 +107,16 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     # -- Canvas -------------------------------------------------------------
     Setting(
+        "appearance/reduce_motion",
+        False,
+        "Reduce motion",
+        "Appearance",
+        "Motion",
+        "Jump instead of animating: the canvas moving to a place, notes fading in and "
+        "out, a shape picked in a panel glowing.",
+        keywords=("animation", "animate", "accessibility"),
+    ),
+    Setting(
         "canvas/fill_opacity",
         45,
         "Layer fill opacity",
@@ -505,7 +515,7 @@ class PreferencesDialog(QDialog):
         button = QPushButton("Open folder")
         button.setAutoDefault(False)
         button.setToolTip("Put a theme's .json file here; it shows in Interface theme")
-        button.clicked.connect(lambda: _open_folder(folder))
+        button.clicked.connect(lambda: open_folder(folder))
         line.addWidget(button)
         line.addStretch(1)
         column.addLayout(line)
@@ -640,6 +650,7 @@ class PreferencesDialog(QDialog):
             self.pages.setCurrentRow(list(PAGES).index(first))
 
 
-def _open_folder(folder) -> None:
+def open_folder(folder) -> None:
+    """Show ``folder`` in the system's file manager (made first if missing)."""
     folder.mkdir(parents=True, exist_ok=True)
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))

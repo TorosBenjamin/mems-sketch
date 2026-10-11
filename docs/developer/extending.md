@@ -68,6 +68,12 @@ others:
   text)` for a field and its **?**, `widgets.dialog_margins(layout)`, and
   `widgets.SideList` for a column of pages (as in Settings).
 - **Sizes** come from the theme: `theme.metric("space_m")` and the like.
+- **Saying what happened:** `window.notify(text, kind, action=(label, slot))`
+  shows a note over the editor (`kind`: info, success, warning, or error,
+  which stays until closed). The status bar is for the active tool's hint.
+- **Motion:** `motion.run(owner, step, duration)` calls `step(t)` from 0 to 1
+  and jumps to the end when the user turned on *Reduce motion* (and in tests).
+  Keep it short: `motion.SHORT` for panels, `motion.VIEW` for the canvas.
 
 ## An export format
 

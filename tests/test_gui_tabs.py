@@ -73,7 +73,7 @@ def test_library_tabs_are_read_only_but_take_trial_values(example):
     w.open_component("std.perforated_plate")
     assert w.document.read_only and "viewing" in w.windowTitle()
     w.add_primitive("rect")
-    assert "read-only" in w.statusBar().currentMessage()
+    assert any("read-only" in t for t in w.toasts.texts())
     area_before = w.document.results.geometry().layers["device"].area()
     w.document.set_trial("pitch", 40)
     assert w.document.results.geometry().layers["device"].area() != area_before  # other holes

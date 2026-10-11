@@ -105,4 +105,7 @@ it is `import _geom` from `build/geom/`.
 Lengths are in µm. Inside, geometry is kept in nm, so Open CASCADE's fixed
 point tolerance (10⁻⁷ model units) is 10⁻¹⁰ µm. The tests check that a
 2×10⁻⁸ µm gap survives a union and that tolerances stay below 10⁻⁸ µm
-(requirement QP-1), and that circles stay exact (QP-2).
+(requirement QP-1), and that circles stay exact (QP-2). Where curves touch
+tangentially Open CASCADE widens the tolerance locally (about 10⁻⁶ µm at most,
+measured); booleans, offsets and corner rounding throw `GeometryError` for a
+result coarser than 10⁻⁵ µm, or one that is not valid (QR-3).

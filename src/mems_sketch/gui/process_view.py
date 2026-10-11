@@ -9,9 +9,10 @@ session like any other, with undo.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from mems_sketch.editing import EditSession
+from mems_sketch.gui import theme, widgets
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import ConstantsPanel, LayerDefinitionsPanel
 from mems_sketch.gui.rules_panel import RulesPanel
@@ -44,7 +45,8 @@ class ProcessView(QWidget):
             )
         )
         top.addStretch()
-        split = QSplitter(Qt.Orientation.Vertical)
+        # The page reaches the editor's edges: the dividers stop short of them, as in a panel.
+        split = widgets.splitter(Qt.Orientation.Vertical, inset=theme.metric("space_m"))
         split.addWidget(self.constants)
         split.addWidget(self.layers)
         split.addWidget(self.rules)

@@ -55,7 +55,8 @@ def test_the_versions_and_their_changes(window, commit):
     window.tool_windows.open("history")
     panel = window.history
     assert versions(panel) == ["Uncommitted changes", "Longer beam", "Beam"]
-    assert change_rows(panel) == ["No changes"]
+    assert change_rows(panel) == [] and panel.no_changes.isVisible()
+    assert not panel.changes.isVisible()
     panel.versions.setCurrentItem(panel.versions.topLevelItem(1))
     assert change_rows(panel) == ["top", "  shape beam: x1 40 → 50"]
 

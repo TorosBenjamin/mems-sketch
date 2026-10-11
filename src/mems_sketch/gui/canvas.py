@@ -53,7 +53,6 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.transform import Transform
 from mems_sketch.gui import icons
 from mems_sketch.gui import theme as themes
-from mems_sketch.gui.theme import ISLAND_RADIUS
 
 POINT_SIZES = {  # marker size in pixels
     "declared": 9,  # the edited component's own points
@@ -1114,8 +1113,8 @@ class LayoutCanvas(QGraphicsView):
         outline = QPainterPath()
         outline.addRoundedRect(
             QRectF(viewport.mapFrom(island, QPoint(0, 0)), QSizeF(island.size())),
-            ISLAND_RADIUS,
-            ISLAND_RADIUS,
+            themes.metric("radius_island"),
+            themes.metric("radius_island"),
         )
         view = QPainterPath()
         view.addRect(QRectF(viewport.rect()))

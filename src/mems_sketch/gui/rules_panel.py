@@ -89,9 +89,9 @@ class RulesPanel(_Panel):
         self.rules.itemChanged.connect(self._rule_changed)
         self.actions = _action_bar(
             QLabel("Rules"),
-            ("add", "Add a rule", self._show_kinds),
+            ("plus", "Add a rule", self._show_kinds),
             ("undo", "Reset the selected rules to the process's", self._reset_rules),
-            ("remove", "Remove the selected rules", self._remove_rules),
+            ("minus", "Remove the selected rules", self._remove_rules),
             help="What the layers are checked with after every change. Each rule is a "
             "*kind* of check on some layers with its values, written *name=value*; a "
             "value can be an expression such as *process.undercut*. Untick a rule to "

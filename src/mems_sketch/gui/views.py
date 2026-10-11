@@ -14,7 +14,6 @@ from concurrent.futures import Executor, Future, ProcessPoolExecutor, ThreadPool
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QProxyStyle,
-    QSplitter,
     QStyle,
     QTabBar,
     QTabWidget,
@@ -28,6 +27,7 @@ from mems_sketch.core.shapes import NodePath, node_at
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import LayoutCanvas
+from mems_sketch.gui.widgets import HairlineSplitter
 from mems_sketch.process import rules
 
 MAX_PANES = 2
@@ -222,7 +222,7 @@ class ComponentView(QWidget):
             return False
 
 
-class EditorArea(QSplitter):
+class EditorArea(HairlineSplitter):
     """Tabs of component views in one or two panes.
 
     ``current`` is the view the user works in: the current tab of the pane
@@ -234,7 +234,7 @@ class EditorArea(QSplitter):
     tab_menu_requested = Signal(object, QPoint)  # ComponentView, global position
 
     def __init__(self, document: EditSession) -> None:
-        super().__init__(Qt.Orientation.Horizontal)
+        super().__init__(Qt.Orientation.Horizontal)  # split: a hairline between the panes
         self.document = document
         self.panes: list[QTabWidget] = []
         self.current: ComponentView | None = None

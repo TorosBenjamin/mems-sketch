@@ -602,7 +602,9 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   10⁻⁸ µm or finer**, everywhere, for every design size the tool supports
   ([QS-3](#performance-and-scale)). It is fixed, not a setting
   ([decision P-1](#decisions)): the geometry library works in doubles, in
-  nanometres, with Open CASCADE's tolerance of 10⁻⁷ nm.
+  nanometres, with Open CASCADE's tolerance of 10⁻⁷ nm. Where curves touch
+  tangentially (holes grown until they just meet), Open CASCADE widens it
+  locally, measured up to about 10⁻⁶ µm; [QR-3](#robustness) bounds that.
 - **QP-2** (Must, exists; [#56](https://github.com/TorosBenjamin/mems-sketch/issues/56)) **Curves are exact** through every operation
   (boolean, offset, fillet, corners, transforms). Curves are split into
   segments only by an output, at that output's tolerance.
@@ -691,9 +693,12 @@ ten times larger than that, so the numbers hold with room to spare.
   (EDT-3).
 - **QR-2** (Must, exists) Every evaluation error names **where** it happened
   (component and shape path) and **why**.
-- **QR-3** (Must, new; [#60](https://github.com/TorosBenjamin/mems-sketch/issues/60)) A geometry operation that fails, or that would exceed
+- **QR-3** (Must, exists; [#60](https://github.com/TorosBenjamin/mems-sketch/issues/60)) A geometry operation that fails, or that would exceed
   the precision of QP-1, reports it as an error, never as silently wrong
-  geometry.
+  geometry. Booleans, offsets and corner rounding check their result: one
+  whose tolerance is coarser than 10⁻⁵ µm (a hundred times finer than the
+  finest output grid) is an error, and so is rounding that makes boundaries
+  cross (a radius too large for the room).
 
 ### Compatibility and installation
 

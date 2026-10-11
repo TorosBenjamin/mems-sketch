@@ -193,8 +193,10 @@ def test_shapes_and_placements_offer_relative_layers_and_levels(window):
     from mems_sketch import ComponentDef, RefShape
 
     doc = window.document
-    combos = [c for c in window.properties.findChildren(QComboBox) if c.isEditable()]
-    items = [combos[0].itemText(k) for k in range(combos[0].count())]
+    layer = next(
+        c for c in window.properties.findChildren(QComboBox) if c.currentData() == "device"
+    )
+    items = [layer.itemData(k) for k in range(layer.count())]
     assert items[:4] == ["level", "level+1", "level-1", "level.anchor"]
     assert "metal" in items
     doc.project.define_component(
@@ -398,10 +400,26 @@ def test_choosing_from_a_list_applies_at_once(window):
     layer = next(
         c for c in window.properties.findChildren(QComboBox) if c.currentText() == "device"
     )
-    layer.addItem("oxide")
+    layer.addItem("oxide", "oxide")
     layer.setCurrentText("oxide")
     layer.activated.emit(layer.currentIndex())
     assert window.document.shapes[0].layer == "oxide"
+
+
+def test_the_layer_is_picked_from_a_list_with_the_layers_colours(window):
+    layer = next(
+        c for c in window.properties.findChildren(QComboBox) if c.currentData() == "device"
+    )
+    assert not layer.isEditable()  # chosen, not typed
+    items = {layer.itemData(i): layer.itemText(i) for i in range(layer.count())}
+    # Relative layers say where they land in this tab; named ones are themselves.
+    assert items["level"] == "level · device" and items["level+1"] == "level+1 · metal"
+    assert items["level.anchor"] == "level.anchor · anchor" and items["metal"] == "metal"
+    assert all(not layer.itemIcon(i).isNull() for i in range(layer.count()))
+    level_up = layer.findData("level+1")
+    layer.setCurrentIndex(level_up)
+    layer.activated.emit(level_up)
+    assert window.document.shapes[0].layer == "level+1"
 
 
 def test_the_empty_panel_has_the_islands_colour(window):

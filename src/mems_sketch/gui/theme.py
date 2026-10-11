@@ -480,6 +480,14 @@ QCheckBox::indicator:checked, QTreeView::indicator:checked, QTableView::indicato
     background: {accent}; border-color: {accent}; image: url({check});
 }}
 QCheckBox::indicator:disabled {{ background: {window}; }}
+/* A visibility column (property visibility=true) shows an eye, not a check box. */
+QTreeView[visibility="true"]::indicator, QTableView[visibility="true"]::indicator {{
+    width: 16px; height: 16px; border: none; background: transparent; image: url({eye_off});
+}}
+QTreeView[visibility="true"]::indicator:checked,
+QTableView[visibility="true"]::indicator:checked {{
+    border: none; background: transparent; image: url({eye});
+}}
 
 QStatusBar {{ background: {frame}; border: none; color: {muted}; min-height: 26px; }}
 QStatusBar::item {{ border: none; }}
@@ -501,7 +509,15 @@ QToolTip {{
     border-radius: {radius_control}px;
 }}
 
+/* Editing a cell: a flat field filling the cell, not a rounded box inside it. */
+QAbstractItemView QLineEdit, QAbstractItemView QLineEdit:focus {{
+    border: none; border-radius: 0; margin: 0; padding: 0 4px; background: {editor};
+}}
 QLineEdit[expression="true"] {{ background: {expression}; }}
+QTextEdit#expanded-value {{
+    background: {editor}; border: 1px solid {accent}; border-radius: {radius_control}px;
+    padding: 1px 3px;
+}}
 QLineEdit[invalid="true"] {{ border: 1px solid {error}; }}
 QLineEdit#title-edit {{
     background: transparent; border: 1px solid transparent; font-size: {font_title}px; font-weight: 600;
@@ -582,6 +598,8 @@ def apply(app: QApplication, name: str) -> str:
             check=_svg_file(f"check-{theme}", CHECK_MARK, t["accent_text"]),
             arrow=_svg_file(f"arrow-{theme}", CHEVRON, t["text"]),
             arrow_disabled=_svg_file(f"arrow-{theme}-disabled", CHEVRON, t["muted"]),
+            eye=_icon_file(f"eye-{theme}", "eye"),
+            eye_off=_icon_file(f"eye-off-{theme}", "eye_off"),
             **_current.metrics,
         )
     )
@@ -592,13 +610,22 @@ CHECK_MARK = '<path d="M3.5 8.4l3 3 6-6.4" stroke-width="2"/>'  # check boxes
 CHEVRON = '<path d="M4 6l4 4 4-4" stroke-width="1.5"/>'  # drop-down lists
 
 
+def _icon_file(name: str, icon: str) -> str:
+    """An icon of the set, in the theme's colours, as an SVG file for the style sheet."""
+    return _write(name, icons.svg(icon))
+
+
 def _svg_file(name: str, shape: str, color: str) -> str:
     """``shape`` drawn in ``color`` as an SVG file, for the style sheet (which needs a file)."""
-    path = Path(tempfile.gettempdir()) / f"mems-sketch-{name}.svg"
-    svg = (
+    return _write(
+        name,
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" '
-        f'stroke="{color}" stroke-linecap="round" stroke-linejoin="round">{shape}</svg>'
+        f'stroke="{color}" stroke-linecap="round" stroke-linejoin="round">{shape}</svg>',
     )
+
+
+def _write(name: str, svg: str) -> str:
+    path = Path(tempfile.gettempdir()) / f"mems-sketch-{name}.svg"
     try:
         if not path.exists() or path.read_text() != svg:
             path.write_text(svg)

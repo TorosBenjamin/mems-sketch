@@ -166,3 +166,111 @@ def test_parts_of_a_panel_are_divided_by_a_hairline_not_a_bar(window):
     assert image.pixelColor(inset - 1, middle).name() != line
     assert image.pixelColor(image.width() - inset, middle).name() != line
     assert sum(s.objectName() == "islands" for s in splitters) == 3  # the gaps between islands
+
+
+# -- editing long values, visibility, cell editors ------------------------------
+
+
+def _field_in_panel(qtbot, text):
+    from PySide6.QtWidgets import QFormLayout, QScrollArea
+
+    from mems_sketch.gui.value_edit import ValueEdit
+
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    body = QWidget()
+    form = QFormLayout(body)
+    field = ValueEdit(text, scope={"width": 10, "rim_width": 3})
+    form.addRow(QLabel("A rather long label"), field)
+    area.setWidget(body)
+    area.resize(320, 200)
+    qtbot.addWidget(area)
+    area.show()
+    qtbot.waitExposed(area)
+    return area, field
+
+
+def test_editing_a_value_too_long_for_its_field_opens_a_wider_editor(qtbot):
+    from PySide6.QtCore import Qt as _Qt
+
+    area, field = _field_in_panel(qtbot, "abs(width - rim_width) + abs(width + rim_width) / 2")
+    applied = []
+    field.returnPressed.connect(lambda: applied.append(field.text()))
+    field.setFocus()
+    qtbot.waitUntil(lambda: field.expanded is not None)
+    expanded = field.expanded
+    assert expanded.width() > field.width()  # as wide as the panel, not the field
+    assert expanded.width() >= area.viewport().width() - 8
+    assert expanded.height() >= field.height()
+    expanded.setPlainText("abs(width - rim_width)")
+    qtbot.keyClick(expanded, _Qt.Key.Key_Return)
+    assert applied == ["abs(width - rim_width)"] and field.expanded is None
+    assert not expanded.isVisible()
+
+
+def test_esc_leaves_the_field_as_it_was_and_short_values_stay_in_the_field(qtbot):
+    from PySide6.QtCore import Qt as _Qt
+
+    long = "abs(width - rim_width) + abs(width + rim_width) / 2"
+    _area, field = _field_in_panel(qtbot, long)
+    field.setFocus()
+    qtbot.waitUntil(lambda: field.expanded is not None)
+    field.expanded.setPlainText("width")
+    qtbot.keyClick(field.expanded, _Qt.Key.Key_Escape)
+    assert field.text() == long and field.expanded is None
+    _area, short = _field_in_panel(qtbot, "12")
+    short.setFocus()
+    qtbot.wait(20)
+    assert short.expanded is None  # fits: no second editor
+    qtbot.keyClick(short, _Qt.Key.Key_Return, _Qt.KeyboardModifier.ShiftModifier)
+    assert short.expanded is not None  # Shift+Enter opens it anyway
+    short.expanded.finish()
+
+
+def test_the_wider_editor_completes_names(qtbot):
+    _area, field = _field_in_panel(qtbot, "abs(width - rim_width) + abs(width + rim_width) / 2")
+    field.setFocus()
+    qtbot.waitUntil(lambda: field.expanded is not None)
+    expanded = field.expanded
+    expanded.setPlainText("abs(wid")
+    cursor = expanded.textCursor()
+    cursor.movePosition(cursor.MoveOperation.End)
+    expanded.setTextCursor(cursor)
+    expanded._complete("width")
+    assert expanded.toPlainText() == "abs(width"
+    expanded.finish(keep=False)
+
+
+def test_shapes_and_layers_show_an_eye_for_visibility(window):
+    assert window.tree.property("visibility") is True
+    assert window.layers.layers.property("visibility") is True
+    window.open_process()  # a rule's check box is on/off, not visibility: it stays a box
+    assert not window.area.process_view.rules.rules.property("visibility")
+    style = QApplication_style_sheet()
+    assert '[visibility="true"]::indicator:checked' in style and "eye" in style
+
+
+def QApplication_style_sheet():
+    from PySide6.QtWidgets import QApplication
+
+    return QApplication.instance().styleSheet()
+
+
+def test_editing_a_cell_is_a_flat_field_filling_the_cell(window, qtbot):
+    from PySide6.QtWidgets import QLineEdit, QTableWidgetItem
+
+    table = widgets.make_table(("Name", "Value"), stretch=1)  # the window's style sheet
+    qtbot.addWidget(table)
+    table.setRowCount(1)
+    table.setItem(0, 1, QTableWidgetItem("abs(width - rim_width)"))
+    table.resize(300, 120)
+    table.show()
+    qtbot.waitExposed(table)
+    table.editItem(table.item(0, 1))
+    editor = next(e for e in table.viewport().findChildren(QLineEdit) if e.isVisible())
+    qtbot.wait(20)
+    image = editor.grab().toImage()
+    background = theme.color("editor").name()
+    # No border: the corners and edges are the field's own background.
+    for x, y in ((0, 0), (image.width() - 1, 0), (0, image.height() - 1)):
+        assert image.pixelColor(x, y).name() == background

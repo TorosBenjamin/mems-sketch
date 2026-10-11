@@ -78,10 +78,10 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "shapes": "The shape tree of the component you are editing, evaluated again "
     "whenever a value changes. Operations (subtract, offset, …) hold the shapes they "
     "act on, so nothing is lost: change a shape inside and the result follows.\n\n"
-    "Tick a shape to switch it off; a placed component opens to show what it is made "
+    "Click a shape's eye to hide it; a placed component opens to show what it is made "
     "of (read-only).",
-    "layers": "Tick a layer to show it; click a layer to draw on it. What a layer is "
-    "(its GDS number and rules) is part of the process: View › Process.",
+    "layers": "Click a layer's eye to show or hide it; click a layer to draw on it. What a "
+    "layer is (its GDS number and rules) is part of the process: View › Process.",
     "messages": "Why the component does not build, and the rule checks: shapes "
     "narrower or closer together than their layer allows. Click a message to see "
     "where it is.",

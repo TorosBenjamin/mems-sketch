@@ -43,6 +43,14 @@ drawn (with its trial values):
 | GDSII (`.gds`), OASIS (`.oas`), DXF (`.dxf`) | Mask and layout tools; layers get their GDS numbers from the process |
 | Geometry as JSON (`.json`), XML (`.xml`), MATLAB (`.mat`) | Scripts: the polygons, plus the component's points and parameter values |
 
+A layout file (GDSII, OASIS, DXF) is written on its **grid**, with curves
+split into straight segments within its **curve tolerance**; both start as the
+process's (see [Design rules](components.md#design-rules)). The design itself
+stays exact: it is rounded once, when the file is written. If rounding onto a
+coarse grid changes the shape of the design (a gap narrower than the grid
+closes, a thin neck comes apart, a small hole fills up), the export says what
+changed and where, with the area before and after.
+
 A geometry file holds, per layer, the polygons as rows of `x y` points in µm,
 each with its holes; then the points and parameters. In MATLAB:
 
@@ -111,6 +119,8 @@ mems-sketch-cli convert old_design.mems my_project           # the earlier forma
 - `convert` does not overwrite a folder that already holds a project.
 - `-O NAME=VALUE` (or `--option`) sets one of the format's settings and can
   be repeated; `formats` lists them. GDSII, OASIS and DXF take `grid_um`, the
-  file's grid (default 0.001, a whole multiple of 1 nm), and `top_cell`, the
-  top cell's name. **File → Export…** asks for the same settings and
+  file's grid (a whole multiple of 1 nm), `chord_um`, the curve tolerance
+  (both default to the process's), and `top_cell`, the top cell's name. What
+  rounding onto the grid changed in the shape of the design is printed after
+  the file is written. **File → Export…** asks for the same settings and
   remembers them per format.

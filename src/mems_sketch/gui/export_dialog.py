@@ -28,13 +28,16 @@ def _key(format_name: str, option: ExportOption) -> str:
     return f"export/{format_name}/{option.name}"
 
 
-def remembered(settings, format_name: str, options: tuple[ExportOption, ...]) -> dict[str, Any]:
-    """The values last used for a format's options; defaults where none is
-    stored or the stored one no longer fits."""
+def remembered(
+    settings, format_name: str, options: tuple[ExportOption, ...], defaults: dict | None = None
+) -> dict[str, Any]:
+    """The values last used for a format's options; where none is stored or the
+    stored one no longer fits, ``defaults`` (e.g. the process's grid), else the
+    option's own default."""
     values: dict[str, Any] = {}
     for option in options:
         stored = settings.value(_key(format_name, option))
-        value = option.default
+        value = (defaults or {}).get(option.name, option.default)
         if stored is not None:
             try:
                 value = option.parse(str(stored))

@@ -1556,16 +1556,35 @@ class MainWindow(QMainWindow):
         options = options_of(cls)
         values: dict = {}
         if options:
+            process = self.document.project.process
+            start = {"grid_um": process.grid_um, "chord_um": process.chord_um}
             dialog = ExportOptionsDialog(
-                title_of(cls), options, remembered(self.settings, format_name, options), self
+                title_of(cls), options, remembered(self.settings, format_name, options, start), self
             )
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             values = dialog.values()
             remember(self.settings, format_name, options, values)
-        if self._run(lambda: self.document.export(path, format_name, values))[0]:
+        ok, result = self._run(lambda: self.document.export_with_report(path, format_name, values))
+        if ok:
             self._remember_dir(path)
+            written = result[1]
+            changes = written.describe() if hasattr(written, "describe") else []
+            if changes:  # snapping to the file's grid changed the shape (requirement OUT-3)
+                self.show_export_changes(path, changes)
             self.statusBar().showMessage(f"Exported {path}", 5000)
+
+    def show_export_changes(self, path: str, changes: list[str]) -> None:
+        """Say what snapping to the export's grid changed in the shape of the design."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Export")
+        box.setText(
+            f"Exported {Path(path).name}, but snapping to its grid changed the shape of the design:"
+        )
+        box.setInformativeText("\n".join(changes[:20]) + ("\n…" if len(changes) > 20 else ""))
+        box.setDetailedText("\n".join(changes))
+        box.exec()
 
     def _last_dir(self) -> str:
         return str(self.settings.value("last_dir", str(Path.home())))

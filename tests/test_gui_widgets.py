@@ -12,7 +12,11 @@ from mems_sketch.gui.app import MainWindow
 
 
 @pytest.fixture
-def window(qtbot):
+def window(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    # Closing after an edit asks about the unsaved changes: answer it.
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Discard)
     w = MainWindow()
     qtbot.addWidget(w)
     w.resize(1200, 800)
@@ -148,7 +152,7 @@ def test_parts_of_a_panel_are_divided_by_a_hairline_not_a_bar(window):
     splitters = window.findChildren(QSplitter)
     inner = [s for s in splitters if s.objectName() != "islands"]
     assert {s.objectName() for s in inner} == {"panel-split"}
-    assert len(inner) >= 4  # Points, History, the Process page, the editor area
+    assert len(inner) >= 3  # Points, History, the editor area
     line = theme.color("border_strong").name()
     for split in (s for s in inner if s.count() > 1):  # a 1 px line in the handle's middle
         image = split.handle(1).grab().toImage()
@@ -158,11 +162,58 @@ def test_parts_of_a_panel_are_divided_by_a_hairline_not_a_bar(window):
             assert image.pixelColor(x, y - 1).name() != line  # 1 px thick
         else:  # side by side
             assert image.pixelColor(x - 1, y).name() != line
-    # The Process page reaches the editor's edges: its dividers stop short of them.
-    page = window.area.process_view.findChild(QSplitter, "panel-split")
-    image = page.handle(1).grab().toImage()
-    middle, inset = image.height() // 2, theme.metric("space_m")
-    assert image.pixelColor(inset, middle).name() == line
-    assert image.pixelColor(inset - 1, middle).name() != line
-    assert image.pixelColor(image.width() - inset, middle).name() != line
     assert sum(s.objectName() == "islands" for s in splitters) == 3  # the gaps between islands
+
+
+def test_the_process_page_is_cards_at_a_readable_width(window):
+    window.open_process()
+    view = window.area.process_view
+    cards = [c for c in view.findChildren(QWidget) if c.objectName() == "card"]
+    assert [c.title.text() for c in cards] == ["Constants", "Layers", "Rules"]
+    page = view.page.widget().findChild(QWidget, "page")
+    assert page.maximumWidth() <= 1100
+    # The process picker is in the page's header, above the cards.
+    assert view.rules.process.parentWidget() is not view.rules
+    # Each card's actions are in its own header, by its title.
+    assert all(b.parentWidget() is cards[2] for b in view.rules.actions)
+    # Tables are as tall as their rows: the page scrolls, not the tables.
+    table = view.layers.layers
+    assert table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert table.height() >= table.rowCount() * table.verticalHeader().defaultSectionSize()
+
+
+def test_a_rule_with_one_value_shows_and_takes_just_the_value(window):
+    window.open_process()
+    rules = window.area.process_view.rules.rules
+    row = [rules.item(r, 0).text() for r in range(rules.rowCount())].index("device_min_width")
+    assert rules.item(row, 3).text() == "2"
+    rules.item(row, 3).setText("1.5")
+    assert window.document.project.process.rules["device_min_width"].values == {"value": 1.5}
+    assert rules.item(row, 4).icon().cacheKey() != 0  # the severity has its icon
+
+
+def test_a_rules_note_and_origin_fold_out_under_it(window):
+    window.open_process()
+    panel = window.area.process_view.rules
+    rules = panel.rules
+    assert panel.details is None and rules.columnCount() == 5  # the row: what is scanned for
+    row = [rules.item(r, 0).text() if rules.item(r, 0) else None for r in range(rules.rowCount())]
+    rules.selectRow(row.index("device_anchored"))
+    details = panel.details
+    assert details is not None and rules.cellWidget(row.index("device_anchored") + 1, 0) is details
+    # The project's own process: nothing to give a reason for (a library's is in test_gui_layout).
+    assert details.source.text() == "project" and details.reason.isHidden()
+    details.note.setText("anchors come later")
+    details.note.editingFinished.emit()
+    assert window.document.project.process.rules["device_anchored"].message == "anchors come later"
+    names = [rules.item(r, 0).text() if rules.item(r, 0) else None for r in range(rules.rowCount())]
+    assert names.count(None) == 1  # one rule open at a time, the table as tall as its rows
+    assert rules.height() >= sum(rules.rowHeight(r) for r in range(rules.rowCount()))
+
+
+def test_columns_fitting_their_contents_do_not_cut_off_their_longest_text(window):
+    window.open_process()
+    rules = window.area.process_view.rules.rules
+    names = [rules.item(r, 0).text() for r in range(rules.rowCount())]
+    widest = max(rules.fontMetrics().horizontalAdvance(n) for n in names)
+    assert rules.columnWidth(0) >= widest + 13 + 2 * widgets.CELL_PADDING  # check box too

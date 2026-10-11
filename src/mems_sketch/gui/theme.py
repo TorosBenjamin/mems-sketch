@@ -424,7 +424,7 @@ QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {{
 QHeaderView::section {{
     background: {island}; color: {muted}; border: none; padding: 4px 6px;
 }}
-QTableView::item {{ padding: 0 4px; }}
+QTableView::item {{ padding: 0 4px; }}  /* widgets.CELL_PADDING */
 QTableCornerButton::section {{ background: {island}; border: none; }}
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
@@ -520,6 +520,11 @@ QWidget#canvas-buttons {{
     background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_card}px;
 }}
 QLabel#muted, QLabel#header-context {{ color: {muted}; }}
+QWidget#page {{ background: {island}; }}
+QFrame#card {{
+    background: {island}; border: 1px solid {border_strong}; border-radius: {radius_card}px;
+}}
+QLabel#card-heading {{ font-weight: 600; }}
 QWidget#empty-state QLabel {{ color: {muted}; }}
 QLabel#muted[error="true"] {{ color: {error}; }}
 QLabel#heading {{ font-weight: 600; font-size: {font_heading}px; }}

@@ -311,7 +311,7 @@ def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window)
     definitions = window.area.process_view.layers.layers
     assert headers(definitions) == ["Layer", "GDS", "Datatype", "Level"]
     rules = window.area.process_view.rules.rules
-    assert headers(rules)[:6] == ["Rule", "Kind", "Layers", "Values", "Severity", "Note"]
+    assert headers(rules) == ["Rule", "Kind", "Layers", "Values", "Severity"]
     row = [rules.item(r, 0).text() for r in range(rules.rowCount())].index("device_min_width")
     rules.item(row, 3).setText("value=0.5")
     assert window.document.project.process.rules["device_min_width"].values == {"value": 0.5}
@@ -468,10 +468,13 @@ def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path)
     assert window.document.project.process_name == "fab.surface"
     table = panel.rules
     row = [table.item(r, 0).text() for r in range(table.rowCount())].index("device_min_width")
-    assert table.item(row, 6).text() == "fab.surface"
+    details = panel.open_details("device_min_width")  # folds out under the rule
+    assert details.source.text() == "fab.surface" and details.reason.isHidden()
     table.item(row, 3).setText("value=1")
-    assert table.item(row, 6).text() == "fab.surface (changed)"
-    table.item(row, 7).setText("test structures")
+    details = panel.details
+    assert details.source.text() == "fab.surface (changed)" and not details.reason.isHidden()
+    details.reason.setText("test structures")
+    details.reason.editingFinished.emit()
     assert window.document.project.reasons == {"device_min_width": "test structures"}
     table.selectRow(row)
     panel.actions.buttons["Reset the selected rules to the process's"].click()

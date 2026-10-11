@@ -520,11 +520,19 @@ class LayoutCanvas(QGraphicsView):
             self.zoom_to(rect, animated=True)
 
     def show_geometry(
-        self, geometry: Geometry, colors: dict[str, QColor], visible: dict[str, bool]
+        self,
+        geometry: Geometry,
+        colors: dict[str, QColor],
+        visible: dict[str, bool],
+        shapes: list[Geometry] | None = None,
     ) -> None:
         """Draw ``geometry``: each geometry it places once (a painter path per
-        layer), as an item per placement; items that are drawn as before are kept."""
-        self._shown = (geometry, colors, visible)
+        layer), as an item per placement; items that are drawn as before are kept.
+
+        A layer is filled merged, so shapes overlapping on it are not tinted twice;
+        ``shapes`` (the component's own shapes, one geometry each) are outlined one
+        by one over the fill, so a shape inside another on its layer keeps its edge."""
+        self._shown = (geometry, colors, visible, shapes)
         alpha = round(255 * self.options["fill_opacity"] / 100)
         width = self.options["outline_width"]
         order = {layer: z for z, layer in enumerate(sorted(geometry.layer_names()))}
@@ -556,6 +564,27 @@ class LayoutCanvas(QGraphicsView):
                 item.setVisible(visible.get(layer, True))
                 new.setdefault(key, []).append(item)
                 self._layer_items.setdefault(layer, []).append(item)
+        for shape in shapes or ():
+            for layer, region in shape.own.items():
+                if region.is_empty() or layer not in order:
+                    continue
+                color = colors.get(layer, QColor(self.theme["unknown_layer"]))
+                key = ("outline", shape, layer, color.rgba(), width)
+                kept = old.get(key)
+                if kept:
+                    item = kept.pop()
+                else:
+                    item = QGraphicsPathItem(own_path(shape, layer))
+                    pen = QPen(color, width)
+                    pen.setCosmetic(True)
+                    item.setPen(pen)
+                    item.setBrush(Qt.BrushStyle.NoBrush)
+                    item.setCacheMode(cache)
+                    self.scene().addItem(item)
+                item.setZValue(order[layer] + 0.5)  # over its layer's fill, under the next
+                item.setVisible(visible.get(layer, True))
+                new.setdefault(key, []).append(item)
+                self._layer_items.setdefault(layer, []).append(item)
         for items in old.values():
             for item in items:
                 self.scene().removeItem(item)
@@ -570,17 +599,25 @@ class LayoutCanvas(QGraphicsView):
 
     def show_overlay(
         self,
-        highlight: Geometry | None,
+        highlight: Geometry | list[Geometry] | None,
         markers: list[tuple[float, float, float, float]],
         box: list[tuple[float, float]] | None = None,
     ) -> None:
-        """Outline the selection, mark rule violations and, dashed, the box a selected
-        shape's points come from (so e.g. ``center`` of a shape cut in two makes sense)."""
+        """Outline the selection (a geometry per selected shape, each outlined on its
+        own, so shapes that touch still look like two), mark rule violations and,
+        dashed, the box a selected shape's points come from (so e.g. ``center`` of a
+        shape cut in two makes sense)."""
         for item in self._overlay:
             self.scene().removeItem(item)
         self._overlay.clear()
-        if highlight is not None:
-            for leaf, at in highlight.leaves():
+        if highlight is None:
+            highlights = []
+        elif isinstance(highlight, Geometry):
+            highlights = [highlight]
+        else:
+            highlights = highlight
+        for selected in highlights:
+            for leaf, at in selected.leaves():
                 for layer, region in leaf.own.items():
                     if region.is_empty():
                         continue

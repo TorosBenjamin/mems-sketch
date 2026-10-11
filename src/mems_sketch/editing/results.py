@@ -71,6 +71,28 @@ class Results:
         engine = self.session.engine.trial(self._trial(path, node))
         return engine.build(component, self.session.trials_for(component)).geometry
 
+    def preview_outlined(
+        self, path: NodePath, node: Shape
+    ) -> tuple[Geometry, Geometry | None, list[Geometry]]:
+        """:meth:`preview`, the outline of ``node`` as it would be (to keep it
+        outlined as selected while one of its values is dragged) and the
+        component's shapes as they would be (see :meth:`shapes`)."""
+        component = self.session.active
+        engine = self.session.engine.trial(self._trial(path, node))
+        build = engine.build(component, self.session.trials_for(component))
+        record = build.records()
+        shapes = _top_level(record)
+        if path not in record:
+            return build.geometry, None, shapes
+        outline = Geometry()
+        outline.merge(record[path].geometry, frame_of(record, path))
+        return build.geometry, None if outline.is_empty() else outline, shapes
+
+    def shapes(self, component: str | None = None) -> list[Geometry]:
+        """The geometry of each shown top-level node of a component, in its frame:
+        drawn outlined one by one over the merged layers."""
+        return _top_level(self.inspection(component))
+
     def inspect_with(self, path: NodePath, node: Shape) -> dict[NodePath, NodeRecord]:
         """Every node of the active component as it would be with ``node`` at ``path``."""
         component = self.session.active
@@ -131,6 +153,11 @@ class Results:
                 continue
             result.merge(record[path].geometry, frame_of(record, path))
         return None if result.is_empty() else result
+
+    def highlights(self, paths: list[NodePath], component: str | None = None) -> list[Geometry]:
+        """:meth:`highlight` of each node on its own, so nodes that touch or overlap
+        are still outlined one by one."""
+        return [g for g in (self.highlight([p], component) for p in paths) if g is not None]
 
     def pieces(self, path: NodePath, component: str | None = None) -> int:
         """How many separate pieces a node's geometry has (all layers together), e.g.
@@ -259,3 +286,7 @@ class Results:
             label = node_at(shapes, path).name or node_at(shapes, path).kind
             result += [(f"{label}.{p}", x, y) for p, x, y in self.node_points(path, component)]
         return result
+
+
+def _top_level(record: dict[NodePath, NodeRecord]) -> list[Geometry]:
+    return [r.geometry for p, r in sorted(record.items()) if len(p) == 1]

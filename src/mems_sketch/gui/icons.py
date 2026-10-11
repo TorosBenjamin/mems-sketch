@@ -19,30 +19,6 @@ from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
-COLORS = {
-    "light": {
-        "fg": "#6c707e",
-        "blue": "#3574f0",
-        "red": "#db3b4b",
-        "green": "#208a3c",
-        "orange": "#e66d17",
-        "yellow": "#e5a50a",
-        "purple": "#834df0",
-        "x": "#e0443e",  # the x axis (Blender/Unity: red)
-        "y": "#3f9b3f",  # the y axis (green)
-    },
-    "dark": {
-        "fg": "#ced0d6",
-        "blue": "#548af7",
-        "red": "#e55765",
-        "green": "#5fb865",
-        "orange": "#e08855",
-        "yellow": "#f2c55c",
-        "purple": "#a571e6",
-        "x": "#f0584f",
-        "y": "#6cc36c",
-    },
-}
 SIZES = (16, 20, 24, 32)
 
 
@@ -262,25 +238,26 @@ ICONS = {
     '<path d="M5 6h2M5 10h2M9 6h2M9 10h2"/>',
     # -- messages ---------------------------------------------------------
     "error": '<circle cx="8" cy="8" r="6.2" fill="{red}" stroke="none"/>'
-    '<path d="M8 4.6v4.2M8 11.1v.3" stroke="#fff" stroke-width="1.6"/>',
+    '<path d="M8 4.6v4.2M8 11.1v.3" stroke="{on_accent}" stroke-width="1.6"/>',
     "warning": '<path d="M8 1.8 14.6 13.8H1.4z" fill="{yellow}" stroke="none"/>'
-    '<path d="M8 6v4M8 11.7v.3" stroke="#222" stroke-width="1.5"/>',
+    '<path d="M8 6v4M8 11.7v.3" stroke="{on_yellow}" stroke-width="1.5"/>',
     "info": '<circle cx="8" cy="8" r="6.2" fill="{blue}" stroke="none"/>'
-    '<path d="M8 7.2v4.4M8 4.7v.3" stroke="#fff" stroke-width="1.6"/>',
+    '<path d="M8 7.2v4.4M8 4.7v.3" stroke="{on_accent}" stroke-width="1.6"/>',
     "ok": '<circle cx="8" cy="8" r="6.2" fill="{green}" stroke="none"/>'
-    '<path d="M5 8.2l2 2 4-4.2" stroke="#fff" stroke-width="1.6"/>',
+    '<path d="M5 8.2l2 2 4-4.2" stroke="{on_accent}" stroke-width="1.6"/>',
 }
 
 _theme = "light"
+_colors: dict[str, str] | None = None  # the theme's icon colours, read when first needed
 _cache: dict[tuple[str, str, str | None], QIcon] = {}
 _bound: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def svg(name: str, color: str | None = None) -> str:
     """The SVG source of an icon, coloured for the current theme."""
-    colors = dict(COLORS[_theme])
+    colors = dict(_theme_colors())
     if color is not None:
-        colors["fg"] = COLORS[_theme].get(color, color)
+        colors["fg"] = colors.get(color, color)
     body = ICONS[name]
     for key, value in colors.items():
         body = body.replace("{" + key + "}", value)
@@ -321,10 +298,21 @@ def bind(target, name: str, color: str | None = None):
     return target
 
 
+def _theme_colors() -> dict[str, str]:
+    global _colors
+    if _colors is None:
+        from mems_sketch.gui import theme  # it imports this module
+
+        _colors = theme.get(_theme).icons
+    return _colors
+
+
 def set_theme(theme: str) -> None:
-    """Recolour every bound icon for the ``light`` or ``dark`` theme."""
-    global _theme
-    _theme = theme if theme in COLORS else "light"
+    """Recolour every bound icon for a theme (its id, as in :mod:`mems_sketch.gui.theme`)."""
+    global _theme, _colors
+    _theme, _colors = theme, None
+    _theme_colors()
+    _cache.clear()  # a theme's colours may have changed since it was cached
     for target, (name, color) in list(_bound.items()):
         try:
             target.setIcon(icon(name, color))
@@ -338,4 +326,4 @@ def current_theme() -> str:
 
 def color(key: str) -> str:
     """A named colour of the current theme (``fg``, ``blue``, ``x``, ...)."""
-    return COLORS[_theme][key]
+    return _theme_colors()[key]

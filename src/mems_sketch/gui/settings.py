@@ -13,10 +13,12 @@ window applies it at once (there is no restart and no "Apply" step).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from PySide6.QtCore import QObject, QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QSettings, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -36,12 +38,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme
 from mems_sketch.gui.help import HelpButton
-from mems_sketch.gui.theme import UI_THEMES
 
 ORGANIZATION = APPLICATION = "mems-sketch"
-CANVAS_THEMES = {"auto": "Same as the interface", "light": "Light", "dark": "Dark"}
+
+
+def canvas_themes() -> dict[str, str]:
+    """appearance/canvas_theme: the interface's theme, or any theme's canvas colours."""
+    return {"auto": "Same as the interface"} | {t.id: t.name for t in theme.themes().values()}
 
 
 @dataclass(frozen=True)
@@ -52,13 +57,17 @@ class Setting:
     page: str
     group: str
     help: str = ""
-    choices: dict[str, str] | None = None  # value -> label
+    # value -> label, or a function giving them when they are found at run time (themes)
+    choices: dict[str, str] | Callable[[], dict[str, str]] | None = None
     minimum: float | None = None
     maximum: float | None = None
     step: float | None = None
     suffix: str = ""
     decimals: int = 0
     keywords: tuple[str, ...] = field(default_factory=tuple)
+
+    def options(self) -> dict[str, str] | None:
+        return self.choices() if callable(self.choices) else self.choices
 
 
 FRAME_RATES = {  # canvas/max_fps: value -> label
@@ -80,7 +89,9 @@ SETTINGS: tuple[Setting, ...] = (
         "Interface theme",
         "Appearance",
         "Theme",
-        choices=UI_THEMES,
+        "More themes come from packages and from your themes folder: JSON files that "
+        "can change some colours of another theme. The user guide explains how.",
+        choices=theme.choices,
         keywords=("dark", "light", "colour", "color"),
     ),
     Setting(
@@ -90,7 +101,7 @@ SETTINGS: tuple[Setting, ...] = (
         "Appearance",
         "Theme",
         "The layout canvas can stay light in a dark interface, or the other way round.",
-        choices=CANVAS_THEMES,
+        choices=canvas_themes,
         keywords=("dark", "white", "background"),
     ),
     # -- Canvas -------------------------------------------------------------
@@ -349,7 +360,7 @@ def _convert(value: Any, setting: Setting) -> Any:
             value = str(value)
     except (TypeError, ValueError):
         return default
-    if setting.choices is not None and value not in setting.choices:
+    if setting.choices is not None and value not in setting.options():
         return default
     if setting.minimum is not None and value < setting.minimum:
         return setting.minimum if not isinstance(default, int) else int(setting.minimum)
@@ -366,6 +377,7 @@ class PreferencesDialog(QDialog):
 
     def __init__(self, settings: Settings, shortcuts: list[tuple[str, str]], parent=None) -> None:
         super().__init__(parent)
+        theme.load()  # themes added to the folder since the window opened
         self.settings = settings
         self.setWindowTitle("Settings")
         self.resize(760, 520)
@@ -452,7 +464,34 @@ class PreferencesDialog(QDialog):
             label.setFixedWidth(170)  # the same for every group, so the fields line up
             groups[setting.group].addRow(label, shown)
             self._rows[setting.key] = (label, shown)
+        if page == "Appearance":
+            outer.addWidget(self._themes_folder())
         outer.addStretch(1)
+        return widget
+
+    def _themes_folder(self) -> QWidget:
+        """Where the user's themes go, and why a theme found there could not be used."""
+        widget = QWidget()
+        column = QVBoxLayout(widget)
+        column.setContentsMargins(0, 8, 0, 0)
+        line = QHBoxLayout()
+        folder = theme.user_folder()
+        label = QLabel(f"Your themes: {folder}")
+        label.setObjectName("muted")
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        line.addWidget(label)
+        button = QPushButton("Open folder")
+        button.setAutoDefault(False)
+        button.clicked.connect(lambda: _open_folder(folder))
+        line.addWidget(button)
+        line.addStretch(1)
+        column.addLayout(line)
+        for problem in theme.problems():
+            text = QLabel(problem)
+            text.setObjectName("muted")
+            text.setProperty("error", True)
+            text.setWordWrap(True)
+            column.addWidget(text)
         return widget
 
     def _editor(self, setting: Setting) -> QWidget:
@@ -463,7 +502,7 @@ class PreferencesDialog(QDialog):
             editor.toggled.connect(lambda v, k=key: self.settings.set(k, v))
         elif setting.choices is not None:
             editor = QComboBox()
-            for choice, text in setting.choices.items():
+            for choice, text in setting.options().items():
                 editor.addItem(text, choice)
             editor.setCurrentIndex(editor.findData(value))
             editor.currentIndexChanged.connect(
@@ -550,3 +589,8 @@ class PreferencesDialog(QDialog):
             item.setHidden(not all(w in item.data(Qt.ItemDataRole.UserRole) for w in words))
         if words and first is not None:
             self.pages.setCurrentRow(list(PAGES).index(first))
+
+
+def _open_folder(folder) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))

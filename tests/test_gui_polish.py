@@ -80,7 +80,7 @@ def test_every_icon_draws_something_in_both_themes(qapp, name):
 def test_the_interface_theme_is_a_setting_applied_at_once(window):
     window.settings.set("appearance/ui_theme", "dark")
     assert (
-        QApplication.instance().palette().window().color().name() == theme.TOKENS["dark"]["window"]
+        QApplication.instance().palette().window().color().name() == theme.tokens("dark")["window"]
     )
     assert window.canvas.backgroundBrush().color().name() == "#1e1f22"  # the canvas follows
     window.settings.set("appearance/canvas_theme", "light")  # ... unless chosen separately

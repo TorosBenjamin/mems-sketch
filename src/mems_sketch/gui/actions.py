@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QMenu
 
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme
 
 if TYPE_CHECKING:
     from mems_sketch.gui.app import MainWindow
@@ -185,7 +185,7 @@ class Actions:
             self.settings_toggles[key] = action
         self.dark = act("Dark canvas", w._toggle_dark, None, view)
         self.dark.setCheckable(True)
-        self.dark.setChecked(w.canvas_theme == "dark")
+        self.dark.setChecked(theme.get(w.canvas_theme).dark)
         implementation = act(
             "Show implementation of read-only components",
             lambda checked: w.settings.set("editor/show_implementation", checked),

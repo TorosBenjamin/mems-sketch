@@ -69,13 +69,44 @@ grid step, zoom and cursor position.
 
 ## Settings
 
-**☰ → File → Settings…** (Ctrl+Alt+S): appearance (light or dark, or as the
-system; the canvas can keep its own background), canvas (fill opacity,
+**☰ → File → Settings…** (Ctrl+Alt+S): appearance (light, dark, as the
+system or [your own theme](#your-own-theme); the canvas can keep its own
+background), canvas (fill opacity,
 outlines, grid, overlays, gizmo size, zoom step), snapping, editor defaults
 and the keymap. The search field filters them; changes apply at once and are
 kept per user.
 
 ![Settings](../images/settings.png)
+
+### Your own theme
+
+A theme is a JSON file of colours. Put it in your themes folder (*Settings →
+Appearance* shows where, with a button that opens it), named after the theme:
+`ocean.json` is the theme `ocean`. It can start from another theme and change
+only some colours:
+
+```json
+{
+  "name": "Ocean",
+  "parent": "dark",
+  "ui": {"accent": "#1abc9c", "selected": "#1d4d47"},
+  "canvas": {"background": "#0f1c24", "highlight": "#ffb347"},
+  "icons": {"blue": "#1abc9c"}
+}
+```
+
+- `ui` colours the window, `canvas` the layout canvas and `icons` the icons.
+  The built-in [light](../../src/mems_sketch/gui/themes/light.json) and
+  [dark](../../src/mems_sketch/gui/themes/dark.json) themes list every colour.
+- Without a `parent`, a theme must give every colour.
+- `dark` (`true` or `false`) says whether it is a dark theme; it is taken from
+  the parent when left out. **View → Dark canvas** goes by it.
+- Colours are `#rrggbb`, or `#aarrggbb` with transparency.
+
+The theme appears in *Interface theme* and *Canvas background* the next time
+Settings opens. A theme that cannot be used (a misspelt colour name, a parent
+that does not exist) is listed under the folder, with the reason. A theme
+changes colours only, never the layout.
 
 ## Undo and editor state
 

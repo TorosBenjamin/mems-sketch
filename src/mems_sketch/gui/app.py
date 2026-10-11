@@ -346,12 +346,12 @@ class MainWindow(QMainWindow):
         return self.ui_theme if chosen == "auto" else chosen
 
     def set_canvas_theme(self, theme: str) -> None:
-        """Light or dark canvas background for every tab; remembered for next time."""
+        """The canvas colours of a theme for every tab; remembered for next time."""
         self.settings.set("appearance/canvas_theme", theme)
 
     def _frame_color(self) -> QColor:
         """The window's frame colour: what shows around the islands."""
-        return QColor(theme.TOKENS[self.ui_theme]["frame"])
+        return QColor(theme.get(self.ui_theme).ui["frame"])
 
     def _toggle_dark(self, checked: bool) -> None:
         self.set_canvas_theme("dark" if checked else "light")
@@ -375,7 +375,7 @@ class MainWindow(QMainWindow):
             for view in self.area.views():
                 view.canvas.set_theme(self.canvas_theme)
                 view.canvas.corner_color = self._frame_color()
-            self.dark_action.setChecked(self.canvas_theme == "dark")
+            self.dark_action.setChecked(theme.get(self.canvas_theme).dark)
             self.update_overlay()
         if key in CANVAS_OPTIONS.values():
             options = self._canvas_options()

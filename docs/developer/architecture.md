@@ -109,8 +109,9 @@ wires the parts; each part only talks to the session:
 - `panels.py`, `points_panel.py`, `history_panel.py`, `properties.py`: tool
   windows; `toolwindows.py` places them around the editor.
 - `actions.py`: every command with its shortcut, menus and toolbar.
-- `settings.py`, `theme.py`, `icons.py`: preferences, the light and dark
-  themes, and SVG icons coloured per theme.
+- `settings.py`, `theme.py`, `icons.py`: preferences, the themes (JSON files
+  of colours in `gui/themes/`, from packages and from the user's folder), and
+  SVG icons coloured per theme.
 
 ## Package layout
 

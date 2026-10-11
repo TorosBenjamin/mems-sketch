@@ -53,7 +53,7 @@ from mems_sketch.editing.points import PointEdits
 from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
 from mems_sketch.engine import Engine
-from mems_sketch.export.base import export
+from mems_sketch.export.base import export_with_report
 from mems_sketch.storage import is_copy, load, save
 from mems_sketch.storage.project_files import PROJECT_FILE, load_library, project_folder
 
@@ -233,15 +233,25 @@ class EditSession:
     def export(
         self, path: str | Path, format_name: str | None = None, options: dict | None = None
     ) -> Path:
+        """Export the active component with its trial values."""
+        return self.export_with_report(path, format_name, options)[0]
+
+    def export_with_report(
+        self, path: str | Path, format_name: str | None = None, options: dict | None = None
+    ) -> tuple[Path, Any]:
+        """:meth:`export`, and what the exporter returned (for a layout file, the
+        output written, which says what snapping to its grid changed)."""
         component = self.active
-        return export(
+        build = self.results.build(component)
+        return export_with_report(
             self.project,
             path,
             format_name=format_name,
-            geometry=self.results.geometry(),
+            geometry=build.geometry,
             component=component,
             params=self.trials_for(component),
             options=options,
+            build=build,
         )
 
     def _reset(self, project: Project, path: Path | None) -> None:

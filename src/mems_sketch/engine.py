@@ -24,7 +24,7 @@ import json
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from mems_sketch.core.component import Geometry, builtin_definitions, resolve_params
+from mems_sketch.core.component import DBU_UM, Geometry, builtin_definitions, resolve_params
 from mems_sketch.core.imports import ImportedCell, ImportedComponent, cell_geometry
 from mems_sketch.core.levels import Stack
 from mems_sketch.core.region import Region
@@ -39,6 +39,15 @@ if TYPE_CHECKING:
 
 GRID_UM = 0.001
 CHORD_UM = 0.005
+# What snapping to an output's grid can change in the shape of the geometry.
+SNAP_CHANGES = {
+    "vanished": "a piece smaller than the grid vanished",
+    "split": "a piece came apart (a neck narrower than the grid)",
+    "merged": "pieces joined (a gap narrower than the grid closed)",
+    "hole_closed": "a hole smaller than the grid filled up",
+    "hole_joined": "a hole joined another, or opened to the outside",
+    "hole_formed": "a new hole formed (a notch's mouth closed)",
+}
 PREVIEW = "_preview"  # the component loose shapes are built in
 
 
@@ -174,6 +183,58 @@ class Engine:
             self._root.clear()
 
 
+@dataclasses.dataclass(frozen=True)
+class SnapEvent:
+    """A change snapping made in the shape of the geometry, and where (µm)."""
+
+    change: str  # one of SNAP_CHANGES
+    box: tuple[float, float, float, float]
+
+    def describe(self) -> str:
+        x0, y0, x1, y1 = self.box
+        return f"{SNAP_CHANGES.get(self.change, self.change)} at ({(x0 + x1) / 2:g}, {(y0 + y1) / 2:g})"
+
+
+@dataclasses.dataclass(frozen=True)
+class LayerSnapping:
+    """What snapping one layer to an output's grid changed (areas in µm²)."""
+
+    area_exact: float
+    area_snapped: float
+    events: tuple[SnapEvent, ...] = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class Output:
+    """A component as an output (a layout file, the rule checks) gets it: everything
+    merged in and rounded once, from the exact geometry, onto the output's grid with
+    curves within its chord (requirements QP-3, QP-4), and what that changed."""
+
+    grid: float  # µm
+    chord: float  # µm
+    geometry: Geometry  # flat, in the 1 nm units of Geometry, on multiples of the grid
+    snapping: dict[str, LayerSnapping]
+
+    @property
+    def changed_shape(self) -> bool:
+        """Whether snapping changed the shape of anything (beyond moving edges)."""
+        return any(s.events for s in self.snapping.values())
+
+    def describe(self) -> list[str]:
+        """What snapping changed, a line each: per layer, its events and the area."""
+        lines = []
+        for layer, snapping in sorted(self.snapping.items()):
+            for event in snapping.events:
+                lines.append(f"{layer}: {event.describe()}")
+            if snapping.events:
+                change = snapping.area_snapped - snapping.area_exact
+                lines.append(
+                    f"{layer}: area {snapping.area_exact:.6g} µm² exact, "
+                    f"{snapping.area_snapped:.6g} µm² on the grid ({change:+.3g} µm²)"
+                )
+        return lines
+
+
 class Build:
     """One component built with some parameter values. Results are computed when
     first asked for and kept; they are shared, so treat them as read-only."""
@@ -195,6 +256,36 @@ class Build:
         """The geometry, with the components it places as instances (its ``layers``
         flatten them). Raises if the component does not build."""
         return self._built[0]
+
+    @cached_property
+    def built(self):
+        """The engine's own build of the component (``_core.Built``): outputs are made
+        from it. Get it where the engine builds (the main thread); ``output`` may then
+        run on another thread, since it only reads what was built."""
+        engine = self._engine
+        engine.variables(self.component, self.params)  # the model's checks, with its messages
+        return engine._core.built(self.component, self.params)
+
+    def output(self, grid: float = GRID_UM, chord: float = CHORD_UM) -> Output:
+        """The component for an output with this grid and chord tolerance (µm): see
+        :class:`Output`. The grid is a whole multiple of 1 nm. Kept per grid and chord;
+        once ``built`` is there, it may be made on another thread."""
+        steps = round(grid / DBU_UM)
+        if steps < 1 or abs(steps * DBU_UM - grid) > 1e-9 * DBU_UM:
+            raise ValueError(f"the grid must be a whole multiple of 1 nm, not {grid:g} µm")
+        if not chord > 0:
+            raise ValueError(f"the chord tolerance must be positive, not {chord:g} µm")
+        outputs = self.__dict__.setdefault("_outputs", {})
+        if (grid, chord) not in outputs:
+            layers, reports = self.built.output(grid, chord)
+            snapping = {
+                layer: LayerSnapping(
+                    exact, snapped, tuple(SnapEvent(change, tuple(box)) for change, box in events)
+                )
+                for layer, (exact, snapped, events) in reports.items()
+            }
+            outputs[(grid, chord)] = Output(grid, chord, _geometry(layers, steps), snapping)
+        return outputs[(grid, chord)]
 
     def layers(self) -> list[str]:
         """The layers with geometry."""
@@ -243,10 +334,14 @@ class Build:
         return self._records
 
 
-def _geometry(layers: dict[str, tuple]) -> Geometry:
-    """The engine's layers: ([(hull, [holes])], box) each, in grid units."""
+def _geometry(layers: dict[str, tuple], steps: int = 1) -> Geometry:
+    """The engine's layers: ([(hull, [holes])], box) each, in grid units (``steps``
+    of the 1 nm units of Geometry each)."""
     geometry = Geometry()
     for layer, (polygons, box) in layers.items():
+        if steps != 1:
+            polygons = [(hull * steps, [h * steps for h in holes]) for hull, holes in polygons]
+            box = tuple(v * steps for v in box) if box is not None else None
         geometry.layers[layer] = Region.from_polygons(polygons, merged=True, box=box)
     return geometry
 

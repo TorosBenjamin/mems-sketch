@@ -120,6 +120,24 @@ class ProcessEdits(Commands):
 
         self.session.edit("Edit layer stack", change)
 
+    def set_output(self, grid_um: float, chord_um: float) -> None:
+        """The fab's grid and curve tolerance (µm): what the rule checks round the
+        design onto, and where layout exports start."""
+        if not grid_um > 0 or not chord_um > 0:
+            raise ValueError("the grid and curve tolerance are positive lengths")
+        if abs(round(grid_um / 0.001) * 0.001 - grid_um) > 1e-12:
+            raise ValueError(f"the grid must be a whole multiple of 1 nm, not {grid_um:g} µm")
+
+        def change(project: Project) -> None:
+            if project.base_process is not None:  # like the layers, they belong to the process
+                raise ValueError(
+                    f"the grid belongs to process {project.process_name}: "
+                    "use a process of the project's own to change it"
+                )
+            project.process.grid_um, project.process.chord_um = grid_um, chord_um
+
+        self.session.edit("Set the process grid", change)
+
     # -- design rules --------------------------------------------------------
 
     def set_rule(self, name: str, rule: Rule) -> None:

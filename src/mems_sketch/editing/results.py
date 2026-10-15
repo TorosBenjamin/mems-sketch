@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import dataclasses
+import threading
+import time
+from concurrent.futures import Executor, Future
 from typing import TYPE_CHECKING
 
 from mems_sketch.core.component import Geometry
@@ -26,12 +29,88 @@ if TYPE_CHECKING:
 
 class Results:
     """What a session's components evaluate to, computed on demand and cached until
-    the session changes. Of the active component unless another is named."""
+    the session changes. Of the active component unless another is named.
+
+    A big design takes a while to build: :meth:`build_in_background` builds it on
+    another thread, and what is asked for meanwhile waits for that build rather
+    than starting another."""
 
     def __init__(self, session: EditSession) -> None:
         self.session = session
+        self.version = 0  # counts the session's changes: what a result was made for
+        # How long the components of this version took to build, of those that were
+        # built (what was built before takes no time and says nothing).
+        self.build_seconds: dict[str, float] = {}
+        self._lock = threading.Lock()  # results stored by a background build
         self._inspection: dict[str, dict[NodePath, NodeRecord]] = {}
-        session.changed.connect(self._inspection.clear)
+        self._problems: list[str] | None = None
+        self._pending: tuple[int, Future] | None = None
+        session.changed.connect(self._changed)
+
+    def _changed(self) -> None:
+        with self._lock:
+            self.version += 1
+            self._inspection.clear()
+            self._problems = None
+            self.build_seconds = {}
+
+    def build_in_background(self, components: list[str], executor: Executor) -> Future:
+        """Build ``components`` (with their trial values) and check the project, on
+        ``executor``, for the session as it is now. The future's result says whether
+        the results are still current (False: the session changed meanwhile)."""
+        version, session = self.version, self.session
+        session.engine  # noqa: B018 - loaded, so that the copy shares its caches
+        engine = session._engine.trial(session._snapshot())  # its own copy of the project
+        wanted = [(c, session.trials_for(c)) for c in dict.fromkeys(components)]
+
+        def run() -> bool:
+            if self.version != version:
+                return False  # a newer change came first: its build follows
+            records, seconds = {}, {}
+            for component, trials in wanted:
+                build = engine.build(component, trials)
+                started, cached = time.perf_counter(), engine.cached
+                try:
+                    build.geometry  # noqa: B018 - building is the point
+                except Exception:  # noqa: BLE001, S112 - asked for again, it says why
+                    continue
+                if engine.cached != cached:
+                    seconds[component] = time.perf_counter() - started
+                records[component] = build.records()
+            problems = engine.problems()
+            with self._lock:
+                if self.version != version:
+                    return False
+                self._inspection.update(records)
+                self._problems = problems
+                self.build_seconds.update(seconds)
+            return True
+
+        future = executor.submit(run)
+        self._pending = (version, future)
+        return future
+
+    def ready(self) -> bool:
+        """Nothing is being built in the background for the session as it is now."""
+        pending = self._pending
+        return pending is None or pending[0] != self.version or pending[1].done()
+
+    def _wait(self) -> None:
+        """Let a background build of the session as it is now finish (what it makes
+        is then here), rather than build the same again."""
+        pending = self._pending
+        if pending is not None and pending[0] == self.version:
+            try:
+                pending[1].result()
+            except Exception:  # noqa: BLE001, S110 - building again says why
+                pass
+
+    def problems(self) -> list[str]:
+        """Why the project does not build (empty when it does), cached until it changes."""
+        self._wait()
+        if self._problems is None:
+            self._problems = self.session.problems()
+        return list(self._problems)
 
     def scope(self, path: NodePath | None = None, component: str | None = None) -> dict[str, float]:
         """Resolved parameters (trial values included) plus ``process.*`` constants.
@@ -57,12 +136,20 @@ class Results:
         """Every node of a component as evaluated (cached until the next change)."""
         component = component or self.session.active
         if component not in self._inspection:
+            self._wait()
+        if component not in self._inspection:
             self._inspection[component] = self._build(component).records()
         return self._inspection[component]
 
     def geometry(self, component: str | None = None) -> Geometry:
         component = component or self.session.active
-        return self._build(component).geometry
+        build = self._build(component)
+        started, cached = time.perf_counter(), build._engine.cached
+        try:
+            return build.geometry
+        finally:
+            if build._engine.cached != cached:  # it was built, not found built
+                self.build_seconds[component] = time.perf_counter() - started
 
     def preview(self, path: NodePath, node: Shape) -> Geometry:
         """The active component as it would be with ``node`` at ``path``, without
@@ -103,6 +190,7 @@ class Results:
         """The engine's build of a component (default: the active one) with its trial
         values: what outputs (exports, rule checks) are made from."""
         component = component or self.session.active
+        self._wait()
         return self.session.engine.build(component, self.session.trials_for(component))
 
     _build = build

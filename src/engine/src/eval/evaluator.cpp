@@ -529,15 +529,27 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
 }
 
 std::shared_ptr<const Built> BuildCache::find(const std::string& key) const {
+    const std::lock_guard lock(mutex_);
     const auto found = built_.find(key);
     return found == built_.end() ? nullptr : found->second;
 }
 
 std::shared_ptr<const Built> BuildCache::put(std::shared_ptr<const Built> built) {
+    const std::lock_guard lock(mutex_);
     // Past the limit, start again: what is in use is built again as it is asked for
     // (what is still placed somewhere stays alive with its instances).
     if (built_.size() >= max_entries_) built_.clear();
-    return built_.insert_or_assign(built->key, std::move(built)).first->second;
+    return built_.try_emplace(built->key, std::move(built)).first->second;
+}
+
+void BuildCache::clear() {
+    const std::lock_guard lock(mutex_);
+    built_.clear();
+}
+
+size_t BuildCache::size() const {
+    const std::lock_guard lock(mutex_);
+    return built_.size();
 }
 
 Records Builder::records(std::string_view component, const Values& params, std::string* error) {

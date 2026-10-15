@@ -48,6 +48,14 @@ def _outputs() -> Executor:
     return _executors["output"]
 
 
+def builds() -> Executor:
+    """Where a big design is built after a change (MainWindow.refresh), one build at a
+    time: a build for a version of the design that is no longer current is skipped."""
+    if "build" not in _executors:
+        _executors["build"] = ThreadPoolExecutor(max_workers=1, thread_name_prefix="build")
+    return _executors["build"]
+
+
 def _check_job(build, grid: float, chord: float, project, component: str) -> list:
     """In the output thread: the design as the process's grid has it, then its rule
     checks, in another process when it can have one."""
@@ -95,6 +103,8 @@ class ComponentView(QWidget):
         super().__init__()
         self._generation = 0
         self.checking = False  # a background rule check is running
+        self.updating = False  # a background build will replace what it shows
+        self.shown = Geometry()  # what the canvas shows: the last result that built
         self._check_done.connect(self._take_check)
         self.document = document
         self.component = component
@@ -145,7 +155,7 @@ class ComponentView(QWidget):
         try:
             drawn = geometry = self.document.results.geometry(component=self.component)
         except Exception as exc:  # noqa: BLE001 - shown in the messages panel
-            geometry = Geometry()
+            geometry = self.shown  # the last result stays until there is a new one
             self.errors.append(str(exc))
         self.node_regions = self.document.results.node_regions(visible, self.component)
         try:
@@ -163,6 +173,7 @@ class ComponentView(QWidget):
         except Exception:  # noqa: BLE001 - it did not build: the errors say why
             shapes = []
         self.canvas.show_geometry(geometry, colors, visible, shapes)
+        self.shown = geometry
         if not self._fitted and not geometry.is_empty():
             self._fitted = True
             self.canvas.fit()

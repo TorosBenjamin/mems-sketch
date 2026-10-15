@@ -1,6 +1,7 @@
 """A big design builds in the background: the editor goes on meanwhile (QS-8)."""
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -125,3 +126,52 @@ def test_without_build_checks_an_edit_that_does_not_build_is_kept():
     session.check_builds = False
     session.nodes.add(bad)
     assert any("nope" in p for p in session.results.problems())
+
+
+def plate_session() -> EditSession:
+    """A plate with 3,600 round holes: a build that takes a while."""
+    from mems_sketch import ArrayModifier, BooleanShape, CircleShape
+
+    holes = CircleShape(
+        layer="device",
+        x=1.25,
+        y=1.25,
+        radius="r",
+        modifiers=[ArrayModifier(rows=60, columns=60, dx=2.5, dy=2.5)],
+    )
+    plate = BooleanShape(
+        op="subtract", a=[RectShape(layer="device", x0=0, y0=0, x1=150, y1=150)], b=[holes]
+    )
+    session = EditSession()
+    session.parameters.set("r", 0.5)
+    session.nodes.add(plate)
+    return session
+
+
+def test_a_cancelled_engine_builds_no_more():
+    from mems_sketch import engine as engine_module
+
+    session = plate_session()
+    engine = session._engine.trial(session._snapshot())
+    engine.cancel()
+    with pytest.raises(engine_module.BuildCancelled):
+        engine.build(session.active).geometry  # noqa: B018
+
+
+def test_a_change_stops_the_background_build_of_the_design_before_it():
+    session = plate_session()
+    session.check_builds = False  # as the editor has it for a big design: edits do not build
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        session.parameters.update("r", default=0.6)  # not built yet
+        started = time.perf_counter()
+        whole = session.results.build_in_background([session.active], executor)
+        assert whole.result() is True
+        full = time.perf_counter() - started
+
+        session.parameters.update("r", default=0.7)
+        stale = session.results.build_in_background([session.active], executor)
+        time.sleep(full / 10)
+        started = time.perf_counter()
+        session.parameters.update("r", default=0.8)  # stops the build of r = 0.7
+        assert stale.result() is False
+        assert time.perf_counter() - started < full / 2

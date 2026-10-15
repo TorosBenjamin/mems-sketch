@@ -103,6 +103,19 @@ class Process:
         self.rules[rule.name] = rule
         return rule
 
+    def stack_order(self) -> list[str]:
+        """The layers bottom to top, as they are drawn: the levels of the stack from
+        the bottom, each its anchoring layer, its main layer, then the layers of its
+        other roles; layers in no level (imported, unassigned) first, under them all,
+        in the order the process lists them."""
+        stacked: list[str] = []
+        for level in self.levels:
+            anchor = level.roles.get("anchor")
+            others = [layer for role, layer in level.roles.items() if role != "anchor"]
+            stacked += [layer for layer in (anchor, level.layer, *others) if layer]
+        stacked = list(dict.fromkeys(stacked))
+        return [name for name in self.layers if name not in stacked] + stacked
+
     def scope(self) -> dict[str, float]:
         """Resolved constants keyed as they appear in expressions (``process.name``)."""
         return {PROCESS_PREFIX + k: v for k, v in resolve_variables(self.constants).items()}

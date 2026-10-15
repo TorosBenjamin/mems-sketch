@@ -64,6 +64,12 @@ def _core():
     return _core
 
 
+def __getattr__(name: str):
+    if name == "BuildCancelled":  # a build stopped by Engine.cancel()
+        return _core().BuildCancelled
+    raise AttributeError(name)
+
+
 class Engine:
     def __init__(self) -> None:
         self._root = None  # the first engine loaded: its cache is shared with every later one
@@ -167,9 +173,18 @@ class Engine:
         for name in project.components:
             try:
                 self.build(name).geometry  # noqa: B018 - building is the check
+            except _core().BuildCancelled:
+                raise
             except Exception as exc:  # noqa: BLE001 - collected for the caller
                 problems.append(f"{name}: {exc}")
         return problems
+
+    def cancel(self) -> None:
+        """Stop this engine's builds, from another thread too: they raise
+        :class:`BuildCancelled` soon, inside long operations as well. What they had
+        finished stays in the cache. A cancelled engine builds no more."""
+        if self._core is not None:
+            self._core.cancel()
 
     @property
     def cached(self) -> int:

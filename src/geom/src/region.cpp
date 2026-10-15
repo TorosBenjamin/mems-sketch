@@ -1,8 +1,11 @@
 #include "mgeom/region.hpp"
 
+#include "mgeom/interrupt.hpp"
+
 #include "region_impl.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
@@ -21,15 +24,16 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
-#include <TopLoc_Location.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GProp_GProps.hxx>
-#include <BRepAdaptor_Surface.hxx>
+#include <Message_ProgressIndicator.hxx>
+#include <Message_ProgressScope.hxx>
+#include <NCollection_List.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
-#include <NCollection_List.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Face.hxx>
@@ -110,6 +114,20 @@ NCollection_List<TopoDS_Shape> copied(const NCollection_List<TopoDS_Shape>& shap
 // faces inside one compound. So faces that may overlap (a union) go in one
 // by one (each); a region's own faces never overlap and go in as one
 // compound (one: subtract, intersect).
+// Open CASCADE's progress, polled while a boolean runs (on its worker threads too):
+// it stops the boolean when the work it is part of was asked to stop.
+class StopWhenInterrupted : public Message_ProgressIndicator {
+public:
+    explicit StopWhenInterrupted(const std::atomic<bool>* flag) : flag_(flag) {}
+
+protected:
+    bool UserBreak() override { return flag_ && flag_->load(std::memory_order_relaxed); }
+    void Show(const Message_ProgressScope&, const bool) override {}
+
+private:
+    const std::atomic<bool>* flag_;
+};
+
 template <class Op>
 TopoDS_Shape run_boolean(const NCollection_List<TopoDS_Shape>& shared_args,
                          const NCollection_List<TopoDS_Shape>& shared_tools, const char* name) {
@@ -120,7 +138,14 @@ TopoDS_Shape run_boolean(const NCollection_List<TopoDS_Shape>& shared_args,
         op.SetArguments(args);
         op.SetTools(tools);
         op.SetRunParallel(true);
-        op.Build();
+        check_interrupted();
+        if (const std::atomic<bool>* flag = interrupt_flag()) {
+            occ::handle<StopWhenInterrupted> progress = new StopWhenInterrupted(flag);
+            op.Build(progress->Start());
+        } else {
+            op.Build();
+        }
+        check_interrupted();
         if (!op.IsDone() || op.HasErrors()) {
             throw GeometryError(std::string(name) + " failed in Open CASCADE");
         }
@@ -236,6 +261,7 @@ Region Region::operator|(const Region& other) const {
 }
 
 Region Region::unite(std::span<const Region> regions) {
+    check_interrupted();
     // Every face with its bounding box (enlarged by its tolerance, so faces
     // that touch count as overlapping).
     std::vector<TopoDS_Face> faces;
@@ -282,6 +308,7 @@ Region Region::unite(std::span<const Region> regions) {
     std::vector<TopoDS_Face> result;
     std::vector<bool> done(n, false);
     for (size_t i = 0; i < n; ++i) {
+        if (i % 256 == 0) check_interrupted();
         const size_t g = root(i);
         if (done[g]) continue;
         done[g] = true;
@@ -405,6 +432,7 @@ FastCut cut_disjoint_holes(const std::vector<TopoDS_Face>& faces,
             edge_boxes.push_back(box_of(e.Current()));
         }
         for (size_t i = 0; i < nt; ++i) {
+            if (i % 256 == 0) check_interrupted();
             if (!usable[i] || placed[i] || !strictly_inside(tool_boxes[i], face_box)) continue;
             bool touches = false;
             for (const Bnd_Box& eb : edge_boxes) {
@@ -488,6 +516,7 @@ TopoDS_Face detail::face_of_boundaries(const gp_Pln& plane, const TopoDS_Wire& o
 
 Region Region::operator-(const Region& other) const {
     if (empty() || other.empty()) return *this;
+    check_interrupted();
     // Independent copies, as for a boolean (see copied()).
     const std::vector<TopoDS_Face> faces = faces_of(BRepBuilderAPI_Copy(impl_->shape).Shape());
     const std::vector<TopoDS_Face> tools =

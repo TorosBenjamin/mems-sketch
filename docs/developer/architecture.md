@@ -60,7 +60,10 @@ a change builds the open tabs on a thread of its own
 (`Results.build_in_background`, on a copy of the project), and the tabs keep
 the last result until the new one is there. What asks for a result meanwhile
 waits for that build instead of building again; a build of a version that is
-no longer current is not used. Such an edit is not refused for not building
+no longer current is stopped: the next change cancels it (`Engine.cancel`), and
+the engine and the geometry library check for that before each shape, between
+the holes of a cut and inside Open CASCADE's booleans (`mgeom::Interruptible`),
+so a long build stops within moments. Such an edit is not refused for not building
 (`EditSession.check_builds` is off): the messages panel says why instead,
 while references and cycles are still checked at once. The engine's cache is
 shared between threads, and one engine builds one thing at a time.

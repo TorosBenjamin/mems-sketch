@@ -69,6 +69,7 @@ from mems_sketch.gui.toolbar import build_toolbar
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool
 from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import ComponentView, EditorArea, builds
+from mems_sketch.gui.widgets import MenuTidier
 
 PANEL_HELP = {  # the "?" in each tool window's header
     "components": "Every component, each listed once: the project's, each library's and "
@@ -247,6 +248,10 @@ class MainWindow(QMainWindow):
         self._double_shift.pressed.connect(self.search)
         self.winId()  # the native window, which every key typed in this window reaches first
         self.windowHandle().installEventFilter(self._double_shift)
+        app = QApplication.instance()
+        if not hasattr(app, "_menu_tidier"):  # once for every window and menu
+            app._menu_tidier = MenuTidier(app)
+            app.installEventFilter(app._menu_tidier)
 
         self.setWindowIcon(icons.icon("component"))
         self.resize(1500, 950)

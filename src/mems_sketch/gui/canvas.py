@@ -153,6 +153,32 @@ def own_path(geometry: Geometry, layer: str) -> QPainterPath:
     return paths[layer]
 
 
+class ShapeItem(QGraphicsPathItem):
+    """A filled shape: its fill drawn without antialiasing, its outline over it with.
+
+    Antialiasing a fill costs some fifty times as much on a path with thousands
+    of holes (10,000 round holes: 3.6 s against 0.08 s a picture), and it is not
+    seen: the outline covers the fill's edge."""
+
+    def paint(self, painter, option, widget=None) -> None:
+        if self.brush().style() != Qt.BrushStyle.NoBrush:
+            antialiased = painter.testRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            painter.fillPath(self.path(), self.brush())
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, antialiased)
+        if self.pen().style() != Qt.PenStyle.NoPen:
+            painter.strokePath(self.path(), self.pen())
+
+
+def stack_order(geometry: Geometry, colors: dict[str, QColor]) -> dict[str, int]:
+    """The z-order of a geometry's layers: bottom to top as the layer stack has them
+    (the order of ``colors``, see LayersPanel), then layers the process does not
+    know, by name."""
+    names = set(geometry.layer_names())
+    known = [layer for layer in colors if layer in names]
+    return {layer: z for z, layer in enumerate([*known, *sorted(names - set(known))])}
+
+
 def qtransform(t: Transform) -> QTransform:
     """A placement as Qt applies it: mirrored about x, scaled, turned, then moved."""
     q = QTransform()
@@ -184,7 +210,7 @@ def polygon_f(points) -> QPolygonF:
     return loop
 
 
-class _PlacedPathItem(QGraphicsPathItem):
+class _PlacedPathItem(ShapeItem):
     """A path item that remembers its placement (for drag previews, which move
     and turn it on top of that)."""
 
@@ -535,7 +561,7 @@ class LayoutCanvas(QGraphicsView):
         self._shown = (geometry, colors, visible, shapes)
         alpha = round(255 * self.options["fill_opacity"] / 100)
         width = self.options["outline_width"]
-        order = {layer: z for z, layer in enumerate(sorted(geometry.layer_names()))}
+        order = stack_order(geometry, colors)
         leaves = geometry.leaves()
         cache = CACHED if len(leaves) <= MAX_CACHED_ITEMS else QGraphicsItem.CacheMode.NoCache
         old, new = self._items_by_key, {}
@@ -550,7 +576,7 @@ class LayoutCanvas(QGraphicsView):
                 if kept:
                     item = kept.pop()
                 else:
-                    item = QGraphicsPathItem(own_path(leaf, layer))
+                    item = ShapeItem(own_path(leaf, layer))
                     item.setTransform(qtransform(at))
                     fill = QColor(color)
                     fill.setAlpha(alpha)
@@ -621,7 +647,7 @@ class LayoutCanvas(QGraphicsView):
                 for layer, region in leaf.own.items():
                     if region.is_empty():
                         continue
-                    item = QGraphicsPathItem(own_path(leaf, layer))
+                    item = ShapeItem(own_path(leaf, layer))
                     item.setTransform(qtransform(at))
                     pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
                     pen.setCosmetic(True)
@@ -667,7 +693,7 @@ class LayoutCanvas(QGraphicsView):
                 continue
             color = QColor(self.theme[style])
             for layer in geometry.layer_names():
-                item = QGraphicsPathItem(geometry_path(geometry, layer))
+                item = ShapeItem(geometry_path(geometry, layer))
                 pen = QPen(color, OUTLINE_PX)
                 pen.setCosmetic(True)
                 item.setPen(pen)
@@ -706,6 +732,7 @@ class LayoutCanvas(QGraphicsView):
     def show_drag_preview(self, geometry: Geometry, colors: dict[str, QColor]) -> None:
         """Draw what is being dragged on top; move it with :meth:`move_drag_preview`."""
         self.clear_drag_preview()
+        order = stack_order(geometry, colors)
         for leaf, at in geometry.leaves():
             for layer, region in leaf.own.items():
                 if region.is_empty():
@@ -719,7 +746,7 @@ class LayoutCanvas(QGraphicsView):
                 pen.setStyle(Qt.PenStyle.DashLine)
                 item.setPen(pen)
                 item.setBrush(QBrush(fill))
-                item.setZValue(1050)
+                item.setZValue(1050 + order[layer] / 1000)  # over everything, in stack order
                 item.setCacheMode(CACHED)  # moving it reuses the picture
                 self.scene().addItem(item)
                 self._drag_items.append(item)

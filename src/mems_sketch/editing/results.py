@@ -8,6 +8,7 @@ import time
 from concurrent.futures import Executor, Future
 from typing import TYPE_CHECKING
 
+from mems_sketch import engine as engine_module
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.shapes import (
     BBOX_POINTS,
@@ -45,9 +46,13 @@ class Results:
         self._inspection: dict[str, dict[NodePath, NodeRecord]] = {}
         self._problems: list[str] | None = None
         self._pending: tuple[int, Future] | None = None
+        self._building = None  # the engine of the background build, while it runs
         session.changed.connect(self._changed)
 
     def _changed(self) -> None:
+        building = self._building
+        if building is not None:
+            building.cancel()  # its design is no longer current: stop it, mid-boolean too
         with self._lock:
             self.version += 1
             self._inspection.clear()
@@ -64,6 +69,15 @@ class Results:
         wanted = [(c, session.trials_for(c)) for c in dict.fromkeys(components)]
 
         def run() -> bool:
+            try:
+                return build()
+            except engine_module.BuildCancelled:
+                return False  # a newer change: its build follows
+            finally:
+                if self._building is engine:
+                    self._building = None
+
+        def build() -> bool:
             if self.version != version:
                 return False  # a newer change came first: its build follows
             records, seconds = {}, {}
@@ -72,6 +86,8 @@ class Results:
                 started, cached = time.perf_counter(), engine.cached
                 try:
                     build.geometry  # noqa: B018 - building is the point
+                except engine_module.BuildCancelled:
+                    raise
                 except Exception:  # noqa: BLE001, S112 - asked for again, it says why
                     continue
                 if engine.cached != cached:
@@ -86,6 +102,7 @@ class Results:
                 self.build_seconds.update(seconds)
             return True
 
+        self._building = engine
         future = executor.submit(run)
         self._pending = (version, future)
         return future

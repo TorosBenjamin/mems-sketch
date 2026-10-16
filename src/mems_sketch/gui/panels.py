@@ -1167,12 +1167,17 @@ class LayersPanel(_Panel):
     def refresh(self) -> None:
         from mems_sketch.gui.canvas import layer_color
 
-        layers = self.document.project.layers
-        self._layer_names = list(layers)
-        self.colors = {name: layer_color(i) for i, name in enumerate(layers)}
+        process = self.document.project.process
+        layers, stack = process.layers, process.stack_order()
+        # Each layer keeps its colour (by its place in the process); ``colors`` is in
+        # the stack's order, bottom to top, which is how the canvas draws them, and
+        # the list shows the top one first, as it is on top on the canvas.
+        hues = {name: layer_color(i) for i, name in enumerate(layers)}
+        self.colors = {name: hues[name] for name in stack}
+        self._layer_names = list(reversed(stack))
         self.layers.blockSignals(True)
-        self.layers.setRowCount(len(layers))
-        for row, layer in enumerate(layers.values()):
+        self.layers.setRowCount(len(stack))
+        for row, layer in enumerate(layers[name] for name in self._layer_names):
             name_cell = QTableWidgetItem(layer.name)
             name_cell.setFlags(name_cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             shown = self.visible.get(layer.name, True)

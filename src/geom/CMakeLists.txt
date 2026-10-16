@@ -44,7 +44,8 @@ add_library(mgeom
     src/wire.cpp
     src/construct.cpp
     src/snap.cpp
-    src/grid.cpp)
+    src/grid.cpp
+    src/interrupt.cpp)
 add_library(mgeom::mgeom ALIAS mgeom)
 target_include_directories(mgeom
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

@@ -31,6 +31,7 @@
 #include <numbers>
 #include <string>
 
+#include "mgeom/interrupt.hpp"
 #include "region_impl.hpp"
 
 namespace mgeom {
@@ -203,6 +204,7 @@ Region enclosed(const std::vector<TopoDS_Wire>& loops) {
 }  // namespace
 
 Region Region::offset(double distance, Join join) const {
+    check_interrupted();
     if (!std::isfinite(distance)) throw GeometryError("an offset needs a finite distance");
     if (empty() || distance == 0.0) return *this;
     if (distance < 0) {
@@ -327,6 +329,7 @@ TopoDS_Face rounded_face(const TopoDS_Face& face, const AddCorner& add) {
 }  // namespace
 
 Region Region::filleted(double convex_radius, double concave_radius) const {
+    check_interrupted();
     if (!(convex_radius >= 0.0) || !(concave_radius >= 0.0)) {
         throw GeometryError("fillet radii cannot be negative");
     }
@@ -345,6 +348,7 @@ Region Region::filleted(double convex_radius, double concave_radius) const {
 }
 
 Region Region::rounded(std::span<const CornerRounding> wanted) const {
+    check_interrupted();
     for (const CornerRounding& w : wanted) {
         if (!(w.radius >= 0.0)) throw GeometryError("a corner radius cannot be negative");
     }

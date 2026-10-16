@@ -12,6 +12,7 @@
 #include "../modifiers/modifiers.hpp"
 #include "../shapes/kinds.hpp"
 #include "context.hpp"
+#include "mgeom/interrupt.hpp"
 #include "mgeom/types.hpp"
 
 namespace mems {
@@ -142,6 +143,7 @@ mgeom::Transform placement_of(const Json& node, const Context& ctx) {
 
 NodeResult render_node(const Json& node, Builder& builder, const std::string& component, const Variables& variables,
                        const Scope& scope) {
+    mgeom::check_interrupted();  // the build is no longer needed: stop before the next shape
     const std::string kind = node.value("kind", std::string());
     const RenderKind render = find_kind(kind);
     if (!render) throw NotSupported("'" + kind + "' shapes are not built by the engine yet");
@@ -397,6 +399,8 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
         } pop{path};
         try {
             result = render_node(node, builder, component, variables, visible);
+        } catch (const mgeom::Interrupted&) {
+            throw;  // not the shape's fault, hidden or not
         } catch (const mgeom::GeometryError& error) {
             if (!entries[k].enabled) return finish_hidden(k);
             throw BuildError("'" + label_of(node) + "': " + error.what());
@@ -569,6 +573,8 @@ Records Builder::records(std::string_view component, const Values& params, std::
         path_.clear();
         const Variables variables(values.begin(), values.end());
         render_lists({&definition->shapes->json}, *this, qualified, variables, Scope{});
+    } catch (const mgeom::Interrupted&) {
+        throw;
     } catch (const std::exception& e) {
         if (!error) throw;
         *error = e.what();

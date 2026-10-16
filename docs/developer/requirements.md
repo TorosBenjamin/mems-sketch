@@ -657,7 +657,7 @@ ten times larger than that, so the numbers hold with room to spare.
   single shapes, not whole components: the dependencies go through
   expressions, points, alignments, modifiers and `layer_map`. Shapes that do
   not read the changed value, and layers it does not reach, cost nothing.
-- **QS-8** (Must, new; [#62](https://github.com/TorosBenjamin/mems-sketch/issues/62)) **The editor never waits for a build.** Builds run in
+- **QS-8** (Must, exists; [#62](https://github.com/TorosBenjamin/mems-sketch/issues/62)) **The editor never waits for a build.** Builds run in
   the background; the canvas shows the last finished result and says when a
   newer one is on its way. A newer value cancels a build that is no longer
   needed, inside long operations too.

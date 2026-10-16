@@ -109,3 +109,8 @@ point tolerance (10⁻⁷ model units) is 10⁻¹⁰ µm. The tests check that a
 tangentially Open CASCADE widens the tolerance locally (about 10⁻⁶ µm at most,
 measured); booleans, offsets and corner rounding throw `GeometryError` for a
 result coarser than 10⁻⁵ µm, or one that is not valid (QR-3).
+
+Work can be stopped from another thread (`mgeom/interrupt.hpp`): while an
+`Interruptible` scope watches a flag, operations throw `Interrupted` soon after
+it is set, inside Open CASCADE's booleans too (the editor stops a build that a
+newer change made useless).

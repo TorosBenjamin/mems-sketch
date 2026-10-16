@@ -2,6 +2,7 @@
 // which give the same values as mems_sketch.core.expressions, and its project
 // model (mems_sketch.engine.project_data makes the JSON it reads).
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <tuple>
 #include <map>
@@ -22,6 +23,7 @@
 #include "mems/build.hpp"
 #include "mems/expression.hpp"
 #include "mems/project.hpp"
+#include "mgeom/interrupt.hpp"
 #include "mgeom/snap.hpp"
 
 namespace nb = nanobind;
@@ -212,6 +214,8 @@ struct Engine {
     std::shared_ptr<const mems::Project> project;
     std::unique_ptr<mems::Builder> builder;
     std::unique_ptr<std::mutex> busy = std::make_unique<std::mutex>();
+    // Set by cancel(): its builds stop soon (mgeom::Interrupted), wherever they are.
+    std::shared_ptr<std::atomic<bool>> stop = std::make_shared<std::atomic<bool>>(false);
 
     Engine(std::shared_ptr<mems::BuildCache> c, std::string_view json)
         : cache(std::move(c)),
@@ -244,6 +248,7 @@ NB_MODULE(_core, m) {
     nb::exception<mems::PrivateComponent>(m, "PrivateComponentError", unknown.ptr());
     auto build_error = nb::exception<mems::BuildError>(m, "BuildError", PyExc_ValueError);
     nb::exception<mems::NotSupported>(m, "NotSupported", build_error.ptr());
+    nb::exception<mgeom::Interrupted>(m, "BuildCancelled", PyExc_RuntimeError);
 
     nb::class_<mems::Project>(m, "Project", "A project as the engine knows it before building it.")
         .def("__init__", [](mems::Project* p, std::string_view json) { new (p) mems::Project(mems::Project::from_json(json)); },
@@ -323,6 +328,7 @@ NB_MODULE(_core, m) {
                 {
                     nb::gil_scoped_release release;  // geometry takes a while; Python may go on
                     const std::lock_guard lock(*e.busy);
+                    mgeom::Interruptible interruptible(e.stop.get());
                     built = e.builder->build(component, values);
                     built->flat();
                 }
@@ -339,6 +345,7 @@ NB_MODULE(_core, m) {
                 {
                     nb::gil_scoped_release release;
                     const std::lock_guard lock(*e.busy);
+                    mgeom::Interruptible interruptible(e.stop.get());
                     built = e.builder->build(component, values);
                 }
                 nb::dict cells;
@@ -357,6 +364,7 @@ NB_MODULE(_core, m) {
                 {
                     nb::gil_scoped_release release;
                     const std::lock_guard lock(*e.busy);
+                    mgeom::Interruptible interruptible(e.stop.get());
                     built = e.builder->build(component, values);
                 }
                 return output_of(*built, grid, chord);
@@ -375,6 +383,7 @@ NB_MODULE(_core, m) {
                 {
                     nb::gil_scoped_release release;
                     const std::lock_guard lock(*e.busy);
+                    mgeom::Interruptible interruptible(e.stop.get());
                     handle.built = e.builder->build(component, values);
                 }
                 return handle;
@@ -391,6 +400,7 @@ NB_MODULE(_core, m) {
                 {
                     nb::gil_scoped_release release;
                     const std::lock_guard lock(*e.busy);
+                    mgeom::Interruptible interruptible(e.stop.get());
                     records = e.builder->records(component, values, &error);
                 }
                 nb::dict result, cells;
@@ -415,6 +425,10 @@ NB_MODULE(_core, m) {
                 snap_cache().clear();
             },
             "Forget every cached build.")
+        .def(
+            "cancel", [](Engine& e) { e.stop->store(true); },
+            "Stop this engine's builds (another thread may call it while one runs): they raise "
+            "BuildCancelled soon, and what they had finished stays in the cache.")
         .def_prop_ro("cached", [](const Engine& e) { return e.cache->size(); },
                      "How many component builds the cache holds.");
 

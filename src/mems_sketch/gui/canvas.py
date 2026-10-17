@@ -38,6 +38,7 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QFontMetricsF,
     QInputDevice,
     QPainter,
     QPainterPath,
@@ -101,6 +102,7 @@ CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
 OUTLINE_PX = 1.0
+CURSOR_LABEL_OFFSET = 16  # px: a label by the cursor starts this far right and below it
 PULSE_PX = 3.0  # a picked shape's glow starts this wide, then thins and fades
 COMPONENT_MIME = "application/x-mems-sketch-component"  # a component dragged from the explorer
 # The world the user can pan over, in µm: ±1 m, inside the ±2.1 m that 32-bit
@@ -287,6 +289,12 @@ class LayoutCanvas(QGraphicsView):
         self._hover_item: QGraphicsPathItem | None = None
         self._pulse_item: QGraphicsPathItem | None = None
         self._glide_target: tuple[float, QPointF] | None = None  # where a glide is going
+        # A label by the cursor: the live value of a drag (``cursor_label``) or, when
+        # pointing at a shape for a moment, what it is (``hover_label``).
+        self.cursor_label: str | None = None
+        self.hover_label: str | None = None
+        self._cursor_at = QPointF()  # viewport pixels
+        self._over_selection = False  # the cursor is on the selection: a drag moves it
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
         self._caption: tuple[str, str] = ("", "")
@@ -1143,6 +1151,9 @@ class LayoutCanvas(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        self._cursor_at = event.position()
+        if self.cursor_label or self.hover_label:
+            self.viewport().update()  # the label follows the cursor
         if self._right_from is not None:
             if (event.position() - self._right_from).manhattanLength() <= RIGHT_CLICK_SLOP_PX:
                 return
@@ -1242,6 +1253,29 @@ class LayoutCanvas(QGraphicsView):
             return
         super().keyReleaseEvent(event)
 
+    def leaveEvent(self, event) -> None:
+        self.set_hover_label(None)  # a drag's label stays: the drag may come back
+        super().leaveEvent(event)
+
+    def set_cursor_label(self, text: str | None) -> None:
+        """The live value of what the cursor is doing (a drag's offset, a shape's size),
+        next to the cursor; None takes it away."""
+        if text != self.cursor_label:
+            self.cursor_label = text
+            self.viewport().update()
+
+    def set_hover_label(self, text: str | None) -> None:
+        """What the shape under the cursor is, next to the cursor (after a pause)."""
+        if text != self.hover_label:
+            self.hover_label = text
+            self.viewport().update()
+
+    def set_over_selection(self, over: bool) -> None:
+        """The cursor is on the selection: the move cursor says a drag moves it."""
+        if over != self._over_selection:
+            self._over_selection = over
+            self._update_cursor()
+
     def set_tool_cursor(self, cursor: Qt.CursorShape) -> None:
         self._tool_cursor = cursor
         self._update_cursor()
@@ -1258,6 +1292,8 @@ class LayoutCanvas(QGraphicsView):
                     "free": Qt.CursorShape.SizeAllCursor,
                 }.get(part, Qt.CursorShape.PointingHandCursor)
             )
+        elif self._over_selection:
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
         else:
             self.setCursor(getattr(self, "_tool_cursor", Qt.CursorShape.ArrowCursor))
 
@@ -1341,6 +1377,9 @@ class LayoutCanvas(QGraphicsView):
             self._draw_scale_bar(painter, 16, height)
         if self._gizmo is not None:
             self._draw_gizmo(painter)
+        label = self.cursor_label or self.hover_label
+        if label:
+            self._draw_cursor_label(painter, label)
         self._round_corners(painter)
         painter.restore()
 
@@ -1490,6 +1529,25 @@ class LayoutCanvas(QGraphicsView):
         fill.setAlpha(160)
         painter.setBrush(fill)
         painter.drawEllipse(QPointF(cx, cy), 7, 7)
+
+    def _draw_cursor_label(self, painter: QPainter, text: str) -> None:
+        """Below and right of the cursor, kept inside the view."""
+        font = QFont(self.font())
+        font.setBold(True)  # as the chip draws it
+        metrics = QFontMetricsF(font)
+        width = metrics.horizontalAdvance(text) + 16
+        y = self._cursor_at.y() + CURSOR_LABEL_OFFSET + metrics.height()
+        y = min(y, self.viewport().height() - 6)
+        # Right of the cursor, unless that runs into the tool palette or the edge:
+        # then left of it.
+        right = self.viewport().width() - 4
+        palette = self.mode_palette.geometry()
+        if self.mode_palette.isVisible() and palette.top() - 4 <= y <= palette.bottom() + 30:
+            right = min(right, palette.left() - 6)
+        x = self._cursor_at.x() + CURSOR_LABEL_OFFSET
+        if x + width > right:
+            x = self._cursor_at.x() - CURSOR_LABEL_OFFSET - width
+        self._draw_chip(painter, QPointF(max(x, 4), y), text)
 
     def _draw_chip(self, painter: QPainter, at: QPointF, text: str) -> None:
         """A small label on a rounded background, readable on any drawing."""

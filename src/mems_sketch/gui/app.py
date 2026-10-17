@@ -110,6 +110,7 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "on the canvas, click it to go there and edit it. *Re-export* makes a shape's "
     "point one of this component's.",
 }
+HOVER_LABEL_DELAY_MS = 600  # pointing at a shape this long says what it is
 STATE_SAVE_DELAY_MS = 1000  # the editor state is written this long after the last change
 GUIDE_REACH_PX = 6  # a click this close to a guide line selects it
 BOX_EPS_UM = 0.0005  # half a database unit: a box edge drawn on a shape's edge contains it
@@ -177,6 +178,11 @@ class MainWindow(QMainWindow):
         self.draw_layer: str | None = None  # the layer the drawing tools draw on
         self.path_width = self.settings.get("editor/path_width")
         self._hovered: NodePath | None = None
+        self._tip_for: NodePath | None = None  # the shape a hover label is (or will be) about
+        self._tip_timer = QTimer(self)
+        self._tip_timer.setSingleShot(True)
+        self._tip_timer.setInterval(HOVER_LABEL_DELAY_MS)
+        self._tip_timer.timeout.connect(self._show_tip)
         self.tools: dict[str, Tool] = {cls.name: cls(self) for cls in TOOLS}
         self.tool: Tool = self.tools["select"]
         self.tool.reset()
@@ -677,7 +683,10 @@ class MainWindow(QMainWindow):
         for view in self.area.views():
             view.canvas.set_tool_cursor(tool.cursor)
             view.canvas.show_hover(None)
-        self._hovered = None
+            view.canvas.set_cursor_label(None)
+            view.canvas.set_hover_label(None)
+            view.canvas.set_over_selection(False)
+        self._hovered = self._tip_for = None
         tool.activate()
         self.settings.set_value("tool", name)
         self._show_tool_options()
@@ -689,7 +698,18 @@ class MainWindow(QMainWindow):
             view.canvas.set_tool_cursor(self.tool.cursor)
 
     def prompt(self, text: str) -> None:
+        """The hint for what to do next, in the status bar (a drag's label by the
+        cursor goes: the drag is over)."""
         self.statusBar().showMessage(text)
+        if self.area.current is not None:  # not while the window is being made
+            self.area.current.canvas.set_cursor_label(None)
+
+    def live(self, text: str, label: str | None = None) -> None:
+        """The live value of a drag or of a shape being drawn: in the status bar, and
+        ``label`` (by default the text before its parenthesised help) by the cursor."""
+        self.statusBar().showMessage(text)
+        self.canvas.set_cursor_label(label or text.split("   (")[0].strip())
+        self.canvas.set_hover_label(None)
 
     def run(self, action) -> tuple[bool, object]:
         return self._run(action)
@@ -964,6 +984,9 @@ class MainWindow(QMainWindow):
         self.tool.design_changed()  # what it was doing was based on the previous state
         self._hovered = None  # it may be gone (deleted): the next move finds what is under
         self.canvas.show_hover(None)
+        self._tip_for = None
+        self._tip_timer.stop()
+        self.canvas.set_hover_label(None)
         for view in self.area.views():
             if not self.document.exists(view.component):
                 self.area.close_view(view)  # its component was deleted (or undone)
@@ -1216,22 +1239,51 @@ class MainWindow(QMainWindow):
         self._hover(x, y)
 
     def _hover(self, x: float, y: float) -> None:
-        """Outline the shape under the cursor (what a click would select)."""
+        """Outline the shape under the cursor (what a click would select); after a
+        pause, say what it is; over the selection, show that a drag moves it."""
         tool = self.tool
-        hovered = None
-        if (
-            tool.hovers
-            and not tool.busy
-            and self.settings.get("canvas/hover_highlight")
-            and self.canvas.gizmo_hit(x, y) is None
-        ):
-            hovered = self.hit(x, y)
-            if hovered in self.selection:
-                hovered = None
+        free = tool.hovers and not tool.busy and self.canvas.gizmo_hit(x, y) is None
+        under = self.hit(x, y) if free else None
+        hovered = under
+        if hovered in self.selection or not self.settings.get("canvas/hover_highlight"):
+            hovered = None
         if hovered != self._hovered:
             self._hovered = hovered
             geometry = dict(self.view.node_regions).get(hovered) if hovered else None
             self.canvas.show_hover(geometry)
+        if under != self._tip_for:
+            self._tip_for = under
+            self.canvas.set_hover_label(None)
+            if under is not None:
+                self._tip_timer.start()
+            else:
+                self._tip_timer.stop()
+        self.canvas.set_over_selection(
+            free and tool.name == "select" and under is not None and under in self.selection
+        )
+
+    def _show_tip(self) -> None:
+        if self._tip_for is None or self.canvas.cursor_label or self.tool.busy:
+            return
+        try:
+            self.canvas.set_hover_label(self.describe_node(self._tip_for))
+        except KeyError:  # gone meanwhile
+            self._tip_for = None
+
+    def describe_node(self, path: NodePath) -> str:
+        """A shape in a few words: its name, what it is and its layer (``bar · rect ·
+        device``), or the component it places (``comb_top · comb_drive``)."""
+        node = self.document.node(path)
+        parts = [node.name or f"unnamed {node.kind}"]
+        component = getattr(node, "component", None)
+        if component:
+            parts.append(component)
+        else:
+            parts.append(node.kind)
+            layer = getattr(node, "layer", None)
+            if layer:
+                parts.append(layer)
+        return " · ".join(parts)
 
     def _view_double_clicked(self, view: ComponentView, x: float, y: float) -> None:
         """Double-clicking a placed component opens it in a tab (unless a tool uses it)."""

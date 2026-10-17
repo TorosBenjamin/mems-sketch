@@ -82,6 +82,13 @@ glows on the canvas for a moment, and comes into view if it was outside.
 Clicking a shape on the canvas selects it without the glow: you are already
 looking at it.
 
+While you drag or draw, the live value is next to the cursor as well as in
+the status bar: a move's offset (and the point it snaps to), the angle of a
+rotation, a rectangle's or circle's size, the length and angle of the polygon
+or path edge you are drawing, a corner's radius. Pointing at a shape for a
+moment says what it is: its name, kind and layer, or the component it places.
+Over the selection the cursor shows that a drag moves it.
+
 **Settings → Appearance → Reduce motion** turns the animations off: the view
 jumps, notes appear and go at once, and picked shapes do not glow.
 

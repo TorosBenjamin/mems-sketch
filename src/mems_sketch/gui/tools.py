@@ -137,6 +137,7 @@ class Tool:
         self.reset()
         self.canvas.clear_drag_preview()
         self.canvas.show_box(None)
+        self.canvas.set_cursor_label(None)
         return busy
 
     def design_changed(self) -> None:
@@ -271,7 +272,9 @@ class Tool:
     def gizmo_move(self, x, y, modifiers) -> None:
         dx, dy = self._gizmo_delta(x, y, modifiers)
         self.canvas.move_drag_preview(dx, dy)
-        self.window.prompt(f"Move Δx {dx:g} µm, Δy {dy:g} µm   (Ctrl: no snapping)")
+        self.window.live(
+            f"Move Δx {dx:g} µm, Δy {dy:g} µm   (Ctrl: no snapping)", _offset_label(dx, dy)
+        )
 
     def gizmo_release(self, x, y, modifiers) -> None:
         dx, dy = self._gizmo_delta(x, y, modifiers)
@@ -358,7 +361,7 @@ class SelectTool(Tool):
         text = f"Move Δx {dx:g} µm, Δy {dy:g} µm"
         if snap:
             text += f"   {snap[1]} on {snap[2]} (release with Shift to align it there)"
-        self.window.prompt(text)
+        self.window.live(text, _offset_label(dx, dy, snap[2] if snap else None))
 
     def release(self, x, y, modifiers) -> None:
         if self.gizmo_dragging:
@@ -491,7 +494,10 @@ class MoveTool(Tool):
         dx, dy = self._destination(x, y, modifiers)
         self.canvas.move_drag_preview(dx, dy)
         self.canvas.show_points("snap", [self._snap] if self._snap else [])
-        self.window.prompt(f"Move Δx {dx:g} µm, Δy {dy:g} µm   (click to place, Esc cancels)")
+        self.window.live(
+            f"Move Δx {dx:g} µm, Δy {dy:g} µm   (click to place, Esc cancels)",
+            _offset_label(dx, dy, self._snap[0] if self._snap else None),
+        )
 
     def hover_label(self, x, y) -> str | None:
         if self._base is None and self.window.selection:
@@ -611,7 +617,10 @@ class RotateTool(Tool):
         self.canvas.rotate_drag_preview(self._angle, self._origin)
         self.canvas.set_gizmo_sweep(self._grab, self._angle)
         snap = "Ctrl: steps" if not modifiers & CTRL else f"{self.step:g}° steps"
-        self.window.prompt(f"Rotate by {self._angle:g}°   ({snap}; release to apply, Esc cancels)")
+        self.window.live(
+            f"Rotate by {self._angle:g}°   ({snap}; release to apply, Esc cancels)",
+            f"{self._angle:+g}°",
+        )
 
     def release(self, x, y, modifiers) -> None:
         if self._origin is None:
@@ -847,7 +856,7 @@ class CornersTool(Tool):
             return  # nothing new to show: no rebuild
         self._dragged = radius
         note = "the largest that fits" if radius == largest else "Ctrl: exact"
-        self.window.prompt(f"Radius {radius:g} µm (release to set; {note})")
+        self.window.live(f"Radius {radius:g} µm   (release to set; {note})", f"r {radius:g} µm")
         with contextlib.suppress(ValueError, KeyError):
             node, _ = self.document.corners.with_corner(self.path, *self._press, _um(radius))
             self.window._preview_node(node, self.path)
@@ -1149,7 +1158,7 @@ class _TwoPointTool(DrawTool):
         shape = self.shape(self.placed[0], self.locate(x, y, modifiers), modifiers)
         self.preview(shape, [], False)
         if shape is not None:
-            self.window.prompt(f"{self.describe(shape)}   (click to finish, Esc cancels)")
+            self.window.live(f"{self.describe(shape)}   (click to finish, Esc cancels)")
 
     def start_at(self, x: float, y: float) -> None:
         super().start_at(x, y)
@@ -1268,6 +1277,10 @@ class _PointsTool(DrawTool):
             self.canvas.show_points("snap", [self._snap] if self._snap else [])
             return
         self._show()
+        (ax, ay), (bx, by) = self.placed[-1], self._cursor
+        if (ax, ay) != (bx, by):  # the edge being drawn, by the cursor
+            angle = math.degrees(math.atan2(by - ay, bx - ax))
+            self.canvas.set_cursor_label(f"{math.hypot(bx - ax, by - ay):g} µm  ∠ {angle:.1f}°")
 
     def _show(self) -> None:
         points = list(self.placed)
@@ -1377,3 +1390,9 @@ TOOLS: tuple[type[Tool], ...] = (
 def _um(value: float) -> float:
     """A coordinate without floating-point noise (grid steps like 0.1 add up badly)."""
     return round(value, 6) + 0.0  # + 0.0 turns -0.0 into 0.0
+
+
+def _offset_label(dx: float, dy: float, onto: str | None = None) -> str:
+    """A move's offset by the cursor, and the point it snaps to."""
+    text = f"Δx {dx:g}  Δy {dy:g} µm"
+    return f"{text}  → {onto}" if onto else text

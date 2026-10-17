@@ -19,30 +19,6 @@ from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
-COLORS = {
-    "light": {
-        "fg": "#6c707e",
-        "blue": "#3574f0",
-        "red": "#db3b4b",
-        "green": "#208a3c",
-        "orange": "#e66d17",
-        "yellow": "#e5a50a",
-        "purple": "#834df0",
-        "x": "#e0443e",  # the x axis (Blender/Unity: red)
-        "y": "#3f9b3f",  # the y axis (green)
-    },
-    "dark": {
-        "fg": "#ced0d6",
-        "blue": "#548af7",
-        "red": "#e55765",
-        "green": "#5fb865",
-        "orange": "#e08855",
-        "yellow": "#f2c55c",
-        "purple": "#a571e6",
-        "x": "#f0584f",
-        "y": "#6cc36c",
-    },
-}
 SIZES = (16, 20, 24, 32)
 
 
@@ -209,12 +185,18 @@ ICONS = {
     'stroke="{blue}"/>',
     "folder": '<path d="M1.8 3.2h4.4l1.5 1.5h6.5v8.6H1.8z"/>',
     # -- editing ----------------------------------------------------------
-    "add": '<path d="M8 3v10M3 8h10" stroke="{green}"/>',
-    "remove": '<path d="M3 8h10" stroke="{red}"/>',
+    "add": '<path d="M8 3v10M3 8h10" stroke="{green}"/>',  # something added (history)
+    "remove": '<path d="M3 8h10" stroke="{red}"/>',  # and removed
+    "plus": '<path d="M8 3v10M3 8h10"/>',  # actions: add a row, a point, ...
+    "minus": '<path d="M3 8h10"/>',  # and remove the selected ones
     "delete": '<path d="M2.6 4h10.8M6.2 4V2.4h3.6V4M4 4l.7 9.6h6.6L12 4"/><path d="M6.6 6.6v4.6M9.4 '
     '6.6v4.6"/>',
     "duplicate": '<rect x="5.2" y="5.2" width="8.4" height="8.4" rx="1"/><path d="M10.8 5.2V2.4H2.4'
     'v8.4h2.8"/>',
+    "cut": '<circle cx="4.4" cy="11.8" r="2"/><circle cx="11.6" cy="11.8" r="2"/><path d="M5.8 10.4'
+    'L11.4 2.4M10.2 10.4L4.6 2.4"/>',
+    "paste": '<rect x="3" y="3" width="10" height="11" rx="1"/><path d="M6 3V1.8h4V3M5.6 7h4.8M5.6 '
+    '9.6h4.8"/>',
     "rotate_left": _arc_arrow(-80, 150) + '<text x="8" y="10" font-size="5" fill="{fg}" '
     'stroke="none" text-anchor="middle" font-family="sans-serif">90</text>',
     "rotate_right": _arc_arrow(260, 30) + '<text x="8" y="10" font-size="5" fill="{fg}" '
@@ -237,6 +219,9 @@ ICONS = {
     '<path d="M3.4 4.6h3M9.6 4.6h3" stroke="{red}"/>',
     "snap_points": '<circle cx="8" cy="8" r="3.6"/><path d="M8 1.6v3M8 11.4v3M1.6 8h3M11.4 8h3"/>'
     '<circle cx="8" cy="8" r="1.1" fill="{blue}" stroke="none"/>',
+    "keyboard": '<rect x="1.5" y="4" width="13" height="8.4" rx="1.4"/>'
+    '<path d="M4 6.6h.01M6.7 6.6h.01M9.3 6.6h.01M12 6.6h.01M4 9.6h.01M12 9.6h.01M6.2 9.6h3.6" '
+    'stroke-width="1.4"/>',
     "grid": '<rect x="1.8" y="1.8" width="12.4" height="12.4" rx="1"/>'
     '<path d="M1.8 6h12.4M1.8 10h12.4M6 1.8v12.4M10 1.8v12.4"/>',
     "axes": '<path d="M3 13V3.2" stroke="{y}"/><path d="M3 13h9.8" stroke="{x}"/>'
@@ -246,6 +231,9 @@ ICONS = {
     "ruler": '<path d="M1.9 10.6 10.6 1.9l3.5 3.5-8.7 8.7z"/>',
     # -- tool windows -----------------------------------------------------
     "minimize": '<path d="M4 8.5h8"/>',
+    "maximize": '<rect x="3.5" y="3.5" width="9" height="9" rx=".6"/>',
+    "restore": '<rect x="3" y="5.5" width="7.5" height="7.5" rx=".6"/><path d="M5.5 5.5V3h7.5v7.5'
+    'h-2.5"/>',
     "help": '<circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1'
     'v.5M8 11.4v.3" stroke-width="1.4"/>',
     "menu": '<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',
@@ -262,25 +250,26 @@ ICONS = {
     '<path d="M5 6h2M5 10h2M9 6h2M9 10h2"/>',
     # -- messages ---------------------------------------------------------
     "error": '<circle cx="8" cy="8" r="6.2" fill="{red}" stroke="none"/>'
-    '<path d="M8 4.6v4.2M8 11.1v.3" stroke="#fff" stroke-width="1.6"/>',
+    '<path d="M8 4.6v4.2M8 11.1v.3" stroke="{on_accent}" stroke-width="1.6"/>',
     "warning": '<path d="M8 1.8 14.6 13.8H1.4z" fill="{yellow}" stroke="none"/>'
-    '<path d="M8 6v4M8 11.7v.3" stroke="#222" stroke-width="1.5"/>',
+    '<path d="M8 6v4M8 11.7v.3" stroke="{on_yellow}" stroke-width="1.5"/>',
     "info": '<circle cx="8" cy="8" r="6.2" fill="{blue}" stroke="none"/>'
-    '<path d="M8 7.2v4.4M8 4.7v.3" stroke="#fff" stroke-width="1.6"/>',
+    '<path d="M8 7.2v4.4M8 4.7v.3" stroke="{on_accent}" stroke-width="1.6"/>',
     "ok": '<circle cx="8" cy="8" r="6.2" fill="{green}" stroke="none"/>'
-    '<path d="M5 8.2l2 2 4-4.2" stroke="#fff" stroke-width="1.6"/>',
+    '<path d="M5 8.2l2 2 4-4.2" stroke="{on_accent}" stroke-width="1.6"/>',
 }
 
 _theme = "light"
+_colors: dict[str, str] | None = None  # the theme's icon colours, read when first needed
 _cache: dict[tuple[str, str, str | None], QIcon] = {}
 _bound: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def svg(name: str, color: str | None = None) -> str:
     """The SVG source of an icon, coloured for the current theme."""
-    colors = dict(COLORS[_theme])
+    colors = dict(_theme_colors())
     if color is not None:
-        colors["fg"] = COLORS[_theme].get(color, color)
+        colors["fg"] = colors.get(color, color)
     body = ICONS[name]
     for key, value in colors.items():
         body = body.replace("{" + key + "}", value)
@@ -321,10 +310,21 @@ def bind(target, name: str, color: str | None = None):
     return target
 
 
+def _theme_colors() -> dict[str, str]:
+    global _colors
+    if _colors is None:
+        from mems_sketch.gui import theme  # it imports this module
+
+        _colors = theme.get(_theme).icons
+    return _colors
+
+
 def set_theme(theme: str) -> None:
-    """Recolour every bound icon for the ``light`` or ``dark`` theme."""
-    global _theme
-    _theme = theme if theme in COLORS else "light"
+    """Recolour every bound icon for a theme (its id, as in :mod:`mems_sketch.gui.theme`)."""
+    global _theme, _colors
+    _theme, _colors = theme, None
+    _theme_colors()
+    _cache.clear()  # a theme's colours may have changed since it was cached
     for target, (name, color) in list(_bound.items()):
         try:
             target.setIcon(icon(name, color))
@@ -338,4 +338,4 @@ def current_theme() -> str:
 
 def color(key: str) -> str:
     """A named colour of the current theme (``fg``, ``blue``, ``x``, ...)."""
-    return COLORS[_theme][key]
+    return _theme_colors()[key]

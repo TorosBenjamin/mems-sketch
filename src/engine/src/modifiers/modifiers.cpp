@@ -35,7 +35,7 @@ void strings_of(const Json& value, std::vector<std::string>& out) {
         for (const auto& item : value) strings_of(item, out);
 }
 
-// The self.<point>.<axis> names in the modifier's expressions and ``extra``.
+// The self measures (self.left.x, self.width) in the modifier's expressions and ``extra``.
 std::vector<std::string> self_names(const Json& modifier, const std::vector<std::string>& extra) {
     std::vector<std::string> texts;
     strings_of(modifier, texts);
@@ -44,7 +44,7 @@ std::vector<std::string> self_names(const Json& modifier, const std::vector<std:
         if (text.find("self.") == std::string::npos) continue;
         try {
             for (const auto& name : names_in(text))
-                if (name.rfind("self.", 0) == 0 && std::count(name.begin(), name.end(), '.') == 2) found.push_back(name);
+                if (name.rfind("self.", 0) == 0 && measure_name(name)) found.push_back(name);
         } catch (const ExpressionError&) {
         }
     }
@@ -55,6 +55,10 @@ std::vector<std::string> self_names(const Json& modifier, const std::vector<std:
 
 }  // namespace
 
+Points self_points(const Result& own) {
+    return {"self", bbox_of(own.layers, own.instances), own.points, {}, std::make_shared<Outline>(own.layers, own.instances)};
+}
+
 bool uses_self(const Json& modifier, const std::vector<std::string>& extra_names) {
     return !self_names(modifier, extra_names).empty();
 }
@@ -63,20 +67,16 @@ Variables with_self(const Json& modifier, const Result& own, const Variables& va
                     const std::vector<std::string>& extra_names) {
     const auto names = self_names(modifier, extra_names);
     if (names.empty()) return variables;
-    const Points self{"self", bbox_of(own.layers, own.instances), own.points, {}};
+    const Points self = self_points(own);
     Variables result = variables;
-    for (const auto& name : names) {
-        const size_t dot = name.rfind('.');
-        const mgeom::Point p = self.point(name.substr(5, dot - 5));
-        result[name] = name.substr(dot + 1) == "x" ? p.x : p.y;
-    }
+    for (const auto& name : names) result[name] = self.measure(name.substr(5));
     return result;
 }
 
 mgeom::Point point_of(const std::string& reference, const Result& own, const Scope& scope, const std::string& what) {
     const std::string node = reference.substr(0, reference.find('.'));
     const std::string point = reference.substr(reference.find('.') + 1);
-    if (node == "self") return Points{"self", bbox_of(own.layers, own.instances), own.points, {}}.point(point);
+    if (node == "self") return self_points(own).point(point);
     const auto found = scope.find(node);
     if (found == scope.end()) throw BuildError(what + ": no shape named '" + node + "' is visible");
     return found->second.point(point);

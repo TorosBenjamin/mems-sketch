@@ -49,6 +49,32 @@ with an anchor of `left-top`, `left-bottom`, `bottom` or `right`, and the
 panel's help text in `PANEL_HELP` (shown by its **?**). A panel talks only to
 the session and emits `error(str)` for problems.
 
+Build it from the shared pieces in `gui/widgets.py`, so it looks like the
+others:
+
+- **The header:** the panel sets `header_buttons` (from
+  `widgets.header_actions((icon, tooltip, slot), ...)`) and, if it shows
+  something particular, `header_context` (`widgets.header_context()`, e.g. the
+  component's name). Both go in the tool window's header, after its title; a
+  panel has no header row of its own. Use the neutral `plus` and `minus` icons
+  for adding and removing.
+- **Tables:** `widgets.make_table(columns, stretch=…)`: left-aligned titles, one
+  column taking the room left, the rest fitting their contents, no sideways
+  scrolling, and cut-off text shown whole as the tooltip.
+- **Nothing to show:** `widgets.EmptyState(text)`, with `set_action(text, slot)`
+  for a button; for a list or table that is empty for now,
+  `widgets.placeholder(view, text)`.
+- **Dialogs:** `widgets.form()` for labelled fields, `widgets.with_help(field,
+  text)` for a field and its **?**, `widgets.dialog_margins(layout)`, and
+  `widgets.SideList` for a column of pages (as in Settings).
+- **Sizes** come from the theme: `theme.metric("space_m")` and the like.
+- **Saying what happened:** `window.notify(text, kind, action=(label, slot))`
+  shows a note over the editor (`kind`: info, success, warning, or error,
+  which stays until closed). The status bar is for the active tool's hint.
+- **Motion:** `motion.run(owner, step, duration)` calls `step(t)` from 0 to 1
+  and jumps to the end when the user turned on *Reduce motion* (and in tests).
+  Keep it short: `motion.SHORT` for panels, `motion.VIEW` for the canvas.
+
 ## An export format
 
 A class with `format_name`, `file_extension` and
@@ -56,7 +82,9 @@ A class with `format_name`, `file_extension` and
 
 - `title`: its name in **File → Export…** (default: the format name);
 - `options`: the settings it takes, as `ExportOption`s. Each value is passed to
-  `export` as a keyword argument; values not given take their defaults;
+  `export` as a keyword argument; values not given take their defaults. The
+  export dialog shows an option's `help` by its **?**, and a text option's
+  `placeholder` (what leaving it empty means) in its empty field;
 - `wants_context = True`: it also receives `component=` and `params=`.
 
 ```python
@@ -138,3 +166,25 @@ for every tree (`test_every_codec_reads_back_what_it_wrote` checks this);
 projects and geometry then work in the new format, including `convert`,
 `load`, `save` and import. For geometry export, add a `DocumentExporter`
 subclass in `export/document_formats.py`.
+
+## A theme
+
+A theme is a JSON file of colours and sizes (the user guide's
+[Your own theme](../user/the-window.md#your-own-theme) describes it). A
+package adds themes under the `mems_sketch.themes` entry-point group. Each
+entry point names the theme's id and gives a path to its JSON file, the theme
+as a dictionary, or a function returning either:
+
+```toml
+[project.entry-points."mems_sketch.themes"]
+ocean = "my_themes:OCEAN"  # OCEAN = Path(__file__).with_name("ocean.json")
+```
+
+`gui/theme.py` defines the colours and sizes a theme has (`UiColors`,
+`CanvasColors`, `IconColors`, `Metrics`) and checks every theme against them when it is loaded: a theme
+with an unknown or missing colour is left out and reported in Settings, never
+half applied. Interface code takes every colour from the theme
+(`theme.color("muted")`, the canvas's `self.theme`, `icons.color`);
+`test_no_colours_are_written_into_the_interface_code` keeps it that way. A new
+colour or size goes into the model and into both built-in themes.
+

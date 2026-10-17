@@ -95,20 +95,34 @@ struct NodeRecord {
 };
 using Records = std::map<NodePath, NodeRecord>;
 
+// One node of a shape tree as evaluated, with the records of the nodes inside
+// it (src/eval/evaluator.cpp).
+struct CachedNode;
+
 // Built components by a key of everything they depend on (fingerprint, values,
 // level, layer stack), so one cache serves every version of a project: after
-// an edit only what the edit changed is built again.
+// an edit only what the edit changed is built again. Inside a component, the
+// same for single nodes of its shape tree (with the values, points and
+// components each reads): a shape the edit does not reach is not built again.
+// Builders on several threads may share one (the editor builds in the background).
 class BuildCache {
 public:
-    explicit BuildCache(size_t max_entries = 4096) : max_entries_(max_entries) {}
+    explicit BuildCache(size_t max_entries = 4096, size_t max_nodes = 65536)
+        : max_entries_(max_entries), max_nodes_(max_nodes) {}
     std::shared_ptr<const Built> find(const std::string& key) const;
+    // What the cache keeps for the key: ``built``, or what another thread put first.
     std::shared_ptr<const Built> put(std::shared_ptr<const Built> built);
-    void clear() { built_.clear(); }
-    size_t size() const { return built_.size(); }
+    std::shared_ptr<const CachedNode> find_node(const std::string& key) const;
+    void put_node(const std::string& key, std::shared_ptr<const CachedNode> node);
+    void clear();
+    size_t size() const;  // components
+    size_t nodes() const;
 
 private:
-    size_t max_entries_;
+    size_t max_entries_, max_nodes_;
+    mutable std::mutex mutex_;
     std::map<std::string, std::shared_ptr<const Built>> built_;
+    std::map<std::string, std::shared_ptr<const CachedNode>> nodes_;
 };
 
 // Builds the components of one project. Each component built with the same
@@ -143,6 +157,7 @@ public:
     // nodes are recorded (none inside the components it places).
     NodePath& path() { return path_; }
     Records* recording() { return recording_; }
+    BuildCache& cache() { return *cache_; }
 
 private:
     const Project& project_;

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from mems_sketch.core.expressions import ExpressionError, substitute
 from mems_sketch.core.shapes.base import Value
-from mems_sketch.core.shapes.points import point_names
+from mems_sketch.core.shapes.points import measure_path, point_names
 from mems_sketch.core.shapes.registry import SHAPE_ADAPTER
 from mems_sketch.core.shapes.tree import walk
 
@@ -177,7 +177,7 @@ def rename_node_references(shapes: list[Shape], old: str, new: str) -> list[Shap
 
     def change(name: str) -> str | None:
         head, dot, rest = name.partition(".")
-        if head == old and dot and (rest.count(".") == 1 or "." not in rest):
+        if head == old and dot and ("." not in rest or measure_path(name) is not None):
             return f"{new}.{rest}"
         return None
 

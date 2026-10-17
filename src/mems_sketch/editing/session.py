@@ -39,6 +39,7 @@ from mems_sketch.core.shapes import (
     walk,
 )
 from mems_sketch.core.user_component import ComponentDef, ParamDef, name_shapes
+from mems_sketch.editing.clipboard import ClipboardEdits
 from mems_sketch.editing.components import ComponentEdits, library_name
 from mems_sketch.editing.corners import CornerEdits
 from mems_sketch.editing.events import Event
@@ -53,7 +54,7 @@ from mems_sketch.editing.points import PointEdits
 from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
 from mems_sketch.engine import Engine
-from mems_sketch.export.base import export
+from mems_sketch.export.base import export_with_report
 from mems_sketch.storage import is_copy, load, save
 from mems_sketch.storage.project_files import PROJECT_FILE, load_library, project_folder
 
@@ -73,6 +74,11 @@ class EditSession:
         self.path: Path | None = None
         self.dirty = False
         self._engine = Engine()
+        # Whether an edit is refused when the project would no longer build. Building
+        # a big design takes seconds, so the editor turns this off for one and shows
+        # what does not build instead (references are checked either way).
+        self.check_builds = True
+        self._valid: bool | None = None  # whether the project builds, once known
         # (description, other project state, active before the change, active after it)
         self._undo: list[tuple[str, Project, str, str]] = []
         self._redo: list[tuple[str, Project, str, str]] = []
@@ -81,6 +87,7 @@ class EditSession:
         self.results = Results(self)  # connects first: its cache clears before views refresh
         self.components = ComponentEdits(self)
         self.nodes = NodeEdits(self)
+        self.clipboard = ClipboardEdits(self)
         self.modifiers = ModifierEdits(self)
         self.corners = CornerEdits(self)
         self.imports = ImportEdits(self)
@@ -103,12 +110,16 @@ class EditSession:
         change: Callable[[Project], object],
         done: Callable[[], None] | None = None,
     ) -> object:
-        """Apply ``change``; roll back and re-raise if a valid project would become invalid.
+        """Apply ``change``; roll back and re-raise if a valid project would become invalid
+        (with :attr:`check_builds`), or if its references would stop resolving or form a
+        cycle (a component placing itself cannot be drawn, so that is refused even in a
+        project with problems).
 
         ``done`` runs after a successful change, before views are told.
         """
         before, active = self._snapshot(), self.active
-        was_valid = not self.problems(before)
+        was_valid = self.check_builds and self._builds(before)
+        references_valid = was_valid or _references_valid(before)
         try:
             result = change(self.project)
             for definition in self.project.components.values():
@@ -117,9 +128,12 @@ class EditSession:
                 problems = self.problems()
                 if problems:
                     raise ValueError(problems[0])
+            elif references_valid:
+                self.project.check_references()
         except Exception:
             self.project, self.active = before, active
             raise
+        self._valid = True if was_valid else None
         if not self.exists(self.active):
             self.active = self.project.default_component()
         self._undo.append((description, before, active, self.active))
@@ -130,6 +144,12 @@ class EditSession:
         self._set_dirty(True)
         self.changed.emit()
         return result
+
+    def _builds(self, project: Project) -> bool:
+        """Whether ``project`` (the session's, as it is) builds; known after an edit."""
+        if self._valid is None:
+            self._valid = not self.problems(project)
+        return self._valid
 
     def _snapshot(self) -> Project:
         # Libraries are read-only: share them instead of copying (the dict is
@@ -167,7 +187,7 @@ class EditSession:
             self._restore(state, after)
 
     def _restore(self, project: Project, active: str) -> None:
-        self.project = project
+        self.project, self._valid = project, None
         self.active = active if self.exists(active) else project.default_component()
         self._set_dirty(self._fingerprints() != self._saved)
         self.changed.emit()
@@ -233,19 +253,29 @@ class EditSession:
     def export(
         self, path: str | Path, format_name: str | None = None, options: dict | None = None
     ) -> Path:
+        """Export the active component with its trial values."""
+        return self.export_with_report(path, format_name, options)[0]
+
+    def export_with_report(
+        self, path: str | Path, format_name: str | None = None, options: dict | None = None
+    ) -> tuple[Path, Any]:
+        """:meth:`export`, and what the exporter returned (for a layout file, the
+        output written, which says what snapping to its grid changed)."""
         component = self.active
-        return export(
+        build = self.results.build(component)
+        return export_with_report(
             self.project,
             path,
             format_name=format_name,
-            geometry=self.results.geometry(),
+            geometry=build.geometry,
             component=component,
             params=self.trials_for(component),
             options=options,
+            build=build,
         )
 
     def _reset(self, project: Project, path: Path | None) -> None:
-        self.project = project
+        self.project, self._valid = project, None
         self.active = project.default_component()
         self.path = path
         self._undo.clear()
@@ -413,3 +443,11 @@ class EditSession:
 
     def shapes_in(self, project: Project) -> list[Shape]:
         return self.local(project).shapes
+
+
+def _references_valid(project: Project) -> bool:
+    try:
+        project.check_references()
+    except ValueError:
+        return False
+    return True

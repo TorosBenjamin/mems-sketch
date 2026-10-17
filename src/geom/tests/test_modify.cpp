@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <numbers>
+#include <vector>
 
 #include "mgeom/measure.hpp"
 #include "mgeom/region.hpp"
@@ -171,6 +172,19 @@ TEST_CASE("offset") {
         CHECK(l_shape().transformed(mirror_x()).offset(0.5).area() ==
               approx(l_shape().offset(0.5).area()));
     }
+
+    SUBCASE("holes that grow until they just meet stay within the precision limit") {
+        // Open CASCADE widens its tolerance where the circles touch (to about
+        // 1e-6 µm); results coarser than 1e-5 µm would be an error (QR-3).
+        std::vector<Region> holes;
+        for (int i = 0; i < 10; ++i) {
+            for (int j = 0; j < 10; ++j) holes.push_back(Region::circle({5.0 + 10 * i, 5.0 + 10 * j}, 4));
+        }
+        const Region plate = Region::rect(0, 0, 100, 100) - Region::unite(holes);
+        const Region shrunk = plate.offset(-1);
+        CHECK(shrunk.valid());
+        CHECK(shrunk.max_tolerance() < 1e-5);
+    }
 }
 
 TEST_CASE("fillet") {
@@ -224,5 +238,37 @@ TEST_CASE("rounding and chamfering chosen corners") {
         CHECK_THROWS_AS(square.rounded(nowhere), GeometryError);
         const CornerRounding too_big[] = {{{0, 0}, 20, CornerStyle::round}};
         CHECK_THROWS_AS(square.rounded(too_big), GeometryError);
+    }
+}
+
+// Requirement QR-3: rounding the corners of a face with holes gives valid
+// geometry (Open CASCADE's 2D fillet alone left the holes' edges out of order),
+// and rounding that would make boundaries cross is an error.
+TEST_CASE("rounding the corners of faces with holes") {
+    const Region plate = Region::rect(0, 0, 10, 10) - Region::rect(4, 4, 6, 6);
+    SUBCASE("every corner, outside and of the hole") {
+        const Region r = plate.filleted(1, 0.5);
+        CHECK(r.valid());
+        CHECK(r.area() == approx(96 - 4 * (1 - pi / 4) + 4 * 0.25 * (1 - pi / 4)));
+    }
+    SUBCASE("only the outer corners, around a round hole") {
+        const Region r = (Region::rect(0, 0, 10, 10) - Region::circle({5, 5}, 2)).filleted(1, 0);
+        CHECK(r.valid());
+        CHECK(r.area() == approx(100 - 4 * pi - 4 * (1 - pi / 4)));
+    }
+    SUBCASE("chosen corners of the hole, round and chamfered") {
+        const CornerRounding wanted[] = {
+            {{4, 4}, 0.5, CornerStyle::round},
+            {{6, 6}, 0.5, CornerStyle::chamfer},
+        };
+        const Region r = plate.rounded(wanted);
+        CHECK(r.valid());
+        // Rounding or chamfering a hole's corner adds material to the plate.
+        CHECK(r.area() == approx(96 + 0.25 * (1 - pi / 4) + 0.125));
+    }
+    SUBCASE("two holes close together, and a radius that does not fit") {
+        const Region two = Region::rect(0, 0, 20, 10) - Region::rect(2, 2, 9.9, 8) - Region::rect(10.1, 2, 18, 8);
+        CHECK(two.filleted(1, 1).valid());
+        CHECK_THROWS_AS(two.filleted(0, 4), GeometryError);  // 4 does not fit a 6 x 7.9 hole's corners
     }
 }

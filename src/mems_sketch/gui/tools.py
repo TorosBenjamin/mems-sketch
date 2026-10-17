@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 
 SNAP_PX = 10  # default: a point snaps to another within this many pixels
 DRAG_THRESHOLD_PX = 4  # a press moving less than this is a click, not a drag
+GRID_POINTS = 64  # a move snaps the nearest of at most this many moving points to the grid
 ANGLE_STEP = 15.0  # default: degrees the Rotate tool snaps to
 CTRL = Qt.KeyboardModifier.ControlModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
@@ -65,6 +66,28 @@ ALT = Qt.KeyboardModifier.AltModifier
 NONE = Qt.KeyboardModifier.NoModifier
 
 Candidate = tuple[str, float, float]  # label, x, y
+
+
+def grid_move(points, dx: float, dy: float, step: float, axes: str = "xy") -> tuple[float, float]:
+    """``dx, dy`` changed so that one of the moving ``points`` lands on the grid.
+
+    Of the points (``(x, y)`` before the move), the one that needs the least
+    change is put on a grid line in each of ``axes``; the others keep their
+    places relative to it. Without points, the move itself is whole grid steps.
+    """
+    if not points:
+        return (
+            round(dx / step) * step if "x" in axes else dx,
+            round(dy / step) * step if "y" in axes else dy,
+        )
+    best = None
+    for px, py in points[:GRID_POINTS]:
+        mx = round((px + dx) / step) * step - px if "x" in axes else dx
+        my = round((py + dy) / step) * step - py if "y" in axes else dy
+        change = math.hypot(mx - dx, my - dy)
+        if best is None or change < best[0]:
+            best = (change, mx, my)
+    return _um(best[1]), _um(best[2])
 
 
 class Tool:
@@ -114,6 +137,7 @@ class Tool:
         self.reset()
         self.canvas.clear_drag_preview()
         self.canvas.show_box(None)
+        self.canvas.set_cursor_label(None)
         return busy
 
     def design_changed(self) -> None:
@@ -209,8 +233,8 @@ class Tool:
                 return tx - px, ty - py, (path, name, target, tx, ty)
         if not self.setting("snapping/grid", True):
             return dx, dy, None
-        step = self.canvas.grid_step()
-        return round(dx / step) * step, round(dy / step) * step, None
+        moving = [(px, py) for _, _, px, py in plan.points]
+        return (*grid_move(moving, dx, dy, self.canvas.grid_step()), None)
 
     # -- the move gizmo (Select and Move) ---------------------------------
 
@@ -238,16 +262,19 @@ class Tool:
         dx, dy = x - x0, y - y0
         if part == "free":
             return self.snapped_move(plan, dx, dy, modifiers)[:2]
-        step = self.canvas.grid_step()
-        snap = not modifiers & CTRL and self.setting("snapping/grid", True)
         along = dx if part == "x" else dy
-        along = round(along / step) * step if snap else along
+        if not modifiers & CTRL and self.setting("snapping/grid", True):
+            moving = [(px, py) for _, _, px, py in plan.points]
+            gx, gy = grid_move(moving, dx, dy, self.canvas.grid_step(), axes=part)
+            along = gx if part == "x" else gy
         return (along, 0.0) if part == "x" else (0.0, along)
 
     def gizmo_move(self, x, y, modifiers) -> None:
         dx, dy = self._gizmo_delta(x, y, modifiers)
         self.canvas.move_drag_preview(dx, dy)
-        self.window.prompt(f"Move Δx {dx:g} µm, Δy {dy:g} µm   (Ctrl: no snapping)")
+        self.window.live(
+            f"Move Δx {dx:g} µm, Δy {dy:g} µm   (Ctrl: no snapping)", _offset_label(dx, dy)
+        )
 
     def gizmo_release(self, x, y, modifiers) -> None:
         dx, dy = self._gizmo_delta(x, y, modifiers)
@@ -311,7 +338,7 @@ class SelectTool(Tool):
         if self._mode == "move":
             self._drag_to(x - x0, y - y0, modifiers)
         elif self._mode == "box":
-            self.canvas.show_box((x0, y0, x, y))
+            self.canvas.show_box((x0, y0, x, y), self.window.box_touches(x0, x))
 
     def _start_move(self) -> None:
         if not self.editable():
@@ -334,7 +361,22 @@ class SelectTool(Tool):
         text = f"Move Δx {dx:g} µm, Δy {dy:g} µm"
         if snap:
             text += f"   {snap[1]} on {snap[2]} (release with Shift to align it there)"
-        self.window.prompt(text)
+        label = _offset_label(dx, dy, snap[2] if snap else None)
+        offset = self._new_offset(dx, dy, modifiers)
+        if offset is not None:  # an aligned shape: the drag changes its offset
+            label = f"offset {offset[0]:g}, {offset[1]:g} µm"
+        self.window.live(text, label)
+
+    def _new_offset(self, dx, dy, modifiers) -> tuple[float, float] | None:
+        """The offset a drag gives one aligned shape (None: not one aligned shape, a
+        drag with Alt, which takes the alignment off, or an offset that is an
+        expression)."""
+        if modifiers & ALT or self._plan is None or len(self._plan.roots) != 1:
+            return None
+        align = self.document.node(self._plan.roots[0]).align
+        if align is None or not all(isinstance(v, int | float) for v in (align.dx, align.dy)):
+            return None
+        return align.dx + dx, align.dy + dy
 
     def release(self, x, y, modifiers) -> None:
         if self.gizmo_dragging:
@@ -361,7 +403,7 @@ class SelectTool(Tool):
                 lambda: self.document.nodes.set_align(path, Align(point=point, to=target))
             )
             if ok:
-                window.statusBar().showMessage(f"Aligned {point} to {target}", 5000)
+                window.notify(f"Aligned {point} to {target}", "success")
             return
         detach = bool(modifiers & ALT)
         window.run(lambda: self.document.moves.move(plan.roots, dx, dy, detach=detach))
@@ -467,7 +509,10 @@ class MoveTool(Tool):
         dx, dy = self._destination(x, y, modifiers)
         self.canvas.move_drag_preview(dx, dy)
         self.canvas.show_points("snap", [self._snap] if self._snap else [])
-        self.window.prompt(f"Move Δx {dx:g} µm, Δy {dy:g} µm   (click to place, Esc cancels)")
+        self.window.live(
+            f"Move Δx {dx:g} µm, Δy {dy:g} µm   (click to place, Esc cancels)",
+            _offset_label(dx, dy, self._snap[0] if self._snap else None),
+        )
 
     def hover_label(self, x, y) -> str | None:
         if self._base is None and self.window.selection:
@@ -490,22 +535,37 @@ class MoveTool(Tool):
 
 
 class RotateTool(Tool):
-    """Rotate the selection about a pivot; the angle snaps to 15° steps."""
+    """Rotate the selection: drag anywhere to turn it about its centre.
+
+    The angle follows the mouse smoothly; Ctrl snaps it to the angle step.
+    Shift+click sets another pivot (a shape's point, or the grid) for the drags
+    that follow; Esc goes back to the centre. A click without dragging selects
+    what is under it.
+    """
 
     name, label, shortcut = "rotate", "Rotate", "R"
     cursor = Qt.CursorShape.CrossCursor
     gizmo, hovers, icon = "rotate", True, "rotate"
 
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__(window)
+        self.pivot: tuple[float, float] | None = None  # Shift+click; None: the centre
+
     def reset(self) -> None:
-        self._pivot: tuple[float, float] | None = None
         self._plan: DragPlan | None = None
+        self._origin: tuple[float, float] | None = None  # the turn's centre, while dragging
+        self._press: tuple[float, float] | None = None
+        self._grab = 0.0  # the angle the drag started at, around the centre
         self._angle = 0.0
         self._candidates: list[Candidate] | None = None
-        self._ring: float | None = None  # dragging the ring: the angle it was grabbed at
+
+    def activate(self) -> None:
+        self.pivot = None
+        super().activate()
 
     @property
     def busy(self) -> bool:
-        return self._pivot is not None
+        return self._origin is not None
 
     @property
     def step(self) -> float:
@@ -514,87 +574,100 @@ class RotateTool(Tool):
     def hint(self) -> str:
         if not self.window.selection:
             return "Rotate: click a shape to rotate"
-        if self._pivot is None:
-            return "Rotate: drag the ring to rotate about the centre, or click a pivot"
+        about = "the pivot" if self.pivot is not None else "its centre"
         return (
-            f"Rotate: move to set the angle ({self.step:g}° steps; Ctrl: free), click to apply, "
-            "Esc cancels"
+            f"Rotate: drag to turn it about {about} (Ctrl: {self.step:g}° steps); "
+            "Shift+click: another pivot"
         )
+
+    def _centre(self) -> tuple[float, float] | None:
+        if self.pivot is not None:
+            return self.pivot
+        return self.document.results.selection_center(self.window.selection)
 
     def press(self, x, y, modifiers) -> None:
         if not self.window.selection:
             self.window.select_click(self.window.hit(x, y), False)
             self.window.prompt(self.hint())
             return
-        if self._pivot is None and self.canvas.gizmo_hit(x, y) == "ring":
-            if not self.editable():
-                return
-            _, cx, cy = self.canvas.gizmo
-            self._plan = self.document.moves.plan_drag(self.window.selection)
-            if not self._plan.roots:
-                return
-            self._pivot = (cx, cy)
-            self._ring = math.degrees(math.atan2(y - cy, x - cx))
-            self.canvas.set_gizmo_active("ring")
-            self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
-            return
-        if self._pivot is None:
-            if not self.editable():
-                return
+        if modifiers & SHIFT:  # another pivot
             if self._candidates is None:
                 self._candidates = self.document.results.all_points()
-            px, py, _ = self.snap(x, y, self._candidates, modifiers)
-            self._plan = self.document.moves.plan_drag(self.window.selection)
-            if not self._plan.roots:
-                return
-            self._pivot = (px, py)
-            self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
+            px, py, _ = self.snap(x, y, self._candidates, modifiers & ~SHIFT)
+            self.pivot = (px, py)
             self.window.update_overlay()
             self.window.prompt(self.hint())
             return
-        angle, pivot, roots = self._angle_at(x, y, modifiers), self._pivot, self._plan.roots
-        self.cancel()
-        if angle:
-            self.window.run(lambda: self.document.moves.rotate(roots, angle, pivot))
-        self.window.prompt(self.hint())
+        centre = self._centre()
+        if centre is None or not self.editable():
+            return
+        self._plan = self.document.moves.plan_drag(self.window.selection)
+        if not self._plan.roots:
+            self._plan = None
+            return
+        self._origin, self._press = centre, (x, y)
+        self._grab = math.degrees(math.atan2(y - centre[1], x - centre[0]))
+        self._angle = 0.0
+        self.canvas.set_gizmo_active("ring")
+        self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
 
     def _angle_at(self, x, y, modifiers) -> float:
-        px, py = self._pivot
-        if math.hypot(x - px, y - py) * self.canvas.pixels_per_um() < DRAG_THRESHOLD_PX:
-            return 0.0
-        angle = math.degrees(math.atan2(y - py, x - px))
-        if self._ring is not None:  # relative to where the ring was grabbed
-            angle = (angle - self._ring + 180) % 360 - 180
-        if not modifiers & CTRL:
+        cx, cy = self._origin
+        if math.hypot(x - cx, y - cy) * self.canvas.pixels_per_um() < DRAG_THRESHOLD_PX:
+            return self._angle  # too close to the centre to tell: as it was
+        angle = math.degrees(math.atan2(y - cy, x - cx))
+        angle = (angle - self._grab + 180) % 360 - 180
+        if modifiers & CTRL:
             angle = round(angle / self.step) * self.step
         return round(angle, 6)
 
+    def _dragged(self, x, y) -> bool:
+        px, py = self._press
+        return math.hypot(x - px, y - py) * self.canvas.pixels_per_um() >= DRAG_THRESHOLD_PX
+
     def move(self, x, y, modifiers, left) -> None:
-        if self._pivot is None:
+        if self._origin is None or not left:
             return
         self._angle = self._angle_at(x, y, modifiers)
-        self.canvas.rotate_drag_preview(self._angle, self._pivot)
-        if self._ring is not None:
-            self.canvas.set_gizmo_sweep(self._ring, self._angle)
-        finish = "release" if self._ring is not None else "click"
-        self.window.prompt(f"Rotate by {self._angle:g}°   ({finish} to apply, Esc cancels)")
+        self.canvas.rotate_drag_preview(self._angle, self._origin)
+        self.canvas.set_gizmo_sweep(self._grab, self._angle)
+        snap = "Ctrl: steps" if not modifiers & CTRL else f"{self.step:g}° steps"
+        self.window.live(
+            f"Rotate by {self._angle:g}°   ({snap}; release to apply, Esc cancels)",
+            f"{self._angle:+g}°",
+        )
 
     def release(self, x, y, modifiers) -> None:
-        if self._ring is None:
+        if self._origin is None:
             return
-        angle, pivot, roots = self._angle_at(x, y, modifiers), self._pivot, self._plan.roots
+        dragged = self._dragged(x, y)
+        angle = self._angle_at(x, y, modifiers) if dragged else 0.0
+        origin, roots = self._origin, self._plan.roots
         self.cancel()
-        if angle:
-            self.window.run(lambda: self.document.moves.rotate(roots, angle, pivot))
+        if not dragged:  # a click: select what is under it
+            self.window.select_click(self.window.hit(x, y), False)
+        elif angle:
+            self.window.run(lambda: self.document.moves.rotate(roots, angle, origin))
         self.window.prompt(self.hint())
 
     def cancel(self) -> bool:
-        if self._ring is not None:
+        """Esc: stop the drag; when idle, go back to rotating about the centre."""
+        if self._origin is not None:
             self.canvas.set_gizmo_active(None)
+            return super().cancel()
+        if self.pivot is not None:
+            self.pivot = None
+            self.window.update_overlay()
+            return True
         return super().cancel()
 
+    def design_changed(self) -> None:
+        if self._origin is not None:
+            self.canvas.set_gizmo_active(None)
+        super().cancel()  # the drag stops; a chosen pivot stays
+
     def markers(self) -> dict[str, list[Candidate]]:
-        return {"anchor": [("pivot", *self._pivot)]} if self._pivot else {}
+        return {"anchor": [("pivot", *self.pivot)]} if self.pivot else {}
 
 
 class AlignTool(Tool):
@@ -609,6 +682,10 @@ class AlignTool(Tool):
         self.path: NodePath | None = None
         self.point: str | None = None
         self.candidates: list[Candidate] = []
+        # Picking one end only (a pick button in Properties): "point" or "to", and the
+        # target to keep when only the point is picked.
+        self.only: str | None = None
+        self.keep_to: str | None = None
 
     @property
     def busy(self) -> bool:
@@ -616,7 +693,7 @@ class AlignTool(Tool):
 
     def activate(self) -> None:
         super().activate()
-        if len(self.window.selection) == 1:
+        if len(self.window.selection) == 1 and self.step is None:
             self.begin(self.window.selection[0])
 
     def hint(self) -> str:
@@ -628,16 +705,44 @@ class AlignTool(Tool):
                 return f"Now click the point to put {self.point} on (Esc cancels)"
         return "Align: click the shape to align"
 
-    def begin(self, path: NodePath) -> None:
+    def begin(
+        self,
+        path: NodePath,
+        only: str | None = None,
+        point: str | None = None,
+        to: str | None = None,
+    ) -> None:
+        """Start aligning the shape at ``path``: its point, then the target. With
+        ``only`` ("point" or "to") just that end is picked: the other (``to`` or
+        ``point``) and the offset stay."""
         if not self.editable():
             return
-        candidates = self.document.results.node_points(path)
-        if not candidates:
-            self.window.report_error("this shape has no points to align (does it have geometry?)")
-            return
-        self.step, self.path, self.candidates = "own", path, candidates
+        self.reset()
+        self.only, self.keep_to = only, to or None
+        if only == "to":
+            targets = self._targets(path)
+            if not targets:
+                self.window.report_error("there is no other named shape here to align to")
+                return
+            self.step, self.path, self.point, self.candidates = (
+                "target",
+                path,
+                point or "center",
+                targets,
+            )
+        else:
+            candidates = self.document.results.node_points(path)
+            if not candidates:
+                self.window.report_error(
+                    "this shape has no points to align (does it have geometry?)"
+                )
+                return
+            self.step, self.path, self.candidates = "own", path, candidates
         self.window.prompt(self.hint())
         self.window.update_overlay()
+
+    def _targets(self, path: NodePath) -> list[Candidate]:
+        return [(n, tx, ty) for n, _, tx, ty in self.document.results.align_targets(path)]
 
     def press(self, x, y, modifiers) -> None:
         if self.step is None:
@@ -652,10 +757,11 @@ class AlignTool(Tool):
                 "Click on one of the marked points (Esc cancels)", 5000
             )
             return
+        if self.step == "own" and self.only == "point" and self.keep_to:
+            self._finish(picked, self.keep_to)
+            return
         if self.step == "own":
-            targets = [
-                (n, tx, ty) for n, _, tx, ty in self.document.results.align_targets(self.path)
-            ]
+            targets = self._targets(self.path)
             if not targets:
                 self.reset()
                 self.window.report_error("there is no other named shape here to align to")
@@ -664,14 +770,28 @@ class AlignTool(Tool):
             self.window.prompt(self.hint())
             self.window.update_overlay()
             return
-        path, point = self.path, self.point
-        self.reset()
-        self.window.update_overlay()
-        ok, _ = self.window.run(
-            lambda: self.document.nodes.set_align(path, Align(point=point, to=picked))
+        self._finish(self.point, picked)
+
+    def _finish(self, point: str, to: str) -> None:
+        """Align ``point`` to ``to``; picking one end keeps the offset."""
+        path, only = self.path, self.only
+        old = self.document.node(path).align
+        keep = only is not None and old is not None
+        align = (
+            Align(point=point, to=to, dx=old.dx, dy=old.dy) if keep else Align(point=point, to=to)
         )
+        self.reset()
+        self.canvas.set_cursor_label(None)
+        self.window.update_overlay()
+        ok, _ = self.window.run(lambda: self.document.nodes.set_align(path, align))
         if ok:
-            self.window.statusBar().showMessage(f"Aligned {point} to {picked}", 5000)
+            self.window.notify(f"Aligned {point} to {to}", "success")
+        if only is not None:
+            self.window.set_tool("select")  # picked from Properties: back where it was
+
+    def move(self, x, y, modifiers, left) -> None:
+        if self.step is not None:  # the point a click would pick, by the cursor
+            self.canvas.set_cursor_label(self._nearest(x, y))
 
     def _nearest(self, x, y) -> str | None:
         label = self.snap(x, y, self.candidates, NONE, grid=False)[2]
@@ -684,9 +804,12 @@ class AlignTool(Tool):
         return {"pick": self.candidates} if self.step else {}
 
     def cancel(self) -> bool:
+        only = self.only
         busy = super().cancel()
         if busy:
             self.window.update_overlay()
+        if busy and only is not None:  # picked from Properties: back where it was
+            self.window.set_tool("select")
         return busy
 
 
@@ -714,6 +837,7 @@ class CornersTool(Tool):
         self.rounded: list[tuple[int, tuple[float, float]]] = []
         self._press: tuple[float, float] | None = None  # the corner a press is on
         self._dragged: float | None = None  # the radius being dragged
+        self._limit: float | None = None  # the largest radius that corner takes
 
     @property
     def busy(self) -> bool:
@@ -778,6 +902,10 @@ class CornersTool(Tool):
                 self.begin(hit)
             return
         self._press, self._dragged = corner, None
+        try:  # worked out once: the drag stops at the largest radius that fits
+            self._limit = self.document.corners.max_radius(self.path, *corner)
+        except (ValueError, KeyError, IndexError):
+            self._limit = None
 
     def move(self, x, y, modifiers, left) -> None:
         if self._press is None or not left:
@@ -786,8 +914,14 @@ class CornersTool(Tool):
         if self._dragged is None and distance * self.canvas.pixels_per_um() < self.DRAG_PX:
             return
         radius = distance if modifiers & CTRL else max(round(distance, 1), 0.1)
+        largest = math.floor(self._limit * 1e6) / 1e6 if self._limit is not None else None
+        if largest is not None and radius >= largest:
+            radius = largest
+        if radius == self._dragged:
+            return  # nothing new to show: no rebuild
         self._dragged = radius
-        self.window.prompt(f"Radius {radius:g} µm (release to set; Ctrl: exact)")
+        note = "the largest that fits" if radius == largest else "Ctrl: exact"
+        self.window.live(f"Radius {radius:g} µm   (release to set; {note})", f"r {radius:g} µm")
         with contextlib.suppress(ValueError, KeyError):
             node, _ = self.document.corners.with_corner(self.path, *self._press, _um(radius))
             self.window._preview_node(node, self.path)
@@ -965,6 +1099,11 @@ class DrawTool(Tool):
     uses_layer: ClassVar[bool] = True  # draws on the chosen layer (a guide does not)
     cursor = Qt.CursorShape.CrossCursor
     noun: ClassVar[str]
+    once = False  # started from Add: back to Select after one shape (see draw_once)
+
+    def deactivate(self) -> None:
+        super().deactivate()
+        self.once = False
 
     def reset(self) -> None:
         self.placed: list[tuple[float, float]] = []
@@ -1028,7 +1167,10 @@ class DrawTool(Tool):
             self.window.report_error(problem)
             return
         self.window.add_drawn(shape)
-        self.window.prompt(self.hint())
+        if self.once:
+            self.window.set_tool("select")
+        else:
+            self.window.prompt(self.hint())
 
     def hover_label(self, x, y) -> str | None:
         return self.snap(x, y, self._points(), NONE, grid=False)[2]
@@ -1081,7 +1223,7 @@ class _TwoPointTool(DrawTool):
         shape = self.shape(self.placed[0], self.locate(x, y, modifiers), modifiers)
         self.preview(shape, [], False)
         if shape is not None:
-            self.window.prompt(f"{self.describe(shape)}   (click to finish, Esc cancels)")
+            self.window.live(f"{self.describe(shape)}   (click to finish, Esc cancels)")
 
     def start_at(self, x: float, y: float) -> None:
         super().start_at(x, y)
@@ -1200,6 +1342,10 @@ class _PointsTool(DrawTool):
             self.canvas.show_points("snap", [self._snap] if self._snap else [])
             return
         self._show()
+        (ax, ay), (bx, by) = self.placed[-1], self._cursor
+        if (ax, ay) != (bx, by):  # the edge being drawn, by the cursor
+            angle = math.degrees(math.atan2(by - ay, bx - ax))
+            self.canvas.set_cursor_label(f"{math.hypot(bx - ax, by - ay):g} µm  ∠ {angle:.1f}°")
 
     def _show(self) -> None:
         points = list(self.placed)
@@ -1309,3 +1455,9 @@ TOOLS: tuple[type[Tool], ...] = (
 def _um(value: float) -> float:
     """A coordinate without floating-point noise (grid steps like 0.1 add up badly)."""
     return round(value, 6) + 0.0  # + 0.0 turns -0.0 into 0.0
+
+
+def _offset_label(dx: float, dy: float, onto: str | None = None) -> str:
+    """A move's offset by the cursor, and the point it snaps to."""
+    text = f"Δx {dx:g}  Δy {dy:g} µm"
+    return f"{text}  → {onto}" if onto else text

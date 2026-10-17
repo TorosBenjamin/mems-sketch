@@ -91,12 +91,30 @@ class Process:
     levels: list[Level] = field(default_factory=list)  # the layer stack, bottom to top
     default_level: str | None = None  # where a top component is; None: the first level
     description: str = ""
+    # The fab's grid and curve tolerance, µm: the rule checks run on the geometry
+    # rounded onto it as an export would write it (requirement DRC-3), and layout
+    # exports start from it.
+    grid_um: float = 0.001
+    chord_um: float = 0.005
 
     def add_rule(self, rule: Rule) -> Rule:
         if rule.name in self.rules:
             raise ValueError(f"rule '{rule.name}' already exists")
         self.rules[rule.name] = rule
         return rule
+
+    def stack_order(self) -> list[str]:
+        """The layers bottom to top, as they are drawn: the levels of the stack from
+        the bottom, each its anchoring layer, its main layer, then the layers of its
+        other roles; layers in no level (imported, unassigned) first, under them all,
+        in the order the process lists them."""
+        stacked: list[str] = []
+        for level in self.levels:
+            anchor = level.roles.get("anchor")
+            others = [layer for role, layer in level.roles.items() if role != "anchor"]
+            stacked += [layer for layer in (anchor, level.layer, *others) if layer]
+        stacked = list(dict.fromkeys(stacked))
+        return [name for name in self.layers if name not in stacked] + stacked
 
     def scope(self) -> dict[str, float]:
         """Resolved constants keyed as they appear in expressions (``process.name``)."""
@@ -163,6 +181,8 @@ def changes_between(
         raise ValueError("the layers and layer stack belong to the process: they cannot change")
     if process.default_level != base.default_level:
         raise ValueError("the default level belongs to the process: it cannot change")
+    if (process.grid_um, process.chord_um) != (base.grid_um, base.chord_um):
+        raise ValueError("the grid and curve tolerance belong to the process: they cannot change")
     for kind, mine, theirs in (
         ("constant", process.constants, base.constants),
         ("rule", process.rules, base.rules),

@@ -127,3 +127,35 @@ def test_a_typed_extension_decides_the_format(window, resonator, monkeypatch, tm
     window.export_file()
     assert titles == ["Export as OASIS"]
     assert target.read_bytes().startswith(b"%SEMI-OASIS")
+
+
+def test_export_says_when_snapping_changed_the_shape(window, monkeypatch, tmp_path):
+    from mems_sketch import Layer, Project, RectShape
+    from mems_sketch.storage import save
+
+    project = Project()
+    project.add_layer(Layer("device", 1))
+    project.add(RectShape(layer="device", x0=0, y0=0, x1=10.6, y1=5))
+    project.add(RectShape(layer="device", x0=11.4, y0=0, x1=20, y1=5))  # 0.8 µm apart
+    save(project, tmp_path / "gap")
+    window.open_project(str(tmp_path / "gap"))
+    target = tmp_path / "gap.gds"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), "GDSII (*.gds)")
+    )
+
+    def accept(dialog):
+        dialog.editors["grid_um"].setValue(1.0)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(ExportOptionsDialog, "exec", accept)
+    shown = []
+    monkeypatch.setattr(window, "show_export_changes", lambda path, lines: shown.append(lines))
+    window.export_file()
+    assert target.exists()
+    assert len(shown) == 1 and any("gap narrower than the grid closed" in s for s in shown[0])
+    shown.clear()
+    monkeypatch.setattr(ExportOptionsDialog, "exec", lambda d: QDialog.DialogCode.Accepted)
+    window.settings.set_value("export/gds/grid_um", "0.001")
+    window.export_file()  # the default grid changes nothing: no message
+    assert shown == []

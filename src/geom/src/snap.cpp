@@ -6,6 +6,8 @@
 
 #include "mgeom/snap.hpp"
 
+#include "mgeom/interrupt.hpp"
+
 #include <clipper2/clipper.h>
 
 #include <algorithm>
@@ -137,6 +139,7 @@ size_t hole_count(const std::vector<GridPolygon>& polygons) {
 }  // namespace
 
 Snapped snap(const Region& region, double grid, double chord) {
+    check_interrupted();
     if (!(grid > 0.0) || !std::isfinite(grid)) throw GeometryError("a grid needs a positive step");
     if (!(chord > 0.0) || !std::isfinite(chord)) {
         throw GeometryError("snapping needs a positive chord tolerance");

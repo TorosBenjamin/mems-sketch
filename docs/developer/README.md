@@ -16,6 +16,9 @@ the [user guide](../user/README.md).
 6. **[Geometry core architecture](core-architecture.md)**: the C++ core the
    geometry backend is moving to, a geometry library on Open CASCADE with the
    mems-sketch engine on top; target architecture, with the migration plan.
+7. **[The Sketch language](language.md)**: the language of every value, a
+   typed profile of Python's expressions with units and geometry; its design
+   and the steps to build it.
 
 ## Working on the code
 

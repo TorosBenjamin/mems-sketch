@@ -3,6 +3,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepCheck_Analyzer.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -26,9 +27,11 @@
 #include <gp_Vec.hxx>
 
 #include <cmath>
+#include <functional>
 #include <numbers>
 #include <string>
 
+#include "mgeom/interrupt.hpp"
 #include "region_impl.hpp"
 
 namespace mgeom {
@@ -201,6 +204,7 @@ Region enclosed(const std::vector<TopoDS_Wire>& loops) {
 }  // namespace
 
 Region Region::offset(double distance, Join join) const {
+    check_interrupted();
     if (!std::isfinite(distance)) throw GeometryError("an offset needs a finite distance");
     if (empty() || distance == 0.0) return *this;
     if (distance < 0) {
@@ -279,69 +283,101 @@ void check_fillet(const BRepFilletAPI_MakeFillet2d& fillet, const gp_Pnt& at, do
     }
 }
 
-TopoDS_Face finished(BRepFilletAPI_MakeFillet2d& fillet) {
+// Corners are rounded boundary by boundary: the outer one and each hole as a
+// face of its own. Open CASCADE's 2D fillet on a face with holes leaves the
+// holes' edges out of order (its own check calls the face invalid). A corner
+// that is convex for a hole is concave for the face around it, so ``add`` is
+// told which it is for the face. It adds a fillet or chamfer to ``fillet`` at
+// the corner, or nothing (false).
+using AddCorner = std::function<bool(const FaceCorner&, bool convex, BRepFilletAPI_MakeFillet2d& fillet,
+                                     const TopoDS_Face& boundary)>;
+
+TopoDS_Wire rounded_boundary(const TopoDS_Wire& wire, const gp_Pln& plane, bool hole, const AddCorner& add) {
+    const TopoDS_Face face = detail::face_of_boundaries(plane, wire, {});
+    BRepFilletAPI_MakeFillet2d fillet(face);
+    bool any = false;
+    for (const FaceCorner& c : corners_of(face)) any = add(c, hole ? !c.convex : c.convex, fillet, face) || any;
+    if (!any) return wire;
     fillet.Build();
     if (!fillet.IsDone()) throw GeometryError("cannot round the corners");
-    return TopoDS::Face(fillet.Shape());
+    return BRepTools::OuterWire(TopoDS::Face(fillet.Shape()));
+}
+
+// A face with its corners rounded (see AddCorner), checked, so that geometry
+// whose boundaries came to cross is an error, never returned (requirement QR-3).
+TopoDS_Face rounded_face(const TopoDS_Face& face, const AddCorner& add) {
+    const gp_Pln plane = BRepAdaptor_Surface(face).Plane();
+    const TopoDS_Wire outer = BRepTools::OuterWire(face);
+    const TopoDS_Wire new_outer = rounded_boundary(outer, plane, false, add);
+    bool changed = !new_outer.IsSame(outer);
+    std::vector<TopoDS_Wire> holes;
+    for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) {
+        const TopoDS_Wire hole = TopoDS::Wire(w.Current());
+        if (hole.IsSame(outer)) continue;
+        holes.push_back(rounded_boundary(hole, plane, true, add));
+        changed = changed || !holes.back().IsSame(hole);
+    }
+    if (!changed) return face;
+    const TopoDS_Face result = detail::face_of_boundaries(plane, new_outer, holes);
+    if (!BRepCheck_Analyzer(result).IsValid()) {
+        throw GeometryError("rounding the corners made boundaries cross: a radius is too large for the room");
+    }
+    detail::check_precision(result, "rounding the corners");
+    return result;
 }
 
 }  // namespace
 
 Region Region::filleted(double convex_radius, double concave_radius) const {
+    check_interrupted();
     if (!(convex_radius >= 0.0) || !(concave_radius >= 0.0)) {
         throw GeometryError("fillet radii cannot be negative");
     }
     if (empty() || (convex_radius == 0.0 && concave_radius == 0.0)) return *this;
+    const AddCorner add = [&](const FaceCorner& c, bool convex, BRepFilletAPI_MakeFillet2d& fillet,
+                              const TopoDS_Face&) {
+        const double r = convex ? convex_radius : concave_radius;
+        if (r == 0.0) return false;
+        fillet.AddFillet(c.vertex, r * kNmPerUm);
+        check_fillet(fillet, c.point, r);
+        return true;
+    };
     std::vector<TopoDS_Face> result;
-    for (const TopoDS_Face& face : faces_of(copied(impl_->shape))) {
-        BRepFilletAPI_MakeFillet2d fillet(face);
-        bool any = false;
-        for (const FaceCorner& c : corners_of(face)) {
-            const double r = c.convex ? convex_radius : concave_radius;
-            if (r == 0.0) continue;
-            fillet.AddFillet(c.vertex, r * kNmPerUm);
-            check_fillet(fillet, c.point, r);
-            any = true;
-        }
-        result.push_back(any ? finished(fillet) : face);
-    }
+    for (const TopoDS_Face& face : faces_of(copied(impl_->shape))) result.push_back(rounded_face(face, add));
     return RegionAccess::make(compound_of(result));
 }
 
 Region Region::rounded(std::span<const CornerRounding> wanted) const {
+    check_interrupted();
     for (const CornerRounding& w : wanted) {
         if (!(w.radius >= 0.0)) throw GeometryError("a corner radius cannot be negative");
     }
     std::vector<bool> found(wanted.size(), false);
-    std::vector<TopoDS_Face> result;
-    for (const TopoDS_Face& face : faces_of(copied(impl_->shape))) {
-        BRepFilletAPI_MakeFillet2d fillet(face);
-        NCollection_IndexedDataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>,
-                                   TopTools_ShapeMapHasher>
-            edges_at;
-        TopExp::MapShapesAndAncestors(face, TopAbs_VERTEX, TopAbs_EDGE, edges_at);
-        bool any = false;
-        for (const FaceCorner& c : corners_of(face)) {
-            const Point at = from_occ(c.point);
-            for (size_t k = 0; k < wanted.size(); ++k) {
-                const CornerRounding& w = wanted[k];
-                if (found[k] || std::hypot(w.at.x - at.x, w.at.y - at.y) > kCornerMatch) continue;
-                found[k] = true;
-                if (w.radius == 0.0) break;
-                if (w.style == CornerStyle::round) {
-                    fillet.AddFillet(c.vertex, w.radius * kNmPerUm);
-                } else {
-                    const auto& edges = edges_at.FindFromKey(c.vertex);
-                    fillet.AddChamfer(TopoDS::Edge(edges.First()), TopoDS::Edge(edges.Last()),
-                                      w.radius * kNmPerUm, w.radius * kNmPerUm);
-                }
-                check_fillet(fillet, c.point, w.radius);
-                any = true;
-                break;
+    const AddCorner add = [&](const FaceCorner& c, bool, BRepFilletAPI_MakeFillet2d& fillet,
+                              const TopoDS_Face& boundary) {
+        const Point at = from_occ(c.point);
+        for (size_t k = 0; k < wanted.size(); ++k) {
+            const CornerRounding& w = wanted[k];
+            if (found[k] || std::hypot(w.at.x - at.x, w.at.y - at.y) > kCornerMatch) continue;
+            found[k] = true;
+            if (w.radius == 0.0) return false;
+            if (w.style == CornerStyle::round) {
+                fillet.AddFillet(c.vertex, w.radius * kNmPerUm);
+            } else {
+                NCollection_IndexedDataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>, TopTools_ShapeMapHasher>
+                    edges_at;
+                TopExp::MapShapesAndAncestors(boundary, TopAbs_VERTEX, TopAbs_EDGE, edges_at);
+                const auto& edges = edges_at.FindFromKey(c.vertex);
+                fillet.AddChamfer(TopoDS::Edge(edges.First()), TopoDS::Edge(edges.Last()), w.radius * kNmPerUm,
+                                  w.radius * kNmPerUm);
             }
+            check_fillet(fillet, c.point, w.radius);
+            return true;
         }
-        result.push_back(any ? finished(fillet) : face);
-    }
+        return false;
+    };
+    std::vector<TopoDS_Face> result;
+    for (const TopoDS_Face& face : faces_of(copied(impl_->shape))) result.push_back(rounded_face(face, add));
     for (size_t k = 0; k < wanted.size(); ++k) {
         if (!found[k]) {
             throw GeometryError("(" + std::to_string(wanted[k].at.x) + ", " +

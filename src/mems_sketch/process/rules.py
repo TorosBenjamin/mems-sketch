@@ -124,11 +124,13 @@ def rule_values(
 def check(
     project: Project, geometry: Geometry | None = None, component: str | None = None
 ) -> list[Violation]:
-    """Check ``geometry`` (default: the drawn project) against the project's rules.
+    """Check ``geometry`` against the project's rules; by default the component as
+    an export would write it, rounded onto the process's grid (requirement DRC-3).
     ``component`` is what the geometry is (default: the project's default
     component); its waivers mark the violations they accept."""
     component = component or project.default_component()
-    geometry = project.render(component) if geometry is None else geometry
+    if geometry is None:
+        geometry = checked_geometry(project, component)
     violations: list[Violation] = []
     for name in geometry.layers:
         if name not in project.layers:
@@ -147,6 +149,18 @@ def check(
     if definition is not None and definition.waivers:
         violations = _apply_waivers(violations, definition.waivers, geometry)
     return violations
+
+
+def checked_geometry(
+    project: Project, component: str | None = None, params: dict | None = None
+) -> Geometry:
+    """A component as the rule checks see it: rounded onto the process's grid, its
+    curves within the process's tolerance, as an export would write it."""
+    from mems_sketch.engine import Engine
+
+    process = project.process
+    build = Engine().load(project).build(project._target(component), params)
+    return build.output(process.grid_um, process.chord_um).geometry
 
 
 # -- waivers -------------------------------------------------------------------

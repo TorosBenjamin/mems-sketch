@@ -12,6 +12,7 @@
 #include "../modifiers/modifiers.hpp"
 #include "../shapes/kinds.hpp"
 #include "context.hpp"
+#include "mgeom/interrupt.hpp"
 #include "mgeom/types.hpp"
 
 namespace mems {
@@ -36,28 +37,13 @@ std::string name_of(const Json& node) {
     return node.contains("name") && node["name"].is_string() ? node["name"].get<std::string>() : std::string();
 }
 
-// node.point.x: a point coordinate (node, point, axis), or nothing.
-struct PointName {
-    std::string node, point;
-    int axis;
-};
-std::optional<PointName> point_name(const std::string& name) {
-    const size_t first = name.find('.');
-    if (first == std::string::npos) return std::nullopt;
-    const size_t second = name.find('.', first + 1);
-    if (second == std::string::npos || name.find('.', second + 1) != std::string::npos) return std::nullopt;
-    const std::string axis = name.substr(second + 1);
-    if (axis != "x" && axis != "y") return std::nullopt;
-    return PointName{name.substr(0, first), name.substr(first + 1, second - first - 1), axis == "x" ? 0 : 1};
-}
-
-// The point coordinates a string uses (when it is an expression).
-std::vector<PointName> point_names(const std::string& text) {
-    std::vector<PointName> found;
-    if (std::count(text.begin(), text.end(), '.') < 2) return found;
+// The measures a string uses (when it is an expression).
+std::vector<MeasureName> measure_names(const std::string& text) {
+    std::vector<MeasureName> found;
+    if (text.find('.') == std::string::npos) return found;
     try {
         for (const auto& name : names_in(text))
-            if (auto point = point_name(name)) found.push_back(*point);
+            if (auto measure = measure_name(name)) found.push_back(*measure);
     } catch (const ExpressionError&) {
     }
     return found;
@@ -77,16 +63,17 @@ void own_strings(const Json& value, std::vector<std::string>& out) {
         for (const auto& [key, item] : value.items()) own_strings(item, out);
 }
 
-// The names of the nodes whose points a node or its subtree uses.
+// The names of the nodes whose points a node or its subtree uses (a switched-off
+// node too: it is still built, for its points).
 void point_dependencies(const Json& node, std::set<std::string>& found) {
-    if (node.value("enabled", true)) {
+    {
         if (node.contains("align") && node["align"].is_object())
             found.insert(node["align"].value("to", std::string()).substr(0, node["align"].value("to", std::string()).find('.')));
         std::vector<std::string> texts;
         for (const auto& [key, value] : node.items())
             if (!is_child_list(key, value)) own_strings(value, texts);
         for (const auto& text : texts)
-            for (const auto& point : point_names(text)) found.insert(point.node);
+            for (const auto& measure : measure_names(text)) found.insert(measure.node);
         // Points the modifiers name outside expressions: a mirror's about, a corner's at.
         for (const auto& modifier : node.value("modifiers", Json::array())) {
             if (modifier.contains("about") && modifier["about"].is_string()) {
@@ -141,6 +128,7 @@ mgeom::Transform placement_of(const Json& node, const Context& ctx) {
 
 NodeResult render_node(const Json& node, Builder& builder, const std::string& component, const Variables& variables,
                        const Scope& scope) {
+    mgeom::check_interrupted();  // the build is no longer needed: stop before the next shape
     const std::string kind = node.value("kind", std::string());
     const RenderKind render = find_kind(kind);
     if (!render) throw NotSupported("'" + kind + "' shapes are not built by the engine yet");
@@ -161,17 +149,151 @@ NodeResult render_node(const Json& node, Builder& builder, const std::string& co
     first["j"] = 0.0;
     Result made = produce(first);
     NodeResult result{std::move(made.layers), std::move(made.instances),
-                      Points{label_of(node), {}, std::move(made.points), {}}, {}, {}};
+                      Points{label_of(node), {}, std::move(made.points), {}, {}}, {}, {}};
     result.points.box = bbox_of(result.layers, result.instances);
+    result.points.outline = std::make_shared<Outline>(result.layers, result.instances);
     if (node.contains("align") && !node["align"].is_null()) {
         result.shift = alignment(node, result.points, first, scope, builder, component);
         for (auto& [layer, region] : result.layers) region = region.transformed(result.shift);
         result.instances = placed(result.instances, result.shift);
         for (auto& [name, point] : result.points.declared) point = result.shift.apply(point);
         result.points.box = bbox_of(result.layers, result.instances);
+        result.points.outline = std::make_shared<Outline>(result.layers, result.instances);
     }
-    if (builder.recording()) result.inner = result.shift * placement_of(node, Context{builder, component, first, scope});
+    result.inner = result.shift * placement_of(node, Context{builder, component, first, scope});
     return result;
+}
+
+}  // namespace
+
+// What the node cache keeps: the node as evaluated and, when it was evaluated
+// while records were made, the records of the nodes inside it (by their path
+// below it).
+struct CachedNode {
+    NodeResult result;
+    bool has_records = false;
+    std::vector<std::pair<NodePath, NodeRecord>> records;
+};
+
+namespace {
+
+void strings_in(const Json& value, std::vector<std::string>& out) {
+    if (value.is_string()) out.push_back(value.get<std::string>());
+    else if (value.is_array() || value.is_object())
+        for (const auto& item : value) strings_in(item, out);
+}
+
+void references_in(const Json& value, std::vector<std::string>& out) {
+    if (value.is_object()) {
+        if (value.value("kind", std::string()) == "ref" && value.contains("component") && value["component"].is_string())
+            out.push_back(value["component"].get<std::string>());
+        for (const auto& item : value) references_in(item, out);
+    } else if (value.is_array()) {
+        for (const auto& item : value) references_in(item, out);
+    }
+}
+
+void append_number(std::string& key, double value) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, "%.17g", value);
+    key += buffer;
+}
+
+void append_points(std::string& key, const Points& p) {
+    key += p.name;
+    for (const double v : {p.box.x0, p.box.y0, p.box.x1, p.box.y1, p.transform.dx, p.transform.dy, p.transform.angle_deg,
+                           p.transform.scale})
+        key += ',', append_number(key, v);
+    key += p.transform.mirror_x ? "m" : "-";
+    for (const auto& [name, q] : p.declared) key += ';' + name + '=', append_number(key, q.x), key += ',', append_number(key, q.y);
+    char buffer[32];  // the geometry its minimal box is taken of: the same object for the same node result
+    std::snprintf(buffer, sizeof buffer, "@%p", static_cast<const void*>(p.outline.get()));
+    key += buffer;
+}
+
+// Everything evaluating ``node`` reads, as a key: the node itself, the values
+// and the other nodes' points its expressions use, the components it places,
+// the level and the layer stack. None when it cannot be told (then it is
+// evaluated every time).
+std::optional<std::string> node_key(const Json& node, Builder& builder, const std::string& component,
+                                    const Variables& variables, const Scope& scope) {
+    const Project& project = builder.project();
+    std::string key = component;
+    key += '\x1f';
+    key += builder.level() ? *builder.level() : std::string("-");
+    key += '\x1f';
+    key += project.stack_key();
+    key += '\x1f';
+    key += node.dump();
+    std::vector<std::string> texts;
+    strings_in(node, texts);
+    std::set<std::string> names;
+    for (const auto& text : texts) {
+        try {
+            for (const auto& name : names_in(text)) names.insert(name);
+        } catch (const ExpressionError&) {  // not an expression (a name, a layer)
+        }
+    }
+    for (const auto& name : names) {
+        if (const auto found = variables.find(name); found != variables.end()) {
+            key += '\x1f' + name + '=';
+            append_number(key, found->second);
+        }
+    }
+    std::set<std::string> dependencies;
+    point_dependencies(node, dependencies);
+    for (const auto& name : dependencies) {
+        key += '\x1f' + name + ':';
+        if (const auto found = scope.find(name); found != scope.end()) append_points(key, found->second);
+        else key += '!';
+    }
+    std::vector<std::string> references;
+    references_in(node, references);
+    for (const auto& reference : references) {
+        try {
+            key += '\x1f' + reference + '#' + project.fingerprint(project.qualify(reference, component));
+        } catch (const std::exception&) {
+            return std::nullopt;  // the evaluation reports it
+        }
+    }
+    return key;
+}
+
+bool below(const NodePath& path, const NodePath& prefix) {
+    return path.size() > prefix.size() && std::equal(prefix.begin(), prefix.end(), path.begin());
+}
+
+// render_node, from the node cache when nothing it reads has changed. While
+// records are made, the records of the nodes inside it are kept with it and
+// made again from there.
+NodeResult cached_render(const Json& node, Builder& builder, const std::string& component, const Variables& variables,
+                         const Scope& scope) {
+    const auto key = node_key(node, builder, component, variables, scope);
+    if (!key) return render_node(node, builder, component, variables, scope);
+    Records* records = builder.recording();
+    const NodePath& path = builder.path();
+    const auto hit = builder.cache().find_node(*key);
+    if (hit && (!records || hit->has_records)) {
+        mgeom::check_interrupted();
+        if (records)
+            for (const auto& [relative, record] : hit->records) {
+                NodePath full = path;
+                full.insert(full.end(), relative.begin(), relative.end());
+                records->emplace(std::move(full), record);
+            }
+        return hit->result;
+    }
+    auto made = std::make_shared<CachedNode>();
+    made->result = render_node(node, builder, component, variables, scope);
+    if (records) {
+        made->has_records = true;
+        for (auto it = records->lower_bound(path); it != records->end() && below(it->first, path); ++it)
+            made->records.emplace_back(NodePath(it->first.begin() + path.size(), it->first.end()), it->second);
+        // Built before without records: keep that result (other nodes' keys name its geometry).
+        if (hit) made->result = hit->result;
+    }
+    builder.cache().put_node(*key, made);
+    return made->result;
 }
 
 }  // namespace
@@ -180,6 +302,18 @@ NodeResult render_node(const Json& node, Builder& builder, const std::string& co
 
 mgeom::Point Points::point(const std::string& point) const {
     mgeom::Point p;
+    if (point.rfind("min.", 0) == 0 && is_bbox_point(point.substr(4))) {
+        const mgeom::MinimalBox m = minimal();  // already in this frame
+        const mgeom::Box& b = m.box;
+        const std::string at = point.substr(4);
+        const double cu = (b.x0 + b.x1) / 2, cv = (b.y0 + b.y1) / 2;
+        double u = cu, v = cv;
+        if (at.find("left") != std::string::npos) u = b.x0;
+        if (at.find("right") != std::string::npos) u = b.x1;
+        if (at.find("bottom") != std::string::npos) v = b.y0;
+        if (at.find("top") != std::string::npos) v = b.y1;
+        return m.to_xy({u, v});
+    }
     if (const auto found = declared.find(point); found != declared.end()) {
         p = found->second;
     } else if (is_bbox_point(point)) {
@@ -209,6 +343,68 @@ mgeom::Point Points::point(const std::string& point) const {
         throw BuildError("shape '" + name + "' has no point '" + point + "'");
     }
     return transform.is_identity() ? p : transform.apply(p);
+}
+
+double Points::measure(const std::string& path) const {
+    const auto distance = [](mgeom::Point a, mgeom::Point b) { return std::hypot(b.x - a.x, b.y - a.y); };
+    if (path == "width") return distance(point("left"), point("right"));
+    if (path == "height") return distance(point("bottom"), point("top"));
+    const size_t dot = path.rfind('.');
+    if (dot != std::string::npos && (path.substr(dot + 1) == "x" || path.substr(dot + 1) == "y")) {
+        const mgeom::Point p = point(path.substr(0, dot));
+        return path.substr(dot + 1) == "x" ? p.x : p.y;
+    }
+    if (path == "min.angle") return minimal().angle_deg;
+    if (path == "min.width") return minimal().box.width();
+    if (path == "min.height") return minimal().box.height();
+    throw BuildError("shape '" + name + "' has no measure '" + path + "'");
+}
+
+constexpr double OUTLINE_CHORD_UM = 0.001;  // curves split within the database grid
+
+mgeom::MinimalBox Points::minimal() const {
+    std::vector<mgeom::Point> points;
+    if (outline && !outline->hull().empty()) {
+        points = outline->hull();
+    } else {
+        for (const auto& [n, q] : declared) points.push_back(q);  // nothing drawn (a guide)
+    }
+    if (points.empty()) throw BuildError("shape '" + name + "' has no geometry to measure");
+    if (!transform.is_identity())
+        for (auto& p : points) p = transform.apply(p);
+    return mgeom::minimal_box(points, OUTLINE_CHORD_UM * std::abs(transform.scale));
+}
+
+const std::vector<mgeom::Point>& Outline::hull() const {
+    std::call_once(once_, [this] {
+        std::vector<mgeom::Point> points;
+        const auto add = [&](const mgeom::Region& region) {
+            const auto more = mgeom::convex_hull(mgeom::outline_points(region, OUTLINE_CHORD_UM));
+            points.insert(points.end(), more.begin(), more.end());
+        };
+        for (const auto& [layer, region] : layers_) add(region);
+        for (const auto& instance : instances_)
+            for (const auto& [layer, region] : instance.built->flat()) add(region.transformed(instance.transform));
+        hull_ = mgeom::convex_hull(points);
+    });
+    return hull_;
+}
+
+std::optional<MeasureName> measure_name(const std::string& name) {
+    const size_t first = name.find('.');
+    if (first == std::string::npos || first == 0) return std::nullopt;
+    std::string path = name.substr(first + 1);
+    const auto coordinate = [](const std::string& text) {  // point.x, point.y
+        const size_t dot = text.find('.');
+        return dot != std::string::npos && dot > 0 && text.find('.', dot + 1) == std::string::npos &&
+               (text.substr(dot + 1) == "x" || text.substr(dot + 1) == "y");
+    };
+    const bool min = path.rfind("min.", 0) == 0;
+    const std::string rest = min ? path.substr(4) : std::string();
+    if (path == "width" || path == "height" || coordinate(path) ||
+        (min && (rest == "width" || rest == "height" || rest == "angle" || coordinate(rest))))
+        return MeasureName{name.substr(0, first), std::move(path)};
+    return std::nullopt;
 }
 
 Points Points::seen_through(const mgeom::Transform& t) const {
@@ -292,12 +488,11 @@ double Context::value(const Json& value) const {
     Variables extra;
     for (const auto& name : expression.names()) {
         if (variables.count(name)) continue;
-        const auto point = point_name(name);
-        if (!point) continue;
-        const auto found = scope.find(point->node);
+        const auto measure = measure_name(name);
+        if (!measure) continue;
+        const auto found = scope.find(measure->node);
         if (found == scope.end()) continue;  // an unknown variable, as in Python
-        const mgeom::Point p = found->second.point(point->point);
-        extra[name] = point->axis == 0 ? p.x : p.y;
+        extra[name] = found->second.measure(measure->path);
     }
     if (extra.empty()) return expression.evaluate(variables);
     Variables all = variables;
@@ -348,9 +543,13 @@ Layers LayerSet::merged() const {
 
 Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, const std::string& component,
                       const Variables& variables, const Scope& scope) {
+    // A switched-off node (enabled: false) is hidden, not removed: it is built, so
+    // that shapes aligned to it or using its points stay where they are, but its
+    // geometry is left out. If it cannot be built, it has no points either.
     struct Entry {
-        size_t slot, index;  // its list, and its index there (disabled nodes count)
+        size_t slot, index;  // its list, and its index there
         const Json* node;
+        bool enabled;
     };
     std::vector<Entry> entries;
     std::map<std::string, size_t> named;
@@ -358,9 +557,8 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
         size_t index = 0;
         for (const auto& node : *lists[slot]) {
             const size_t at = index++;
-            if (!node.value("enabled", true)) continue;
             if (const std::string name = name_of(node); !name.empty()) named[name] = entries.size();
-            entries.push_back({slot, at, &node});
+            entries.push_back({slot, at, &node, node.value("enabled", true)});
         }
     }
     std::vector<std::optional<Layers>> results(entries.size());
@@ -368,6 +566,11 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
     std::vector<bool> visiting(entries.size(), false);
     Rendered rendered;
 
+    // A hidden node that cannot be built: nothing, and no points.
+    auto finish_hidden = [&](size_t k) {
+        visiting[k] = false;
+        results[k] = Layers{};
+    };
     std::function<void(size_t)> visit = [&](size_t k) {
         if (results[k]) return;
         const Json& node = *entries[k].node;
@@ -387,9 +590,19 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
             ~Pop() { path.pop_back(); }
         } pop{path};
         try {
-            result = render_node(node, builder, component, variables, visible);
+            result = cached_render(node, builder, component, variables, visible);
+        } catch (const mgeom::Interrupted&) {
+            throw;  // not the shape's fault, hidden or not
         } catch (const mgeom::GeometryError& error) {
+            if (!entries[k].enabled) return finish_hidden(k);
             throw BuildError("'" + label_of(node) + "': " + error.what());
+        } catch (const std::exception&) {  // a build or expression error
+            if (!entries[k].enabled) return finish_hidden(k);
+            throw;
+        }
+        if (!entries[k].enabled) {  // hidden: its points, not its geometry
+            result.layers.clear();
+            result.instances.clear();
         }
         if (Records* records = builder.recording(); records && !records->count(path))
             records->emplace(path, NodeRecord{result.layers, result.instances, result.points.name,
@@ -486,7 +699,7 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
     built.layers = std::move(rendered.layers.front());
     built.instances = std::move(rendered.instances.front());
     built.box = bbox_of(built.layers, built.instances);
-    const Points whole{definition->name, built.box, {}, {}};
+    const Points whole{definition->name, built.box, {}, {}, std::make_shared<Outline>(built.layers, built.instances)};
     Variables first = variables;
     first["i"] = 0.0;
     first["j"] = 0.0;
@@ -496,7 +709,7 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
         mgeom::Point base{0.0, 0.0};
         if (point.contains("at") && point["at"].is_string()) {
             const std::string at = point["at"].get<std::string>();
-            if (is_bbox_point(at)) {
+            if (is_bbox_point(at) || (at.rfind("min.", 0) == 0 && is_bbox_point(at.substr(4)))) {
                 base = whole.point(at);
             } else {
                 const std::string node = at.substr(0, at.find('.'));
@@ -512,15 +725,45 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
 }
 
 std::shared_ptr<const Built> BuildCache::find(const std::string& key) const {
+    const std::lock_guard lock(mutex_);
     const auto found = built_.find(key);
     return found == built_.end() ? nullptr : found->second;
 }
 
 std::shared_ptr<const Built> BuildCache::put(std::shared_ptr<const Built> built) {
+    const std::lock_guard lock(mutex_);
     // Past the limit, start again: what is in use is built again as it is asked for
     // (what is still placed somewhere stays alive with its instances).
     if (built_.size() >= max_entries_) built_.clear();
-    return built_.insert_or_assign(built->key, std::move(built)).first->second;
+    return built_.try_emplace(built->key, std::move(built)).first->second;
+}
+
+std::shared_ptr<const CachedNode> BuildCache::find_node(const std::string& key) const {
+    const std::lock_guard lock(mutex_);
+    const auto found = nodes_.find(key);
+    return found == nodes_.end() ? nullptr : found->second;
+}
+
+void BuildCache::put_node(const std::string& key, std::shared_ptr<const CachedNode> node) {
+    const std::lock_guard lock(mutex_);
+    if (nodes_.size() >= max_nodes_) nodes_.clear();  // as for components: start again
+    nodes_.insert_or_assign(key, std::move(node));
+}
+
+size_t BuildCache::nodes() const {
+    const std::lock_guard lock(mutex_);
+    return nodes_.size();
+}
+
+void BuildCache::clear() {
+    const std::lock_guard lock(mutex_);
+    built_.clear();
+    nodes_.clear();
+}
+
+size_t BuildCache::size() const {
+    const std::lock_guard lock(mutex_);
+    return built_.size();
 }
 
 Records Builder::records(std::string_view component, const Values& params, std::string* error) {
@@ -540,6 +783,8 @@ Records Builder::records(std::string_view component, const Values& params, std::
         path_.clear();
         const Variables variables(values.begin(), values.end());
         render_lists({&definition->shapes->json}, *this, qualified, variables, Scope{});
+    } catch (const mgeom::Interrupted&) {
+        throw;
     } catch (const std::exception& e) {
         if (!error) throw;
         *error = e.what();

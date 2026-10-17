@@ -61,6 +61,8 @@ levels:                 # the layer stack, bottom to top
   roles: {anchor: anchor}
 - {layer: metal}
 default_level: device   # where a top component is; the first level when left out
+grid: 0.001             # µm: the fab's grid; rule checks round the design onto it (default 0.001)
+chord: 0.005            # µm: how far curves may stray when they are split (default 0.005)
 rules:
   device_min_width: {kind: min_width, layers: [device], value: 2}
   device_release:

@@ -1,5 +1,5 @@
 ; The Windows installer (Inno Setup 6), from the PyInstaller folder:
-;   iscc /DAppVersion=0.2.0 /DSourceDir=dist\mems-sketch /DOutputDir=out packaging\windows\mems-sketch.iss
+;   iscc /DAppVersion=0.3.0 /DSourceDir=dist\mems-sketch /DOutputDir=out packaging\windows\mems-sketch.iss
 ; Installs for the current user (no administrator rights needed), with a
 ; Start menu entry and an uninstaller.
 
@@ -27,7 +27,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
-OutputBaseFilename=MEMS_Sketch-{#AppVersion}-windows-setup
+OutputBaseFilename=MEMS-Sketch-{#AppVersion}-Windows-x64-Setup
 SetupIconFile=..\icons\mems-sketch.ico
 UninstallDisplayIcon={app}\mems-sketch.exe
 Compression=lzma2/max

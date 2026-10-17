@@ -12,8 +12,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QElapsedTimer, QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QAction, QIcon, QKeySequence, QWindow
+from PySide6.QtCore import QElapsedTimer, QEvent, QObject, QSize, Qt, Signal
+from PySide6.QtGui import QAction, QFont, QIcon, QKeySequence, QWindow
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme, widgets
 
 GROUPS = ("Components", "Shapes", "Parameters", "Actions")  # in the order shown
 ALL = "All"
@@ -124,6 +124,7 @@ class SearchDialog(QDialog):
         self.list.header().setStretchLastSection(False)
         self.list.itemActivated.connect(self._run)
         self.list.itemClicked.connect(self._run)
+        self.nothing = widgets.placeholder(self.list, "")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 8)
         layout.setSpacing(6)
@@ -146,6 +147,8 @@ class SearchDialog(QDialog):
         self.list.clear()
         groups = GROUPS if self.scope == ALL else (self.scope,)
         muted = self.palette().placeholderText()
+        bold = self.list.font()
+        bold.setWeight(QFont.Weight.DemiBold)
         for group in groups:
             ranked = [
                 (score, index, result)
@@ -159,6 +162,12 @@ class SearchDialog(QDialog):
                 heading = QTreeWidgetItem([group])
                 heading.setFlags(Qt.ItemFlag.NoItemFlags)
                 heading.setForeground(0, muted)
+                heading.setFont(0, bold)
+                if self.list.topLevelItemCount():  # room above every group but the first
+                    heading.setSizeHint(
+                        0, QSize(0, theme.metric("row_height") + theme.metric("space_m"))
+                    )
+                    heading.setTextAlignment(0, Qt.AlignmentFlag.AlignBottom)
                 self.list.addTopLevelItem(heading)
                 ranked = ranked[:PER_GROUP_IN_ALL]
             for _score, _index, result in ranked:
@@ -167,10 +176,16 @@ class SearchDialog(QDialog):
                 item.setData(0, RESULT_ROLE, result)
                 item.setForeground(1, muted)
                 item.setForeground(2, muted)
+                item.setTextAlignment(
+                    2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
                 item.setDisabled(not result.enabled)
                 self.list.addTopLevelItem(item)
         for column in (1, 2):
             self.list.resizeColumnToContents(column)
+        what = text.strip()
+        self.nothing.setText(f"Nothing matches “{what}”." if what else "Nothing to find.")
+        self.nothing.refresh()
         shown = [item for item in self._visible() if not item.isDisabled()]
         self.list.setCurrentItem(shown[0] if shown else None)
 

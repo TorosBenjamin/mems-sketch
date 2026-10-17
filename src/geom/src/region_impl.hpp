@@ -10,7 +10,10 @@
 #include <gp_Pnt.hxx>
 
 #include <memory>
+#include <string>
 #include <vector>
+
+#include <gp_Pln.hxx>
 
 #include "mgeom/region.hpp"
 
@@ -31,6 +34,23 @@ inline TopoDS_Compound compound_of(const std::vector<TopoDS_Face>& faces) {
     for (const auto& face : faces) builder.Add(compound, face);
     return compound;
 }
+
+// The coarsest tolerance an operation may leave in its result, in nm (10⁻⁵ µm).
+// Open CASCADE keeps 10⁻⁷ nm, but widens it where curves touch tangentially,
+// up to about 10⁻³ nm (holes grown until they just meet); this is ten times
+// that, and still a hundred times finer than the finest output grid (1 nm).
+constexpr double kMaxToleranceNm = 1e-2;
+
+// The coarsest vertex or edge tolerance in a shape, in nm.
+double worst_tolerance(const TopoDS_Shape& shape);
+
+// Throws GeometryError when ``what`` left a result coarser than kMaxToleranceNm.
+void check_precision(const TopoDS_Shape& shape, const std::string& what);
+
+// A face on a plane from its outer boundary and its holes, each running the way
+// it must (the outer one counter-clockwise, holes clockwise), however they came.
+TopoDS_Face face_of_boundaries(const gp_Pln& plane, const TopoDS_Wire& outer,
+                               const std::vector<TopoDS_Wire>& holes);
 
 inline std::vector<TopoDS_Face> faces_of(const TopoDS_Shape& shape) {
     std::vector<TopoDS_Face> faces;

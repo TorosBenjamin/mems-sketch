@@ -5,8 +5,9 @@ the example library, with more and more holes, and times what a user does:
 
 - pan, zoom, hover and the drag preview: one mouse event and the frame it
   draws (a frame under ~16 ms keeps up with a 60 Hz display);
-- press, drop and a parameter edit: until the change is on screen; the
-  rule checks of a big design finish later in the background ("checked");
+- press, drop and a parameter edit: until the editor takes input again; a
+  big design is built in the background, on screen later ("shown"), and its
+  rule checks finish after that ("checked");
 - open: from the file to the first picture.
 
 Run it from the repository root::
@@ -114,6 +115,14 @@ def wait_for_checks(app, view, limit_s: float = 120.0) -> None:
         time.sleep(0.002)
 
 
+def wait_for_build(app, window, limit_s: float = 120.0) -> None:
+    """Until a change built in the background is on screen."""
+    deadline = time.perf_counter() + limit_s
+    while window.view.updating and time.perf_counter() < deadline:
+        app.processEvents()
+        time.sleep(0.002)
+
+
 def run(app, path: Path) -> dict[str, float | list[float] | None]:
     from mems_sketch.gui.app import MainWindow
 
@@ -181,9 +190,10 @@ def run(app, path: Path) -> dict[str, float | list[float] | None]:
         out["drop"] = ms(
             lambda: (mouse(canvas, QEvent.Type.MouseButtonRelease, end, LEFT), frame())
         )
+        out["shown (drop)"] = ms(lambda: wait_for_build(app, window))
         out["checked (drop)"] = ms(lambda: wait_for_checks(app, window.view))
 
-    edits, checks = [], []
+    edits, shown, checks = [], [], []
     for k in range(1, 6):  # new values each time: nothing comes from a cache
         value = PITCH + k * 0.01
 
@@ -192,10 +202,13 @@ def run(app, path: Path) -> dict[str, float | list[float] | None]:
             window.canvas.viewport().repaint()
 
         edits.append(ms(edit))
+        shown.append(ms(lambda: wait_for_build(app, window)))
         checks.append(ms(lambda: wait_for_checks(app, window.view)))
     out["parameter edit"] = edits
+    out["shown (edit)"] = shown
     out["checked (edit)"] = checks
     out["undo"] = ms(lambda: (window.run(window.document.undo), window.canvas.viewport().repaint()))
+    out["shown (undo)"] = ms(lambda: wait_for_build(app, window))
     window.close()
     window.deleteLater()
     app.processEvents()

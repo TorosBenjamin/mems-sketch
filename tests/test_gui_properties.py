@@ -4,7 +4,14 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QComboBox, QInputDialog, QLabel, QMessageBox, QToolButton
+from PySide6.QtWidgets import (
+    QComboBox,
+    QGroupBox,
+    QInputDialog,
+    QLabel,
+    QMessageBox,
+    QToolButton,
+)
 
 from mems_sketch import ArrayModifier, RectShape
 from mems_sketch.gui.app import MainWindow
@@ -136,6 +143,8 @@ def test_long_names_are_cut_and_do_not_widen_the_panel(window):
     assert QLabel.text(summary).endswith("…")  # shown cut; text() is all of it
     from_x.setFocus()
     assert not from_x._elided()  # all of it while editing
+    name.setFocus()  # the name too (giving it focus used to raise)
+    assert not name._elided()
 
 
 def test_internal_parameters_are_locked_and_not_offered_where_placed(window):
@@ -184,8 +193,10 @@ def test_shapes_and_placements_offer_relative_layers_and_levels(window):
     from mems_sketch import ComponentDef, RefShape
 
     doc = window.document
-    combos = [c for c in window.properties.findChildren(QComboBox) if c.isEditable()]
-    items = [combos[0].itemText(k) for k in range(combos[0].count())]
+    layer = next(
+        c for c in window.properties.findChildren(QComboBox) if c.currentData() == "device"
+    )
+    items = [layer.itemData(k) for k in range(layer.count())]
     assert items[:4] == ["level", "level+1", "level-1", "level.anchor"]
     assert "metal" in items
     doc.project.define_component(
@@ -389,12 +400,106 @@ def test_choosing_from_a_list_applies_at_once(window):
     layer = next(
         c for c in window.properties.findChildren(QComboBox) if c.currentText() == "device"
     )
-    layer.addItem("oxide")
+    layer.addItem("oxide", "oxide")
     layer.setCurrentText("oxide")
     layer.activated.emit(layer.currentIndex())
     assert window.document.shapes[0].layer == "oxide"
 
 
+def test_the_layer_is_picked_from_a_list_with_the_layers_colours(window):
+    layer = next(
+        c for c in window.properties.findChildren(QComboBox) if c.currentData() == "device"
+    )
+    assert not layer.isEditable()  # chosen, not typed
+    items = {layer.itemData(i): layer.itemText(i) for i in range(layer.count())}
+    # Relative layers say where they land in this tab; named ones are themselves.
+    assert items["level"] == "level · device" and items["level+1"] == "level+1 · metal"
+    assert items["level.anchor"] == "level.anchor · anchor" and items["metal"] == "metal"
+    assert all(not layer.itemIcon(i).isNull() for i in range(layer.count()))
+    level_up = layer.findData("level+1")
+    layer.setCurrentIndex(level_up)
+    layer.activated.emit(level_up)
+    assert window.document.shapes[0].layer == "level+1"
+
+
 def test_the_empty_panel_has_the_islands_colour(window):
     window.tree.select_paths([])
     assert window.properties.widget().objectName() == "properties-body"
+
+
+def test_the_alignment_points_are_lists_that_open_on_a_click(window, qtbot):
+    window.document.nodes.add(RectShape(name="anchor", layer="device", x0=50, y0=0, x1=60, y1=10))
+    window.tree.select_paths([((0, 0),)])
+    point, target = [
+        c
+        for c in window.properties.findChildren(QComboBox)
+        if c.placeholderText() or not c.isEditable()
+    ][-2:]
+    assert not point.isEditable() and not target.isEditable()  # a click anywhere opens them
+    assert point.currentText() == "center"
+    assert target.currentText() == "" and target.placeholderText() == "choose a point"
+    assert "anchor.left" in [target.itemText(i) for i in range(target.count())]
+    section = next(
+        b for b in window.properties.findChildren(QGroupBox) if b.title().startswith("Align")
+    )
+    section.setChecked(True)  # switched on: waits for the point to align to
+    target.setCurrentText("anchor.left")
+    target.activated.emit(target.currentIndex())
+    assert window.document.shapes[0].align.to == "anchor.left"
+
+
+def _focus(qtbot, widget):
+    widget.window().activateWindow()
+    widget.setFocus()
+    qtbot.waitUntil(widget.hasFocus)
+
+
+def test_leaving_a_renamed_title_applies_it(window, qtbot):
+    editor = window.properties
+    _focus(qtbot, editor.name_edit)
+    editor.name_edit.setText("beam")
+    _focus(qtbot, window.canvas)  # clicked out of it, without Enter
+    qtbot.waitUntil(lambda: window.document.shapes[0].name == "beam")
+    window.tree.select_paths([])  # the form goes; the name stays
+    assert window.document.shapes[0].name == "beam"
+
+
+def test_an_edit_is_kept_when_another_shape_is_picked(window, qtbot):
+    window.document.nodes.add(RectShape(name="other", layer="device", x0=50, y0=0, x1=60, y1=4))
+    window.tree.select_paths([((0, 0),)])
+    y1 = fields(window)["To y"]
+    _focus(qtbot, y1)
+    y1.setText("9")
+    _focus(qtbot, window.canvas)
+    window.tree.select_paths([((1, 0),)])  # another shape: the form is built again
+    qtbot.waitUntil(lambda: window.document.shapes[0].y1 == 9)
+
+
+def test_moving_to_the_next_field_applies_and_keeps_the_focus_there(window, qtbot):
+    edits = fields(window)
+    _focus(qtbot, edits["To x"])
+    edits["To x"].setText("30")
+    _focus(qtbot, edits["To y"])
+    qtbot.waitUntil(lambda: window.document.shapes[0].x1 == 30)
+    focused = window.focusWidget()
+    assert focused is fields(window)["To y"]  # the new form's field, at the same place
+
+
+def test_leaving_an_unchanged_field_adds_no_undo_step(window, qtbot):
+    window.document._undo.clear()
+    edits = fields(window)
+    _focus(qtbot, edits["To x"])
+    _focus(qtbot, window.canvas)
+    qtbot.wait(20)
+    assert not window.document.can_undo()
+
+
+def test_leaving_a_field_that_cannot_be_evaluated_says_why(window, qtbot):
+    messages = []
+    window.properties.error.connect(messages.append)
+    edits = fields(window)
+    _focus(qtbot, edits["To x"])
+    edits["To x"].setText("nonexistent + 1")
+    _focus(qtbot, window.canvas)
+    qtbot.wait(20)
+    assert messages and window.document.shapes[0].x1 == "pitch * 2"

@@ -98,6 +98,20 @@ class ModifierEdits(Commands):
         self.session.edit(f"Apply {first.kind} of {_label(node)}", change)
         return path
 
+    def self_values(self, path: NodePath, index: int) -> dict[str, float]:
+        """The ``self`` measures the modifier at ``index`` uses, as it sees them: of
+        the node with the modifiers above it (for previews of its fields)."""
+        node = self.session.node(path)
+        modifier = node.modifiers[index]
+        names = modifier._self_names()
+        if not names:
+            return {}
+        before = [m for m in node.modifiers[:index] if m.enabled]
+        own = node.model_copy(update={"modifiers": before, "align": None})
+        variables = {**self.session.results.scope(), "i": 0.0, "j": 0.0}
+        points = self._measure(own, variables)
+        return {name: points.measure(name.removeprefix("self.")) for name in names}
+
     # -- helpers -----------------------------------------------------------------
 
     def _set(self, path: NodePath, modifiers: list[Modifier], description: str) -> None:

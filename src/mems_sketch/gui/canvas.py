@@ -102,6 +102,8 @@ CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
 OUTLINE_PX = 1.0
+ALIGN_LABEL_GAP_PX = 14  # an alignment's names sit this far beyond the arrow's ends
+ALIGN_APART_PX = 4  # an alignment's point and target closer than this are drawn as one
 CURSOR_LABEL_OFFSET = 16  # px: a label by the cursor starts this far right and below it
 PULSE_PX = 3.0  # a picked shape's glow starts this wide, then thins and fades
 COMPONENT_MIME = "application/x-mems-sketch-component"  # a component dragged from the explorer
@@ -295,6 +297,9 @@ class LayoutCanvas(QGraphicsView):
         self.hover_label: str | None = None
         self._cursor_at = QPointF()  # viewport pixels
         self._over_selection = False  # the cursor is on the selection: a drag moves it
+        # The selected shape's alignment: its point and the point it is aligned to,
+        # each (name, x, y) in µm (see show_alignment).
+        self._alignment: tuple[tuple[str, float, float], tuple[str, float, float]] | None = None
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
         self._caption: tuple[str, str] = ("", "")
@@ -1253,6 +1258,18 @@ class LayoutCanvas(QGraphicsView):
             return
         super().keyReleaseEvent(event)
 
+    def show_alignment(
+        self,
+        point: tuple[str, float, float] | None,
+        target: tuple[str, float, float] | None = None,
+    ) -> None:
+        """Show how the selected shape is aligned: its ``point`` and the ``target`` it
+        is kept on, joined by an arrow when an offset sets them apart (None: none)."""
+        link = (point, target) if point is not None and target is not None else None
+        if link != self._alignment:
+            self._alignment = link
+            self.viewport().update()
+
     def leaveEvent(self, event) -> None:
         self.set_hover_label(None)  # a drag's label stays: the drag may come back
         super().leaveEvent(event)
@@ -1375,6 +1392,8 @@ class LayoutCanvas(QGraphicsView):
         self._draw_ruler_ticks(painter)
         if self.options["show_scale_bar"]:
             self._draw_scale_bar(painter, 16, height)
+        if self._alignment is not None:
+            self._draw_alignment(painter)
         if self._gizmo is not None:
             self._draw_gizmo(painter)
         label = self.cursor_label or self.hover_label
@@ -1529,6 +1548,47 @@ class LayoutCanvas(QGraphicsView):
         fill.setAlpha(160)
         painter.setBrush(fill)
         painter.drawEllipse(QPointF(cx, cy), 7, 7)
+
+    def _draw_alignment(self, painter: QPainter) -> None:
+        """A ring on the target, a dot on the shape's point, and between them (when an
+        offset sets them apart) a dashed arrow to the point; their names by them."""
+        (point, px, py), (target, tx, ty) = self._alignment
+        at = self.mapFromScene(QPointF(px, py)).toPointF()
+        to = self.mapFromScene(QPointF(tx, ty)).toPointF()
+        color = QColor(self.theme["focus"])
+        apart = math.hypot(at.x() - to.x(), at.y() - to.y()) > ALIGN_APART_PX
+        pen = QPen(color, 1.5)
+        if apart:
+            pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawLine(to, at)
+            angle = math.atan2(at.y() - to.y(), at.x() - to.x())
+            head = QPolygonF(
+                [
+                    at,
+                    at - QPointF(math.cos(angle - 0.45), math.sin(angle - 0.45)) * 9,
+                    at - QPointF(math.cos(angle + 0.45), math.sin(angle + 0.45)) * 9,
+                ]
+            )
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawPolygon(head)
+        pen.setStyle(Qt.PenStyle.SolidLine)
+        pen.setWidthF(2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(to, 6, 6)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(at, 3, 3)
+        if apart:  # each name beyond its end of the arrow, so the two stay apart
+            length = math.hypot(at.x() - to.x(), at.y() - to.y())
+            away = QPointF(at.x() - to.x(), at.y() - to.y()) / length * ALIGN_LABEL_GAP_PX
+            nudge = QPointF(10, 5)
+            self._draw_chip(painter, to - away + nudge, target)
+            self._draw_chip(painter, at + away + nudge, point)
+        else:
+            self._draw_chip(painter, to + QPointF(10, -8), f"{point} → {target}")
 
     def _draw_cursor_label(self, painter: QPainter, text: str) -> None:
         """Below and right of the cursor, kept inside the view."""

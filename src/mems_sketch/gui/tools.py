@@ -667,6 +667,10 @@ class AlignTool(Tool):
         self.path: NodePath | None = None
         self.point: str | None = None
         self.candidates: list[Candidate] = []
+        # Picking one end only (a pick button in Properties): "point" or "to", and the
+        # target to keep when only the point is picked.
+        self.only: str | None = None
+        self.keep_to: str | None = None
 
     @property
     def busy(self) -> bool:
@@ -674,7 +678,7 @@ class AlignTool(Tool):
 
     def activate(self) -> None:
         super().activate()
-        if len(self.window.selection) == 1:
+        if len(self.window.selection) == 1 and self.step is None:
             self.begin(self.window.selection[0])
 
     def hint(self) -> str:
@@ -686,16 +690,44 @@ class AlignTool(Tool):
                 return f"Now click the point to put {self.point} on (Esc cancels)"
         return "Align: click the shape to align"
 
-    def begin(self, path: NodePath) -> None:
+    def begin(
+        self,
+        path: NodePath,
+        only: str | None = None,
+        point: str | None = None,
+        to: str | None = None,
+    ) -> None:
+        """Start aligning the shape at ``path``: its point, then the target. With
+        ``only`` ("point" or "to") just that end is picked: the other (``to`` or
+        ``point``) and the offset stay."""
         if not self.editable():
             return
-        candidates = self.document.results.node_points(path)
-        if not candidates:
-            self.window.report_error("this shape has no points to align (does it have geometry?)")
-            return
-        self.step, self.path, self.candidates = "own", path, candidates
+        self.reset()
+        self.only, self.keep_to = only, to or None
+        if only == "to":
+            targets = self._targets(path)
+            if not targets:
+                self.window.report_error("there is no other named shape here to align to")
+                return
+            self.step, self.path, self.point, self.candidates = (
+                "target",
+                path,
+                point or "center",
+                targets,
+            )
+        else:
+            candidates = self.document.results.node_points(path)
+            if not candidates:
+                self.window.report_error(
+                    "this shape has no points to align (does it have geometry?)"
+                )
+                return
+            self.step, self.path, self.candidates = "own", path, candidates
         self.window.prompt(self.hint())
         self.window.update_overlay()
+
+    def _targets(self, path: NodePath) -> list[Candidate]:
+        return [(n, tx, ty) for n, _, tx, ty in self.document.results.align_targets(path)]
 
     def press(self, x, y, modifiers) -> None:
         if self.step is None:
@@ -710,10 +742,11 @@ class AlignTool(Tool):
                 "Click on one of the marked points (Esc cancels)", 5000
             )
             return
+        if self.step == "own" and self.only == "point" and self.keep_to:
+            self._finish(picked, self.keep_to)
+            return
         if self.step == "own":
-            targets = [
-                (n, tx, ty) for n, _, tx, ty in self.document.results.align_targets(self.path)
-            ]
+            targets = self._targets(self.path)
             if not targets:
                 self.reset()
                 self.window.report_error("there is no other named shape here to align to")
@@ -722,14 +755,28 @@ class AlignTool(Tool):
             self.window.prompt(self.hint())
             self.window.update_overlay()
             return
-        path, point = self.path, self.point
-        self.reset()
-        self.window.update_overlay()
-        ok, _ = self.window.run(
-            lambda: self.document.nodes.set_align(path, Align(point=point, to=picked))
+        self._finish(self.point, picked)
+
+    def _finish(self, point: str, to: str) -> None:
+        """Align ``point`` to ``to``; picking one end keeps the offset."""
+        path, only = self.path, self.only
+        old = self.document.node(path).align
+        keep = only is not None and old is not None
+        align = (
+            Align(point=point, to=to, dx=old.dx, dy=old.dy) if keep else Align(point=point, to=to)
         )
+        self.reset()
+        self.canvas.set_cursor_label(None)
+        self.window.update_overlay()
+        ok, _ = self.window.run(lambda: self.document.nodes.set_align(path, align))
         if ok:
-            self.window.notify(f"Aligned {point} to {picked}", "success")
+            self.window.notify(f"Aligned {point} to {to}", "success")
+        if only is not None:
+            self.window.set_tool("select")  # picked from Properties: back where it was
+
+    def move(self, x, y, modifiers, left) -> None:
+        if self.step is not None:  # the point a click would pick, by the cursor
+            self.canvas.set_cursor_label(self._nearest(x, y))
 
     def _nearest(self, x, y) -> str | None:
         label = self.snap(x, y, self.candidates, NONE, grid=False)[2]
@@ -742,9 +789,12 @@ class AlignTool(Tool):
         return {"pick": self.candidates} if self.step else {}
 
     def cancel(self) -> bool:
+        only = self.only
         busy = super().cancel()
         if busy:
             self.window.update_overlay()
+        if busy and only is not None:  # picked from Properties: back where it was
+            self.window.set_tool("select")
         return busy
 
 

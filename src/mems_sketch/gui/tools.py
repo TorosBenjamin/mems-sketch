@@ -335,7 +335,7 @@ class SelectTool(Tool):
         if self._mode == "move":
             self._drag_to(x - x0, y - y0, modifiers)
         elif self._mode == "box":
-            self.canvas.show_box((x0, y0, x, y))
+            self.canvas.show_box((x0, y0, x, y), self.window.box_touches(x0, x))
 
     def _start_move(self) -> None:
         if not self.editable():

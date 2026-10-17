@@ -133,12 +133,22 @@ class ToolWindows(QWidget):
         self.center.addWidget(self._hosts["bottom"])
         self.center.setStretchFactor(0, 1)
         self._splitters = {"main": self.main, "left": self.left_side, "center": self.center}
+        # A panel dragged narrower than it can be closes, as in VS Code; the editor
+        # never does.
+        self._panes = {
+            "main": [["left-top", "left-bottom"], None, ["right"]],
+            "left": [["left-top"], ["left-bottom"]],
+            "center": [None, ["bottom"]],
+        }
+        self._kept_sizes: dict[str, list[int]] = {}  # the sizes before a panel closed
         for name, splitter in self._splitters.items():
             splitter.setObjectName("islands")  # the frame shows between them
-            splitter.setChildrenCollapsible(False)
             splitter.setHandleWidth(GAP)
             splitter.setSizes(DEFAULT_SIZES[name])
+            for index, anchors in enumerate(self._panes[name]):
+                splitter.setCollapsible(index, anchors is not None)
             splitter.splitterMoved.connect(self._resize_timer.start)
+            splitter.splitterMoved.connect(lambda *_, n=name: self._dragged(n))
 
         self._groups: dict[str, QVBoxLayout] = {}
         left = self._stripe("left")
@@ -245,6 +255,7 @@ class ToolWindows(QWidget):
         window.header_buttons.show()
         window.button.setChecked(True)
         self._update()
+        self._unfold(window.anchor)
         self.changed.emit()
 
     def close(self, name: str) -> None:
@@ -262,6 +273,34 @@ class ToolWindows(QWidget):
             self.close(name)
         else:
             self.open(name)
+
+    def _dragged(self, name: str) -> None:
+        """A splitter moved: a panel dragged down to nothing closes, and comes back at
+        the size it had when it opens again."""
+        splitter = self._splitters[name]
+        sizes = splitter.sizes()
+        collapsed = [
+            anchors
+            for index, (anchors, size) in enumerate(zip(self._panes[name], sizes, strict=True))
+            if anchors is not None and size == 0 and splitter.widget(index).isVisible()
+        ]
+        if not collapsed:
+            self._kept_sizes[name] = sizes
+            return
+        for anchors in collapsed:
+            for anchor in anchors:
+                self._hide(anchor)
+
+    def _unfold(self, anchor: str) -> None:
+        """A panel opening where it was dragged shut gets its last size back."""
+        for name, splitter in self._splitters.items():
+            sizes = splitter.sizes()
+            for index, anchors in enumerate(self._panes[name]):
+                if anchors and anchor in anchors and sizes[index] == 0:
+                    kept = self._kept_sizes.get(name)
+                    usable = kept is not None and kept[index] > 0
+                    splitter.setSizes(kept if usable else DEFAULT_SIZES[name])
+                    break
 
     def _hide(self, anchor: str) -> None:
         current = self._hosts[anchor].current

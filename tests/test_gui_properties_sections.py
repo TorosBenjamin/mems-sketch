@@ -8,7 +8,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QToolButton
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QMessageBox, QToolButton
 
 from mems_sketch.core.shapes import Align, RectShape
 from mems_sketch.gui.app import MainWindow
@@ -44,20 +44,32 @@ def test_each_part_is_a_card_and_the_kind_is_in_words(window):
     cards = sections(window)
     assert "Geometry" in cards and "Modifiers" in cards
     assert any(t.startswith("Align") for t in cards)
-    texts = [label.text() for label in window.properties.findChildren(QLabel)]
-    assert "Rectangle" in texts and "rect" not in texts
+    assert window.properties.header_context.text() == "Rectangle"  # in the panel's header
+
+
+def opener(window) -> QToolButton:
+    return next(
+        b for b in window.properties.findChildren(QToolButton) if b.objectName() == "open-component"
+    )
 
 
 def test_a_placed_component_says_so_and_opens(window):
     window.add_component("anchor")
     node = window.document.node(window.selection[0])
     assert kind_title(node) == "Placed component"
+    assert window.properties.header_context.text() == "Placed component"
     assert "Placement" in sections(window)
-    opener = next(
-        b for b in window.properties.findChildren(QToolButton) if b.text() == "Open anchor"
-    )
-    opener.click()
+    assert not window.properties.findChildren(QComboBox, "component")  # shown once, as text
+    opener(window).click()
     assert window.document.active == "anchor"
+
+
+def test_the_open_button_menu_replaces_the_placed_component(window):
+    window.add_component("anchor")
+    path = window.selection[0]
+    replace = opener(window).menu().actions()[0].menu()
+    next(a for a in replace.actions() if a.text() == "comb_drive").trigger()
+    assert window.document.node(path).component == "comb_drive"
 
 
 def test_a_folded_card_stays_folded_for_that_kind_of_shape(window, qtbot):

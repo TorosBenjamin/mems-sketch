@@ -22,6 +22,7 @@ import numpy as np
 import shiboken6
 from PySide6.QtCore import (
     QEasingCurve,
+    QEvent,
     QLineF,
     QPoint,
     QPointF,
@@ -38,6 +39,7 @@ from PySide6.QtGui import (
     QColor,
     QFont,
     QFontMetricsF,
+    QInputDevice,
     QPainter,
     QPainterPath,
     QPen,
@@ -84,6 +86,7 @@ DEFAULT_OPTIONS = {
     "show_scale_bar": True,
     "gizmo_size_px": 70,
     "zoom_step": 1.25,
+    "scrolling": "auto",  # "auto": a mouse wheel zooms, a touchpad pans; "zoom"; "pan"
     "draft_quality": True,  # no antialiasing while zooming or resizing, until it settles
     "max_fps": 0,  # mouse moves handled (and so frames drawn) per second; 0: no limit
 }
@@ -179,6 +182,20 @@ def stack_order(geometry: Geometry, colors: dict[str, QColor]) -> dict[str, int]
     names = set(geometry.layer_names())
     known = [layer for layer in colors if layer in names]
     return {layer: z for z, layer in enumerate([*known, *sorted(names - set(known))])}
+
+
+def _from_touchpad(event) -> bool:
+    """Whether a wheel event comes from a touchpad (or another device that scrolls
+    smoothly) rather than a mouse wheel's notches."""
+    device = event.pointingDevice()
+    if device is not None and device.type() == QInputDevice.DeviceType.TouchPad:
+        return True
+    if event.phase() != Qt.ScrollPhase.NoScrollPhase:  # touchpads say when fingers start
+        return True
+    if not event.pixelDelta().isNull():
+        return True
+    delta = event.angleDelta()
+    return bool(delta.x()) or delta.y() % 120 != 0  # a part of a notch, or sideways
 
 
 def qtransform(t: Transform) -> QTransform:
@@ -783,8 +800,11 @@ class LayoutCanvas(QGraphicsView):
             self._gizmo_offset = (0.0, 0.0)
             self.viewport().update()
 
-    def show_box(self, corners: tuple[float, float, float, float] | None) -> None:
-        """The selection box being dragged out, or None to hide it."""
+    def show_box(
+        self, corners: tuple[float, float, float, float] | None, touching: bool = True
+    ) -> None:
+        """The selection box being dragged out, or None to hide it: dashed when it
+        selects what it touches, solid when only what is inside it."""
         if corners is None:
             if self._box_item is not None:
                 self.scene().removeItem(self._box_item)
@@ -802,6 +822,9 @@ class LayoutCanvas(QGraphicsView):
             self._box_item.setBrush(QBrush(fill))
             self._box_item.setZValue(1200)
             self.scene().addItem(self._box_item)
+        pen = self._box_item.pen()
+        pen.setStyle(Qt.PenStyle.DashLine if touching else Qt.PenStyle.SolidLine)
+        self._box_item.setPen(pen)
         self._box_item.setRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)).normalized())
 
     def show_hover(self, geometry: Geometry | None) -> None:
@@ -1028,13 +1051,47 @@ class LayoutCanvas(QGraphicsView):
     # -- interaction -------------------------------------------------------
 
     def wheelEvent(self, event) -> None:
+        """A mouse wheel zooms; two fingers on a touchpad pan, in any direction (see
+        the ``scrolling`` option). With Ctrl, scrolling always zooms: it is what a
+        pinch on a Windows touchpad sends. Zooming follows how far it scrolled."""
         self.stop_gliding()
-        step = self.options["zoom_step"]
-        factor = step if event.angleDelta().y() > 0 else 1 / step
+        mode = self.options.get("scrolling", "auto")
+        zooms = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier) or (
+            mode == "zoom" or (mode == "auto" and not _from_touchpad(event))
+        )
+        if not zooms:
+            delta = event.pixelDelta()
+            if delta.isNull():  # a wheel without pixels: a notch scrolls 48 px
+                delta = event.angleDelta() * 48 / 120
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier and not delta.x():
+                delta = QPoint(delta.y(), 0)  # Shift turns a wheel sideways
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            self.view_changed.emit()
+            return
+        delta = event.angleDelta()
+        notches = (delta.y() or delta.x()) / 120  # a touchpad sends a fraction of one
+        if notches:
+            self._zoom_by_at(self.options["zoom_step"] ** notches, event.position())
+
+    def viewportEvent(self, event) -> bool:
+        """A pinch on a touchpad (macOS, and Linux with libinput) zooms about the
+        fingers."""
+        if event.type() == QEvent.Type.NativeGesture:
+            if event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+                self.stop_gliding()
+                self._zoom_by_at(1.0 + event.value(), event.position())
+                return True
+            if event.gestureType() == Qt.NativeGestureType.SmartZoomNativeGesture:
+                self.fit(animated=True)  # a two-finger double tap
+                return True
+        return super().viewportEvent(event)
+
+    def _zoom_by_at(self, factor: float, pos: QPointF) -> None:
         scale = abs(self.transform().m11()) * factor
-        if 1e-4 < scale < 1e5:
+        if factor > 0 and 1e-4 < scale < 1e5:
             self._begin_draft()
-            self._zoom_about(event.position(), factor)
+            self._zoom_about(pos, factor)
             self.view_changed.emit()
 
     def _zoom_about(self, pos: QPointF, factor: float) -> None:

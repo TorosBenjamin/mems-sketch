@@ -71,6 +71,18 @@ class Setting:
         return self.choices() if callable(self.choices) else self.choices
 
 
+SCROLLING = {  # canvas/scrolling: value -> label
+    "auto": "Automatic: a mouse wheel zooms, a touchpad pans",
+    "zoom": "Scrolling zooms",
+    "pan": "Scrolling pans (Ctrl zooms)",
+}
+
+BOX_SELECTION = {  # editor/box_selection: value -> label
+    "touching": "What the box touches",
+    "inside": "What is entirely inside the box",
+    "direction": "By direction: to the right inside, to the left touching",
+}
+
 FRAME_RATES = {  # canvas/max_fps: value -> label
     "display": "The display's refresh rate",
     "30": "30 fps",
@@ -205,6 +217,18 @@ SETTINGS: tuple[Setting, ...] = (
         keywords=("gizmo",),
     ),
     Setting(
+        "canvas/scrolling",
+        "auto",
+        "Scrolling",
+        "Canvas",
+        "Navigation",
+        "What scrolling does on the canvas. A touchpad pans with two fingers and zooms "
+        "with a pinch; a mouse wheel zooms. Choose one if your device is taken for the "
+        "other.",
+        choices=SCROLLING,
+        keywords=("touchpad", "trackpad", "pinch", "pan", "wheel", "mouse"),
+    ),
+    Setting(
         "canvas/zoom_step",
         1.25,
         "Zoom per wheel step",
@@ -290,6 +314,18 @@ SETTINGS: tuple[Setting, ...] = (
         "Editor",
         "Projects",
         "Kept in .mems-sketch/state.json in the project folder (ignored by git).",
+    ),
+    Setting(
+        "editor/box_selection",
+        "touching",
+        "Box selection selects",
+        "Editor",
+        "Selection",
+        "Dragging a box over the canvas selects the shapes it touches (any part of "
+        "them), or only those entirely inside it. By direction: dragging to the right "
+        "selects what is inside, to the left what it touches (the box is dashed then).",
+        choices=BOX_SELECTION,
+        keywords=("selection", "rubber band", "crossing", "window", "drag"),
     ),
     Setting(
         "editor/path_width",

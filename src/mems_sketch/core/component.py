@@ -213,6 +213,28 @@ class Geometry:
             )
         return self._box
 
+    def overlaps_box(self, x0: float, y0: float, x1: float, y1: float) -> bool:
+        """Some of the geometry is in the box (µm, ``x0 <= x1``, ``y0 <= y1``); what it
+        places is looked at where it is, not flattened (in a turned placement, the box
+        around the box is looked at)."""
+        box = self.bbox()
+        if box is None or box[2] < x0 or box[0] > x1 or box[3] < y0 or box[1] > y1:
+            return False
+        left, bottom, right, top = to_dbu(x0), to_dbu(y0), to_dbu(x1), to_dbu(y1)
+        for region in self._own.values():
+            b = region.bbox()
+            if b.empty() or b.right < left or b.left > right or b.top < bottom or b.bottom > top:
+                continue
+            if any(p.overlaps_box(left, bottom, right, top) for p in region.each()):
+                return True
+        for geometry, placement in self.instances:
+            inverse = placement.inverted()
+            corners = [inverse.apply(x, y) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+            xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+            if geometry.overlaps_box(min(xs), min(ys), max(xs), max(ys)):
+                return True
+        return False
+
     def touches(self, x: float, y: float, reach: float = 0.0) -> bool:
         """Some polygon is within ``reach`` µm of the point (at least one database
         unit); what it places is looked at where it is, not flattened."""

@@ -1,4 +1,8 @@
-"""Rectangle between two corners."""
+"""Rectangle between two corners, its corners rounded by ``corner_radius``.
+
+The radius is clamped to half the shorter side: at that it is a circle (a
+square) or a stadium, built as such (exact arcs, no zero-length edges).
+"""
 
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ class RectShape(Primitive):
     y0: Value
     x1: Value
     y1: Value
+    corner_radius: Value = 0.0
 
     def moved(self, x, y, inner) -> dict:
         return {"x0": x(self.x0), "x1": x(self.x1), "y0": y(self.y0), "y1": y(self.y1)}

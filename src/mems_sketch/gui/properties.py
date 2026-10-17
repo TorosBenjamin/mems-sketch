@@ -99,6 +99,7 @@ MODIFIER_TITLES = {
     "polar_array": "Polar array",
     "mirror": "Mirror",
     "corners": "Corners",
+    "perforate": "Perforate",
 }
 MODIFIER_LABELS = {  # per kind, then per field
     "array": {"columns": "Columns", "rows": "Rows", "dx": "Step x", "dy": "Step y"},
@@ -116,6 +117,17 @@ MODIFIER_LABELS = {  # per kind, then per field
         "y": "Line at y",
         "keep": "Keep the original",
     },
+    "perforate": {
+        "grid": "Grid",
+        "pitch": "Pitch",
+        "row_pitch": "Row pitch",
+        "hole_size": "Hole size",
+        "hole_height": "Hole height",
+        "corner_radius": "Corner radius",
+        "margin": "Margin",
+        "keep_out": "Keep clear of",
+        "keep_out_margin": "Keep-out margin",
+    },
 }
 MODIFIER_TIPS = {
     "array": "Copies on a grid; i and j are each copy's column and row",
@@ -125,6 +137,8 @@ MODIFIER_TIPS = {
     "a guide, or through a point",
     "corners": "Chosen corners rounded or cut, each with its own radius: pick them on the "
     "canvas with the Corners tool (O)",
+    "perforate": "Holes on a square or hex grid, only where a whole hole fits inside the "
+    "margin and clear of the shapes to keep clear of; they refill when the shape changes",
 }
 SELF_POINTS = ("self.center", "self.left", "self.right", "self.top", "self.bottom")
 # What modifier fields are offered of the node itself.
@@ -151,6 +165,7 @@ PAIR_LABELS = {  # (kind, first field) -> row label, where the default does not 
     ("arc", "x"): "Centre",
     ("polar_array", "x"): "Centre",
     ("mirror", "x"): "Line at",
+    ("perforate", "x"): "Hole at",
 }
 
 
@@ -331,6 +346,13 @@ class PropertyEditor(QScrollArea):
             combo.setCurrentText(value)
             self._editors[field] = combo.currentText
             return self._applies(combo)
+        if typing.get_origin(annotation) is list and args == (str,):  # names, e.g. keep_out
+            edit = QLineEdit(", ".join(value))
+            edit.setPlaceholderText("shape names, comma-separated")
+            edit.returnPressed.connect(self.apply)
+            edit.setReadOnly(self.document.read_only)
+            self._editors[field] = lambda: [n.strip() for n in edit.text().split(",") if n.strip()]
+            return edit
         optional = type(None) in args
         return self._value_editor(field, value, optional)
 

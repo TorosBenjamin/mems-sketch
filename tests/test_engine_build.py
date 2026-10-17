@@ -70,11 +70,29 @@ RECORDING = Path(__file__).parent / "data" / "python_backend.json.gz"
 _recorded: dict[str, object] | None = None
 
 
+# Fields added after the recording, left out of a case's key while they hold
+# their defaults (what the recorded result was built without).
+_LATER_FIELDS = {("rect", "corner_radius"): 0.0}
+
+
+def _as_recorded(value):
+    if isinstance(value, dict):
+        kind = value.get("kind")
+        return {
+            k: _as_recorded(v)
+            for k, v in value.items()
+            if (kind, k) not in _LATER_FIELDS or v != _LATER_FIELDS[(kind, k)]
+        }
+    if isinstance(value, list):
+        return [_as_recorded(v) for v in value]
+    return value
+
+
 def case_key(project: Project, component: str, params=None, what: str = "geometry") -> str:
     """Everything a case's result depends on, hashed."""
 
     def dump(components):
-        return {n: d.model_dump(mode="json") for n, d in sorted(components.items())}
+        return {n: _as_recorded(d.model_dump(mode="json")) for n, d in sorted(components.items())}
 
     data = {
         "components": dump(project.components),
@@ -120,10 +138,14 @@ def python_points(project: Project, component: str) -> dict[str, tuple[float, fl
     return {n: tuple(p) for n, p in recorded(case_key(project, component, {}, "points")).items()}
 
 
-def assert_same(project: Project, component: str, params=None, tolerance=CURVED_NM):
-    """Both backends give the same geometry, or both refuse it."""
+def assert_same(
+    project: Project, component: str, params=None, tolerance=CURVED_NM, recorded_as=None
+):
+    """Both backends give the same geometry, or both refuse it. ``recorded_as``: the
+    project as the recording had it (a component since rewritten to the same
+    geometry)."""
     try:
-        python = python_regions(project, component, params)
+        python = python_regions(recorded_as or project, component, params)
     except Exception as python_error:  # noqa: BLE001
         with pytest.raises(ValueError):
             engine_regions(project, component, params)
@@ -148,12 +170,56 @@ def all_components(project: Project) -> list[str]:
     return names
 
 
+# std.perforated_plate as recorded: a rectangle less an array of circles. It is
+# a perforate modifier now (#83), with the holes where they were.
+RECORDED_PLATE = """
+description: Square plate with a grid of round release holes
+parameters:
+  size: {default: 160, min: 10, description: Edge length (µm)}
+  pitch: {default: 20, min: 2, description: Hole pitch (µm)}
+  hole_r:
+    default: pitch / 6
+    min: 0.5
+    internal: true
+    description: Hole radius (µm), follows the pitch
+shapes:
+  plate:
+    kind: boolean
+    op: subtract
+    a:
+      outline: {kind: rect, layer: device, x0: -size/2, y0: -size/2, x1: size/2, y1: size/2}
+    b:
+      holes:
+        kind: circle
+        layer: device
+        x: -size/2 + pitch/2
+        y: -size/2 + pitch/2
+        radius: hole_r
+        modifiers:
+        - {kind: array, columns: floor(size/pitch), rows: floor(size/pitch), dx: pitch, dy: pitch}
+"""
+
+
+def as_recorded(folder: str) -> Project:
+    import yaml
+
+    from mems_sketch.storage.component_format import component_from_data
+
+    plate, _ = component_from_data("perforated_plate", yaml.safe_load(RECORDED_PLATE))
+    old = load(EXAMPLES / folder)
+    for components in [old.components, *(lib.components for lib in old.libraries.values())]:
+        if "perforated_plate" in components:
+            components["perforated_plate"] = plate
+    return old
+
+
 @pytest.mark.parametrize("folder", ["resonator", "libraries/mems_std"])
 def test_the_examples(folder):
     """Every example component the engine builds matches; the others say why not."""
     project = load(EXAMPLES / folder)
+    recorded_as = as_recorded(folder)
     for name in all_components(project):
-        assert assert_same(project, name) == "same", name
+        assert assert_same(project, name, recorded_as=recorded_as) == "same", name
 
 
 BUILT_IN_CASES = [  # (component, parameters, built: else both refuse)

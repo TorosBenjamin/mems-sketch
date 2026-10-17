@@ -57,7 +57,8 @@ add_library(mems_engine
     src/modifiers/array.cpp
     src/modifiers/polar_array.cpp
     src/modifiers/mirror.cpp
-    src/modifiers/corners.cpp)
+    src/modifiers/corners.cpp
+    src/modifiers/perforate.cpp)
 add_library(mems::engine ALIAS mems_engine)
 target_include_directories(mems_engine
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

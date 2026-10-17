@@ -153,6 +153,12 @@ ICONS = {
     'fill-opacity=".35" stroke="{blue}"/><rect x="6.5" y="11.5" width="3" height="3" rx=".5" '
     'fill="{blue}" fill-opacity=".35" stroke="{blue}"/><rect x="1.5" y="6.5" width="3" '
     'height="3" rx=".5" fill="{blue}" fill-opacity=".35" stroke="{blue}"/>',
+    "perforate": '<rect x="2" y="2" width="12" height="12" rx="1"/>'
+    + "".join(
+        f'<circle cx="{x}" cy="{y}" r="1.1" fill="{{blue}}" stroke="none"/>'
+        for x in (5, 8, 11)
+        for y in (5, 8, 11)
+    ),
     "parameter": '<path d="M8 2.2 13.8 8 8 13.8 2.2 8z" stroke="{purple}"/>'
     '<path d="M8 5.6 10.4 8 8 10.4 5.6 8z" fill="{purple}" stroke="none"/>',
     "up": '<path d="M4 10l4-4 4 4"/>',

@@ -74,7 +74,7 @@ void point_dependencies(const Json& node, std::set<std::string>& found) {
             if (!is_child_list(key, value)) own_strings(value, texts);
         for (const auto& text : texts)
             for (const auto& measure : measure_names(text)) found.insert(measure.node);
-        // Points the modifiers name outside expressions: a mirror's about, a corner's at.
+        // Nodes the modifiers name outside expressions: a mirror's about, a corner's at.
         for (const auto& modifier : node.value("modifiers", Json::array())) {
             if (modifier.contains("about") && modifier["about"].is_string()) {
                 const std::string about = modifier["about"].get<std::string>();
@@ -83,6 +83,8 @@ void point_dependencies(const Json& node, std::set<std::string>& found) {
             for (const auto& corner : modifier.value("corners", Json::array()))
                 if (corner.contains("at") && corner["at"].is_string())
                     found.insert(corner["at"].get<std::string>().substr(0, corner["at"].get<std::string>().find('.')));
+            for (const auto& name : modifier.value("keep_out", Json::array()))  // a perforation's
+                if (name.is_string()) found.insert(name.get<std::string>());
         }
     }
     for (const auto& [key, value] : node.items())

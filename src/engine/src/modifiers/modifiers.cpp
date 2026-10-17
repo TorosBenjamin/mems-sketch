@@ -12,6 +12,7 @@ ApplyModifier find_modifier(std::string_view kind) {
         {"polar_array", apply_polar_array},
         {"mirror", apply_mirror},
         {"corners", apply_corners},
+        {"perforate", apply_perforate},
     };
     const auto found = modifiers.find(kind);
     return found == modifiers.end() ? nullptr : found->second;

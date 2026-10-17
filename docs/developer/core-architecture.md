@@ -144,8 +144,7 @@ class Region {
   static Region path(const Wire& centreline, const Width& width, PathEnds ends);
   static Region polygon(const Wire& outline);  // lines, arcs and splines: the one constructor
   static Region text(std::string_view text, const Font& font, const TextStyle& style);
-  static Region perforate(const Region& area, const Region& hole, const Grid& grid,
-                          double margin, const Region& keep_out);
+  static Region rounded_rect(double x0, double y0, double x1, double y1, double r);  // a circle or stadium when fully rounded
 
   Region operator|(const Region&) const;  // union
   Region operator-(const Region&) const;  // subtract
@@ -159,6 +158,10 @@ class Region {
   Properties properties() const;        // area, perimeter, centroid, second moments
   std::vector<Point> points(PointKind) const;  // arc centres, edge midpoints, ...
 };
+
+// For perforations (mgeom/fit.hpp): which sites a shape, moved there, lies
+// wholly inside an area, against an edge index of the area's outline.
+std::vector<bool> fits_inside(const Region& area, const Region& shape, std::span<const Point> sites);
 
 // A centreline or outline: straight, arc and spline segments.
 class Wire {
@@ -455,7 +458,7 @@ src/
       model/              the project as read from JSON
       eval/               node graph, fingerprints, cache, alignment order
       shapes/             one file per shape kind, as in core/shapes/kinds/
-      modifiers/          array, polar_array, mirror, corners
+      modifiers/          array, polar_array, mirror, corners, perforate
     bindings/             nanobind module mems_sketch._core
     tests/                C++ unit tests of the engine
 ```

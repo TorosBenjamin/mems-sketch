@@ -271,10 +271,14 @@ measurements and checks: see its design, [The Sketch language](language.md).
     imported layouts, so the same project gives the same text on every
     machine (QP-5). System fonts are not used unless copied into the
     project.
-- **SHP-14** (Should, new; [#83](https://github.com/TorosBenjamin/mems-sketch/issues/83)) **Perforation:** fill a region with holes (any
-  shape) on a square or hexagonal grid, keeping a margin from the region's
-  edges and from keep-out shapes (anchors, other layers mapped in). The holes
-  follow when the region changes. For release holes.
+- **SHP-14** (Should, exists; [#83](https://github.com/TorosBenjamin/mems-sketch/issues/83)) **Perforation:** fill a region with holes on a
+  square or hexagonal grid, keeping a margin from the region's edges and from
+  keep-out shapes (anchors, other layers mapped in). The holes follow when the
+  region changes. For release holes. It is the `perforate` modifier: any
+  closed shape, only whole holes, the grid centred on the shape (or through a
+  chosen hole centre); holes round, square, rounded squares or slots
+  (rectangles with a corner radius, a fully rounded one built as a circle or
+  stadium). A polar pattern for round membranes is not there yet.
 - **SHP-15** (Could, new; [#98](https://github.com/TorosBenjamin/mems-sketch/issues/98)) More factory shapes: **regular polygon** (n sides),
   **ellipse** (exact), **spiral** (Archimedean, with a width).
 

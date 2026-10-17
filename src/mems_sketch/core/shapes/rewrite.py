@@ -119,6 +119,8 @@ _NOT_EXPRESSIONS = frozenset(
         "to",
         "axis",
         "about",
+        "grid",
+        "keep_out",
     }
 )
 
@@ -137,17 +139,25 @@ def map_expressions(shapes: list[Shape], change: Callable[[str], str | None]) ->
                 value = {**value, "to": change(value["to"]) or value["to"]}
             if value.get("kind") == "mirror" and value.get("about"):
                 value = {**value, "about": _about(value["about"], change)}
+            if value.get("kind") == "perforate" and value.get("keep_out"):
+                value = {**value, "keep_out": [_named(n, change) for n in value["keep_out"]]}
             if key == "mapping":
                 return value
             return {k: visit(v, None if key == "params" else k) for k, v in value.items()}
         if isinstance(value, list | tuple):
-            return [visit(v) for v in value]
+            return [visit(v, key if key in _NOT_EXPRESSIONS else None) for v in value]
         if isinstance(value, str) and key not in _NOT_EXPRESSIONS:
             return rewrite(value, change)
         return value
 
     data = [visit(shape.model_dump(), None) for shape in shapes]
     return [SHAPE_ADAPTER.validate_python(item) for item in data]
+
+
+def _named(name: str, change: Callable[[str], str | None]) -> str:
+    """A shape's name (a perforation's keep-out) after ``change``."""
+    changed = change(f"{name}.center")
+    return changed.rpartition(".")[0] if changed else name
 
 
 def _about(about: str, change: Callable[[str], str | None]) -> str:

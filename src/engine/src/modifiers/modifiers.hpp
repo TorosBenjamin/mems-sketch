@@ -30,6 +30,8 @@ Result apply_polar_array(const Json& modifier, const Produce& produce, const Var
 Result apply_mirror(const Json& modifier, const Produce& produce, const Variables& variables, const ModifierContext& ctx);
 Result apply_corners(const Json& modifier, const Produce& produce, const Variables& variables,
                      const ModifierContext& ctx);
+Result apply_perforate(const Json& modifier, const Produce& produce, const Variables& variables,
+                       const ModifierContext& ctx);
 
 // -- shared by the modifiers --
 

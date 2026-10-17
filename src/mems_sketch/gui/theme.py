@@ -35,7 +35,7 @@ from PySide6.QtCore import QStandardPaths, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, scrollbars
 
 SYSTEM = "system"  # follow the desktop: the built-in light or dark theme
 BUILT_IN = Path(__file__).with_name("themes")
@@ -136,8 +136,9 @@ class IconColors(_Colors):
     purple: str
     x: str  # the x axis
     y: str  # the y axis
-    on_accent: str  # marks drawn on the coloured badges (error, info, ok)
-    on_yellow: str  # and on the yellow one (warning)
+    amber: str | None = None  # the warning sign, readable on the background; else yellow
+    on_accent: str | None = None  # no longer used: kept so older themes still load
+    on_yellow: str | None = None  # no longer used: kept so older themes still load
 
 
 class Metrics(BaseModel):
@@ -275,7 +276,7 @@ def _resolve_all(files: dict[str, tuple[_File, str]]) -> dict[str, Theme]:
         colors = {}
         for group, model in GROUPS.items():
             try:
-                colors[group] = model.model_validate(merged[group]).model_dump()
+                colors[group] = model.model_validate(merged[group]).model_dump(exclude_none=True)
             except ValidationError as e:
                 raise ThemeError(f"{group}: {_explain(e)}") from e
         done[tid] = Theme(tid, file.name, bool(dark), **colors, source=where)
@@ -502,10 +503,17 @@ QStatusBar QToolButton {{ padding: 2px 5px; }}
 QStatusBar QComboBox, QStatusBar QDoubleSpinBox {{ padding: 0 6px; }}
 QGraphicsView {{ border: none; }}
 
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
-QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
-QScrollBar::handle {{ background: {scroll}; border-radius: {radius_control}px; min-height: 24px; min-width: 24px;
-    margin: 2px; }}
+/* A scroll area's own bars take no room: thin bars float over the content instead
+   (scrollbars.py), drawn thinner until pointed at. */
+QAbstractScrollArea QScrollBar:vertical {{ width: 0; }}
+QAbstractScrollArea QScrollBar:horizontal {{ height: 0; }}
+QScrollBar:vertical, QScrollBar#overlay-scroll:vertical {{ background: transparent; width: 10px; margin: 0; }}
+QScrollBar:horizontal, QScrollBar#overlay-scroll:horizontal {{
+    background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle {{ background: {scroll}; border-radius: 3px; min-height: 24px; min-width: 24px; }}
+QScrollBar::handle:vertical {{ margin: 2px 2px 2px 3px; }}
+QScrollBar::handle:horizontal {{ margin: 3px 2px 2px 2px; }}
+QScrollBar[wide="true"]::handle {{ margin: 1px; border-radius: 4px; background: {muted}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
@@ -623,6 +631,7 @@ def apply(app: QApplication, name: str) -> str:
     if app.property("mems_sketch_theme") == theme and _applied.get(id(app)) is _current:
         return theme  # re-polishing every widget is slow; nothing would change
     app.setProperty("mems_sketch_theme", theme)
+    scrollbars.install(app)
     _applied[id(app)] = _current
     app.setStyle("Fusion")
     app.setPalette(palette(theme))

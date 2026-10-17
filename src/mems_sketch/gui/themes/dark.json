@@ -59,8 +59,7 @@
     "yellow": "#f2c55c",
     "purple": "#a571e6",
     "x": "#f0584f",
-    "on_accent": "#ffffff",
-    "on_yellow": "#222222",
+    "amber": "#f2c55c",
     "y": "#6cc36c"
   },
   "metrics": {

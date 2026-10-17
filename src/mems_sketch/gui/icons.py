@@ -249,14 +249,14 @@ ICONS = {
     "properties": '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>'
     '<path d="M5 6h2M5 10h2M9 6h2M9 10h2"/>',
     # -- messages ---------------------------------------------------------
-    "error": '<circle cx="8" cy="8" r="6.2" fill="{red}" stroke="none"/>'
-    '<path d="M8 4.6v4.2M8 11.1v.3" stroke="{on_accent}" stroke-width="1.6"/>',
-    "warning": '<path d="M8 1.8 14.6 13.8H1.4z" fill="{yellow}" stroke="none"/>'
-    '<path d="M8 6v4M8 11.7v.3" stroke="{on_yellow}" stroke-width="1.5"/>',
-    "info": '<circle cx="8" cy="8" r="6.2" fill="{blue}" stroke="none"/>'
-    '<path d="M8 7.2v4.4M8 4.7v.3" stroke="{on_accent}" stroke-width="1.6"/>',
-    "ok": '<circle cx="8" cy="8" r="6.2" fill="{green}" stroke="none"/>'
-    '<path d="M5 8.2l2 2 4-4.2" stroke="{on_accent}" stroke-width="1.6"/>',
+    "error": '<circle cx="8" cy="8" r="5.8" stroke="{red}" stroke-width="1.3"/>'
+    '<path d="M8 5v3.5M8 10.9v.01" stroke="{red}" stroke-width="1.4"/>',
+    "warning": '<path d="M8 2.4 14.2 13.2H1.8z" stroke="{amber}" stroke-width="1.3"/>'
+    '<path d="M8 6.4v3.1M8 11.2v.01" stroke="{amber}" stroke-width="1.4"/>',
+    "info": '<circle cx="8" cy="8" r="5.8" stroke="{blue}" stroke-width="1.3"/>'
+    '<path d="M8 7.4v3.6M8 5.1v.01" stroke="{blue}" stroke-width="1.4"/>',
+    "ok": '<circle cx="8" cy="8" r="5.8" stroke="{green}" stroke-width="1.3"/>'
+    '<path d="M5.6 8.1l1.7 1.7 3.2-3.4" stroke="{green}" stroke-width="1.4"/>',
 }
 
 _theme = "light"
@@ -315,7 +315,9 @@ def _theme_colors() -> dict[str, str]:
     if _colors is None:
         from mems_sketch.gui import theme  # it imports this module
 
-        _colors = theme.get(_theme).icons
+        colors = dict(theme.get(_theme).icons)
+        colors.setdefault("amber", colors["yellow"])
+        _colors = colors
     return _colors
 
 

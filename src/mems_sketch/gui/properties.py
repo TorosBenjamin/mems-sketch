@@ -123,6 +123,15 @@ MODIFIER_TIPS = {
     "canvas with the Corners tool (O)",
 }
 SELF_POINTS = ("self.center", "self.left", "self.right", "self.top", "self.bottom")
+# What modifier fields are offered of the node itself.
+SELF_MEASURES = (
+    "self.width",
+    "self.height",
+    *(f"{p}.{axis}" for p in SELF_POINTS for axis in "xy"),
+    "self.min.angle",
+    "self.min.width",
+    "self.min.height",
+)
 # Fields shown as one row of two: (first, second) -> row label, inside prefixes.
 PAIRS = {
     ("x0", "y0"): ("From", ("x", "y")),
@@ -161,6 +170,7 @@ class PropertyEditor(QScrollArea):
         self.hide_implementation = False  # a read-only component: show its interface
         self._editors: dict[str, typing.Callable[[], object]] = {}
         self._scope: dict[str, float] = {}
+        self._offered: tuple[str, ...] = ()  # names completed besides those of the scope
         self._show_placeholder("Select a shape to edit its properties.")
         # Leaving a text field applies it, as Enter does: an edit is never lost by
         # clicking elsewhere (another field, the canvas, another shape).
@@ -339,7 +349,9 @@ class PropertyEditor(QScrollArea):
     ) -> ValueEdit:
         """A field for a number or an expression (see :class:`ValueEdit`)."""
         parameters = [p.name for p in self.document.active_definition.parameters]
-        edit = ValueEdit(value, self._scope, parameters, prefix=prefix, optional=optional)
+        edit = ValueEdit(
+            value, self._scope, parameters, prefix=prefix, optional=optional, offered=self._offered
+        )
         if field.rpartition(":")[2] in COUNT_FIELDS:
             edit.integer, edit.minimum = True, 1
         edit.returnPressed.connect(self.apply)
@@ -661,7 +673,15 @@ class PropertyEditor(QScrollArea):
             widgets["about"] = self._about_editor(key + "about", modifier.about, path)
             form.addRow(labels.get("about", "About"), widgets["about"])
         skip = ("kind", "enabled", "about", "corners")
-        widgets |= self._add_fields(form, modifier, kind, key, skip=skip)
+        scope, self._offered = self._scope, SELF_MEASURES
+        try:
+            self._scope = {**scope, **self.document.modifiers.self_values(path, index)}
+        except Exception:  # noqa: BLE001, S110 - previews then show "?"
+            pass
+        try:
+            widgets |= self._add_fields(form, modifier, kind, key, skip=skip)
+        finally:
+            self._scope, self._offered = scope, ()
         if isinstance(modifier, CornersModifier):
             layout.addWidget(self._corners_editor(key, modifier, path, read_only))
         fields = {

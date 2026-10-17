@@ -23,7 +23,7 @@ from mems_sketch.core.shapes import (
     walk,
 )
 from mems_sketch.core.shapes.modifiers import total_copies
-from mems_sketch.core.user_component import ComponentDef
+from mems_sketch.core.user_component import ComponentDef, ParamDef
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
 from mems_sketch.storage.project_files import load_library
@@ -263,21 +263,11 @@ class ComponentEdits(Commands):
                 "enabled": transform.enabled,
                 "modifiers": transform.modifiers,
             }
-        definition_params = {p.name: p for p in self.session.active_definition.parameters}
-        used = _names_used(nodes) & definition_params.keys()
-        pending = list(used)
-        while pending:  # defaults may depend on further parameters
-            default = definition_params[pending.pop()].default
-            if isinstance(default, str):
-                for dep in names_in(default) & definition_params.keys():
-                    if dep not in used:
-                        used.add(dep)
-                        pending.append(dep)
         parameters = [  # passed in by the reference, so public in the new component
             p.model_copy(update={"internal": False})
-            for p in self.session.active_definition.parameters
-            if p.name in used
+            for p in parameters_used(self.session.active_definition, nodes)
         ]
+        used = {p.name for p in parameters}
         definition = ComponentDef(
             name=name, parameters=parameters, shapes=[n.model_copy(deep=True) for n in nodes]
         )
@@ -390,6 +380,22 @@ def _parameter_values(definition: ComponentDef, given: dict[str, Value]) -> dict
 
 def _as_expression(value: Value) -> str:
     return repr(float(value)) if isinstance(value, int | float) else str(value)
+
+
+def parameters_used(definition: ComponentDef, nodes: list[Shape]) -> list[ParamDef]:
+    """The parameters of ``definition`` that ``nodes`` use, with those their
+    defaults use in turn, in the definition's order."""
+    by_name = {p.name: p for p in definition.parameters}
+    used = _names_used(nodes) & by_name.keys()
+    pending = list(used)
+    while pending:  # defaults may depend on further parameters
+        default = by_name[pending.pop()].default
+        if isinstance(default, str):
+            for dep in names_in(default) & by_name.keys():
+                if dep not in used:
+                    used.add(dep)
+                    pending.append(dep)
+    return [p for p in definition.parameters if p.name in used]
 
 
 def _names_used(nodes: list[Shape]) -> set[str]:

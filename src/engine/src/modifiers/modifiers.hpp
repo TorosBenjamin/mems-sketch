@@ -36,8 +36,11 @@ Result apply_corners(const Json& modifier, const Produce& produce, const Variabl
 // A copy count: a non-negative integer (what: "array columns").
 int copy_count(const Context& ctx, const Json& modifier, const char* key, double fallback, const char* what);
 
-// The self.<point>.<axis> coordinates the modifier uses, measured on ``own``,
-// added to ``variables``.
+// The points and sizes of what a modifier is given: ``self``.
+Points self_points(const Result& own);
+
+// The self measures the modifier uses (self.left.x, self.width, self.min.angle),
+// measured on ``own``, added to ``variables``.
 Variables with_self(const Json& modifier, const Result& own, const Variables& variables,
                     const std::vector<std::string>& extra_names = {});
 

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.component import component_types
 from mems_sketch.core.shapes import NodePath, paths
 from mems_sketch.editing import EditSession
+from mems_sketch.editing.clipboard import is_shapes
 from mems_sketch.export.base import available_exporters, options_of, title_of
 from mems_sketch.gui import icons, motion, theme
 from mems_sketch.gui.actions import Actions, make_action
@@ -226,6 +227,12 @@ class MainWindow(QMainWindow):
             lambda p, e: self._run(lambda: self.document.nodes.set_enabled(p, e))
         )
         self.tree.itemDoubleClicked.connect(self._tree_double_clicked)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(
+            lambda at: self.show_menu(
+                self.actions_.shapes_menu(), self.tree.viewport().mapToGlobal(at)
+            )
+        )
         self.components.place_requested.connect(self.add_component)
         self.components.open_requested.connect(self.open_component)
         self.components.process_requested.connect(self.open_process)
@@ -1594,6 +1601,37 @@ class MainWindow(QMainWindow):
         if self.selection:
             paths, self.selection = self.selection, []
             self._run(lambda: self.document.nodes.remove(paths))
+
+    def copy(self) -> None:
+        """The selected shapes onto the clipboard, as text (other windows can paste them)."""
+        if self.selection:
+            ok, text = self._run(lambda: self.document.clipboard.copy(list(self.selection)))
+            if ok:
+                QApplication.clipboard().setText(text)
+                count = len(self.selection)
+                self.notify(f"Copied {count} shape{'s' if count != 1 else ''}", seconds=2)
+
+    def cut(self) -> None:
+        if self.selection:
+            paths, self.selection = list(self.selection), []
+            ok, text = self._run(lambda: self.document.clipboard.cut(paths))
+            if ok:
+                QApplication.clipboard().setText(text)
+
+    def can_paste(self) -> bool:
+        return is_shapes(QApplication.clipboard().text())
+
+    def paste(self) -> None:
+        """The shapes on the clipboard into the component in the current tab, selected."""
+        text = QApplication.clipboard().text()
+        if not is_shapes(text):
+            self.notify("The clipboard holds no shapes to paste", seconds=3)
+            return
+        ok, pasted = self._run(lambda: self.document.clipboard.paste(text))
+        if ok and pasted:
+            self._select_quietly(list(pasted))
+            for note in pasted.notes:
+                self.notify(note, "warning")
 
     # -- files -------------------------------------------------------------
 

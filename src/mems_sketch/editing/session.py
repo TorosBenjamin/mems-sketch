@@ -39,6 +39,7 @@ from mems_sketch.core.shapes import (
     walk,
 )
 from mems_sketch.core.user_component import ComponentDef, ParamDef, name_shapes
+from mems_sketch.editing.clipboard import ClipboardEdits
 from mems_sketch.editing.components import ComponentEdits, library_name
 from mems_sketch.editing.corners import CornerEdits
 from mems_sketch.editing.events import Event
@@ -86,6 +87,7 @@ class EditSession:
         self.results = Results(self)  # connects first: its cache clears before views refresh
         self.components = ComponentEdits(self)
         self.nodes = NodeEdits(self)
+        self.clipboard = ClipboardEdits(self)
         self.modifiers = ModifierEdits(self)
         self.corners = CornerEdits(self)
         self.imports = ImportEdits(self)

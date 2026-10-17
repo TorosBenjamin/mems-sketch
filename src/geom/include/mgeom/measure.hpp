@@ -2,6 +2,7 @@
 // Measurements on the exact geometry (requirements MEA-2 to MEA-4): for the
 // Measure tool, the information panel and measurements in expressions.
 
+#include <span>
 #include <vector>
 
 #include "mgeom/region.hpp"
@@ -69,5 +70,29 @@ struct Edge {
 };
 
 std::vector<Edge> edges(const Region& region);
+
+// The convex hull of points, counter-clockwise, without collinear points.
+std::vector<Point> convex_hull(std::span<const Point> points);
+
+// The smallest-area rectangle around points, at any angle. ``box`` is in the
+// frame turned by ``angle_deg`` (in (-45, 45]): along its axes, u = x cos a +
+// y sin a and v = -x sin a + y cos a. Rectangles whose areas differ by no
+// more than the slack that ``tolerance`` (how far the points may be from the
+// exact outline, µm) allows are ties, and the one at the smallest angle from
+// the x axis wins: a circle, a square or a level rectangle keeps its level
+// box. Empty points give an empty box.
+struct MinimalBox {
+    double angle_deg = 0.0;
+    Box box;
+
+    // A point (u, v) of the turned frame in x, y.
+    Point to_xy(Point uv) const;
+};
+
+MinimalBox minimal_box(std::span<const Point> points, double tolerance = 0.0);
+
+// The points a region's minimal box is taken of: the outer boundaries, curves
+// split within chord (µm).
+std::vector<Point> outline_points(const Region& region, double chord);
 
 }  // namespace mgeom

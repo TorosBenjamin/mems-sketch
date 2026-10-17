@@ -408,6 +408,18 @@ NB_MODULE(_geom, m) {
         .def_ro("radius", &Edge::radius);
     m.def("edges", &edges, "region"_a, "The boundary's edges, in the order it runs.");
 
+    m.def(
+        "minimal_box",
+        [](PointsIn points, double tolerance) {
+            std::vector<Point> given(points.shape(0));
+            for (size_t k = 0; k < given.size(); ++k) given[k] = {points(k, 0), points(k, 1)};
+            const MinimalBox m = minimal_box(given, tolerance);
+            return std::make_pair(m.angle_deg, m.box);
+        },
+        "points"_a, "tolerance"_a = 0.0,
+        "The smallest-area rectangle around (n, 2) points: (angle_deg in (-45, 45], its box "
+        "in the frame turned by that angle). Near ties go to the smallest angle.");
+
     // Snapping to an output's grid.
     nb::enum_<SnapChange>(m, "SnapChange", "A change snapping made to the shape of the geometry.")
         .value("vanished", SnapChange::vanished, "A piece smaller than the grid disappeared.")

@@ -53,6 +53,18 @@ An aligned shape keeps its alignment and changes its offset (Alt-drag removes
 the alignment instead). Primitives have no rotation of their own, so rotating
 one wraps it in a transform.
 
+**Cut, copy and paste** (Ctrl+X, Ctrl+C, Ctrl+V; in the Edit menu and the
+right-click menus of the canvas and the Shapes tree) work on the selected
+shapes. Paste puts the copies into the component in the current tab, where
+the originals were, and selects them; names that are taken get fresh ones, and
+pasted shapes that refer to each other's points still do. Parameters the
+shapes use come with them when the component lacks them (with the same
+defaults); where it has one by that name, the pasted shapes use it, and a
+different default is pointed out. A component that cannot be placed there
+(another component's private one) is refused. The clipboard holds the shapes
+as text, so they can also be pasted into another window. Cut and paste are
+one undo step each.
+
 ## Aligning parts
 
 ![Align: the candidates of the selected spring](../images/align-tool.png)

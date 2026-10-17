@@ -89,6 +89,9 @@ class Actions:
         self.undo = act("Undo", w.undo, QKeySequence.StandardKey.Undo, edit, "undo")
         self.redo = act("Redo", w.redo, QKeySequence.StandardKey.Redo, edit, "redo")
         edit.addSeparator()
+        self.cut = act("Cut", w.cut, QKeySequence.StandardKey.Cut, edit, "cut")
+        self.copy = act("Copy", w.copy, QKeySequence.StandardKey.Copy, edit, "duplicate")
+        self.paste = act("Paste", w.paste, QKeySequence.StandardKey.Paste, edit, "paste")
         self.duplicate = act("Duplicate", w.duplicate, "Ctrl+D", edit, "duplicate")
         self.delete = act("Delete", w.delete, QKeySequence.StandardKey.Delete, edit, "delete")
         self.unwrap = act("Unwrap operation", w.unwrap, "Ctrl+Shift+U", edit)
@@ -284,8 +287,34 @@ class Actions:
             item(orient, source, enabled=some)
         orient.setEnabled(some and editable)
         menu.addSeparator()
+        self._edit_items(item, menu, some, one)
+        return menu
+
+    def _edit_items(self, item, menu: QMenu, some: bool, one: bool) -> None:
+        """Cut, copy, paste, duplicate and delete, for a right-click menu."""
+        item(menu, self.cut, enabled=some)
+        copy = item(menu, self.copy, enabled=some)
+        copy.setEnabled(some)  # copying changes nothing: also in a read-only component
+        item(menu, self.paste, enabled=self.window.can_paste())
         item(menu, self.duplicate, enabled=one)
         item(menu, self.delete, enabled=some)
+
+    def shapes_menu(self) -> QMenu:
+        """The Shapes tree's right-click menu, for the current selection."""
+        w = self.window
+        editable = not w.document.read_only
+        menu = QMenu(w)
+
+        def item(target: QMenu, source: QAction, enabled: bool = True) -> QAction:
+            action = make_action(menu, source.text(), source.trigger, menu=target)
+            action.setIcon(source.icon())
+            action.setShortcut(source.shortcut())
+            action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)  # shown, not active
+            action.setEnabled(enabled and editable)
+            return action
+
+        selection = list(w.selection)
+        self._edit_items(item, menu, bool(selection), len(selection) == 1)
         return menu
 
     def tab_menu(self, view) -> QMenu:

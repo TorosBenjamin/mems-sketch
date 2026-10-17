@@ -193,6 +193,10 @@ ICONS = {
     '6.6v4.6"/>',
     "duplicate": '<rect x="5.2" y="5.2" width="8.4" height="8.4" rx="1"/><path d="M10.8 5.2V2.4H2.4'
     'v8.4h2.8"/>',
+    "cut": '<circle cx="4.4" cy="11.8" r="2"/><circle cx="11.6" cy="11.8" r="2"/><path d="M5.8 10.4'
+    'L11.4 2.4M10.2 10.4L4.6 2.4"/>',
+    "paste": '<rect x="3" y="3" width="10" height="11" rx="1"/><path d="M6 3V1.8h4V3M5.6 7h4.8M5.6 '
+    '9.6h4.8"/>',
     "rotate_left": _arc_arrow(-80, 150) + '<text x="8" y="10" font-size="5" fill="{fg}" '
     'stroke="none" text-anchor="middle" font-family="sans-serif">90</text>',
     "rotate_right": _arc_arrow(260, 30) + '<text x="8" y="10" font-size="5" fill="{fg}" '

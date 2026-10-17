@@ -23,6 +23,12 @@ On the right: split view, **Find Action** (Ctrl+Shift+A: type part of a
 command's name, Enter runs it; Shift twice searches components, shapes and
 parameters too) and settings.
 
+The toolbar is also the window's title bar: minimize, maximize and close are
+at its right end. Drag an empty part of it to move the window, double-click it
+to maximize or restore, and drag the window's edges or corners to resize it.
+**Settings → Appearance → Use the toolbar as the title bar** switched off
+brings the system's title bar back.
+
 ## Tool windows
 
 Panels open and close from the stripes on the window's edges:

@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
@@ -94,11 +95,17 @@ class Toast(QWidget):
         self.restart()
 
     def restart(self) -> None:
-        if self._seconds > 0 and not self.underMouse():
+        if self._seconds > 0 and not self._pointed_at():
             self._timer.start(int(self._seconds * 1000))
 
+    def _pointed_at(self) -> bool:
+        """Whether the pointer is on it now (where it is, not Qt's last enter/leave,
+        which a window shown or moved under a still pointer leaves out of date)."""
+        return self.isVisible() and self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+
     def enterEvent(self, event) -> None:
-        self._timer.stop()
+        if self._pointed_at():
+            self._timer.stop()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
@@ -170,6 +177,7 @@ class Toasts(QWidget):
         self.raise_()
         toast.show_for()
         self.place()
+        toast.restart()  # where it is now: pointing at it keeps it
         return toast
 
     def toasts(self) -> list[Toast]:

@@ -231,6 +231,9 @@ ICONS = {
     "ruler": '<path d="M1.9 10.6 10.6 1.9l3.5 3.5-8.7 8.7z"/>',
     # -- tool windows -----------------------------------------------------
     "minimize": '<path d="M4 8.5h8"/>',
+    "maximize": '<rect x="3.5" y="3.5" width="9" height="9" rx=".6"/>',
+    "restore": '<rect x="3" y="5.5" width="7.5" height="7.5" rx=".6"/><path d="M5.5 5.5V3h7.5v7.5'
+    'h-2.5"/>',
     "help": '<circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1'
     'v.5M8 11.4v.3" stroke-width="1.4"/>',
     "menu": '<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',

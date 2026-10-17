@@ -117,6 +117,16 @@ SETTINGS: tuple[Setting, ...] = (
         choices=canvas_themes,
         keywords=("dark", "white", "background"),
     ),
+    Setting(
+        "appearance/custom_title_bar",
+        True,
+        "Use the toolbar as the title bar",
+        "Appearance",
+        "Window",
+        "The toolbar holds minimize, maximize and close instead of the system's title bar: "
+        "drag an empty part of it to move the window, double-click it to maximize.",
+        keywords=("title bar", "frame", "window", "close", "minimize", "maximize"),
+    ),
     # -- Canvas -------------------------------------------------------------
     Setting(
         "appearance/reduce_motion",

@@ -65,6 +65,7 @@ from mems_sketch.gui.search import (
 )
 from mems_sketch.gui.settings import PreferencesDialog, Settings, open_folder
 from mems_sketch.gui.statusbar import ToolStatus
+from mems_sketch.gui.title_bar import TitleBar
 from mems_sketch.gui.toast import Toast, Toasts
 from mems_sketch.gui.toolbar import build_toolbar
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool
@@ -412,6 +413,8 @@ class MainWindow(QMainWindow):
         """Apply a changed setting at once."""
         if key == "appearance/reduce_motion":
             motion.set_enabled(not self.settings.get(key))
+        if key == "appearance/custom_title_bar":
+            self.title_bar.set_enabled(self.settings.get(key))
         if key == "appearance/ui_theme":
             self.ui_theme = self._apply_ui_theme()
             self.refresh()  # panels and tabs pick up the new icon colours
@@ -852,7 +855,10 @@ class MainWindow(QMainWindow):
         self.tool_actions, self.operation_actions = actions.tools, actions.operations
         self.setting_actions = actions.settings_toggles
         self.primitive_menu, self.component_menu = actions.add, actions.place
-        self.addToolBar(build_toolbar(self))
+        bar = build_toolbar(self)
+        self.addToolBar(bar)
+        self.title_bar = TitleBar(self, bar)
+        self.title_bar.set_enabled(self.settings.get("appearance/custom_title_bar"))
 
     def _show_tool_options(self) -> None:
         self.tool_status.show_for(self.tool)

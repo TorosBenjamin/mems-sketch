@@ -270,8 +270,8 @@ TEST_CASE("holes cut without a boolean give the same result as with one") {
 TEST_CASE("geometry work stops when it is asked to") {
     const Region plate = Region::rect(0, 0, 100, 100);
     std::vector<Region> holes;
-    for (int i = 0; i < 40; ++i) {
-        for (int j = 0; j < 40; ++j) holes.push_back(Region::circle({1.25 + 2.5 * i, 1.25 + 2.5 * j}, 1));
+    for (int i = 0; i < 80; ++i) {
+        for (int j = 0; j < 80; ++j) holes.push_back(Region::circle({0.625 + 1.25 * i, 0.625 + 1.25 * j}, 0.5));
     }
 
     SUBCASE("asked before: it does not start") {
@@ -281,17 +281,25 @@ TEST_CASE("geometry work stops when it is asked to") {
     }
 
     SUBCASE("asked while a long boolean runs: it stops inside it") {
+        // Asked a tenth of the way through, by how long the same cut takes here
+        // (a fixed delay is too long on a fast machine: the cut would be done).
+        const Region cutter = Region::unite(holes);
+        auto started = std::chrono::steady_clock::now();
+        CHECK_FALSE((plate - cutter).empty());
+        const auto whole = std::chrono::steady_clock::now() - started;
         std::atomic<bool> stop{false};
-        const auto started = std::chrono::steady_clock::now();
+        started = std::chrono::steady_clock::now();
         std::thread asker([&] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::this_thread::sleep_for(whole / 10);
             stop = true;
         });
         mgeom::Interruptible interruptible(&stop);
-        CHECK_THROWS_AS(plate - Region::unite(holes), mgeom::Interrupted);
+        CHECK_THROWS_AS(plate - cutter, mgeom::Interrupted);
         asker.join();
         const auto took = std::chrono::steady_clock::now() - started;
-        CHECK(took < std::chrono::seconds(2));
+        MESSAGE("the whole cut: " << std::chrono::duration<double, std::milli>(whole).count() << " ms, stopped after "
+                                  << std::chrono::duration<double, std::milli>(took).count() << " ms");
+        CHECK(took < whole + std::chrono::seconds(1));  // it threw: it stopped before the end
     }
 
     SUBCASE("not asked, or outside the scope: it goes on") {

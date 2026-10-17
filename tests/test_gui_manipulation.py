@@ -92,7 +92,7 @@ def test_a_placed_component_is_described_by_the_component_it_places(window):
 
 def test_the_move_cursor_shows_over_the_selection(window, qtbot):
     canvas = window.canvas
-    window.tree.select_paths([sorted(window.document.results.inspection())[0]])
+    window.tree.select_paths([min(window.document.results.inspection())])
     hover(canvas, 50, 10)
     qtbot.waitUntil(lambda: canvas.cursor().shape() == Qt.CursorShape.SizeAllCursor)
     hover(canvas, 50, 60)  # beside it (mouse moves are handled at the next frame)

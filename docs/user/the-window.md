@@ -23,6 +23,23 @@ On the right: split view, **Find Action** (Ctrl+Shift+A: type part of a
 command's name, Enter runs it; Shift twice searches components, shapes and
 parameters too) and settings.
 
+**Right-click on the canvas** offers what fits where you clicked. On empty
+space (which clears the selection) it is adding there: **Add**, **Place
+component**, **Paste**, **Select all** (Ctrl+A) and **Fit**. On a shape it
+is what can be done to the selection: the operations, **Rotate & mirror**,
+**Zoom to selection** (Shift+F), **Rename…** (F2, for one shape: its name in
+Properties, ready to type over) and cut, copy, paste, duplicate, delete.
+
+In every menu a command's shortcut is in a lighter colour at the right, and
+an option that can be switched on or off (**View → Dark canvas**) has a check
+box.
+
+Names from somewhere else are written with where they are from, as you type
+them: `std.perforated_plate` (a library's component), `base.top` (a shape's
+point), `device.anchor` (a level's layer). The part before the dot is in a
+lighter colour so the name stands out, in menus such as **Place**, in the
+process list and in the layer stack's levels.
+
 The toolbar is also the window's title bar: minimize, maximize and close are
 at its right end. Drag an empty part of it to move the window, double-click it
 to maximize or restore, and drag the window's edges or corners to resize it.

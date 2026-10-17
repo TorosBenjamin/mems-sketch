@@ -428,6 +428,20 @@ def _convert(value: Any, setting: Setting) -> Any:
     return value
 
 
+class TrimmedSpinBox(QDoubleSpinBox):
+    """A number field that shows 2 µm, not 2.000 µm: its decimals are the most it
+    keeps, not how many it always shows."""
+
+    def textFromValue(self, value: float) -> str:
+        text = self.locale().toString(value, "f", self.decimals())
+        if not self.isGroupSeparatorShown():
+            text = text.replace(self.locale().groupSeparator(), "")
+        point = self.locale().decimalPoint()
+        if point in text:
+            text = text.rstrip("0").removesuffix(point)
+        return text
+
+
 class PreferencesDialog(QDialog):
     """Settings by page, with a search field, like an IDE's settings dialog.
 
@@ -596,7 +610,7 @@ class PreferencesDialog(QDialog):
             editor.setValue(value)
             editor.valueChanged.connect(lambda v, k=key: self.settings.set(k, v))
         else:
-            editor = QDoubleSpinBox()
+            editor = TrimmedSpinBox()
             editor.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
             editor.setDecimals(setting.decimals)
             editor.setRange(setting.minimum, setting.maximum)

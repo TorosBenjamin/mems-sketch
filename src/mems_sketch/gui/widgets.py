@@ -13,6 +13,9 @@
   card with its title, actions and "?", at a readable width.
 - :func:`placeholder`: a muted message in a list or table while it is empty.
 - :class:`MenuTidier`: no menu starts or ends with a separator, or shows two in a row.
+- Qualified names (``std.perforated_plate``, ``base.top``): :func:`qualified_html`,
+  :class:`QualifiedDelegate` and :class:`QualifiedCombo` show where a name is from
+  in the muted colour and the name itself in the text colour.
 - Dialogs: :class:`SideList` (the column of pages in Settings and New Project),
   :func:`form` (labelled fields) and :func:`with_help` (a field and its "?").
 
@@ -21,12 +24,15 @@ Sizes come from the theme's metrics (:func:`mems_sketch.gui.theme.metric`).
 
 from __future__ import annotations
 
+import html
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QModelIndex, QObject, QSize, Qt
-from PySide6.QtGui import QPainter
+from PySide6.QtCore import QEvent, QItemSelectionModel, QModelIndex, QObject, QRect, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
+    QComboBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -41,8 +47,11 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QSplitterHandle,
+    QStyle,
     QStyledItemDelegate,
+    QStyleOptionComboBox,
     QStyleOptionViewItem,
+    QStylePainter,
     QTableWidget,
     QToolButton,
     QToolTip,
@@ -477,3 +486,168 @@ class MenuTidier(QObject):
         if event.type() == QEvent.Type.Show and isinstance(watched, QMenu):
             tidy_separators(watched)
         return False
+
+
+# -- qualified names ------------------------------------------------------------
+# A name from somewhere else is written with where it is from: ``std.perforated_plate``
+# (a library's component), ``base.top`` (a shape's point), ``device.anchor`` (a
+# level's layer). That is how it is typed, so the dot stays; the part before it is
+# muted, so the eye goes to the name.
+
+HEADER_ROLE = Qt.ItemDataRole.UserRole + 40  # a list's row that heads a group
+
+
+def split_qualified(name: str) -> tuple[str, str]:
+    """``std.perforated_plate`` → ``("std.", "perforated_plate")``; ``("", name)``
+    for a name from here."""
+    head, dot, last = name.rpartition(".")
+    if not (head and last) or " " in head:
+        return "", name
+    return head + dot, last
+
+
+def qualified_html(name: str) -> str:
+    """A qualified name as rich text: where it is from muted, the name plain."""
+    prefix, last = split_qualified(name)
+    if not prefix:
+        return html.escape(name)
+    muted = theme.color("muted").name()
+    return f'<span style="color:{muted}">{html.escape(prefix)}</span>{html.escape(last)}'
+
+
+def draw_qualified(painter: QPainter, rect: QRect, text: str, color: QColor, muted: QColor) -> None:
+    """Draw ``text`` in ``rect`` (left, centred vertically) with its qualifier in
+    ``muted``; when it is too long the qualifier is cut first, then the name."""
+    prefix, last = split_qualified(text)
+    metrics = painter.fontMetrics()
+    flags = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    name_width = metrics.horizontalAdvance(last)
+    room = rect.width() - name_width
+    if prefix and room > metrics.horizontalAdvance("…."):
+        shown = metrics.elidedText(prefix, Qt.TextElideMode.ElideLeft, room)
+        painter.save()
+        painter.setPen(muted)
+        painter.drawText(rect, flags, shown)
+        painter.restore()
+        rect = rect.adjusted(metrics.horizontalAdvance(shown), 0, 0, 0)
+    painter.setPen(color)
+    painter.drawText(
+        rect, flags, metrics.elidedText(last, Qt.TextElideMode.ElideRight, rect.width())
+    )
+
+
+class QualifiedDelegate(QStyledItemDelegate):
+    """Draws a list's qualified names with their qualifier muted. ``short`` shows
+    only the name, for a list whose rows are grouped under headings that say
+    where they are from (rows with ``HEADER_ROLE`` set)."""
+
+    def __init__(self, parent: QObject | None = None, short: bool = False) -> None:
+        super().__init__(parent)
+        self.short = short
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
+        size = super().sizeHint(option, index)
+        if _is_separator(index):
+            return QSize(size.width(), 9)
+        return QSize(size.width(), max(size.height(), theme.metric("row_height")))
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        if _is_separator(index):
+            y = option.rect.center().y()
+            painter.save()
+            painter.setPen(theme.color("border_strong"))
+            painter.drawLine(option.rect.left() + 6, y, option.rect.right() - 6, y)
+            painter.restore()
+            return
+        item = QStyleOptionViewItem(option)
+        self.initStyleOption(item, index)
+        text, item.text = item.text, ""
+        widget = item.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        header = bool(index.data(HEADER_ROLE))
+        if header:
+            item.state &= ~QStyle.StateFlag.State_Selected
+            item.state &= ~QStyle.StateFlag.State_MouseOver
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, item, painter, widget)
+        rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, item, widget)
+        margin = style.pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, widget) + 1
+        rect = rect.adjusted(margin, 0, -margin, 0)
+        enabled = bool(item.state & QStyle.StateFlag.State_Enabled)
+        group = QPalette.ColorGroup.Normal if enabled else QPalette.ColorGroup.Disabled
+        color = item.palette.color(group, QPalette.ColorRole.Text)
+        muted = theme.color("muted")
+        painter.save()
+        painter.setFont(item.font)
+        if header:
+            painter.setPen(muted)
+            painter.drawText(
+                rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), text
+            )
+        elif self.short and split_qualified(text)[0]:
+            painter.setPen(color)
+            indented = rect.adjusted(theme.metric("space_m"), 0, 0, 0)
+            last = split_qualified(text)[1]
+            elided = painter.fontMetrics().elidedText(
+                last, Qt.TextElideMode.ElideRight, indented.width()
+            )
+            painter.drawText(
+                indented, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), elided
+            )
+        else:
+            draw_qualified(painter, rect, text, color, muted)
+        painter.restore()
+
+
+def _is_separator(index: QModelIndex) -> bool:
+    return index.data(Qt.ItemDataRole.AccessibleDescriptionRole) == "separator"
+
+
+class QualifiedCombo(QComboBox):
+    """A list to choose from whose choices are qualified names: the chosen one and
+    the open list show the qualifier muted. ``short`` lists only the names, under
+    a heading per qualifier (see :meth:`add_grouped`)."""
+
+    def __init__(self, parent: QWidget | None = None, short: bool = False) -> None:
+        super().__init__(parent)
+        self.setItemDelegate(QualifiedDelegate(self, short))
+
+    def add_grouped(self, names: Sequence[str]) -> None:
+        """Add ``names``, those with a qualifier under a heading per qualifier (a
+        row that can't be chosen); names without one come first."""
+        plain = [n for n in names if not split_qualified(n)[0]]
+        self.addItems(plain)
+        heading = None
+        for name in names:
+            prefix = split_qualified(name)[0]
+            if not prefix:
+                continue
+            if prefix != heading:
+                heading = prefix
+                self.addItem(prefix[:-1])
+                row = self.count() - 1
+                self.setItemData(row, True, HEADER_ROLE)
+                model_item = self.model().item(row)  # a QStandardItemModel's
+                model_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.addItem(name)
+        if self.itemData(self.currentIndex(), HEADER_ROLE):
+            self.setCurrentIndex(-1)  # a heading is never the choice
+
+    def paintEvent(self, event) -> None:
+        text = self.currentText()
+        if self.isEditable() or self.currentIndex() < 0 or not split_qualified(text)[0]:
+            super().paintEvent(event)
+            return
+        painter = QStylePainter(self)
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        option.currentText = ""
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
+        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)
+        rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxEditField, self
+        )
+        if not option.currentIcon.isNull():
+            rect.adjust(option.iconSize.width() + 4, 0, 0, 0)
+        group = QPalette.ColorGroup.Normal if self.isEnabled() else QPalette.ColorGroup.Disabled
+        color = self.palette().color(group, QPalette.ColorRole.ButtonText)
+        draw_qualified(painter, rect.adjusted(1, 0, 0, 0), text, color, theme.color("muted"))

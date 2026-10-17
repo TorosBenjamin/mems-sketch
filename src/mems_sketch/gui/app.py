@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -1265,6 +1266,25 @@ class MainWindow(QMainWindow):
             return None, None
         return point, target
 
+    def select_all(self) -> None:
+        """Select every shape shown in the component (Edit › Select all)."""
+        self._select_quietly([p for p, _ in getattr(self.view, "node_regions", ())])
+
+    def zoom_to_selection(self) -> None:
+        """Glide to show the selected shapes as large as they fit (View › Zoom to selection)."""
+        regions = dict(getattr(self.view, "node_regions", ()))
+        self.canvas.frame(*(regions.get(p) for p in self.selection))
+
+    def rename_selection(self) -> None:
+        """Start renaming the selected shape: its name in Properties, ready to type over."""
+        if len(self.selection) != 1:
+            return
+        self.tool_windows.open("properties")
+        name = self.properties.findChild(QLineEdit, "title-edit")
+        if name is not None and not name.isReadOnly():
+            name.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            name.selectAll()
+
     def _select_quietly(self, paths: list[NodePath]) -> None:
         """Select what was clicked on the canvas: it is where the user looks, so it
         does not glow as a shape picked in a panel does."""
@@ -1476,11 +1496,14 @@ class MainWindow(QMainWindow):
         self.canvas.zoom_to(QRectF(cx - size * 2, cy - size * 2, size * 4, size * 4), animated=True)
 
     def _context_menu(self, view: ComponentView, x: float, y: float, at: QPoint) -> None:
-        """The editor's right-click menu; a shape under the cursor is selected first."""
+        """The editor's right-click menu; a shape under the cursor is selected first,
+        and empty space clears the selection (its menu is for adding there)."""
         if view is not self.area.current:
             self.area.set_current(view)
         hit = self._hit(view, x, y)
-        if hit is not None and hit not in self.selection:
+        if hit is None and self.selection:
+            self._select_quietly([])
+        elif hit is not None and hit not in self.selection:
             self._select_quietly([hit])
         self.show_menu(self.actions_.context_menu(x, y), at)
 

@@ -370,6 +370,8 @@ QWidget#island {{ background: {island}; border-radius: {radius_island}px; }}
 
 QToolBar {{ background: {frame}; border: none; spacing: 2px; padding: 3px 6px; }}
 QToolBar::separator {{ background: {border_strong}; width: 1px; height: 1px; margin: 4px 5px; }}
+QToolButton#window-button, QToolButton#window-close {{ padding: 4px 10px; margin: 0; border-radius: 0; }}
+QToolButton#window-close:hover {{ background: #c42b1c; }}
 QToolButton {{
     background: transparent; border: none; border-radius: {radius_control}px; padding: 4px;
 }}

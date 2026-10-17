@@ -21,6 +21,7 @@ from mems_sketch.core.shapes import (
     translated,
     walk,
 )
+from mems_sketch.core.shapes.modifiers import CornersModifier
 from mems_sketch.core.transform import Transform
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
@@ -121,7 +122,7 @@ class MoveEdits(Commands):
             if detach and node.align is not None:
                 ddx, ddy = ddx + record[path].shift.dx, ddy + record[path].shift.dy
                 node = node.model_copy(update={"align": None})
-            moves[path] = translated(node, ddx, ddy, others)
+            moves[path] = _shift_corners(translated(node, ddx, ddy, others), ddx, ddy)
         label = ", ".join(node_at(shapes, p).name or node_at(shapes, p).kind for p in moves)
 
         def change(project: Project) -> None:
@@ -143,6 +144,38 @@ class MoveEdits(Commands):
         else:
             flip = Transform.reflecting(0, (cx, cy))
         self.transform(paths, flip, "Mirror " + ("left-right" if left_right else "up-down"))
+
+    def _carry_corners(self, path: NodePath, node: Shape, change: Transform) -> Shape:
+        """``node`` with its rounded corners moved by ``change`` along with its outline.
+
+        A placed node's corners are recorded in the frame around it, so turning
+        or mirroring it would leave them where its corners were. They become
+        positions (a recorded point of the node would now name another place);
+        one that cannot be worked out stays as it is.
+        """
+        found = next(
+            ((i, m) for i, m in enumerate(node.modifiers) if isinstance(m, CornersModifier)), None
+        )
+        if found is None or change.is_identity:
+            return node
+        index, modifier = found
+        corners = self.session.corners
+        _, own, _ = corners._before(path)
+        variables = corners._variables(path, own)
+        carried = []
+        for corner in modifier.corners:
+            try:
+                x, y = CornersModifier(corners=[corner]).positions(variables)[0]
+            except ValueError:
+                carried.append(corner)
+                continue
+            nx, ny = change.apply(x, y)
+            carried.append(
+                corner.model_copy(update={"at": None, "x": _round_um(nx), "y": _round_um(ny)})
+            )
+        modifiers = list(node.modifiers)
+        modifiers[index] = modifier.model_copy(update={"corners": carried})
+        return node.model_copy(update={"modifiers": modifiers})
 
     def transform(self, paths: list[NodePath], transform: Transform, description: str) -> None:
         """Apply a rigid transform, given in the active component's frame, to shapes.
@@ -169,7 +202,10 @@ class MoveEdits(Commands):
             frame = frame_of(record, path)
             local = frame.inverted() * transform * frame  # the same move, in the parent's frame
             if type(node).placed:
-                replacements[path] = _reoriented(node, local, record[path])
+                moved = _reoriented(node, local, record[path])
+                replacements[path] = self._carry_corners(
+                    path, moved, _placement_change(node, local, record[path])
+                )
             else:
                 name = node.name or fresh_name("transform", taken)
                 inner = fresh_name(f"{name}_shape", taken)
@@ -191,6 +227,52 @@ class MoveEdits(Commands):
                 container[index] = new
 
         self.session.edit(description, change)
+
+
+def _shift_corners(node: Shape, dx: float, dy: float) -> Shape:
+    """``node`` with its rounded corners moved by ``(dx, dy)`` along with its outline.
+
+    Corners are recorded where the node's modifiers work, around it, so they
+    move the way its coordinates do: a number changes, an expression gets the
+    offset added; one written with the node's own points (``self.…``) moves by
+    itself. A corner at another shape's point becomes that point plus the move.
+    """
+    index = next((i for i, m in enumerate(node.modifiers) if isinstance(m, CornersModifier)), None)
+    if index is None or (dx == 0 and dy == 0):
+        return node
+
+    def shifted(value, by):
+        if isinstance(value, str) and "self." in value:
+            return value
+        return offset_value(value, by)
+
+    corners = []
+    for corner in node.modifiers[index].corners:
+        if corner.at is not None:
+            if corner.at.startswith("self."):
+                corners.append(corner)
+                continue
+            corner = corner.model_copy(
+                update={"at": None, "x": f"{corner.at}.x", "y": f"{corner.at}.y"}
+            )
+        corners.append(
+            corner.model_copy(update={"x": shifted(corner.x, dx), "y": shifted(corner.y, dy)})
+        )
+    modifiers = list(node.modifiers)
+    modifiers[index] = modifiers[index].model_copy(update={"corners": corners})
+    return node.model_copy(update={"modifiers": modifiers})
+
+
+def _placement_change(node: Shape, local: Transform, record: NodeRecord) -> Transform:
+    """How :func:`_reoriented` moves a placed node's outline, in the frame its
+    modifiers work in: ``local``, or for an aligned node (which keeps its
+    position) the turn alone, about its position."""
+    if node.align is None:
+        return local
+    placed = record.shift.inverted() * record.inner
+    fixed = (placed.dx, placed.dy)
+    moved_to = local.apply(*fixed)
+    return Transform.moving(fixed[0] - moved_to[0], fixed[1] - moved_to[1]) * local
 
 
 def _reoriented(node: Shape, local: Transform, record: NodeRecord) -> Shape:

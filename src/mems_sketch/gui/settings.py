@@ -13,35 +13,41 @@ window applies it at once (there is no restart and no "Apply" step).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from PySide6.QtCore import QObject, QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QSettings, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QStackedWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from mems_sketch.gui import icons
-from mems_sketch.gui.help import HelpButton
-from mems_sketch.gui.theme import UI_THEMES
+from mems_sketch.gui import icons, theme, widgets
 
 ORGANIZATION = APPLICATION = "mems-sketch"
-CANVAS_THEMES = {"auto": "Same as the interface", "light": "Light", "dark": "Dark"}
+
+
+def canvas_themes() -> dict[str, str]:
+    """appearance/canvas_theme: the interface's theme, or any theme's canvas colours."""
+    return {"auto": "Same as the interface"} | {t.id: t.name for t in theme.themes().values()}
 
 
 @dataclass(frozen=True)
@@ -52,7 +58,8 @@ class Setting:
     page: str
     group: str
     help: str = ""
-    choices: dict[str, str] | None = None  # value -> label
+    # value -> label, or a function giving them when they are found at run time (themes)
+    choices: dict[str, str] | Callable[[], dict[str, str]] | None = None
     minimum: float | None = None
     maximum: float | None = None
     step: float | None = None
@@ -60,6 +67,21 @@ class Setting:
     decimals: int = 0
     keywords: tuple[str, ...] = field(default_factory=tuple)
 
+    def options(self) -> dict[str, str] | None:
+        return self.choices() if callable(self.choices) else self.choices
+
+
+SCROLLING = {  # canvas/scrolling: value -> label
+    "auto": "Automatic: a mouse wheel zooms, a touchpad pans",
+    "zoom": "Scrolling zooms",
+    "pan": "Scrolling pans (Ctrl zooms)",
+}
+
+BOX_SELECTION = {  # editor/box_selection: value -> label
+    "touching": "What the box touches",
+    "inside": "What is entirely inside the box",
+    "direction": "By direction: to the right inside, to the left touching",
+}
 
 FRAME_RATES = {  # canvas/max_fps: value -> label
     "display": "The display's refresh rate",
@@ -80,7 +102,9 @@ SETTINGS: tuple[Setting, ...] = (
         "Interface theme",
         "Appearance",
         "Theme",
-        choices=UI_THEMES,
+        "More themes come from packages and from your themes folder: JSON files that "
+        "can change some colours of another theme. The user guide explains how.",
+        choices=theme.choices,
         keywords=("dark", "light", "colour", "color"),
     ),
     Setting(
@@ -90,10 +114,30 @@ SETTINGS: tuple[Setting, ...] = (
         "Appearance",
         "Theme",
         "The layout canvas can stay light in a dark interface, or the other way round.",
-        choices=CANVAS_THEMES,
+        choices=canvas_themes,
         keywords=("dark", "white", "background"),
     ),
+    Setting(
+        "appearance/custom_title_bar",
+        True,
+        "Use the toolbar as the title bar",
+        "Appearance",
+        "Window",
+        "The toolbar holds minimize, maximize and close instead of the system's title bar: "
+        "drag an empty part of it to move the window, double-click it to maximize.",
+        keywords=("title bar", "frame", "window", "close", "minimize", "maximize"),
+    ),
     # -- Canvas -------------------------------------------------------------
+    Setting(
+        "appearance/reduce_motion",
+        False,
+        "Reduce motion",
+        "Appearance",
+        "Motion",
+        "Jump instead of animating: the canvas moving to a place, notes fading in and "
+        "out, a shape picked in a panel glowing.",
+        keywords=("animation", "animate", "accessibility"),
+    ),
     Setting(
         "canvas/fill_opacity",
         45,
@@ -183,6 +227,18 @@ SETTINGS: tuple[Setting, ...] = (
         keywords=("gizmo",),
     ),
     Setting(
+        "canvas/scrolling",
+        "auto",
+        "Scrolling",
+        "Canvas",
+        "Navigation",
+        "What scrolling does on the canvas. A touchpad pans with two fingers and zooms "
+        "with a pinch; a mouse wheel zooms. Choose one if your device is taken for the "
+        "other.",
+        choices=SCROLLING,
+        keywords=("touchpad", "trackpad", "pinch", "pan", "wheel", "mouse"),
+    ),
+    Setting(
         "canvas/zoom_step",
         1.25,
         "Zoom per wheel step",
@@ -211,8 +267,9 @@ SETTINGS: tuple[Setting, ...] = (
         "Draft quality while zooming and resizing",
         "Canvas",
         "Performance",
-        "Draw without smoothing during a zoom or resize, then in full quality once it "
-        "stops: much faster on big designs.",
+        "On designs too big to redraw smoothly, draw without smoothing during a zoom "
+        "or resize, then in full quality once it stops. Smaller designs always stay "
+        "in full quality.",
         keywords=("antialiasing", "fps", "lag", "speed"),
     ),
     # -- Snapping -----------------------------------------------------------
@@ -269,6 +326,18 @@ SETTINGS: tuple[Setting, ...] = (
         "Kept in .mems-sketch/state.json in the project folder (ignored by git).",
     ),
     Setting(
+        "editor/box_selection",
+        "touching",
+        "Box selection selects",
+        "Editor",
+        "Selection",
+        "Dragging a box over the canvas selects the shapes it touches (any part of "
+        "them), or only those entirely inside it. By direction: dragging to the right "
+        "selects what is inside, to the left what it touches (the box is dashed then).",
+        choices=BOX_SELECTION,
+        keywords=("selection", "rubber band", "crossing", "window", "drag"),
+    ),
+    Setting(
         "editor/path_width",
         2.0,
         "Default path width",
@@ -282,12 +351,14 @@ SETTINGS: tuple[Setting, ...] = (
     ),
 )
 BY_KEY = {s.key: s for s in SETTINGS}
+LABEL_WIDTH = 170  # px: a setting's label, so the fields of every group line up
+
 PAGES = {
     "Appearance": "eye",
     "Canvas": "grid",
     "Snapping": "snap",
     "Editor": "edit",
-    "Keymap": "search",
+    "Keymap": "keyboard",
 }
 
 
@@ -348,7 +419,7 @@ def _convert(value: Any, setting: Setting) -> Any:
             value = str(value)
     except (TypeError, ValueError):
         return default
-    if setting.choices is not None and value not in setting.choices:
+    if setting.choices is not None and value not in setting.options():
         return default
     if setting.minimum is not None and value < setting.minimum:
         return setting.minimum if not isinstance(default, int) else int(setting.minimum)
@@ -361,13 +432,16 @@ class PreferencesDialog(QDialog):
     """Settings by page, with a search field, like an IDE's settings dialog.
 
     Changes apply immediately; "Reset page" restores a page's defaults.
+    ``shortcuts`` are ``(command, keys)`` or ``(command, keys, menu)`` for the
+    Keymap page.
     """
 
-    def __init__(self, settings: Settings, shortcuts: list[tuple[str, str]], parent=None) -> None:
+    def __init__(self, settings: Settings, shortcuts: list[tuple[str, ...]], parent=None) -> None:
         super().__init__(parent)
+        theme.load()  # themes added to the folder since the window opened
         self.settings = settings
         self.setWindowTitle("Settings")
-        self.resize(760, 520)
+        self.resize(780, 540)
         self._editors: dict[str, QWidget] = {}
         self._rows: dict[str, tuple[QWidget, ...]] = {}
         self._headings: dict[str, QLabel] = {}  # by "page/group"
@@ -377,16 +451,12 @@ class PreferencesDialog(QDialog):
         self.search.setClearButtonEnabled(True)
         self.search.addAction(icons.icon("search"), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(self._filter)
-        self.pages = QListWidget()
-        self.pages.setObjectName("settings-pages")
-        self.pages.setFixedWidth(180)
+        self.side = widgets.SideList(
+            [(icon_name, page) for page, icon_name in PAGES.items()], top=self.search
+        )
+        self.pages = self.side.list
         self.stack = QStackedWidget()
-        self.pages.setIconSize(QSize(18, 18))
-        self.pages.setSpacing(1)
-        for page, icon_name in PAGES.items():
-            item = QListWidgetItem(icons.icon(icon_name), page)
-            item.setSizeHint(QSize(0, 30))  # the highlight stays inside its row
-            self.pages.addItem(item)
+        for page in PAGES:
             if page == "Keymap":
                 self.stack.addWidget(self._keymap_page(shortcuts))
             else:
@@ -394,12 +464,6 @@ class PreferencesDialog(QDialog):
         self.pages.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.pages.setCurrentRow(0)
 
-        left = QVBoxLayout()
-        left.addWidget(self.search)
-        left.addWidget(self.pages)
-        body = QHBoxLayout()
-        body.addLayout(left)
-        body.addWidget(self.stack, 1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.StandardButton.Close).setDefault(True)
@@ -408,50 +472,105 @@ class PreferencesDialog(QDialog):
         reset.setToolTip("Restore this page's defaults")
         reset.clicked.connect(self._reset_page)
         buttons.addButton(reset, QDialogButtonBox.ButtonRole.ResetRole)
-        layout = QVBoxLayout(self)
-        layout.addLayout(body, 1)
-        layout.addWidget(buttons)
+        right = QVBoxLayout()
+        pad = theme.metric("space_xl")
+        right.setContentsMargins(0, 0, pad, pad)
+        right.setSpacing(theme.metric("space_m"))
+        right.addWidget(self.stack, 1)
+        buttons_row = QHBoxLayout()
+        buttons_row.setContentsMargins(pad, 0, 0, 0)
+        buttons_row.addWidget(buttons)
+        right.addLayout(buttons_row)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.side)
+        layout.addLayout(right, 1)
         settings.changed.connect(self._show)
 
+    def _scrolling(self, title: str) -> tuple[QScrollArea, QVBoxLayout]:
+        """A page: its title, then what is added to the returned column; it scrolls
+        when it is taller than the dialog."""
+        content = QWidget()
+        content.setObjectName("dialog-page")
+        column = QVBoxLayout(content)
+        pad = theme.metric("space_xl")
+        column.setContentsMargins(pad, theme.metric("space_l"), pad, 0)
+        column.setSpacing(theme.metric("space_s"))
+        heading = QLabel(title)
+        heading.setObjectName("heading")
+        column.addWidget(heading)
+        area = QScrollArea()
+        area.setObjectName("dialog-page")
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setWidget(content)
+        return area, column
+
     def _page(self, page: str) -> QWidget:
-        widget = QWidget()
-        outer = QVBoxLayout(widget)
-        outer.setContentsMargins(16, 4, 8, 4)
-        title = QLabel(page)
-        title.setObjectName("heading")
-        outer.addWidget(title)
+        area, outer = self._scrolling(page)
+        row_height = theme.metric("row_height") + theme.metric("space_s")  # every row alike
         groups: dict[str, QFormLayout] = {}
         for setting in (s for s in SETTINGS if s.page == page):
             if setting.group not in groups:
-                heading = QLabel(setting.group)
-                heading.setObjectName("muted")
+                heading = self._group_heading(setting.group)
                 self._headings[f"{page}/{setting.group}"] = heading
-                outer.addSpacing(8)
                 outer.addWidget(heading)
-                form = QFormLayout()
-                form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-                form.setHorizontalSpacing(16)
+                form = widgets.form()
+                form.setVerticalSpacing(theme.metric("space_xs"))
                 outer.addLayout(form)
                 groups[setting.group] = form
             editor = self._editor(setting)
-            shown = editor
-            if setting.help:  # a "?" after it explains it
-                shown = QWidget()
-                line = QHBoxLayout(shown)
-                line.setContentsMargins(0, 0, 0, 0)
-                line.setSpacing(4)
-                line.addWidget(editor)
-                line.addWidget(HelpButton(setting.help))
-                line.addStretch(1)
+            shown = widgets.with_help(editor, setting.help) if setting.help else editor
+            shown.setMinimumHeight(row_height)
             if isinstance(editor, QCheckBox):  # the check box carries its label
                 groups[setting.group].addRow(shown)
                 self._rows[setting.key] = (shown,)
                 continue
             label = QLabel(setting.label)
-            label.setFixedWidth(170)  # the same for every group, so the fields line up
+            label.setFixedWidth(LABEL_WIDTH)  # the same for every group, so the fields line up
             groups[setting.group].addRow(label, shown)
             self._rows[setting.key] = (label, shown)
+        if page == "Appearance":
+            outer.addWidget(self._group_heading("Your themes"))
+            outer.addWidget(self._themes_folder())
         outer.addStretch(1)
+        return area
+
+    @staticmethod
+    def _group_heading(text: str) -> QLabel:
+        heading = QLabel(text)
+        heading.setObjectName("group-heading")
+        heading.setContentsMargins(0, theme.metric("space_l"), 0, theme.metric("space_xs"))
+        return heading
+
+    def _themes_folder(self) -> QWidget:
+        """Where the user's themes go, and why a theme found there could not be used."""
+        widget = QWidget()
+        column = QVBoxLayout(widget)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(theme.metric("space_s"))
+        line = QHBoxLayout()
+        line.setSpacing(theme.metric("space_m"))
+        folder = theme.user_folder()
+        label = QLabel(str(folder))
+        label.setObjectName("muted")
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        line.addWidget(label)
+        button = QPushButton("Open folder")
+        button.setAutoDefault(False)
+        button.setToolTip("Put a theme's .json file here; it shows in Interface theme")
+        button.clicked.connect(lambda: open_folder(folder))
+        line.addWidget(button)
+        line.addStretch(1)
+        column.addLayout(line)
+        for problem in theme.problems():
+            text = QLabel(problem)
+            text.setObjectName("muted")
+            text.setProperty("error", True)
+            text.setWordWrap(True)
+            column.addWidget(text)
         return widget
 
     def _editor(self, setting: Setting) -> QWidget:
@@ -462,7 +581,7 @@ class PreferencesDialog(QDialog):
             editor.toggled.connect(lambda v, k=key: self.settings.set(k, v))
         elif setting.choices is not None:
             editor = QComboBox()
-            for choice, text in setting.choices.items():
+            for choice, text in setting.options().items():
                 editor.addItem(text, choice)
             editor.setCurrentIndex(editor.findData(value))
             editor.currentIndexChanged.connect(
@@ -490,20 +609,39 @@ class PreferencesDialog(QDialog):
         self._editors[key] = editor
         return editor
 
-    def _keymap_page(self, shortcuts: list[tuple[str, str]]) -> QWidget:
+    def _keymap_page(self, shortcuts: list[tuple[str, ...]]) -> QWidget:
         widget = QWidget()
+        widget.setObjectName("dialog-page")
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(16, 4, 8, 4)
+        pad = theme.metric("space_xl")
+        layout.setContentsMargins(pad, theme.metric("space_l"), pad, 0)
+        layout.setSpacing(theme.metric("space_m"))
         title = QLabel("Keymap")
         title.setObjectName("heading")
         layout.addWidget(title)
-        self.keymap = QListWidget()
-        for name, keys in shortcuts:
-            item = QListWidgetItem(f"{name}\t{keys}")
-            item.setData(Qt.ItemDataRole.UserRole, f"{name} {keys}".lower())
-            self.keymap.addItem(item)
-        layout.addWidget(self.keymap)
-        note = QLabel("Mouse: wheel zooms, middle or right drag pans, Space + drag pans.")
+        rows: list[tuple[str, str, str]] = []
+        for name, keys, *menu in shortcuts:
+            row = (name, keys, menu[0] if menu else "")
+            if all(row[:2] != seen[:2] for seen in rows):  # a command in two menus once
+                rows.append(row)
+        self.keymap = widgets.make_table(("Command", "Shortcut", "Menu"), stretch=0)
+        self.keymap.setObjectName("keymap")
+        self.keymap.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.keymap.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.keymap.setRowCount(len(rows))
+        muted = theme.color("muted")
+        for r, (name, keys, menu) in enumerate(rows):
+            self.keymap.setItem(r, 0, QTableWidgetItem(name))
+            self.keymap.setItem(r, 1, QTableWidgetItem(keys))
+            where = QTableWidgetItem(menu)
+            where.setForeground(muted)
+            self.keymap.setItem(r, 2, where)
+            self.keymap.item(r, 0).setData(
+                Qt.ItemDataRole.UserRole, f"{name} {keys} {menu}".lower()
+            )
+        self._keymap_empty = widgets.placeholder(self.keymap, "")
+        layout.addWidget(self.keymap, 1)
+        note = QLabel("Mouse: the wheel zooms; middle or right drag, or Space + drag, pans.")
         note.setObjectName("muted")
         layout.addWidget(note)
         return widget
@@ -544,8 +682,21 @@ class PreferencesDialog(QDialog):
                 first = first or setting.page
         for key, heading in self._headings.items():
             heading.setVisible(key in groups_shown)
-        for row in range(self.keymap.count()):
-            item = self.keymap.item(row)
-            item.setHidden(not all(w in item.data(Qt.ItemDataRole.UserRole) for w in words))
+        keys_shown = 0
+        for row in range(self.keymap.rowCount()):
+            haystack = self.keymap.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            hidden = not all(w in haystack for w in words)
+            self.keymap.setRowHidden(row, hidden)
+            keys_shown += not hidden
+        self._keymap_empty.setText(f"No shortcut matches “{text.strip()}”.")
+        self._keymap_empty.refresh()
+        if words and first is None and keys_shown:
+            first = "Keymap"
         if words and first is not None:
             self.pages.setCurrentRow(list(PAGES).index(first))
+
+
+def open_folder(folder) -> None:
+    """Show ``folder`` in the system's file manager (made first if missing)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))

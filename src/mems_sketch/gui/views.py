@@ -14,7 +14,6 @@ from concurrent.futures import Executor, Future, ProcessPoolExecutor, ThreadPool
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QProxyStyle,
-    QSplitter,
     QStyle,
     QTabBar,
     QTabWidget,
@@ -28,6 +27,7 @@ from mems_sketch.core.shapes import NodePath, node_at
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import LayoutCanvas
+from mems_sketch.gui.widgets import HairlineSplitter
 from mems_sketch.process import rules
 
 MAX_PANES = 2
@@ -38,6 +38,34 @@ MAX_PANES = 2
 # was registered at runtime (another process would not know it).
 BACKGROUND_CHECK_POINTS = 20_000
 _executors: dict[str, Executor] = {}
+
+
+def _outputs() -> Executor:
+    """Where the engine makes the output the rule checks look at: a thread (the
+    engine lets Python go on meanwhile), apart from the checks themselves."""
+    if "output" not in _executors:
+        _executors["output"] = ThreadPoolExecutor(max_workers=1, thread_name_prefix="output")
+    return _executors["output"]
+
+
+def builds() -> Executor:
+    """Where a big design is built after a change (MainWindow.refresh), one build at a
+    time: a build for a version of the design that is no longer current is skipped."""
+    if "build" not in _executors:
+        _executors["build"] = ThreadPoolExecutor(max_workers=1, thread_name_prefix="build")
+    return _executors["build"]
+
+
+def _check_job(build, grid: float, chord: float, project, component: str) -> list:
+    """In the output thread: the design as the process's grid has it, then its rule
+    checks, in another process when it can have one."""
+    geometry = build.output(grid, chord).geometry
+    try:
+        future = _checks().submit(rules.check, project, geometry, component)
+    except (RuntimeError, OSError):  # no process to be had (e.g. a script without a main guard)
+        _executors["process"] = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rule-check")
+        future = _checks().submit(rules.check, project, geometry, component)
+    return future.result()
 
 
 def _checks() -> Executor:
@@ -75,6 +103,8 @@ class ComponentView(QWidget):
         super().__init__()
         self._generation = 0
         self.checking = False  # a background rule check is running
+        self.updating = False  # a background build will replace what it shows
+        self.shown = Geometry()  # what the canvas shows: the last result that built
         self._check_done.connect(self._take_check)
         self.document = document
         self.component = component
@@ -125,7 +155,7 @@ class ComponentView(QWidget):
         try:
             drawn = geometry = self.document.results.geometry(component=self.component)
         except Exception as exc:  # noqa: BLE001 - shown in the messages panel
-            geometry = Geometry()
+            geometry = self.shown  # the last result stays until there is a new one
             self.errors.append(str(exc))
         self.node_regions = self.document.results.node_regions(visible, self.component)
         try:
@@ -136,7 +166,14 @@ class ComponentView(QWidget):
             self.guides = []  # construction lines are part of how it is built
         self.canvas.show_guides(self.guides, set(self.selection))
         self.selection = [p for p in self.selection if self._exists(p)]
-        self.canvas.show_geometry(geometry, colors, visible)
+        try:  # each shape outlined on its own (not the shapes of a closed component)
+            shapes = (
+                [] if self.implementation_hidden else self.document.results.shapes(self.component)
+            )
+        except Exception:  # noqa: BLE001 - it did not build: the errors say why
+            shapes = []
+        self.canvas.show_geometry(geometry, colors, visible, shapes)
+        self.shown = geometry
         if not self._fitted and not geometry.is_empty():
             self._fitted = True
             self.canvas.fit()
@@ -153,21 +190,27 @@ class ComponentView(QWidget):
             return
         if self.canvas.isVisible():
             self.canvas.viewport().repaint()
+        # The checks look at the design as an export to the process's grid writes it
+        # (requirement DRC-3); the engine makes that from what it built.
+        results, process = self.document.results, self.document.project.process
+        try:
+            build = results.build(self.component)
+            _ = build.built  # here, where the engine builds: the output may be made elsewhere
+        except Exception as exc:  # noqa: BLE001 - shown in the messages panel
+            self.errors.append(str(exc))
+            return
         if drawn.point_count() <= BACKGROUND_CHECK_POINTS:
             try:
-                self.violations = self.document.results.check(drawn, self.component)
+                checked = build.output(process.grid_um, process.chord_um).geometry
+                self.violations = results.check(checked, self.component)
             except Exception as exc:  # noqa: BLE001 - shown in the messages panel
                 self.errors.append(str(exc))
             return
         generation, project, component = self._generation, self.document.project, self.component
         self.checking = True
-        try:
-            future = _checks().submit(rules.check, project, drawn, component)
-        except (RuntimeError, OSError):  # no process to be had (e.g. a script without a main guard)
-            _executors["process"] = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="rule-check"
-            )
-            future = _checks().submit(rules.check, project, drawn, component)
+        future = _outputs().submit(
+            _check_job, build, process.grid_um, process.chord_um, project, component
+        )
         future.add_done_callback(lambda f: self._report_check(generation, f))
 
     def _report_check(self, generation: int, future: Future) -> None:
@@ -196,7 +239,7 @@ class ComponentView(QWidget):
             return False
 
 
-class EditorArea(QSplitter):
+class EditorArea(HairlineSplitter):
     """Tabs of component views in one or two panes.
 
     ``current`` is the view the user works in: the current tab of the pane
@@ -208,7 +251,7 @@ class EditorArea(QSplitter):
     tab_menu_requested = Signal(object, QPoint)  # ComponentView, global position
 
     def __init__(self, document: EditSession) -> None:
-        super().__init__(Qt.Orientation.Horizontal)
+        super().__init__(Qt.Orientation.Horizontal)  # split: a hairline between the panes
         self.document = document
         self.panes: list[QTabWidget] = []
         self.current: ComponentView | None = None

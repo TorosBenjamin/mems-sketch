@@ -23,7 +23,7 @@ from mems_sketch.core.shapes import (
     walk,
 )
 from mems_sketch.core.shapes.modifiers import total_copies
-from mems_sketch.core.user_component import ComponentDef
+from mems_sketch.core.user_component import ComponentDef, ParamDef
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
 from mems_sketch.storage.project_files import load_library
@@ -155,7 +155,7 @@ class ComponentEdits(Commands):
     def rename(self, old: str, new: str) -> None:
         """Give a component a new (short) name; its private components follow."""
         owner = old.rpartition("/")[0] or None
-        self._move(old, self._check_name(new, owner), f"Rename component {old}")
+        self._move(old, self._check_name(new, owner, old), f"Rename component {old}")
 
     def move(self, name: str, owner: str | None) -> str:
         """Make a component private to ``owner``, or shared (``None``); its own
@@ -163,7 +163,7 @@ class ComponentEdits(Commands):
         no longer see it."""
         short = name.rpartition("/")[2]
         where = f"private to {owner}" if owner else "shared"
-        new = self._check_name(short, owner)
+        new = self._check_name(short, owner, name)
         self._move(name, new, f"Make {short} {where}")
         return new
 
@@ -208,8 +208,9 @@ class ComponentEdits(Commands):
 
         self.session.edit(f"Put {name} on {level or 'the level it is placed on'}", change)
 
-    def _check_name(self, name: str, owner: str | None = None) -> str:
-        """The path of a new component ``name`` (private to ``owner``), if it is free."""
+    def _check_name(self, name: str, owner: str | None = None, moving: str | None = None) -> str:
+        """The path of a new component ``name`` (private to ``owner``), if it is free
+        (``moving``: the component that will have it)."""
         if not name.isidentifier():
             raise ValueError(f"'{name}' is not a valid component name")
         if owner is not None and owner not in self.session.project.components:
@@ -219,6 +220,15 @@ class ComponentEdits(Commands):
         if path in project.components or name in project.imports or is_builtin(name):
             where = f" in {owner}" if owner else ""
             raise ValueError(f"a component named '{name}' already exists{where}")
+        if owner is not None:  # inner names hide outer ones, so not one placed in there
+            inside = [k for k in project.components if k == owner or k.startswith(f"{owner}/")]
+            if any(name in project.components[k].references() for k in inside) and (
+                _resolved(project, name, owner) != moving
+            ):
+                raise ValueError(
+                    f"'{name}' would hide the component {name} placed in {owner}: "
+                    "choose another name"
+                )
         return path
 
     def make(self, paths: list[NodePath], name: str) -> NodePath:
@@ -253,21 +263,11 @@ class ComponentEdits(Commands):
                 "enabled": transform.enabled,
                 "modifiers": transform.modifiers,
             }
-        definition_params = {p.name: p for p in self.session.active_definition.parameters}
-        used = _names_used(nodes) & definition_params.keys()
-        pending = list(used)
-        while pending:  # defaults may depend on further parameters
-            default = definition_params[pending.pop()].default
-            if isinstance(default, str):
-                for dep in names_in(default) & definition_params.keys():
-                    if dep not in used:
-                        used.add(dep)
-                        pending.append(dep)
         parameters = [  # passed in by the reference, so public in the new component
             p.model_copy(update={"internal": False})
-            for p in self.session.active_definition.parameters
-            if p.name in used
+            for p in parameters_used(self.session.active_definition, nodes)
         ]
+        used = {p.name for p in parameters}
         definition = ComponentDef(
             name=name, parameters=parameters, shapes=[n.model_copy(deep=True) for n in nodes]
         )
@@ -382,6 +382,22 @@ def _as_expression(value: Value) -> str:
     return repr(float(value)) if isinstance(value, int | float) else str(value)
 
 
+def parameters_used(definition: ComponentDef, nodes: list[Shape]) -> list[ParamDef]:
+    """The parameters of ``definition`` that ``nodes`` use, with those their
+    defaults use in turn, in the definition's order."""
+    by_name = {p.name: p for p in definition.parameters}
+    used = _names_used(nodes) & by_name.keys()
+    pending = list(used)
+    while pending:  # defaults may depend on further parameters
+        default = by_name[pending.pop()].default
+        if isinstance(default, str):
+            for dep in names_in(default) & by_name.keys():
+                if dep not in used:
+                    used.add(dep)
+                    pending.append(dep)
+    return [p for p in definition.parameters if p.name in used]
+
+
 def _names_used(nodes: list[Shape]) -> set[str]:
     """Every name referenced by the expressions in ``nodes`` (and their subtrees)."""
     found: set[str] = set()
@@ -410,3 +426,10 @@ def library_name(folder: str | Path) -> str:
     """The name a library folder is loaded under by default: ``mems-std-lib`` → ``mems_std_lib``."""
     name = re.sub(r"\W+", "_", Path(folder).name).strip("_").lower() or "lib"
     return name if name.isidentifier() else f"lib_{name}"
+
+
+def _resolved(project: Project, name: str, context: str) -> str | None:
+    try:
+        return project.qualify(name, context)
+    except KeyError:
+        return None

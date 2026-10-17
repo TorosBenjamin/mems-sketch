@@ -23,6 +23,12 @@ On the right: split view, **Find Action** (Ctrl+Shift+A: type part of a
 command's name, Enter runs it; Shift twice searches components, shapes and
 parameters too) and settings.
 
+The toolbar is also the window's title bar: minimize, maximize and close are
+at its right end. Drag an empty part of it to move the window, double-click it
+to maximize or restore, and drag the window's edges or corners to resize it.
+**Settings → Appearance → Use the toolbar as the title bar** switched off
+brings the system's title bar back.
+
 ## Tool windows
 
 Panels open and close from the stripes on the window's edges:
@@ -67,15 +73,76 @@ width while drawing, the angle step for Rotate), the snapping toggles (shape
 points, grid) and the gizmo toggle, then problems (click to open Messages),
 grid step, zoom and cursor position.
 
+## Notes and motion
+
+What a command did shows as a note at the bottom of the editor: "Exported
+resonator.gds" (with **Show in folder**), "Aligned A to B", "Undid Move". A
+note goes by itself after a few seconds; pointing at it keeps it. An error
+stays until you close it, with **Show messages** to see it in Messages. The
+status bar keeps the hint for the tool you are using.
+
+The canvas glides to a place rather than jumping: **Fit** (F), the zoom
+buttons, and a problem chosen in Messages. Scrolling or panning takes over at
+once. A shape you pick in the Shapes panel, in Search Everywhere or in History
+glows on the canvas for a moment, and comes into view if it was outside.
+Clicking a shape on the canvas selects it without the glow: you are already
+looking at it.
+
+While you drag or draw, the live value is next to the cursor as well as in
+the status bar: a move's offset (and the point it snaps to), the angle of a
+rotation, a rectangle's or circle's size, the length and angle of the polygon
+or path edge you are drawing, a corner's radius. Pointing at a shape for a
+moment says what it is: its name, kind and layer, or the component it places.
+Over the selection the cursor shows that a drag moves it.
+
+**Settings → Appearance → Reduce motion** turns the animations off: the view
+jumps, notes appear and go at once, and picked shapes do not glow.
+
 ## Settings
 
-**☰ → File → Settings…** (Ctrl+Alt+S): appearance (light or dark, or as the
-system; the canvas can keep its own background), canvas (fill opacity,
+**☰ → File → Settings…** (Ctrl+Alt+S): appearance (light, dark, as the
+system or [your own theme](#your-own-theme); the canvas can keep its own
+background), canvas (fill opacity,
 outlines, grid, overlays, gizmo size, zoom step), snapping, editor defaults
-and the keymap. The search field filters them; changes apply at once and are
+and the keymap: every command with a shortcut, its keys and the menu it is in.
+The search field filters them, shortcuts too; changes apply at once and are
 kept per user.
 
 ![Settings](../images/settings.png)
+
+### Your own theme
+
+A theme is a JSON file of colours. Put it in your themes folder (*Settings →
+Appearance* shows where, with a button that opens it), named after the theme:
+`ocean.json` is the theme `ocean`. It can start from another theme and change
+only some colours:
+
+```json
+{
+  "name": "Ocean",
+  "parent": "dark",
+  "ui": {"accent": "#1abc9c", "selected": "#1d4d47"},
+  "canvas": {"background": "#0f1c24", "highlight": "#ffb347"},
+  "icons": {"blue": "#1abc9c"}
+}
+```
+
+- `ui` colours the window, `canvas` the layout canvas and `icons` the icons.
+  `metrics` sets sizes in pixels: corner radii, header and row heights, the
+  spacing scale and font sizes (for example `"metrics": {"row_height": 30}` for
+  roomier tables). Radii and font sizes change at once; spacing and heights on
+  the next start.
+  The built-in [light](../../src/mems_sketch/gui/themes/light.json) and
+  [dark](../../src/mems_sketch/gui/themes/dark.json) themes list every colour.
+- Without a `parent`, a theme must give every colour.
+- `dark` (`true` or `false`) says whether it is a dark theme; it is taken from
+  the parent when left out. **View → Dark canvas** goes by it.
+- Colours are `#rrggbb`, or `#aarrggbb` with transparency.
+
+The theme appears in *Interface theme* and *Canvas background* the next time
+Settings opens. A theme that cannot be used (a misspelt colour name, a size
+out of range, a parent that does not exist) is listed under the folder, with
+the reason. A theme changes colours and sizes, never what is where.
 
 ## Undo and editor state
 

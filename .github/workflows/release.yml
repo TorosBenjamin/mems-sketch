@@ -47,14 +47,52 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4  # every artifact: the wheels and the app's packages
+      - uses: actions/download-artifact@v4  # the app's packages: one file each
         with:
+          pattern: app-*
           merge-multiple: true
           path: out
+      - uses: actions/download-artifact@v4  # the wheels: grouped into one archive below
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: wheels
+      - name: Group the wheels, list checksums, write the downloads table
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          (cd wheels && zip -q "../out/mems-sketch-$VERSION-python-wheels.zip" ./*.whl)
+          (cd out && sha256sum -- * > SHA256SUMS.txt)
+          url="https://github.com/$REPOSITORY/releases/download/v$VERSION"
+          app="MEMS-Sketch-$VERSION"
+          cat > notes.md <<EOF
+          ## Download
+
+          | System | The app (nothing else to install) |
+          |---|---|
+          | Windows (64-bit) | [Installer]($url/$app-Windows-x64-Setup.exe) · [Portable zip]($url/$app-Windows-x64-Portable.zip) |
+          | macOS (Apple silicon) | [Disk image]($url/$app-macOS-arm64.dmg) |
+          | Linux (x86-64) | [AppImage]($url/$app-Linux-x86_64.AppImage) |
+
+          The app is not signed yet: on Windows choose *More info* → *Run anyway*, on
+          macOS right-click it and choose *Open* the first time, on Linux make the
+          AppImage executable (\`chmod +x\`).
+
+          **Python package** (Python 3.11 to 3.13, for scripts and the command line):
+          [mems-sketch-$VERSION-python-wheels.zip]($url/mems-sketch-$VERSION-python-wheels.zip)
+          holds the wheels for every system. Unzip it, then
+          \`pip install "mems-sketch[gui]" --find-links <the folder>\`.
+
+          Checksums: [SHA256SUMS.txt]($url/SHA256SUMS.txt).
+
+          EOF
+          ls -l out
       - uses: softprops/action-gh-release@v2.2.2
         with:
           tag_name: v${{ needs.version.outputs.version }}
           target_commitish: ${{ github.sha }}
           name: MEMS Sketch ${{ needs.version.outputs.version }}
+          body_path: notes.md
           generate_release_notes: true
           files: out/*

@@ -54,6 +54,20 @@ that hash, and on a big design they run in the background, in a process of
 their own (`gui/views.py`): the edit is on screen at once, the violations
 follow.
 
+A big design is also built in the background (requirement QS-8): when a
+component of an open tab has taken longer than `BACKGROUND_BUILD_S` to build,
+a change builds the open tabs on a thread of its own
+(`Results.build_in_background`, on a copy of the project), and the tabs keep
+the last result until the new one is there. What asks for a result meanwhile
+waits for that build instead of building again; a build of a version that is
+no longer current is stopped: the next change cancels it (`Engine.cancel`), and
+the engine and the geometry library check for that before each shape, between
+the holes of a cut and inside Open CASCADE's booleans (`mgeom::Interruptible`),
+so a long build stops within moments. Such an edit is not refused for not building
+(`EditSession.check_builds` is off): the messages panel says why instead,
+while references and cycles are still checked at once. The engine's cache is
+shared between threads, and one engine builds one thing at a time.
+
 A component placed whole stays placed: the engine keeps a reference (copied
 by modifiers, turned by transforms) as an *instance* of what it built, and
 `Geometry` has its own polygons plus `instances` of other geometries. One
@@ -73,6 +87,16 @@ Parameters and their checks stay with the Python model. Placements are plain
   definition, the components it places, parameter values, process constants,
   an imported file's digest. Identical placements are built once, and after an
   edit only the changed components and those containing them are rebuilt.
+- Inside a component, every **shape** is cached the same way (requirement
+  QS-7; `cached_render` in `src/eval/evaluator.cpp`): by the shape as written
+  (with what it holds), the values its expressions read, the points of the
+  shapes it uses (and which geometry they came from, for minimal boxes), the
+  fingerprints of the components it places, its level and the layer stack.
+  After an edit only the shapes it reaches are evaluated again: the changed
+  shape, the operations holding it and the shapes using its points; the rest
+  come from the cache, and so do the records of the nodes inside a shape. What
+  is left is merging each list's shapes per layer, which only collects shapes
+  that do not touch.
 - The cache is in memory; the keys are designed so that it could be persisted
   later.
 - Shapes are evaluated in the order their alignments need; a loop is an
@@ -109,8 +133,9 @@ wires the parts; each part only talks to the session:
 - `panels.py`, `points_panel.py`, `history_panel.py`, `properties.py`: tool
   windows; `toolwindows.py` places them around the editor.
 - `actions.py`: every command with its shortcut, menus and toolbar.
-- `settings.py`, `theme.py`, `icons.py`: preferences, the light and dark
-  themes, and SVG icons coloured per theme.
+- `settings.py`, `theme.py`, `icons.py`: preferences, the themes (JSON files
+  of colours in `gui/themes/`, from packages and from the user's folder), and
+  SVG icons coloured per theme.
 
 ## Package layout
 

@@ -80,7 +80,7 @@ def test_every_icon_draws_something_in_both_themes(qapp, name):
 def test_the_interface_theme_is_a_setting_applied_at_once(window):
     window.settings.set("appearance/ui_theme", "dark")
     assert (
-        QApplication.instance().palette().window().color().name() == theme.TOKENS["dark"]["window"]
+        QApplication.instance().palette().window().color().name() == theme.tokens("dark")["window"]
     )
     assert window.canvas.backgroundBrush().color().name() == "#1e1f22"  # the canvas follows
     window.settings.set("appearance/canvas_theme", "light")  # ... unless chosen separately
@@ -162,7 +162,7 @@ def test_move_gizmo_centre_moves_freely(window):
     assert (plate.x0, plate.y0) == (5, 20)
 
 
-def test_rotate_ring_rotates_about_the_centre_in_steps(window):
+def test_rotate_drag_rotates_about_the_centre_with_a_sweep(window):
     one_rect(window)
     window.set_tool("rotate")
     _, cx, cy = window.canvas.gizmo
@@ -417,7 +417,7 @@ def test_a_new_library_has_no_top_and_its_tab_shows_a_component(window, tmp_path
     assert window.document.project.top is None
     assert [v.component for v in window.area.views()] == ["component1"]
     window._edit_top()  # no top component to open
-    assert "library" in window.statusBar().currentMessage()
+    assert any("library" in t for t in window.toasts.texts())
 
 
 def test_the_shape_list_shows_details_and_alignment_icons(resonator):

@@ -4,6 +4,9 @@
 // builder (to build what they place).
 #pragma once
 
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -11,25 +14,54 @@
 
 #include "mems/build.hpp"
 #include "mems/expression.hpp"
+#include "mgeom/measure.hpp"
 #include "mgeom/transform.hpp"
 
 namespace mems {
 
 using Json = nlohmann::ordered_json;
 
+// The geometry of a node, for its minimal box: the points of its convex hull
+// are worked out when first asked for.
+class Outline {
+public:
+    Outline(Layers layers, Instances instances) : layers_(std::move(layers)), instances_(std::move(instances)) {}
+    const std::vector<mgeom::Point>& hull() const;
+
+private:
+    Layers layers_;
+    Instances instances_;
+    mutable std::once_flag once_;
+    mutable std::vector<mgeom::Point> hull_;
+};
+
 // The alignment points of one evaluated node, in the frame of the list holding
 // it (mems_sketch.core.shapes.points.NodePoints): declared ones (a reference's)
 // and those of its bounding box, mapped by ``transform`` into another frame
-// (inside a transform node).
+// (inside a transform node); ``min.<point>`` those of its minimal box.
 struct Points {
     std::string name;
     mgeom::Box box;     // of its geometry, all layers
     PointMap declared;
     mgeom::Transform transform;
+    std::shared_ptr<const Outline> outline;  // for the minimal box (none: its declared points)
 
     mgeom::Point point(const std::string& point) const;
+    // What a name after the node's measures: ``left.x``, ``width``, ``min.angle``,
+    // ``min.top_right.y`` (see measure_name).
+    double measure(const std::string& path) const;
     Points seen_through(const mgeom::Transform& t) const;
+
+private:
+    mgeom::MinimalBox minimal() const;
 };
+
+// node.left.x, node.width, node.min.angle, node.min.left.x: what a node's
+// measure is called in expressions, split into the node and the rest.
+struct MeasureName {
+    std::string node, path;
+};
+std::optional<MeasureName> measure_name(const std::string& name);
 
 using Scope = std::map<std::string, Points, std::less<>>;
 

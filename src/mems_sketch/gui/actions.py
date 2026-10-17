@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QMenu
 
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme
 
 if TYPE_CHECKING:
     from mems_sketch.gui.app import MainWindow
@@ -45,14 +45,6 @@ OPERATIONS = [
     ("layer_map", "Layer map"),
 ]
 BOOLEANS = ("subtract", "intersect", "xor")  # under Operations › Combine
-
-
-def _label(window, path) -> str:
-    try:
-        node = window.document.node(path)
-    except KeyError:
-        return "?"
-    return node.name or node.kind
 
 
 def make_action(
@@ -94,10 +86,12 @@ class Actions:
         act("Quit", w.close, QKeySequence.StandardKey.Quit, file)
 
         edit = self.edit = QMenu("&Edit", w)
-        document = w.document
-        self.undo = act("Undo", document.undo, QKeySequence.StandardKey.Undo, edit, "undo")
-        self.redo = act("Redo", document.redo, QKeySequence.StandardKey.Redo, edit, "redo")
+        self.undo = act("Undo", w.undo, QKeySequence.StandardKey.Undo, edit, "undo")
+        self.redo = act("Redo", w.redo, QKeySequence.StandardKey.Redo, edit, "redo")
         edit.addSeparator()
+        self.cut = act("Cut", w.cut, QKeySequence.StandardKey.Cut, edit, "cut")
+        self.copy = act("Copy", w.copy, QKeySequence.StandardKey.Copy, edit, "duplicate")
+        self.paste = act("Paste", w.paste, QKeySequence.StandardKey.Paste, edit, "paste")
         self.duplicate = act("Duplicate", w.duplicate, "Ctrl+D", edit, "duplicate")
         self.delete = act("Delete", w.delete, QKeySequence.StandardKey.Delete, edit, "delete")
         self.unwrap = act("Unwrap operation", w.unwrap, "Ctrl+Shift+U", edit)
@@ -153,9 +147,10 @@ class Actions:
         self.add = insert.addMenu("Add")
         icons.bind(self.add.menuAction(), "rect")
         for kind, label in PRIMITIVES:
-            # Drawn shapes start their drawing tool; an arc is added as a default one.
+            # Drawn shapes start their drawing tool, for one shape; an arc is added
+            # as a default one.
             slot = (
-                (lambda _=False, k=kind: w.set_tool(k))
+                (lambda _=False, k=kind: w.draw_once(k))
                 if kind in w.tools
                 else (lambda _=False, k=kind: w.add_primitive(k))
             )
@@ -176,9 +171,9 @@ class Actions:
         operations.addAction(self.unpack)
 
         view = self.view = QMenu("&View", w)
-        act("Fit", lambda: w.canvas.fit(), "F", view, "fit")
-        act("Zoom in", lambda: w.canvas.zoom_by(1.25), "Ctrl+=", view, "zoom_in")
-        act("Zoom out", lambda: w.canvas.zoom_by(0.8), "Ctrl+-", view, "zoom_out")
+        act("Fit", lambda: w.canvas.fit(animated=True), "F", view, "fit")
+        act("Zoom in", lambda: w.canvas.zoom_by(1.25, animated=True), "Ctrl+=", view, "zoom_in")
+        act("Zoom out", lambda: w.canvas.zoom_by(0.8, animated=True), "Ctrl+-", view, "zoom_out")
         act("Recompile and check", w.refresh, "F5", view, "recompile")
         view.addSeparator()
         overlays = view.addMenu("Overlays")
@@ -192,7 +187,7 @@ class Actions:
             self.settings_toggles[key] = action
         self.dark = act("Dark canvas", w._toggle_dark, None, view)
         self.dark.setCheckable(True)
-        self.dark.setChecked(w.canvas_theme == "dark")
+        self.dark.setChecked(theme.get(w.canvas_theme).dark)
         implementation = act(
             "Show implementation of read-only components",
             lambda checked: w.settings.set("editor/show_implementation", checked),
@@ -262,7 +257,6 @@ class Actions:
             action.setEnabled(enabled and editable)
             return action
 
-        menu.addSection("At the cursor")
         add = menu.addMenu(self.add.menuAction().icon(), "Add")
         for source in self.add.actions():
             kind = next(k for k, label in PRIMITIVES if label == source.text())
@@ -277,7 +271,7 @@ class Actions:
         add.setEnabled(editable)
         place.setEnabled(editable)
 
-        menu.addSection(", ".join(_label(w, p) for p in selection[:3]) or "No selection")
+        menu.addSeparator()
         one, some, several = len(selection) == 1, bool(selection), len(selection) > 1
         reference = one and w.document.reference_target(selection[0]) is not None
         combine = menu.addMenu(self.combine.menuAction().icon(), "Combine")
@@ -293,8 +287,34 @@ class Actions:
             item(orient, source, enabled=some)
         orient.setEnabled(some and editable)
         menu.addSeparator()
+        self._edit_items(item, menu, some, one)
+        return menu
+
+    def _edit_items(self, item, menu: QMenu, some: bool, one: bool) -> None:
+        """Cut, copy, paste, duplicate and delete, for a right-click menu."""
+        item(menu, self.cut, enabled=some)
+        copy = item(menu, self.copy, enabled=some)
+        copy.setEnabled(some)  # copying changes nothing: also in a read-only component
+        item(menu, self.paste, enabled=self.window.can_paste())
         item(menu, self.duplicate, enabled=one)
         item(menu, self.delete, enabled=some)
+
+    def shapes_menu(self) -> QMenu:
+        """The Shapes tree's right-click menu, for the current selection."""
+        w = self.window
+        editable = not w.document.read_only
+        menu = QMenu(w)
+
+        def item(target: QMenu, source: QAction, enabled: bool = True) -> QAction:
+            action = make_action(menu, source.text(), source.trigger, menu=target)
+            action.setIcon(source.icon())
+            action.setShortcut(source.shortcut())
+            action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)  # shown, not active
+            action.setEnabled(enabled and editable)
+            return action
+
+        selection = list(w.selection)
+        self._edit_items(item, menu, bool(selection), len(selection) == 1)
         return menu
 
     def tab_menu(self, view) -> QMenu:

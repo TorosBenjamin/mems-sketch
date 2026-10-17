@@ -20,16 +20,31 @@
   its start and cut with "…" (the value only if there is room left); the
   whole text is in the tooltip and back while editing. The field may shrink,
   so long names never widen the panel.
+* Editing a text too long for the field (or typing past its end, or
+  Shift+Enter) opens :class:`ExpandedEdit` over it: as wide as the panel,
+  wrapping onto more lines, with the same completion. Enter applies, as in the
+  field; Esc leaves the field as it was; clicking elsewhere applies it, as
+  leaving a field of the Properties panel does.
 """
 
 from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 
-from PySide6.QtCore import QPoint, QRect, QSize, QStringListModel, Qt, Signal
-from PySide6.QtGui import QPainter, QPalette
-from PySide6.QtWidgets import QCompleter, QLineEdit, QMenu, QStyle, QStyleOptionFrame
+import shiboken6
+from PySide6.QtCore import QPoint, QRect, QSize, QStringListModel, Qt, QTimer, Signal
+from PySide6.QtGui import QPainter, QPalette, QTextCursor, QTextOption
+from PySide6.QtWidgets import (
+    QAbstractScrollArea,
+    QCompleter,
+    QLineEdit,
+    QMenu,
+    QStyle,
+    QStyleOptionFrame,
+    QTextEdit,
+)
 
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.gui import icons
@@ -108,7 +123,6 @@ class ElidedLineEdit(QLineEdit):
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)
         self._layout()
-        self._update_cursor()
 
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
@@ -168,9 +182,11 @@ class ValueEdit(QLineEdit):
         parameters: list[str] | None = None,
         prefix: str = "",
         optional: bool = False,
+        offered: Sequence[str] = (),
     ) -> None:
         super().__init__("" if value is None else _format(value))
         self.scope = dict(scope or {})
+        self.offered = list(offered)  # completed too, though without a value here
         self.parameters = list(parameters or [])  # the component's own, listed first
         self.prefix = prefix
         self.optional = optional
@@ -179,6 +195,8 @@ class ValueEdit(QLineEdit):
         self.maximum: float | None = None
         self._press: tuple[float, float] | None = None  # x and value where a drag began
         self._scrubbing = False
+        self.expanded: ExpandedEdit | None = None  # the wider editor, while open
+        self._back_from_expanded = False  # focus returning from it: do not open it again
         self._hint = ""
         self.setProperty("expression", False)
         self.setProperty("invalid", False)
@@ -199,6 +217,7 @@ class ValueEdit(QLineEdit):
         self._bind.setVisible(False)
         self.textChanged.connect(self._update)
         self.textEdited.connect(self._suggest)
+        self.textEdited.connect(self._overflowed)
         self._update()
 
     # -- reading -------------------------------------------------------------
@@ -300,6 +319,24 @@ class ValueEdit(QLineEdit):
         super().focusInEvent(event)
         self._layout()
         self._update_cursor()
+        if self._back_from_expanded:
+            self._back_from_expanded = False
+        elif not self._fits(with_hint=False):
+            QTimer.singleShot(0, self.expand)  # after the click has placed the cursor
+
+    def expand(self) -> None:
+        """Edit in :class:`ExpandedEdit`, over the field and as wide as its panel."""
+        if self.isReadOnly() or self.expanded is not None or not self.hasFocus():
+            return
+        self.expanded = ExpandedEdit(self)
+        self.expanded.open()
+
+    def keyPressEvent(self, event) -> None:
+        enter = event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        if enter and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.expand()
+            return
+        super().keyPressEvent(event)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -370,16 +407,28 @@ class ValueEdit(QLineEdit):
         super().leaveEvent(event)
 
     def focusOutEvent(self, event) -> None:
+        if not shiboken6.isValid(self._bind):  # the field is being destroyed
+            super().focusOutEvent(event)
+            return
         self._bind.setVisible(False)
         super().focusOutEvent(event)
         self.setCursorPosition(0)  # next time, start at the beginning
         self._layout()
         self._update_cursor()
 
+    def _overflowed(self) -> None:
+        """Typing past the end of the field continues in the wider editor."""
+        if not self._fits(with_hint=False):
+            self.expand()
+
     # -- names -------------------------------------------------------------------
 
     def _names(self) -> list[str]:
-        known = [*self.parameters, *sorted(n for n in self.scope if n not in self.parameters)]
+        known = [
+            *self.parameters,
+            *self.offered,
+            *sorted(n for n in self.scope if n not in self.parameters),
+        ]
         return [n for n in dict.fromkeys(known) if n.isidentifier() or "." in n]
 
     def _token(self) -> tuple[int, str]:
@@ -418,7 +467,6 @@ class ValueEdit(QLineEdit):
         """The parameter button's menu: use a parameter, make one, or use the value."""
         menu = QMenu(self)
         if self.parameters:
-            menu.addSection("Parameters")
             for name in self.parameters:
                 shown = f"{name}  = {_format(self.scope[name])}" if name in self.scope else name
                 action = menu.addAction(shown)
@@ -429,7 +477,8 @@ class ValueEdit(QLineEdit):
             for name in constants:
                 action = sub.addAction(f"{name}  = {_format(self.scope[name])}")
                 action.triggered.connect(lambda _=False, n=name: self._use(n))
-        menu.addSeparator()
+        if not menu.isEmpty():
+            menu.addSeparator()  # a line only between groups
         make = menu.addAction(icons.icon("add"), "Make a parameter from this value…")
         make.triggered.connect(self._make_parameter)
         make.setEnabled(bool(self.text().strip()))
@@ -448,3 +497,124 @@ class ValueEdit(QLineEdit):
         except ValueError:
             return
         self.make_parameter.emit(value)
+
+
+class ExpandedEdit(QTextEdit):
+    """A wider editor for a :class:`ValueEdit` whose text does not fit it (see the
+    module docstring). It opens over the field, as wide as the panel, and grows a
+    line at a time as the text wraps."""
+
+    MAX_LINES = 8
+
+    def __init__(self, field: ValueEdit) -> None:
+        super().__init__(field, Qt.WindowType.Popup)
+        self.setObjectName("expanded-value")
+        self.field = field
+        self._done = False
+        self.setAcceptRichText(False)
+        self.setTabChangesFocus(True)
+        self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setPlainText(field.text())
+        cursor = self.textCursor()
+        if field.hasSelectedText():  # a click selects all: keep it selected
+            cursor.setPosition(field.selectionStart())
+            cursor.setPosition(field.selectionEnd(), QTextCursor.MoveMode.KeepAnchor)
+        else:
+            cursor.setPosition(field.cursorPosition())
+        self.setTextCursor(cursor)
+        self._completer = QCompleter(field._model, self)
+        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self._completer.setWidget(self)
+        self._completer.activated.connect(self._complete)
+        self.document().contentsChanged.connect(self._fit)
+
+    def open(self) -> None:
+        field = self.field
+        at = field.mapToGlobal(QPoint(0, 0))
+        left, width = at.x(), max(field.width(), 320)
+        panel = field.parentWidget()
+        while panel is not None and not isinstance(panel, QAbstractScrollArea):
+            panel = panel.parentWidget()
+        if panel is not None:  # the panel's width, less its edges
+            corner = panel.viewport().mapToGlobal(QPoint(0, 0))
+            left, width = corner.x() + 4, max(panel.viewport().width() - 8, field.width())
+        self.setGeometry(left, at.y(), width, field.height())
+        self.show()
+        self.setFocus()
+        self._fit()
+
+    def _fit(self) -> None:
+        """As tall as its lines, up to :attr:`MAX_LINES`."""
+        self.document().setTextWidth(self.viewport().width())
+        line = self.fontMetrics().lineSpacing()
+        content = min(self.document().size().height(), line * self.MAX_LINES + 8)
+        frame = self.height() - self.viewport().height()
+        self.resize(self.width(), max(self.field.height(), round(content) + frame))
+
+    def text(self) -> str:
+        return " ".join(self.toPlainText().split("\n"))
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        enter = key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        if self._completer.popup().isVisible() and (enter or key == Qt.Key.Key_Escape):
+            event.ignore()  # the list of names takes it
+            return
+        if enter:
+            self.finish(apply=True)
+            return
+        if key == Qt.Key.Key_Escape:
+            self.finish(keep=False)
+            return
+        super().keyPressEvent(event)
+        if event.text():
+            self._suggest()
+
+    def finish(self, apply: bool = False, keep: bool = True) -> None:
+        """Close: ``keep`` the text in the field, and ``apply`` it as Enter does."""
+        if self._done:
+            return
+        self._done = True
+        field = self.field
+        if not shiboken6.isValid(field):  # the panel was rebuilt under it
+            return
+        if keep:
+            field.setText(self.text())
+        field.expanded = None
+        field._back_from_expanded = True
+        self.close()
+        field.setFocus(Qt.FocusReason.OtherFocusReason)
+        if apply:
+            field.returnPressed.emit()
+
+    def hideEvent(self, event) -> None:  # clicked elsewhere: the popup closes
+        self.finish(apply=True)  # as leaving a field does
+        super().hideEvent(event)
+
+    def _token(self) -> tuple[int, str]:
+        cursor = self.textCursor().position()
+        before = self.toPlainText()[:cursor]
+        match = _NAME_BEFORE_CURSOR.search(before)
+        return (match.start(), match.group()) if match else (len(before), "")
+
+    def _suggest(self) -> None:
+        _, token = self._token()
+        if not token or is_number(token):
+            self._completer.popup().hide()
+            return
+        self._completer.setCompletionPrefix(token)
+        if self._completer.completionCount() == 0:
+            self._completer.popup().hide()
+            return
+        rect = self.cursorRect()
+        self._completer.complete(QRect(rect.left(), rect.top(), 240, rect.height()))
+
+    def _complete(self, name: str) -> None:
+        start, token = self._token()
+        cursor = self.textCursor()
+        cursor.setPosition(start)
+        cursor.setPosition(start + len(token), QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(name)
+        self.setTextCursor(cursor)

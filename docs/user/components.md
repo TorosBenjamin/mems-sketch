@@ -115,9 +115,10 @@ library** in the Components panel).
 ## The process
 
 **Process** (the first item under the project in Components, or **View →
-Process**) is a tab with the process constants, available in every expression
-as `process.<name>`, the layers with their GDS layer and datatype, and the
-design rules.
+Process**) is a tab with the process the project uses at the top, then a card
+each for the process constants, available in every expression as
+`process.<name>`, the layers with their GDS layer and datatype, and the design
+rules.
 
 ![The Process tab](../images/process.png)
 
@@ -141,14 +142,21 @@ menu in Components), and without that, on the level of the component that
 places it. So one comb drive can be placed on poly1 here and on poly2 there,
 and its anchors follow. A level that runs off the bottom or top of the stack,
 or a role the level does not have, is an error on that placement.
-**Top components on level** below the layers chooses where a component
+**Top components on level** under the layers chooses where a component
 without a default is in its own tab.
+
+**Grid** and **Curve tolerance** are the fab's: the design rules are checked on
+the design rounded onto that grid, with curves split within that tolerance,
+which is what the fab will check; layout exports start from them too. The
+design itself stays exact. They belong to the process: a project using a
+library's process takes them from it.
 
 ### Design rules
 
 Each rule is a **kind** of check on some layers, with values. Values are
 numbers or expressions over the process constants, so a rule can follow the
-process: `undercut=process.undercut`.
+process: `process.undercut`. A rule kind with one value shows and takes just
+the value (`2`); one with several, `name=value` separated by commas.
 
 | Kind | Layers | Checks |
 |---|---|---|
@@ -166,8 +174,9 @@ A new project starts with minimum width and spacing on the device layer and
 the **anchored** and **release** rules (as warnings, with a `process.undercut`
 constant). Change any value, add rules with **+** (pick the kind), and untick a
 rule to turn it off: it stays listed, as off, so it never quietly disappears.
-**Severity** is `error` or `warning`; the note is shown with the rule's
-violations, e.g. why the rule exists.
+**Severity** is `error` or `warning`. Select a rule and its details fold out
+under it: its **Note**, shown with its violations (e.g. why the rule exists),
+and where it comes from.
 
 Rules are checked on the final geometry after every change; **Messages**
 lists the violations and the canvas boxes them in red. More kinds can be
@@ -178,12 +187,13 @@ installed as plugins (`mems-sketch-cli rules` lists them).
 A process (layers, layer stack, constants and rules) can be shared like
 components: a library can hold processes, typically one per fab process, kept
 by whoever looks after it. Choose the one the project uses under **Process**
-at the top of *Rules*: the project's own, or `library.process`.
+at the top of the tab: the project's own, or `library.process`.
 
 On a library's process:
 
 - **Change a constant or a rule** for this project by editing it like any
-  other; the rule is marked *(changed)* and can say why under **Reason**.
+  other; the rule is marked with a dot, its details say *(changed)*, and it can
+  say why under **Reason**.
   Untick a rule to turn it off. **Reset** takes the process's rule again.
 - **Add rules** of your own; they are marked *(added)*.
 - The **layers and the layer stack** belong to the fab and cannot change

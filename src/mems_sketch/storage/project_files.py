@@ -190,6 +190,10 @@ def process_data(process: Process) -> dict[str, Any]:
         ]
     if process.default_level is not None:
         data["default_level"] = process.default_level
+    if process.grid_um != Process.grid_um:
+        data["grid"] = process.grid_um
+    if process.chord_um != Process.chord_um:
+        data["chord"] = process.chord_um
     if process.rules:
         data["rules"] = {rule.name: rule_data(rule) for rule in process.rules.values()}
     return data
@@ -227,7 +231,17 @@ def process_from_data(data: dict[str, Any]) -> Process:
         levels=levels,
         default_level=default_level,
         description=str(data.get("description", "")),
+        grid_um=_positive(data, "grid", Process.grid_um),
+        chord_um=_positive(data, "chord", Process.chord_um),
     )
+
+
+def _positive(data: dict[str, Any], key: str, default: float) -> float:
+    """A positive length (µm) of a process, or the default when it is not given."""
+    value = data.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
+        raise ProjectFormatError(f"the process's {key} is a positive length in µm, not {value!r}")
+    return float(value)
 
 
 def apply_overrides(project: Project, overrides: dict[str, Any]) -> None:

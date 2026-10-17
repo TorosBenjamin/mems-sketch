@@ -87,6 +87,7 @@ def antialiased(canvas) -> bool:
 def test_zooming_draws_in_draft_quality_until_it_settles(canvas, qtbot):
     canvas.configure(draft_quality=True)
     qtbot.waitUntil(lambda: antialiased(canvas), timeout=2000)  # showing it was a resize
+    canvas._full_frame_ms = 100.0  # a big design: full quality is slow
     wheel(canvas)
     assert not antialiased(canvas)
     wheel(canvas)
@@ -94,8 +95,23 @@ def test_zooming_draws_in_draft_quality_until_it_settles(canvas, qtbot):
     qtbot.waitUntil(lambda: antialiased(canvas), timeout=2000)
 
 
+def test_fast_frames_stay_in_full_quality(canvas, qtbot):
+    canvas.configure(draft_quality=True)
+    qtbot.waitUntil(lambda: antialiased(canvas), timeout=2000)
+    canvas._full_frame_ms = 5.0  # fast enough: drafting would only make outlines flicker
+    wheel(canvas)
+    assert antialiased(canvas)
+
+
+def test_a_full_quality_frame_is_timed(canvas, qtbot):
+    canvas._full_frame_ms = -1.0
+    canvas.viewport().repaint()
+    assert canvas._full_frame_ms >= 0
+
+
 def test_draft_quality_can_be_switched_off(canvas, qtbot):
     canvas.configure(draft_quality=False)
+    canvas._full_frame_ms = 100.0
     wheel(canvas)
     assert antialiased(canvas)
 

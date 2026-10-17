@@ -10,26 +10,24 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from mems_sketch.editing.components import library_name
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.storage.project_files import PROJECT_FILE
 
 KINDS = {  # what the wizard makes: label, icon, what it is
@@ -52,16 +50,10 @@ class NewProjectDialog(QDialog):
         self.resize(720, 460)
         self.process_from: str | None = None
 
-        self.kinds = QListWidget()
-        self.kinds.setObjectName("settings-pages")  # the same side list as Settings
-        self.kinds.setFixedWidth(170)
-        self.kinds.setIconSize(QSize(18, 18))
-        self.kinds.setSpacing(1)
-        for key, (label, icon, _about) in KINDS.items():
-            item = QListWidgetItem(icons.icon(icon), label)
-            item.setData(Qt.ItemDataRole.UserRole, key)
-            item.setSizeHint(QSize(0, 30))
-            self.kinds.addItem(item)
+        self.side = widgets.SideList([(icon, label) for label, icon, _about in KINDS.values()])
+        self.kinds = self.side.list
+        for row, key in enumerate(KINDS):
+            self.kinds.item(row).setData(Qt.ItemDataRole.UserRole, key)
         self.kinds.currentRowChanged.connect(self._kind_changed)
 
         self.about = QLabel()
@@ -91,31 +83,35 @@ class NewProjectDialog(QDialog):
         self.libraries = QListWidget()
         self.libraries.setObjectName("library-list")
         self.libraries.setMinimumHeight(90)
+        self.libraries.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.libraries.itemSelectionChanged.connect(self._validate)
-        add = QPushButton("Add…")
-        icons.bind(add, "add")
-        add.setToolTip("Load a folder of components (a library or another project)")
-        add.clicked.connect(lambda: self.add_library())
-        self.remove = QPushButton("Remove")
-        self.remove.clicked.connect(self._remove_library)
-        for button in (add, self.remove):
-            button.setAutoDefault(False)  # Enter creates the project
+        widgets.placeholder(self.libraries, "No libraries: only the built-in components.")
+        add = widgets.action_button(
+            "plus",
+            "Add a library: a folder of components (a library or another project)",
+            lambda: self.add_library(),
+        )
+        self.remove = widgets.action_button(
+            "minus", "Remove the selected library", self._remove_library
+        )
         library_buttons = QVBoxLayout()
+        library_buttons.setSpacing(theme.metric("space_xs"))
         library_buttons.addWidget(add)
         library_buttons.addWidget(self.remove)
         library_buttons.addStretch()
         library_row = QHBoxLayout()
+        library_row.setSpacing(theme.metric("space_s"))
         library_row.addWidget(self.libraries, 1)
         library_row.addLayout(library_buttons)
 
-        form = QFormLayout()
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(8)
+        form = widgets.form()
         form.addRow("Name", self.name)
         form.addRow("Location", where)
         form.addRow("", self.target)
         form.addRow("Process", self.process)
-        form.addRow("Libraries", library_row)
+        libraries_label = QLabel("Libraries")
+        form.addRow(libraries_label, library_row)
+        form.setAlignment(libraries_label, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -126,13 +122,12 @@ class NewProjectDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
 
-        details = QVBoxLayout()
-        details.setContentsMargins(18, 14, 18, 14)
-        details.setSpacing(10)
+        details = widgets.dialog_margins(QVBoxLayout())
         self.heading = QLabel()
         self.heading.setObjectName("heading")
         details.addWidget(self.heading)
         details.addWidget(self.about)
+        details.addSpacing(theme.metric("space_s"))
         details.addLayout(form)
         details.addStretch()
         details.addWidget(self.buttons)
@@ -141,7 +136,7 @@ class NewProjectDialog(QDialog):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self.kinds)
+        layout.addWidget(self.side)
         layout.addWidget(right, 1)
 
         self._named_by_user = False
@@ -254,7 +249,7 @@ class NewProjectDialog(QDialog):
         if not folder:
             return
         name = library_name(folder)
-        item = QListWidgetItem(icons.icon("library"), f"{name}    {folder}")
+        item = QListWidgetItem(icons.icon("library"), f"{name}  ·  {folder}")
         item.setToolTip(folder)
         self.libraries.addItem(item)
         self._validate()

@@ -158,3 +158,31 @@ TEST_CASE("edges, for measuring and snapping") {
         CHECK(e[4].kind == EdgeKind::arc);
     }
 }
+
+TEST_CASE("the minimal box of a turned rectangle lies on it") {
+    const Region beam = Region::rect(0, 0, 10, 2).transformed(Transform{3, 4, 30});
+    const MinimalBox m = minimal_box(outline_points(beam, 0.001), 0.001);
+    CHECK(m.angle_deg == approx(30));
+    CHECK(m.box.width() == approx(10));
+    CHECK(m.box.height() == approx(2));
+    const Point corner = m.to_xy({m.box.x0, m.box.y0});
+    CHECK(corner.x == doctest::Approx(3).epsilon(1e-9));
+    CHECK(corner.y == doctest::Approx(4).epsilon(1e-9));
+}
+
+TEST_CASE("a rectangle turned past 45 degrees is described by the nearer angle") {
+    const Region beam = Region::rect(0, 0, 10, 2).transformed(Transform::rotation(70));
+    const MinimalBox m = minimal_box(outline_points(beam, 0.001), 0.001);
+    CHECK(m.angle_deg == approx(-20));
+    CHECK(m.box.width() == approx(2));
+    CHECK(m.box.height() == approx(10));
+}
+
+TEST_CASE("ties keep the level box: a circle, a square") {
+    const MinimalBox circle = minimal_box(outline_points(Region::circle({5, 5}, 3), 0.001), 0.001);
+    CHECK(circle.angle_deg == 0);
+    CHECK(circle.box.width() == doctest::Approx(6).epsilon(1e-6));
+    const MinimalBox square = minimal_box(outline_points(Region::rect(0, 0, 4, 4).transformed(Transform::rotation(90)), 0.001));
+    CHECK(square.angle_deg == 0);
+    CHECK(minimal_box(std::vector<Point>{}).box.empty());
+}

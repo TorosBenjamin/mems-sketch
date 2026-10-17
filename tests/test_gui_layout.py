@@ -311,7 +311,7 @@ def test_the_layers_window_shows_layers_and_the_process_tab_defines_them(window)
     definitions = window.area.process_view.layers.layers
     assert headers(definitions) == ["Layer", "GDS", "Datatype", "Level"]
     rules = window.area.process_view.rules.rules
-    assert headers(rules)[:6] == ["Rule", "Kind", "Layers", "Values", "Severity", "Note"]
+    assert headers(rules) == ["Rule", "Kind", "Layers", "Values", "Severity"]
     row = [rules.item(r, 0).text() for r in range(rules.rowCount())].index("device_min_width")
     rules.item(row, 3).setText("value=0.5")
     assert window.document.project.process.rules["device_min_width"].values == {"value": 0.5}
@@ -332,10 +332,10 @@ def test_a_tool_window_header_carries_the_panels_own_buttons(window):
     window.tool_windows.close("components")
     window.tool_windows.open("components")
     assert all(b.isVisible() for b in buttons)
-    from mems_sketch.gui.theme import HEADER_HEIGHT
+    from mems_sketch.gui.theme import metric
 
     header = buttons[0].parentWidget().parentWidget()
-    assert header.height() == HEADER_HEIGHT  # lines up with the editor tabs
+    assert header.height() == metric("header_height")  # lines up with the editor tabs
 
 
 def test_the_process_item_has_its_own_right_click_entry(window):
@@ -364,7 +364,7 @@ def test_the_bottom_panel_spans_the_full_width(window):
 
 @pytest.mark.parametrize("name", ["light", "dark"])
 def test_frame_and_islands_have_their_own_colours(window, name, qtbot):
-    from mems_sketch.gui.theme import TOKENS
+    from mems_sketch.gui.theme import tokens
 
     window.settings.set("appearance/ui_theme", name)
     qtbot.wait(20)
@@ -373,13 +373,13 @@ def test_frame_and_islands_have_their_own_colours(window, name, qtbot):
     in_stripe = stripe.mapTo(window, QPoint(stripe.width() // 2, stripe.height() // 2))
     viewport = window.components.tree.viewport()
     in_island = viewport.mapTo(window, QPoint(viewport.width() // 2, viewport.height() - 6))
-    assert image.pixelColor(in_stripe).name() == TOKENS[name]["frame"]
-    assert image.pixelColor(in_island).name() == TOKENS[name]["island"]
+    assert image.pixelColor(in_stripe).name() == tokens(name)["frame"]
+    assert image.pixelColor(in_island).name() == tokens(name)["island"]
 
 
 @pytest.mark.parametrize("name", ["light", "dark"])
 def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, qtbot):
-    from mems_sketch.gui.theme import TOKENS
+    from mems_sketch.gui.theme import tokens
 
     window.settings.set("appearance/ui_theme", name)
     qtbot.wait(20)
@@ -388,7 +388,7 @@ def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, q
     assert corner.x() == 0 and corner.y() == island.height()  # no border around it
     image = window.grab().toImage()
     bottom_left = canvas.mapTo(window, QPoint(0, canvas.height() - 1))
-    assert image.pixelColor(bottom_left).name() == TOKENS[name]["frame"]  # rounded off
+    assert image.pixelColor(bottom_left).name() == tokens(name)["frame"]  # rounded off
     inside = canvas.mapTo(window, QPoint(12, canvas.height() - 12))
     assert image.pixelColor(inside).name() == canvas.theme["background"]
 
@@ -396,7 +396,7 @@ def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, q
 @pytest.mark.parametrize("name", ["light", "dark"])
 def test_the_editor_island_has_all_four_corners_rounded(window, name, qtbot):
     # The tab row spans the island's top: it must not paint a square over the top corners.
-    from mems_sketch.gui.theme import TOKENS
+    from mems_sketch.gui.theme import tokens
 
     window.settings.set("appearance/ui_theme", name)
     qtbot.wait(20)
@@ -405,7 +405,7 @@ def test_the_editor_island_has_all_four_corners_rounded(window, name, qtbot):
     right, bottom = island.width() - 1, island.height() - 1
     for x, y in ((0, 0), (right, 0), (0, bottom), (right, bottom)):
         pixel = island.mapTo(window, QPoint(x, y))
-        assert image.pixelColor(pixel).name() == TOKENS[name]["frame"], (x, y)
+        assert image.pixelColor(pixel).name() == tokens(name)["frame"], (x, y)
 
 
 def test_the_layer_stack_is_edited_in_the_level_column(window):
@@ -432,6 +432,20 @@ def test_the_layer_stack_is_edited_in_the_level_column(window):
     assert process.default_level is None
 
 
+def test_the_process_panel_sets_the_fabs_grid(window):
+    window.open_process()
+    panel = window.area.process_view.layers
+    process = window.document.project.process
+    assert panel.grid.value() == pytest.approx(0.001) and panel.chord.value() == pytest.approx(
+        0.005
+    )
+    panel.grid.setValue(0.002)
+    panel.grid.editingFinished.emit()
+    assert process.grid_um == pytest.approx(0.002)
+    window.document.undo()
+    assert window.area.process_view.layers.grid.value() == pytest.approx(0.001)
+
+
 def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path):
     from mems_sketch import Project, load_library, save
 
@@ -454,12 +468,46 @@ def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path)
     assert window.document.project.process_name == "fab.surface"
     table = panel.rules
     row = [table.item(r, 0).text() for r in range(table.rowCount())].index("device_min_width")
-    assert table.item(row, 6).text() == "fab.surface"
+    details = panel.open_details("device_min_width")  # folds out under the rule
+    assert details.source.text() == "fab.surface" and details.reason.isHidden()
     table.item(row, 3).setText("value=1")
-    assert table.item(row, 6).text() == "fab.surface (changed)"
-    table.item(row, 7).setText("test structures")
+    details = panel.details
+    assert details.source.text() == "fab.surface (changed)" and not details.reason.isHidden()
+    details.reason.setText("test structures")
+    details.reason.editingFinished.emit()
     assert window.document.project.reasons == {"device_min_width": "test structures"}
     table.selectRow(row)
     panel.actions.buttons["Reset the selected rules to the process's"].click()
     assert window.document.project.process.rules["device_min_width"].values == {"value": 2.0}
     assert load_library("fab", tmp_path / "fab").processes["surface"].constants == {"undercut": 2}
+
+
+def test_menus_have_lines_only_between_groups(window):
+    menu = window.actions_.context_menu(0, 0)
+    actions = menu.actions()
+    lines = [i for i, a in enumerate(actions) if a.isSeparator()]
+    assert actions[0].text() == "Add"  # no heading or line above the first group
+    assert lines and all(0 < i < len(actions) - 1 for i in lines)
+    menu.deleteLater()
+
+
+def test_resizing_panels_leaves_the_canvas_alone_and_saves_once(window, qtbot, monkeypatch):
+    overlays, saves = [], []
+    monkeypatch.setattr(window, "update_overlay", lambda: overlays.append(1))
+    window.tool_windows.resized.connect(lambda: saves.append(1))
+    splitter = window.tool_windows._splitters["left"]
+    for k in range(10):  # a drag: the splitter moves pixel by pixel
+        splitter.moveSplitter(splitter.handle(1).pos().y() + (2 if k % 2 else -2), 1)
+    assert overlays == [] and saves == []
+    qtbot.waitUntil(lambda: saves == [1])  # once the drag has stopped
+
+
+def test_the_minus_button_hides_its_panel(window, qtbot):
+    tw = window.tool_windows
+    name = next(n for n in tw.names() if tw.is_open(n))
+    host = tw._hosts[tw._windows[name].anchor]
+    minus = next(b for b in host.findChildren(QToolButton) if b.toolTip() == "Hide")
+    qtbot.mouseClick(minus, Qt.MouseButton.LeftButton)
+    assert not tw.is_open(name) and not host.isVisible()
+    tw.toggle(name)  # the View menu and the stripe bring it back
+    assert tw.is_open(name)

@@ -20,12 +20,26 @@ import weakref
 
 import numpy as np
 import shiboken6
-from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QLineF,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSize,
+    QSizeF,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QBrush,
     QColor,
     QFont,
+    QFontMetricsF,
+    QInputDevice,
     QPainter,
     QPainterPath,
     QPen,
@@ -51,10 +65,9 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.transform import Transform
-from mems_sketch.gui import icons
-from mems_sketch.gui.theme import ISLAND_RADIUS
+from mems_sketch.gui import icons, motion
+from mems_sketch.gui import theme as themes
 
-PALETTE = ["#4c78a8", "#f58518", "#54a24b", "#e45756", "#72b7b2", "#b279a2", "#eeca3b", "#9d755d"]
 POINT_SIZES = {  # marker size in pixels
     "declared": 9,  # the edited component's own points
     "selected": 7,  # points of the selected shape
@@ -63,59 +76,6 @@ POINT_SIZES = {  # marker size in pixels
     "anchor": 9,  # a point a tool has fixed (move base, rotation pivot, ruler start)
     "focus": 15,  # the point hovered or selected in the Points panel
 }
-# Colours per canvas theme. Grid lines are drawn with the ``grid`` colour at
-# increasing opacity for minor lines, every fifth line and the axes.
-THEMES = {
-    "light": {
-        "background": "#ffffff",
-        "grid": (0, 0, 0),
-        "grid_alpha": (16, 34, 90),
-        "highlight": "#f07800",  # selection: orange, as in Blender and Unity
-        "hover": "#f07800",
-        "violation": "#d7002a",
-        "added": "#1f9d45",  # history: material a version added
-        "removed": "#d7002a",  # and removed (hatched: it is not there any more)
-        "declared": "#008a3e",
-        "selected": "#f07800",
-        "pick": "#0a6fd6",
-        "snap": "#e0007a",
-        "anchor": "#e0007a",
-        "focus": "#7a3ee0",
-        "ruler": "#b35c00",
-        "guide": "#1b8a96",
-        "axis_x": "#e0443e",
-        "axis_y": "#3f9b3f",
-        "gizmo_free": "#6c707e",
-        "gizmo_ring": "#3574f0",
-        "overlay": "#1e1f22",  # overlay text
-        "overlay_muted": "#818594",
-    },
-    "dark": {
-        "background": "#1e1f22",
-        "grid": (255, 255, 255),
-        "grid_alpha": (12, 28, 70),
-        "highlight": "#ffa033",
-        "hover": "#ffa033",
-        "violation": "#ff2d55",
-        "added": "#3ddc84",
-        "removed": "#ff4d6a",
-        "declared": "#3ddc84",
-        "selected": "#ffa033",
-        "pick": "#00c8ff",
-        "snap": "#ff5fb0",
-        "anchor": "#ff5fb0",
-        "focus": "#b18cff",
-        "ruler": "#ffb000",
-        "guide": "#4cc2cf",
-        "axis_x": "#f0584f",
-        "axis_y": "#6cc36c",
-        "gizmo_free": "#dfe1e5",
-        "gizmo_ring": "#548af7",
-        "overlay": "#dfe1e5",
-        "overlay_muted": "#868a91",
-    },
-}
-DEFAULT_THEME = "light"
 # Canvas options (the window fills them from the settings; see gui/settings.py).
 DEFAULT_OPTIONS = {
     "fill_opacity": 45,  # %
@@ -126,6 +86,7 @@ DEFAULT_OPTIONS = {
     "show_scale_bar": True,
     "gizmo_size_px": 70,
     "zoom_step": 1.25,
+    "scrolling": "auto",  # "auto": a mouse wheel zooms, a touchpad pans; "zoom"; "pan"
     "draft_quality": True,  # no antialiasing while zooming or resizing, until it settles
     "max_fps": 0,  # mouse moves handled (and so frames drawn) per second; 0: no limit
 }
@@ -136,10 +97,15 @@ MENU_CARET = "▾"  # after the text of a button that opens a menu
 # room for several full-view pictures on a large, high-resolution screen.
 PIXMAP_CACHE_KB = 256 * 1024
 DRAFT_SETTLE_MS = 200  # full quality again this long after the last zoom or resize step
+DRAFT_ABOVE_MS = 25.0  # draft quality only when a full-quality frame takes longer than this
 CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
 OUTLINE_PX = 1.0
+ALIGN_LABEL_GAP_PX = 14  # an alignment's names sit this far beyond the arrow's ends
+ALIGN_APART_PX = 4  # an alignment's point and target closer than this are drawn as one
+CURSOR_LABEL_OFFSET = 16  # px: a label by the cursor starts this far right and below it
+PULSE_PX = 3.0  # a picked shape's glow starts this wide, then thins and fades
 COMPONENT_MIME = "application/x-mems-sketch-component"  # a component dragged from the explorer
 # The world the user can pan over, in µm: ±1 m, inside the ±2.1 m that 32-bit
 # database units (nm) can hold. Cursor positions are kept inside it.
@@ -147,7 +113,9 @@ WORLD = QRectF(-1e6, -1e6, 2e6, 2e6)
 
 
 def layer_color(index: int) -> QColor:
-    return QColor(PALETTE[index % len(PALETTE)])
+    """The colour of the ``index``-th layer: the interface theme's layer colours, in turn."""
+    palette = themes.current().canvas["layers"]
+    return QColor(palette[index % len(palette)])
 
 
 def geometry_path(geometry: Geometry, layer: str) -> QPainterPath:
@@ -192,6 +160,46 @@ def own_path(geometry: Geometry, layer: str) -> QPainterPath:
     return paths[layer]
 
 
+class ShapeItem(QGraphicsPathItem):
+    """A filled shape: its fill drawn without antialiasing, its outline over it with.
+
+    Antialiasing a fill costs some fifty times as much on a path with thousands
+    of holes (10,000 round holes: 3.6 s against 0.08 s a picture), and it is not
+    seen: the outline covers the fill's edge."""
+
+    def paint(self, painter, option, widget=None) -> None:
+        if self.brush().style() != Qt.BrushStyle.NoBrush:
+            antialiased = painter.testRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            painter.fillPath(self.path(), self.brush())
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, antialiased)
+        if self.pen().style() != Qt.PenStyle.NoPen:
+            painter.strokePath(self.path(), self.pen())
+
+
+def stack_order(geometry: Geometry, colors: dict[str, QColor]) -> dict[str, int]:
+    """The z-order of a geometry's layers: bottom to top as the layer stack has them
+    (the order of ``colors``, see LayersPanel), then layers the process does not
+    know, by name."""
+    names = set(geometry.layer_names())
+    known = [layer for layer in colors if layer in names]
+    return {layer: z for z, layer in enumerate([*known, *sorted(names - set(known))])}
+
+
+def _from_touchpad(event) -> bool:
+    """Whether a wheel event comes from a touchpad (or another device that scrolls
+    smoothly) rather than a mouse wheel's notches."""
+    device = event.pointingDevice()
+    if device is not None and device.type() == QInputDevice.DeviceType.TouchPad:
+        return True
+    if event.phase() != Qt.ScrollPhase.NoScrollPhase:  # touchpads say when fingers start
+        return True
+    if not event.pixelDelta().isNull():
+        return True
+    delta = event.angleDelta()
+    return bool(delta.x()) or delta.y() % 120 != 0  # a part of a notch, or sideways
+
+
 def qtransform(t: Transform) -> QTransform:
     """A placement as Qt applies it: mirrored about x, scaled, turned, then moved."""
     q = QTransform()
@@ -223,7 +231,7 @@ def polygon_f(points) -> QPolygonF:
     return loop
 
 
-class _PlacedPathItem(QGraphicsPathItem):
+class _PlacedPathItem(ShapeItem):
     """A path item that remembers its placement (for drag previews, which move
     and turn it on top of that)."""
 
@@ -259,7 +267,7 @@ class LayoutCanvas(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
-        self.theme = THEMES[DEFAULT_THEME]
+        self.theme = themes.get("light").canvas
         self.setBackgroundBrush(QColor(self.theme["background"]))
         self.setTransform(QTransform.fromScale(2, -2))
         # One item per layer of each placed geometry with polygons of its own,
@@ -281,6 +289,17 @@ class LayoutCanvas(QGraphicsView):
         self._box_item: QGraphicsRectItem | None = None
         self._sketch_item: QGraphicsPathItem | None = None
         self._hover_item: QGraphicsPathItem | None = None
+        self._pulse_item: QGraphicsPathItem | None = None
+        self._glide_target: tuple[float, QPointF] | None = None  # where a glide is going
+        # A label by the cursor: the live value of a drag (``cursor_label``) or, when
+        # pointing at a shape for a moment, what it is (``hover_label``).
+        self.cursor_label: str | None = None
+        self.hover_label: str | None = None
+        self._cursor_at = QPointF()  # viewport pixels
+        self._over_selection = False  # the cursor is on the selection: a drag moves it
+        # The selected shape's alignment: its point and the point it is aligned to,
+        # each (name, x, y) in µm (see show_alignment).
+        self._alignment: tuple[tuple[str, float, float], tuple[str, float, float]] | None = None
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
         self._caption: tuple[str, str] = ("", "")
@@ -301,6 +320,7 @@ class LayoutCanvas(QGraphicsView):
         if QPixmapCache.cacheLimit() < PIXMAP_CACHE_KB:
             QPixmapCache.setCacheLimit(PIXMAP_CACHE_KB)
         self._drafting = False
+        self._full_frame_ms = 0.0  # how long the last full-quality frame took
         self._draft_timer = QTimer(self)
         self._draft_timer.setSingleShot(True)
         self._draft_timer.setInterval(DRAFT_SETTLE_MS)
@@ -318,8 +338,8 @@ class LayoutCanvas(QGraphicsView):
     # -- content -----------------------------------------------------------
 
     def set_theme(self, name: str) -> None:
-        """Switch between the ``light`` and ``dark`` canvas colours."""
-        self.theme = THEMES[name]
+        """Draw with the canvas colours of the theme ``name`` (an id, or ``system``)."""
+        self.theme = themes.get(name).canvas
         self.setBackgroundBrush(QColor(self.theme["background"]))
         self.viewport().update()
 
@@ -385,9 +405,13 @@ class LayoutCanvas(QGraphicsView):
         box = self._overlay_box(Qt.Orientation.Horizontal)
         layout = box.layout()
         for name, tip, slot in (
-            ("zoom_in", "Zoom in", lambda: self.zoom_by(self.options["zoom_step"])),
-            ("zoom_out", "Zoom out", lambda: self.zoom_by(1 / self.options["zoom_step"])),
-            ("fit", "Fit (F)", self.fit),
+            ("zoom_in", "Zoom in", lambda: self.zoom_by(self.options["zoom_step"], animated=True)),
+            (
+                "zoom_out",
+                "Zoom out",
+                lambda: self.zoom_by(1 / self.options["zoom_step"], animated=True),
+            ),
+            ("fit", "Fit (F)", lambda: self.fit(animated=True)),
         ):
             button = QToolButton(box)
             icons.bind(button, name)
@@ -405,10 +429,25 @@ class LayoutCanvas(QGraphicsView):
         super().resizeEvent(event)
         self._place_overlays()
 
+    def paintEvent(self, event) -> None:
+        if self._drafting:
+            super().paintEvent(event)
+            return
+        start = time.perf_counter()
+        super().paintEvent(event)
+        self._full_frame_ms = (time.perf_counter() - start) * 1000
+
     def _begin_draft(self) -> None:
         """Draw without antialiasing until zooming or resizing has settled: each step
-        then costs a fraction of a full-quality drawing of a big design."""
+        then costs a fraction of a full-quality drawing of a big design.
+
+        Only when full quality is slow (DRAFT_ABOVE_MS): drafting changes how
+        outlines look (a line between pixels is drawn on one, at full strength),
+        which flickers while zooming if the frames were fast enough anyway.
+        """
         if not self.options["draft_quality"]:
+            return
+        if not self._drafting and self._full_frame_ms <= DRAFT_ABOVE_MS:
             return
         if not self._drafting:
             self._drafting = True
@@ -429,26 +468,130 @@ class LayoutCanvas(QGraphicsView):
         zoom.move(width - zoom.width() - 8, height - zoom.height() - 8)
         modes.move(width - modes.width() - 8, 8)
 
-    def zoom_by(self, factor: float) -> None:
-        """Zoom about the centre of the view."""
-        scale = self.pixels_per_um() * factor
-        if 1e-4 < scale < 1e5:
+    def zoom_by(self, factor: float, animated: bool = False) -> None:
+        """Zoom about the centre of the view (``animated``: gliding there; clicks
+        during a glide add up from where it is going)."""
+        gliding = self._glide_target if motion.running(self, "view") else None
+        scale = (gliding[0] if gliding else self.pixels_per_um()) * factor
+        if not 1e-4 < scale < 1e5:
+            return
+        if animated:
+            center = gliding[1] if gliding else self.mapToScene(self.viewport().rect().center())
+            self._glide(scale, center)
+            return
+        motion.stop(self, "view")
+        self._begin_draft()
+        anchor = self.transformationAnchor()
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.scale(factor, factor)
+        self.setTransformationAnchor(anchor)
+        self.view_changed.emit()
+
+    def _glide(self, scale: float, center: QPointF) -> None:
+        """Move the view to ``scale`` (pixels per µm) and ``center`` smoothly: the
+        zoom changes evenly (by ratio), so zooming in far does not rush at the end."""
+        self._glide_target = (scale, QPointF(center))
+        start_scale = self.pixels_per_um()
+        start = self.mapToScene(self.viewport().rect().center())
+        log_from, log_to = math.log(start_scale), math.log(scale)
+
+        def step(t: float) -> None:
+            s = math.exp(motion.mix(log_from, log_to, t))
+            # Hold the centre's share of the way in screen terms: at each zoom,
+            # pan by the same fraction of the distance as the zoom has covered.
+            k = (s - start_scale) / (scale - start_scale) if scale != start_scale else t
+            x = motion.mix(start.x(), center.x(), k)
+            y = motion.mix(start.y(), center.y(), k)
             self._begin_draft()
-            anchor = self.transformationAnchor()
-            self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
-            self.scale(factor, factor)
-            self.setTransformationAnchor(anchor)
+            self.setTransform(QTransform.fromScale(s, -s))
+            self.centerOn(QPointF(x, y))
+
+        motion.run(
+            self,
+            step,
+            motion.VIEW,
+            done=self.view_changed.emit,
+            easing=QEasingCurve.Type.InOutCubic,
+            key="view",
+        )
+
+    def stop_gliding(self) -> None:
+        """The user took over (wheel, pan): stay where the glide got to."""
+        if motion.running(self, "view"):
+            motion.stop(self, "view")
             self.view_changed.emit()
 
+    def pulse(self, *geometries: Geometry) -> None:
+        """Make ``geometries`` glow and fade (shapes picked in a panel or search), so
+        the eye finds them on the canvas; they move into view first if outside."""
+        if self._pulse_item is not None:
+            self.scene().removeItem(self._pulse_item)
+            self._pulse_item = None
+        motion.stop(self, "pulse")
+        shown = [g for g in geometries if g is not None and not g.is_empty()]
+        if not shown or not motion.enabled():
+            return
+        outline = QPainterPath()
+        for geometry in shown:
+            for leaf, at in geometry.leaves():
+                outline.addPath(qtransform(at).map(own_path(leaf, "")))
+        self.reveal(outline.boundingRect())
+        item = QGraphicsPathItem(outline)
+        item.setZValue(1002)
+        self.scene().addItem(item)
+        self._pulse_item = item
+        color = QColor(self.theme["highlight"])
+
+        def step(t: float) -> None:
+            pen = QPen(color, motion.mix(PULSE_PX, OUTLINE_PX, t))
+            pen.setCosmetic(True)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            item.setPen(pen)
+            item.setOpacity(0.85 * (1.0 - t))
+
+        def done() -> None:
+            if self._pulse_item is item:
+                self.scene().removeItem(item)
+                self._pulse_item = None
+
+        motion.run(
+            self, step, motion.PULSE, done=done, easing=QEasingCurve.Type.InQuad, key="pulse"
+        )
+
+    def reveal(self, rect: QRectF) -> None:
+        """Glide so ``rect`` (µm) is in view: a pan when it fits at this zoom, else
+        zoomed out to it. Nothing moves when it is already in view."""
+        if rect.isEmpty() and rect.width() == 0 and rect.height() == 0:
+            return
+        shown = self.mapToScene(self.viewport().rect()).boundingRect()
+        if shown.contains(rect):
+            return
+        margin = max(rect.width(), rect.height()) * 0.08 + 1
+        if (
+            rect.width() + 2 * margin < shown.width()
+            and rect.height() + 2 * margin < shown.height()
+        ):
+            self._glide(self.pixels_per_um(), rect.center())
+        else:
+            self.zoom_to(rect, animated=True)
+
     def show_geometry(
-        self, geometry: Geometry, colors: dict[str, QColor], visible: dict[str, bool]
+        self,
+        geometry: Geometry,
+        colors: dict[str, QColor],
+        visible: dict[str, bool],
+        shapes: list[Geometry] | None = None,
     ) -> None:
         """Draw ``geometry``: each geometry it places once (a painter path per
-        layer), as an item per placement; items that are drawn as before are kept."""
-        self._shown = (geometry, colors, visible)
+        layer), as an item per placement; items that are drawn as before are kept.
+
+        A layer is filled merged, so shapes overlapping on it are not tinted twice;
+        ``shapes`` (the component's own shapes, one geometry each) are outlined one
+        by one over the fill, so a shape inside another on its layer keeps its edge."""
+        self._shown = (geometry, colors, visible, shapes)
         alpha = round(255 * self.options["fill_opacity"] / 100)
         width = self.options["outline_width"]
-        order = {layer: z for z, layer in enumerate(sorted(geometry.layer_names()))}
+        order = stack_order(geometry, colors)
         leaves = geometry.leaves()
         cache = CACHED if len(leaves) <= MAX_CACHED_ITEMS else QGraphicsItem.CacheMode.NoCache
         old, new = self._items_by_key, {}
@@ -457,13 +600,13 @@ class LayoutCanvas(QGraphicsView):
             for layer, region in leaf.own.items():
                 if region.is_empty():
                     continue
-                color = colors.get(layer, QColor("#888888"))
+                color = colors.get(layer, QColor(self.theme["unknown_layer"]))
                 key = (leaf, layer, _placement_key(at), color.rgba(), alpha, width)
                 kept = old.get(key)
                 if kept:
                     item = kept.pop()
                 else:
-                    item = QGraphicsPathItem(own_path(leaf, layer))
+                    item = ShapeItem(own_path(leaf, layer))
                     item.setTransform(qtransform(at))
                     fill = QColor(color)
                     fill.setAlpha(alpha)
@@ -474,6 +617,27 @@ class LayoutCanvas(QGraphicsView):
                     item.setCacheMode(cache)  # drawn once; pans, hovers and drags reuse it
                     self.scene().addItem(item)
                 item.setZValue(order[layer])
+                item.setVisible(visible.get(layer, True))
+                new.setdefault(key, []).append(item)
+                self._layer_items.setdefault(layer, []).append(item)
+        for shape in shapes or ():
+            for layer, region in shape.own.items():
+                if region.is_empty() or layer not in order:
+                    continue
+                color = colors.get(layer, QColor(self.theme["unknown_layer"]))
+                key = ("outline", shape, layer, color.rgba(), width)
+                kept = old.get(key)
+                if kept:
+                    item = kept.pop()
+                else:
+                    item = QGraphicsPathItem(own_path(shape, layer))
+                    pen = QPen(color, width)
+                    pen.setCosmetic(True)
+                    item.setPen(pen)
+                    item.setBrush(Qt.BrushStyle.NoBrush)
+                    item.setCacheMode(cache)
+                    self.scene().addItem(item)
+                item.setZValue(order[layer] + 0.5)  # over its layer's fill, under the next
                 item.setVisible(visible.get(layer, True))
                 new.setdefault(key, []).append(item)
                 self._layer_items.setdefault(layer, []).append(item)
@@ -491,21 +655,29 @@ class LayoutCanvas(QGraphicsView):
 
     def show_overlay(
         self,
-        highlight: Geometry | None,
+        highlight: Geometry | list[Geometry] | None,
         markers: list[tuple[float, float, float, float]],
         box: list[tuple[float, float]] | None = None,
     ) -> None:
-        """Outline the selection, mark rule violations and, dashed, the box a selected
-        shape's points come from (so e.g. ``center`` of a shape cut in two makes sense)."""
+        """Outline the selection (a geometry per selected shape, each outlined on its
+        own, so shapes that touch still look like two), mark rule violations and,
+        dashed, the box a selected shape's points come from (so e.g. ``center`` of a
+        shape cut in two makes sense)."""
         for item in self._overlay:
             self.scene().removeItem(item)
         self._overlay.clear()
-        if highlight is not None:
-            for leaf, at in highlight.leaves():
+        if highlight is None:
+            highlights = []
+        elif isinstance(highlight, Geometry):
+            highlights = [highlight]
+        else:
+            highlights = highlight
+        for selected in highlights:
+            for leaf, at in selected.leaves():
                 for layer, region in leaf.own.items():
                     if region.is_empty():
                         continue
-                    item = QGraphicsPathItem(own_path(leaf, layer))
+                    item = ShapeItem(own_path(leaf, layer))
                     item.setTransform(qtransform(at))
                     pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
                     pen.setCosmetic(True)
@@ -551,7 +723,7 @@ class LayoutCanvas(QGraphicsView):
                 continue
             color = QColor(self.theme[style])
             for layer in geometry.layer_names():
-                item = QGraphicsPathItem(geometry_path(geometry, layer))
+                item = ShapeItem(geometry_path(geometry, layer))
                 pen = QPen(color, OUTLINE_PX)
                 pen.setCosmetic(True)
                 item.setPen(pen)
@@ -590,11 +762,12 @@ class LayoutCanvas(QGraphicsView):
     def show_drag_preview(self, geometry: Geometry, colors: dict[str, QColor]) -> None:
         """Draw what is being dragged on top; move it with :meth:`move_drag_preview`."""
         self.clear_drag_preview()
+        order = stack_order(geometry, colors)
         for leaf, at in geometry.leaves():
             for layer, region in leaf.own.items():
                 if region.is_empty():
                     continue
-                color = colors.get(layer, QColor("#888888"))
+                color = colors.get(layer, QColor(self.theme["unknown_layer"]))
                 item = _PlacedPathItem(own_path(leaf, layer), qtransform(at))
                 fill = QColor(color)
                 fill.setAlpha(150)
@@ -603,7 +776,7 @@ class LayoutCanvas(QGraphicsView):
                 pen.setStyle(Qt.PenStyle.DashLine)
                 item.setPen(pen)
                 item.setBrush(QBrush(fill))
-                item.setZValue(1050)
+                item.setZValue(1050 + order[layer] / 1000)  # over everything, in stack order
                 item.setCacheMode(CACHED)  # moving it reuses the picture
                 self.scene().addItem(item)
                 self._drag_items.append(item)
@@ -632,8 +805,11 @@ class LayoutCanvas(QGraphicsView):
             self._gizmo_offset = (0.0, 0.0)
             self.viewport().update()
 
-    def show_box(self, corners: tuple[float, float, float, float] | None) -> None:
-        """The selection box being dragged out, or None to hide it."""
+    def show_box(
+        self, corners: tuple[float, float, float, float] | None, touching: bool = True
+    ) -> None:
+        """The selection box being dragged out, or None to hide it: dashed when it
+        selects what it touches, solid when only what is inside it."""
         if corners is None:
             if self._box_item is not None:
                 self.scene().removeItem(self._box_item)
@@ -651,6 +827,9 @@ class LayoutCanvas(QGraphicsView):
             self._box_item.setBrush(QBrush(fill))
             self._box_item.setZValue(1200)
             self.scene().addItem(self._box_item)
+        pen = self._box_item.pen()
+        pen.setStyle(Qt.PenStyle.DashLine if touching else Qt.PenStyle.SolidLine)
+        self._box_item.setPen(pen)
         self._box_item.setRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)).normalized())
 
     def show_hover(self, geometry: Geometry | None) -> None:
@@ -851,33 +1030,73 @@ class LayoutCanvas(QGraphicsView):
                     rect = rect.united(item.sceneBoundingRect())
         return rect
 
-    def fit(self) -> None:
+    def fit(self, animated: bool = False) -> None:
         rect = self.content_rect()
         if rect.isEmpty():
             rect = QRectF(-100, -100, 200, 200)
-        self.zoom_to(rect)
+        self.zoom_to(rect, animated)
 
-    def zoom_to(self, rect: QRectF) -> None:
+    def zoom_to(self, rect: QRectF, animated: bool = False) -> None:
+        """Show ``rect`` (µm) with a margin (``animated``: gliding there)."""
         margin = max(rect.width(), rect.height()) * 0.08 + 1
-        self.fitInView(
-            rect.adjusted(-margin, -margin, margin, margin), Qt.AspectRatioMode.KeepAspectRatio
-        )
-        # fitInView resets the y flip; restore it while keeping the scale.
-        scale = abs(self.transform().m11())
-        center = rect.center()
+        wide = rect.adjusted(-margin, -margin, margin, margin)
+        view = self.viewport().rect().adjusted(2, 2, -2, -2)  # as fitInView leaves
+        if wide.width() <= 0 or wide.height() <= 0 or view.width() <= 0:
+            return
+        scale = min(view.width() / wide.width(), view.height() / wide.height())
+        scale = min(max(scale, 1.0001e-4), 0.9999e5)
+        if animated:
+            self._glide(scale, rect.center())
+            return
+        motion.stop(self, "view")
         self.setTransform(QTransform.fromScale(scale, -scale))
-        self.centerOn(center)
+        self.centerOn(rect.center())
         self.view_changed.emit()
 
     # -- interaction -------------------------------------------------------
 
     def wheelEvent(self, event) -> None:
-        step = self.options["zoom_step"]
-        factor = step if event.angleDelta().y() > 0 else 1 / step
+        """A mouse wheel zooms; two fingers on a touchpad pan, in any direction (see
+        the ``scrolling`` option). With Ctrl, scrolling always zooms: it is what a
+        pinch on a Windows touchpad sends. Zooming follows how far it scrolled."""
+        self.stop_gliding()
+        mode = self.options.get("scrolling", "auto")
+        zooms = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier) or (
+            mode == "zoom" or (mode == "auto" and not _from_touchpad(event))
+        )
+        if not zooms:
+            delta = event.pixelDelta()
+            if delta.isNull():  # a wheel without pixels: a notch scrolls 48 px
+                delta = event.angleDelta() * 48 / 120
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier and not delta.x():
+                delta = QPoint(delta.y(), 0)  # Shift turns a wheel sideways
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            self.view_changed.emit()
+            return
+        delta = event.angleDelta()
+        notches = (delta.y() or delta.x()) / 120  # a touchpad sends a fraction of one
+        if notches:
+            self._zoom_by_at(self.options["zoom_step"] ** notches, event.position())
+
+    def viewportEvent(self, event) -> bool:
+        """A pinch on a touchpad (macOS, and Linux with libinput) zooms about the
+        fingers."""
+        if event.type() == QEvent.Type.NativeGesture:
+            if event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+                self.stop_gliding()
+                self._zoom_by_at(1.0 + event.value(), event.position())
+                return True
+            if event.gestureType() == Qt.NativeGestureType.SmartZoomNativeGesture:
+                self.fit(animated=True)  # a two-finger double tap
+                return True
+        return super().viewportEvent(event)
+
+    def _zoom_by_at(self, factor: float, pos: QPointF) -> None:
         scale = abs(self.transform().m11()) * factor
-        if 1e-4 < scale < 1e5:
+        if factor > 0 and 1e-4 < scale < 1e5:
             self._begin_draft()
-            self._zoom_about(event.position(), factor)
+            self._zoom_about(pos, factor)
             self.view_changed.emit()
 
     def _zoom_about(self, pos: QPointF, factor: float) -> None:
@@ -917,6 +1136,7 @@ class LayoutCanvas(QGraphicsView):
             self._right_from = event.position()  # a click opens the menu; a drag pans
             return
         if self._pans(event):
+            self.stop_gliding()
             self._pan_from = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             return
@@ -936,10 +1156,14 @@ class LayoutCanvas(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        self._cursor_at = event.position()
+        if self.cursor_label or self.hover_label:
+            self.viewport().update()  # the label follows the cursor
         if self._right_from is not None:
             if (event.position() - self._right_from).manhattanLength() <= RIGHT_CLICK_SLOP_PX:
                 return
             self._pan_from, self._right_from = self._right_from, None  # it is a drag: pan
+            self.stop_gliding()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
         if self._pan_from is not None:
             delta = event.position() - self._pan_from
@@ -1034,6 +1258,41 @@ class LayoutCanvas(QGraphicsView):
             return
         super().keyReleaseEvent(event)
 
+    def show_alignment(
+        self,
+        point: tuple[str, float, float] | None,
+        target: tuple[str, float, float] | None = None,
+    ) -> None:
+        """Show how the selected shape is aligned: its ``point`` and the ``target`` it
+        is kept on, joined by an arrow when an offset sets them apart (None: none)."""
+        link = (point, target) if point is not None and target is not None else None
+        if link != self._alignment:
+            self._alignment = link
+            self.viewport().update()
+
+    def leaveEvent(self, event) -> None:
+        self.set_hover_label(None)  # a drag's label stays: the drag may come back
+        super().leaveEvent(event)
+
+    def set_cursor_label(self, text: str | None) -> None:
+        """The live value of what the cursor is doing (a drag's offset, a shape's size),
+        next to the cursor; None takes it away."""
+        if text != self.cursor_label:
+            self.cursor_label = text
+            self.viewport().update()
+
+    def set_hover_label(self, text: str | None) -> None:
+        """What the shape under the cursor is, next to the cursor (after a pause)."""
+        if text != self.hover_label:
+            self.hover_label = text
+            self.viewport().update()
+
+    def set_over_selection(self, over: bool) -> None:
+        """The cursor is on the selection: the move cursor says a drag moves it."""
+        if over != self._over_selection:
+            self._over_selection = over
+            self._update_cursor()
+
     def set_tool_cursor(self, cursor: Qt.CursorShape) -> None:
         self._tool_cursor = cursor
         self._update_cursor()
@@ -1050,12 +1309,14 @@ class LayoutCanvas(QGraphicsView):
                     "free": Qt.CursorShape.SizeAllCursor,
                 }.get(part, Qt.CursorShape.PointingHandCursor)
             )
+        elif self._over_selection:
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
         else:
             self.setCursor(getattr(self, "_tool_cursor", Qt.CursorShape.ArrowCursor))
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F:
-            self.fit()
+            self.fit(animated=True)
             return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Backspace):
             self.key_pressed.emit(event.key())
@@ -1080,22 +1341,36 @@ class LayoutCanvas(QGraphicsView):
     def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
         super().drawBackground(painter, rect)
         step = self.grid_step()
+        # The grid colour mixed with the background beforehand: semi-transparent
+        # lines cost Qt's raster engine about 15 times as much as opaque ones.
+        background = QColor(self.theme["background"])
         minor, major, axis = (
-            QPen(QColor(*self.theme["grid"], alpha), 0) for alpha in self.theme["grid_alpha"]
+            QPen(_mixed(background, QColor(self.theme["grid"]), alpha / 255), 0)
+            for alpha in self.theme["grid_alpha"]
         )
         left, right = math.floor(rect.left() / step), math.ceil(rect.right() / step)
         top, bottom = math.floor(rect.top() / step), math.ceil(rect.bottom() / step)
         if self.options["show_grid"] and (right - left) * (bottom - top) <= 400_000:
+            # Drawn in pixels, on whole pixels and without antialiasing: through the
+            # view's scale, semi-transparent lines cost more than the rest of a frame.
+            to_pixels = painter.worldTransform()
+            area = to_pixels.mapRect(rect)
             lines: dict[int, list[QLineF]] = {0: [], 1: [], 2: []}  # minor, major, axis
             for i in range(left, right + 1):
                 kind = 2 if i == 0 else 1 if i % 5 == 0 else 0
-                lines[kind].append(QLineF(i * step, rect.top(), i * step, rect.bottom()))
+                x = round(to_pixels.map(QPointF(i * step, 0)).x()) + 0.5
+                lines[kind].append(QLineF(x, area.top(), x, area.bottom()))
             for j in range(top, bottom + 1):
                 kind = 2 if j == 0 else 1 if j % 5 == 0 else 0
-                lines[kind].append(QLineF(rect.left(), j * step, rect.right(), j * step))
+                y = round(to_pixels.map(QPointF(0, j * step)).y()) + 0.5
+                lines[kind].append(QLineF(area.left(), y, area.right(), y))
+            painter.save()
+            painter.resetTransform()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
             for kind, pen in enumerate((minor, major, axis)):
                 painter.setPen(pen)
                 painter.drawLines(lines[kind])
+            painter.restore()
         if self.options["show_axes"]:
             for key, line in (
                 ("axis_x", (QPointF(rect.left(), 0), QPointF(rect.right(), 0))),
@@ -1117,8 +1392,13 @@ class LayoutCanvas(QGraphicsView):
         self._draw_ruler_ticks(painter)
         if self.options["show_scale_bar"]:
             self._draw_scale_bar(painter, 16, height)
+        if self._alignment is not None:
+            self._draw_alignment(painter)
         if self._gizmo is not None:
             self._draw_gizmo(painter)
+        label = self.cursor_label or self.hover_label
+        if label:
+            self._draw_cursor_label(painter, label)
         self._round_corners(painter)
         painter.restore()
 
@@ -1134,8 +1414,8 @@ class LayoutCanvas(QGraphicsView):
         outline = QPainterPath()
         outline.addRoundedRect(
             QRectF(viewport.mapFrom(island, QPoint(0, 0)), QSizeF(island.size())),
-            ISLAND_RADIUS,
-            ISLAND_RADIUS,
+            themes.metric("radius_island"),
+            themes.metric("radius_island"),
         )
         view = QPainterPath()
         view.addRect(QRectF(viewport.rect()))
@@ -1269,6 +1549,66 @@ class LayoutCanvas(QGraphicsView):
         painter.setBrush(fill)
         painter.drawEllipse(QPointF(cx, cy), 7, 7)
 
+    def _draw_alignment(self, painter: QPainter) -> None:
+        """A ring on the target, a dot on the shape's point, and between them (when an
+        offset sets them apart) a dashed arrow to the point; their names by them."""
+        (point, px, py), (target, tx, ty) = self._alignment
+        at = self.mapFromScene(QPointF(px, py)).toPointF()
+        to = self.mapFromScene(QPointF(tx, ty)).toPointF()
+        color = QColor(self.theme["focus"])
+        apart = math.hypot(at.x() - to.x(), at.y() - to.y()) > ALIGN_APART_PX
+        pen = QPen(color, 1.5)
+        if apart:
+            pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawLine(to, at)
+            angle = math.atan2(at.y() - to.y(), at.x() - to.x())
+            head = QPolygonF(
+                [
+                    at,
+                    at - QPointF(math.cos(angle - 0.45), math.sin(angle - 0.45)) * 9,
+                    at - QPointF(math.cos(angle + 0.45), math.sin(angle + 0.45)) * 9,
+                ]
+            )
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawPolygon(head)
+        pen.setStyle(Qt.PenStyle.SolidLine)
+        pen.setWidthF(2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(to, 6, 6)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(at, 3, 3)
+        if apart:  # each name beyond its end of the arrow, so the two stay apart
+            length = math.hypot(at.x() - to.x(), at.y() - to.y())
+            away = QPointF(at.x() - to.x(), at.y() - to.y()) / length * ALIGN_LABEL_GAP_PX
+            nudge = QPointF(10, 5)
+            self._draw_chip(painter, to - away + nudge, target)
+            self._draw_chip(painter, at + away + nudge, point)
+        else:
+            self._draw_chip(painter, to + QPointF(10, -8), f"{point} → {target}")
+
+    def _draw_cursor_label(self, painter: QPainter, text: str) -> None:
+        """Below and right of the cursor, kept inside the view."""
+        font = QFont(self.font())
+        font.setBold(True)  # as the chip draws it
+        metrics = QFontMetricsF(font)
+        width = metrics.horizontalAdvance(text) + 16
+        y = self._cursor_at.y() + CURSOR_LABEL_OFFSET + metrics.height()
+        y = min(y, self.viewport().height() - 6)
+        # Right of the cursor, unless that runs into the tool palette or the edge:
+        # then left of it.
+        right = self.viewport().width() - 4
+        palette = self.mode_palette.geometry()
+        if self.mode_palette.isVisible() and palette.top() - 4 <= y <= palette.bottom() + 30:
+            right = min(right, palette.left() - 6)
+        x = self._cursor_at.x() + CURSOR_LABEL_OFFSET
+        if x + width > right:
+            x = self._cursor_at.x() - CURSOR_LABEL_OFFSET - width
+        self._draw_chip(painter, QPointF(max(x, 4), y), text)
+
     def _draw_chip(self, painter: QPainter, at: QPointF, text: str) -> None:
         """A small label on a rounded background, readable on any drawing."""
         font = QFont(self.font())
@@ -1296,6 +1636,13 @@ class LayoutCanvas(QGraphicsView):
         target = self.options["grid_spacing_px"] / pixels_per_um
         exponent = math.floor(math.log10(target))
         return next(m * 10**exponent for m in (1, 2, 5, 10) if m * 10**exponent >= target)
+
+
+def _mixed(under: QColor, over: QColor, alpha: float) -> QColor:
+    """``over`` drawn with opacity ``alpha`` on ``under``, as one opaque colour."""
+    return QColor(
+        *(round(a + (b - a) * alpha) for a, b in zip(under.getRgb()[:3], over.getRgb()[:3]))
+    )
 
 
 def _round_pen(color: QColor, width: float) -> QPen:

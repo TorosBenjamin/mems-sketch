@@ -60,7 +60,11 @@ tested against the latest `development`.
    ```
 
    Describe what changed and how it was checked (tests, screenshots for UI
-   changes).
+   changes). Name the issues it fixes with `Closes #12` (or *Fixes*,
+   *Resolves*) in the title or description: merging into `development`
+   closes them (`.github/workflows/close-issues.yml`). GitHub itself only
+   does this on merges into `main`. Write "part of #12" for an issue the
+   pull request doesn't finish.
 
 5. **Merge when CI is green and the branch is up to date.** GitHub requires
    both: the **CI** check must pass, and the branch must contain the latest

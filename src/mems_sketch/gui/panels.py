@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QMimeData, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -23,7 +24,6 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
-    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -35,9 +35,8 @@ from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_vari
 from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.canvas import COMPONENT_MIME
-from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -104,38 +103,6 @@ def parse_limit(text: str, mark: str) -> tuple[float | str | None, bool]:
     return (parse_value(text) if text else None), exclusive and bool(text)
 
 
-def _action_bar(
-    title: QLabel | None, *actions: tuple[str, str, object], help: str | None = None
-) -> QHBoxLayout:
-    """A tool window's header row: an optional title, then small icon buttons and,
-    with ``help``, a "?" explaining it.
-
-    ``actions`` are ``(icon, tooltip, slot)``; the buttons are also returned in
-    the layout's ``buttons`` attribute (by tooltip) for tests and shortcuts.
-    """
-    row = QHBoxLayout()
-    row.setContentsMargins(6, 2, 4, 2)
-    row.setSpacing(1)
-    if title is not None:
-        title.setObjectName("muted")
-        row.addWidget(title, 1)
-    else:
-        row.addStretch(1)
-    row.buttons = {}
-    for name, tip, slot in actions:
-        button = QToolButton()
-        icons.bind(button, name)
-        button.setIconSize(QSize(16, 16))
-        button.setToolTip(tip)
-        button.setAutoRaise(True)
-        button.clicked.connect(slot)
-        row.addWidget(button)
-        row.buttons[tip] = button
-    if help:
-        row.addWidget(HelpButton(help))
-    return row
-
-
 def swatch_icon(color: QColor) -> QIcon:
     """A small rounded square in a layer's colour."""
     pixmap = QPixmap(24, 24)
@@ -156,17 +123,10 @@ def shape_icon(shape: Shape) -> QIcon:
     return icons.icon(shape.icon_name())
 
 
-def _table(columns: Sequence[str]) -> QTableWidget:
-    table = QTableWidget(0, len(columns))
-    table.setHorizontalHeaderLabels(list(columns))
-    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-    table.horizontalHeader().setStretchLastSection(True)
-    table.horizontalHeader().setHighlightSections(False)
-    table.verticalHeader().hide()
-    table.verticalHeader().setDefaultSectionSize(26)
-    table.setShowGrid(False)
-    table.setFrameShape(QTableWidget.Shape.NoFrame)
-    return table
+def _table(columns: Sequence[str], stretch: int | None = None) -> QTableWidget:
+    """A table on the Process page: the last column (or ``stretch``) takes the room left."""
+    last = len(columns) - 1
+    return widgets.make_table(columns, last if stretch is None else stretch, scroll=True)
 
 
 def _blank_icon() -> QIcon:
@@ -178,7 +138,7 @@ def _blank_icon() -> QIcon:
 def _readonly(text: str) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-    item.setForeground(QBrush(QColor("#8c8f99")))
+    item.setForeground(QBrush(theme.color("muted")))
     return item
 
 
@@ -236,13 +196,12 @@ class ComponentsPanel(_Panel):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.actions = _action_bar(
-            None,
-            ("add", "New component or library", self._add_menu),
+        self.actions = widgets.header_actions(
+            ("plus", "New component or library", self._add_menu),
             ("place", "Place the selected component in the edited one", self._place),
             ("collapse", "Collapse all", self._collapse_all),
         )
-        self.header_buttons = list(self.actions.buttons.values())  # shown in the dock header
+        self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.tree)
 
     # -- building ------------------------------------------------------------
@@ -743,6 +702,7 @@ class ShapeTree(QTreeWidget):
         self.setColumnCount(3)
         self.setHeaderHidden(True)
         self.setItemDelegateForColumn(0, DetailDelegate(self))
+        self.setProperty("visibility", True)  # the check box is an eye: shown or hidden
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         header = self.header()
         header.setStretchLastSection(False)
@@ -828,7 +788,7 @@ class ShapeTree(QTreeWidget):
         item.setData(0, DETAIL_ROLE, "interface only")
         item.setIcon(0, icons.icon("lock"))
         item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-        item.setForeground(0, QBrush(QColor("#8c8f99")))
+        item.setForeground(0, QBrush(theme.color("muted")))
         item.setToolTip(
             0,
             "Its shapes are how it is built: they are hidden, like the internals of a "
@@ -854,7 +814,7 @@ class ShapeTree(QTreeWidget):
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(0, Qt.CheckState.Checked if shape.enabled else Qt.CheckState.Unchecked)
         if not shape.enabled:
-            item.setForeground(0, QBrush(QColor("#8c8f99")))
+            item.setForeground(0, QBrush(theme.color("muted")))
         self._placeholder(item, shape, self.document.active)
         labels = SLOT_LABELS.get(shape.kind)
         for slot, children in enumerate(child_lists(shape)):
@@ -904,7 +864,7 @@ class ShapeTree(QTreeWidget):
         item.setData(0, DETAIL_ROLE, detail(shape))
         item.setIcon(0, shape_icon(shape))
         item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # not selectable: it belongs to ``owner``
-        item.setForeground(0, QBrush(QColor("#8c8f99")))
+        item.setForeground(0, QBrush(theme.color("muted")))
         font = QFont()
         font.setItalic(True)
         item.setFont(0, font)
@@ -987,8 +947,8 @@ class ParametersPanel(_Panel):
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.title = QLabel()
-        self.table = _table(self.COLUMNS)
+        self.title = self.header_context = widgets.header_context()  # the component
+        self.table = widgets.make_table(self.COLUMNS, stretch=self.COLUMNS.index("Default"))
         self.table.itemChanged.connect(self._changed)
         self.table.viewport().installEventFilter(self)
         self.table.setMouseTracking(True)  # for the drag cursor
@@ -997,14 +957,13 @@ class ParametersPanel(_Panel):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.actions = _action_bar(
-            self.title,
-            ("add", "Add parameter", lambda: self._guard(self.document.parameters.add)),
-            ("remove", "Remove the selected parameters", self._remove),
+        self.actions = widgets.header_actions(
+            ("plus", "Add parameter", lambda: self._guard(self.document.parameters.add)),
+            ("minus", "Remove the selected parameters", self._remove),
             ("lock", "Make the selected parameters internal (or public)", self._toggle_internal),
             ("clear", "Clear trial values", self._clear_trials),
         )
-        layout.addLayout(self.actions)
+        self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.table)
         self._names: list[str] = []
 
@@ -1017,7 +976,7 @@ class ParametersPanel(_Panel):
         for row in range(self.table.rowCount()):
             cell = self.table.item(row, 0)
             if cell is not None and cell.text() == name:
-                self.table.selectRow(row)
+                widgets.select_row(self.table, row)
                 self.table.scrollToItem(cell)
                 return
 
@@ -1026,8 +985,8 @@ class ParametersPanel(_Panel):
         if self.hide_implementation:  # its interface: public ones only
             parameters = [p for p in parameters if not p.internal]
         read_only = self.document.read_only
-        suffix = " (read-only; trial values work)" if read_only else ""
-        self.title.setText(f"Parameters of <b>{self.document.active}</b>{suffix}")
+        suffix = " · read-only, trial values work" if read_only else ""
+        self.title.setText(f"{self.document.active}{suffix}")
         try:
             values = self.document.results.scope()
         except Exception:  # noqa: BLE001 - shown as "error" per row
@@ -1064,7 +1023,7 @@ class ParametersPanel(_Panel):
                         tip = f"{limit} does not evaluate\n{tip}"
                 cells[column].setToolTip(tip)
             if p.name in trials:
-                cells[-1].setForeground(QBrush(QColor("#e0a000")))
+                cells[-1].setForeground(QBrush(theme.color("warning")))
             for column, cell in enumerate(cells):
                 self.table.setItem(row, column, cell)
         self.table.blockSignals(False)
@@ -1194,9 +1153,10 @@ class LayersPanel(_Panel):
         self.document = document
         self.visible: dict[str, bool] = {}
         self.colors: dict[str, QColor] = {}
-        self.layers = _table(("Layer", "GDS"))
+        self.layers = widgets.make_table(("Layer", "GDS"), stretch=0)
         self.layers.itemChanged.connect(self._layer_changed)
-        self.layers.setToolTip("Tick to show a layer; click a layer to draw on it")
+        self.layers.setProperty("visibility", True)  # the check box is an eye
+        self.layers.setToolTip("Click the eye to show or hide a layer; click a layer to draw on it")
         self.layers.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1207,12 +1167,17 @@ class LayersPanel(_Panel):
     def refresh(self) -> None:
         from mems_sketch.gui.canvas import layer_color
 
-        layers = self.document.project.layers
-        self._layer_names = list(layers)
-        self.colors = {name: layer_color(i) for i, name in enumerate(layers)}
+        process = self.document.project.process
+        layers, stack = process.layers, process.stack_order()
+        # Each layer keeps its colour (by its place in the process); ``colors`` is in
+        # the stack's order, bottom to top, which is how the canvas draws them, and
+        # the list shows the top one first, as it is on top on the canvas.
+        hues = {name: layer_color(i) for i, name in enumerate(layers)}
+        self.colors = {name: hues[name] for name in stack}
+        self._layer_names = list(reversed(stack))
         self.layers.blockSignals(True)
-        self.layers.setRowCount(len(layers))
-        for row, layer in enumerate(layers.values()):
+        self.layers.setRowCount(len(stack))
+        for row, layer in enumerate(layers[name] for name in self._layer_names):
             name_cell = QTableWidgetItem(layer.name)
             name_cell.setFlags(name_cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             shown = self.visible.get(layer.name, True)
@@ -1283,13 +1248,8 @@ class LayerDefinitionsPanel(_Panel):
         self.document = document
         self.layers = _table(self.LAYER_COLUMNS)
         self.layers.itemChanged.connect(self._layer_changed)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self.actions = _action_bar(
-            QLabel("Layers"),
-            ("add", "Add layer", lambda: self._guard(self.document.process.add_layer)),
-            ("remove", "Remove the selected layers", self._remove_layers),
+        card = widgets.Card(
+            "Layers",
             help="The mask layers and their *GDS* layer and datatype for export. "
             "What they are checked with is in *Rules*.\n\n"
             "*Level* places a layer in the layer stack: a number makes it a level "
@@ -1297,21 +1257,54 @@ class LayerDefinitionsPanel(_Panel):
             "Components draw relative to their level (`level-1`, `level.anchor`), "
             "so the same component can be placed on any level.",
         )
-        layout.addLayout(self.actions)
-        layout.addWidget(self.layers)
-        row = QHBoxLayout()
-        row.setContentsMargins(6, 4, 6, 4)
-        row.addWidget(QLabel("Top components on level"))
+        self.actions = card.add_actions(
+            ("plus", "Add layer", lambda: self._guard(self.document.process.add_layer)),
+            ("minus", "Remove the selected layers", self._remove_layers),
+        )
+        card.body.addWidget(self.layers)
         self.default_level = QComboBox()
         self.default_level.setToolTip(
             "The level a component without a default level is on in its own tab and when exported"
         )
         self.default_level.activated.connect(self._default_level_chosen)
-        row.addWidget(self.default_level, 1)
-        layout.addLayout(row)
+        # The fab's grid: the rule checks see the design rounded onto it, as an
+        # export writes it, and layout exports start from it.
+        self.grid = QDoubleSpinBox()
+        self.chord = QDoubleSpinBox()
+        fields = QHBoxLayout()
+        fields.setSpacing(theme.metric("space_s"))
+        fields.addWidget(QLabel("Top components on level"))
+        fields.addWidget(self.default_level)
+        for box, label, tip, minimum in (
+            (self.grid, "Grid", "The fab's grid: rule checks round the design onto it", 0.001),
+            (
+                self.chord,
+                "Curve tolerance",
+                "How far the straight segments that curves become may stray from them",
+                0.0005,
+            ),
+        ):
+            box.setDecimals(4)
+            box.setRange(minimum, 1.0)
+            box.setSingleStep(0.001)
+            box.setSuffix(" µm")
+            box.setToolTip(tip)
+            box.setKeyboardTracking(False)
+            box.setMinimumWidth(90)
+            box.editingFinished.connect(self._output_changed)
+            fields.addSpacing(theme.metric("space_l"))
+            fields.addWidget(QLabel(label))
+            fields.addWidget(box)
+        fields.addStretch(1)
+        card.body.addLayout(fields)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(card)
         self._layer_names: list[str] = []
 
     def refresh(self) -> None:
+        from mems_sketch.gui.canvas import layer_color
+
         layers = self.document.project.layers
         self._layer_names = list(layers)
         self.layers.blockSignals(True)
@@ -1326,6 +1319,7 @@ class LayerDefinitionsPanel(_Panel):
             ]
             for column, value in enumerate(values):
                 self.layers.setItem(row, column, QTableWidgetItem(_format(value)))
+            self.layers.item(row, 0).setIcon(swatch_icon(layer_color(row)))  # as in Layers
             self.layers.item(row, 3).setToolTip(
                 "A level number (1 at the bottom), a level's role (poly1.anchor), or empty"
             )
@@ -1335,12 +1329,13 @@ class LayerDefinitionsPanel(_Panel):
         default = self.document.project.process.default_level
         self.default_level.setCurrentText(default or "(the first level)")
         self.default_level.setEnabled(bool(levels))
-        # the name column also holds the check box and the colour swatch
-        header = self.layers.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        metrics = self.layers.fontMetrics()
-        widest = max((metrics.horizontalAdvance(n) for n in layers), default=40)
-        self.layers.setColumnWidth(0, max(widest, metrics.horizontalAdvance("Layer")) + 64)
+        process = self.document.project.process
+        for box, value in ((self.grid, process.grid_um), (self.chord, process.chord_um)):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+            box.setEnabled(self.document.project.base_process is None)
+        widgets.fit_to_rows(self.layers)
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:
         name = self._layer_names[item.row()]
@@ -1360,6 +1355,14 @@ class LayerDefinitionsPanel(_Panel):
             self.document.process.set_layer(name, layer)
 
         if not self._guard(apply):
+            self.refresh()
+
+    def _output_changed(self) -> None:
+        process = self.document.project.process
+        grid, chord = round(self.grid.value(), 4), round(self.chord.value(), 4)
+        if (grid, chord) == (process.grid_um, process.chord_um):
+            return
+        if not self._guard(lambda: self.document.process.set_output(grid, chord)):
             self.refresh()
 
     def _default_level_chosen(self, index: int) -> None:
@@ -1382,19 +1385,20 @@ class ConstantsPanel(_Panel):
         self.document = document
         self.constants = _table(["Constant", "Expression", "Value"])
         self.constants.itemChanged.connect(self._constant_changed)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self.actions = _action_bar(
-            QLabel("Constants"),
-            ("add", "Add constant", lambda: self._guard(self.document.process.add_constant)),
-            ("remove", "Remove the selected constants", self._remove_constants),
+        card = widgets.Card(
+            "Constants",
             help="Numbers of the process, such as the device layer thickness. Every "
             "expression in every component can use them as *process.<name>*, e.g. "
             "*process.min_gap*.",
         )
-        layout.addLayout(self.actions)
-        layout.addWidget(self.constants)
+        self.actions = card.add_actions(
+            ("plus", "Add constant", lambda: self._guard(self.document.process.add_constant)),
+            ("minus", "Remove the selected constants", self._remove_constants),
+        )
+        card.body.addWidget(self.constants)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(card)
         self._constant_names: list[str] = []
 
     def refresh(self) -> None:
@@ -1413,6 +1417,7 @@ class ConstantsPanel(_Panel):
             self.constants.setItem(row, 1, QTableWidgetItem(_format(expression)))
             self.constants.setItem(row, 2, _readonly("error" if value is None else f"{value:g}"))
         self.constants.blockSignals(False)
+        widgets.fit_to_rows(self.constants)
 
     def _constant_changed(self, item: QTableWidgetItem) -> None:
         name = self._constant_names[item.row()]
@@ -1480,7 +1485,7 @@ class MessagesPanel(QListWidget):
             if v.waived:
                 label = f"Waived: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
                 item = QListWidgetItem(icons.icon("ok"), label)
-                item.setForeground(QBrush(QColor("#8c8f99")))
+                item.setForeground(QBrush(theme.color("muted")))
             else:
                 prefix = "" if v.is_error else "Warning: "
                 label = f"{prefix}[{v.rule}] {v.layer}: {v.message}{where}"

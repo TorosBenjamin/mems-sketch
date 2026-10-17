@@ -100,6 +100,35 @@ class IntPolygon:
             self._edges = np.hstack([starts, ends])
         return self._edges
 
+    def overlaps_box(self, left: int, bottom: int, right: int, top: int) -> bool:
+        """Some of the polygon's area is in the box (edges included): an edge crosses
+        or lies in it, or the box lies within the polygon's material."""
+        b = self.bbox()
+        if b.right < left or b.left > right or b.top < bottom or b.bottom > top:
+            return False
+        e = self.edges()
+        x0, y0, x1, y1 = e[:, 0], e[:, 1], e[:, 2], e[:, 3]
+        near = (
+            (np.minimum(x0, x1) <= right)
+            & (np.maximum(x0, x1) >= left)
+            & (np.minimum(y0, y1) <= top)
+            & (np.maximum(y0, y1) >= bottom)
+        )
+        if np.any(near):
+            # An edge whose box meets the box crosses it unless the box's corners
+            # are all on one side of the edge's line.
+            x0, y0, x1, y1 = x0[near], y0[near], x1[near], y1[near]
+            dx, dy = (x1 - x0).astype(float), (y1 - y0).astype(float)
+            sides = np.stack(
+                [
+                    dx * (cy - y0) - dy * (cx - x0)
+                    for cx, cy in ((left, bottom), (right, bottom), (right, top), (left, top))
+                ]
+            )
+            if np.any((sides.min(axis=0) <= 0) & (sides.max(axis=0) >= 0)):
+                return True
+        return self.near((left + right) // 2, (bottom + top) // 2, 0)
+
     def near(self, x: int, y: int, reach: int) -> bool:
         """The point is inside the polygon, or within ``reach`` of its outline."""
         e = self.edges()

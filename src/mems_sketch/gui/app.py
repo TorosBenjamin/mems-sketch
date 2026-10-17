@@ -159,7 +159,7 @@ BACKGROUND_BUILD_S = 0.15
 UPDATING_SHOWN_MS = 200
 
 
-RESTORED_TOOLS = ("select", "hand")  # the tools a new window starts in again
+RESTORED_TOOLS = ("select", "hand", "move")  # the tools a new window starts in again
 
 
 class MainWindow(QMainWindow):
@@ -277,7 +277,7 @@ class MainWindow(QMainWindow):
         self.resize(1500, 950)
         self.refresh()
         self._update_title()
-        # Only a way of looking comes back: a tool for one job (align, measure, a
+        # Only a way of working comes back: a tool for one job (align, measure, a
         # drawing tool) would greet you with a prompt you did not ask for.
         saved_tool = self.settings.value("tool", "select")
         self.set_tool(saved_tool if saved_tool in RESTORED_TOOLS else "select")

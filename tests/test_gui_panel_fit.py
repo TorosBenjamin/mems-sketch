@@ -77,7 +77,7 @@ def test_a_new_window_starts_in_select_not_a_one_job_tool(window, qtbot):
     again.set_tool("hand")
     third = MainWindow()
     qtbot.addWidget(third)
-    assert third.tool.name == "hand"  # a way of looking comes back
+    assert third.tool.name == "hand"  # a way of working comes back
 
 
 def test_shape_rows_give_unused_icon_columns_to_the_name(window):

@@ -31,5 +31,5 @@ if [ -z "$tool" ]; then
 fi
 # Without FUSE (containers, CI) the tool runs from its extracted contents.
 APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$tool" --no-appstream "$appdir" \
-    "$out/MEMS_Sketch-$version-x86_64.AppImage"
+    "$out/MEMS-Sketch-$version-Linux-x86_64.AppImage"
 rm -rf "$work"

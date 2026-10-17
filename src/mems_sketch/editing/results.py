@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import threading
 import time
 from concurrent.futures import Executor, Future
@@ -132,8 +133,9 @@ class Results:
     def scope(self, path: NodePath | None = None, component: str | None = None) -> dict[str, float]:
         """Resolved parameters (trial values included) plus ``process.*`` constants.
 
-        With a ``path``, also the point coordinates (``node.point.x``) the node
-        there can use, in its own frame, e.g. to preview expressions.
+        With a ``path``, also the point coordinates (``node.point.x``) and sizes
+        (``node.width``) the node there can use, in its own frame, e.g. to preview
+        expressions.
         """
         component = component or self.session.active
         variables = self.session.engine.variables(component, self.session.trials_for(component))
@@ -143,10 +145,18 @@ class Results:
         if path[:-1] and path[:-1] not in record:
             return variables
         into = frame_of(record, path).inverted() if path[:-1] else None
+        points: dict[str, tuple[float, float]] = {}
         for name, _, x, y in self.align_targets(path, component):
             if into is not None:
                 x, y = into.apply(x, y)
             variables[f"{name}.x"], variables[f"{name}.y"] = x, y
+            points[name] = x, y
+        for name in {n.rpartition(".")[0] for n in points}:  # node.width, node.height
+            for size, (a, b) in {"width": ("left", "right"), "height": ("bottom", "top")}.items():
+                if f"{name}.{a}" in points and f"{name}.{b}" in points:
+                    variables[f"{name}.{size}"] = math.dist(
+                        points[f"{name}.{a}"], points[f"{name}.{b}"]
+                    )
         return variables
 
     def inspection(self, component: str | None = None) -> dict[NodePath, NodeRecord]:

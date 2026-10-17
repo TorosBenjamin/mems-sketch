@@ -83,6 +83,7 @@ from mems_sketch.core.shapes.modifiers import (
 from mems_sketch.core.shapes.points import (
     BBOX_POINTS,
     NodePoints,
+    measure_path,
     own_strings,
     point_dependencies,
     point_names,
@@ -170,6 +171,7 @@ __all__ = [
     "frame_of",
     "kind_class",
     "map_expressions",
+    "measure_path",
     "new_modifier",
     "node_at",
     "offset_value",

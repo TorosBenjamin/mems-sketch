@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 
 import shiboken6
 from PySide6.QtCore import QPoint, QRect, QSize, QStringListModel, Qt, QTimer, Signal
@@ -181,9 +182,11 @@ class ValueEdit(QLineEdit):
         parameters: list[str] | None = None,
         prefix: str = "",
         optional: bool = False,
+        offered: Sequence[str] = (),
     ) -> None:
         super().__init__("" if value is None else _format(value))
         self.scope = dict(scope or {})
+        self.offered = list(offered)  # completed too, though without a value here
         self.parameters = list(parameters or [])  # the component's own, listed first
         self.prefix = prefix
         self.optional = optional
@@ -421,7 +424,11 @@ class ValueEdit(QLineEdit):
     # -- names -------------------------------------------------------------------
 
     def _names(self) -> list[str]:
-        known = [*self.parameters, *sorted(n for n in self.scope if n not in self.parameters)]
+        known = [
+            *self.parameters,
+            *self.offered,
+            *sorted(n for n in self.scope if n not in self.parameters),
+        ]
         return [n for n in dict.fromkeys(known) if n.isidentifier() or "." in n]
 
     def _token(self) -> tuple[int, str]:

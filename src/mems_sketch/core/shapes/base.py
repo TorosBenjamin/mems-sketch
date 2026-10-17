@@ -25,8 +25,10 @@ INDEX_NAMES = ("i", "j")
 
 
 def check_point_reference(reference: str) -> str:
-    """``reference`` must look like ``node.point``."""
+    """``reference`` must look like ``node.point`` (or ``node.min.point``: a corner
+    of its minimal box)."""
     node, sep, point = reference.partition(".")
+    point = point.removeprefix("min.")
     if not sep or not node.isidentifier() or not point.isidentifier():
         raise ValueError(f"'{reference}' is not a point reference like 'mass.top'")
     return reference

@@ -20,7 +20,10 @@ symmetrically.
 
 ``self`` is the node itself as it is just before the modifier (with the
 modifiers above it applied): ``about: self.left`` mirrors a half across its
-own left edge, ``x: self.center.x`` centres a polar array on the node.
+own left edge, ``x: self.center.x`` centres a polar array on the node, and
+``dx: self.width + 5`` spaces an array's copies 5 µm apart. ``self.width`` and
+``self.height`` are the size of its bounding box; ``self.min.*`` the points,
+size and angle of its minimal box (the smallest rectangle around it).
 
 Inside an array the copy's column and row are ``i`` and ``j`` (for a polar
 array the copy's index is ``i``), so each copy can differ, e.g. finger lengths
@@ -82,7 +85,7 @@ class Modifier(BaseModel):
         return []
 
     def _self_names(self) -> set[str]:
-        """The ``self.<point>.x`` / ``.y`` names it uses."""
+        """The ``self`` measures it uses: ``self.<point>.x``, ``self.width``…"""
         from mems_sketch.core.shapes.points import _strings, point_names
 
         names = {n for text in _strings(self) for n in point_names(text) if n.startswith("self.")}
@@ -97,9 +100,13 @@ class Modifier(BaseModel):
             raise ValueError(f"'self' cannot be used in a {self.kind} here")
         values = dict(variables)
         for name in names:
-            _, point, axis = name.split(".")
-            values[name] = own.point(point)[0 if axis == "x" else 1]
+            values[name] = own.measure(name.removeprefix("self."))
         return values
+
+    @classmethod
+    def new(cls) -> Modifier:
+        """A new one, as the editor adds it (its fields' defaults, unless it says)."""
+        return cls()
 
     @classmethod
     def kind_name(cls) -> str:
@@ -133,6 +140,12 @@ class ArrayModifier(Modifier):
     rows: Value = 1.0
     dx: Value = 0.0
     dy: Value = 0.0
+
+    @classmethod
+    def new(cls) -> ArrayModifier:
+        """A new array, as the editor adds one: three copies a copy's width apart, so
+        they are visibly separate and the field shows how to space them."""
+        return cls(columns=3, rows=1, dx="self.width * 2", dy="self.height * 2")
 
     def copies(self, variables=None):
         columns, rows = _try_count(self.columns, variables), _try_count(self.rows, variables)
@@ -397,7 +410,7 @@ BY_MODIFIER_KIND: dict[str, type[Modifier]] = {m.kind_name(): m for m in MODIFIE
 def new_modifier(kind: str) -> Modifier:
     """A modifier of ``kind`` with its default settings."""
     try:
-        return BY_MODIFIER_KIND[kind]()
+        return BY_MODIFIER_KIND[kind].new()
     except KeyError:
         raise ValueError(f"unknown modifier '{kind}'") from None
 

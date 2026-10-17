@@ -23,6 +23,26 @@ def _isolated_settings(tmp_path, monkeypatch):
     monkeypatch.setattr(theme, "user_folder", lambda: tmp_path / "themes")
     theme.load()
     yield
+    _delete_windows()
+
+
+def _delete_windows() -> None:
+    """Free the windows a test left. A closed window is deleted only when the event
+    loop gets to it, which processEvents() never does: without this every window of
+    every test stayed alive, and each test took longer than the one before (a
+    window's setup went from 0.2 s to 7 s within one file)."""
+    import gc
+
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        widget.deleteLater()  # not close(): an unsaved window would ask about saving
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gc.collect()
 
 
 def _write_gds(path, boxes, dbu=0.001, cell="FRAME"):

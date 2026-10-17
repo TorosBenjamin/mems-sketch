@@ -77,7 +77,8 @@ class HistoryPanel(_Panel):
         self.key: Key = UNCOMMITTED
         self._geometry: dict[str, tuple[Geometry, Geometry] | str] = {}  # per component
         self._stale = True  # the commits need reading again when the panel shows
-        # The tool window's header: the branch and what is being compared, and refresh.
+        # The tool window's header: the branch, and refresh. What is compared heads the
+        # list of changes (the header is too narrow to hold both).
         self.title = self.header_context = widgets.header_context()
         self.actions = widgets.header_actions(("recompile", "Refresh", self.reload))
         self.header_buttons = list(self.actions)
@@ -126,6 +127,10 @@ class HistoryPanel(_Panel):
         lower_layout = QVBoxLayout(lower)
         lower_layout.setContentsMargins(0, 0, 0, 0)
         lower_layout.setSpacing(0)
+        self.compared = QLabel()  # "Since the last commit", over the changes
+        self.compared.setObjectName("muted")
+        self.compared.setContentsMargins(8, 6, 8, 2)
+        lower_layout.addWidget(self.compared)
         lower_layout.addWidget(self.commit_box)
         lower_layout.addWidget(self.changes, 1)
         self.no_changes = widgets.EmptyState("No changes")
@@ -269,7 +274,9 @@ class HistoryPanel(_Panel):
 
     def _show(self, comparison: Comparison | None) -> None:
         self.comparison = comparison
-        self.title.setText(self._describe() if comparison is not None else "")
+        branch = self.document.history.branch if comparison is not None else None
+        self.title.setText(branch or "")
+        self.compared.setText(self._describe() if comparison is not None else "")
         self._update_commit_box()
         self._geometry.clear()
         self.changes.clear()
@@ -279,13 +286,10 @@ class HistoryPanel(_Panel):
 
     def _describe(self) -> str:
         if self.key == UNCOMMITTED:
-            text = "Since the last commit"
-        elif self.key[0] == "since":
-            text = f"From {self.key[1][:7]} to now"
-        else:
-            text = f"Commit {self.key[1][:7]}"
-        branch = self.document.history.branch
-        return f"{branch} · {text}" if branch else text
+            return "Since the last commit"
+        if self.key[0] == "since":
+            return f"From {self.key[1][:7]} to now"
+        return f"Commit {self.key[1][:7]}"
 
     def _update_commit_box(self) -> None:
         """The message box shows with uncommitted changes to commit."""

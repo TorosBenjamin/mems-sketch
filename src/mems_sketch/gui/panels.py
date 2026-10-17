@@ -645,6 +645,9 @@ PLACES_ROLE = Qt.ItemDataRole.UserRole + 6  # a shape row placing a component: i
 INSIDE_ROLE = Qt.ItemDataRole.UserRole + 7  # a row inside a placed component: (owner, path)
 
 
+DETAIL_LEAST_CHARS = 6  # a detail shortened to fewer letters is left out
+
+
 class DetailDelegate(QStyledItemDelegate):
     """Draws an item's name, then its detail (``DETAIL_ROLE``) in a muted colour."""
 
@@ -662,11 +665,13 @@ class DetailDelegate(QStyledItemDelegate):
         metrics = style_option.fontMetrics
         used = metrics.horizontalAdvance(style_option.text) + 8
         rect = text_rect.adjusted(used, 0, 0, 0)
-        if rect.width() <= 10:
-            return
-        painter.save()
         font = QFont(style_option.font)
         font.setBold(False)
+        # A few letters and "…" say nothing ("s…"): then no detail (the tooltip has it).
+        least = QFontMetrics(font).horizontalAdvance(detail[:DETAIL_LEAST_CHARS] + "…")
+        if rect.width() < least and len(detail) > DETAIL_LEAST_CHARS:
+            return
+        painter.save()
         painter.setFont(font)
         painter.setPen(option.palette.placeholderText().color())
         text = QFontMetrics(font).elidedText(detail, Qt.TextElideMode.ElideRight, rect.width())
@@ -724,6 +729,7 @@ class ShapeTree(QTreeWidget):
 
     def _expanded(self, item: QTreeWidgetItem) -> None:
         self._fill_placed(item)
+        self._fit_icon_columns()
         self._set_collapsed(item, False)
 
     def _set_collapsed(self, item: QTreeWidgetItem, collapsed: bool) -> None:
@@ -762,7 +768,20 @@ class ShapeTree(QTreeWidget):
             if item.data(0, INSIDE_ROLE) is None:
                 pending.extend(item.child(i) for i in range(item.childCount()))
         self._rebuilding = False
+        self._fit_icon_columns()
         self.select_paths(keep)
+
+    def _fit_icon_columns(self) -> None:
+        """Show the alignment and modifier columns only when a row uses them, so the
+        names have that room otherwise."""
+        for column in (self.STATUS, self.MODIFIERS):
+            used = False
+            pending = [self.topLevelItem(i) for i in range(self.topLevelItemCount())]
+            while pending and not used:
+                item = pending.pop()
+                used = not item.icon(column).isNull()
+                pending.extend(item.child(i) for i in range(item.childCount()))
+            self.setColumnHidden(column, not used)
 
     def _show_pieces(self, item: QTreeWidgetItem, shape: Shape, path: NodePath) -> None:
         """Say when a cut splits a shape, e.g. "2 pieces · subtract" (copies made by

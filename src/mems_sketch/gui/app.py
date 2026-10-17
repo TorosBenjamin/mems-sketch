@@ -258,6 +258,7 @@ class MainWindow(QMainWindow):
             panel.error.connect(self.report_error)
         self.properties.previewed.connect(self._preview_node)
         self.properties.pick_corners.connect(lambda: self.set_tool("corners"))
+        self.properties.pick_alignment.connect(self._pick_alignment)
         self._double_shift = DoubleShift(self)
         self._double_shift.pressed.connect(self.search)
         self.winId()  # the native window, which every key typed in this window reaches first
@@ -1124,6 +1125,7 @@ class MainWindow(QMainWindow):
         shown = self.points_shown()
         box = results.node_box(single) if shown and single is not None else None
         self.canvas.show_overlay(results.highlights(view.selection), markers, box)
+        self.canvas.show_alignment(*self.alignment_link(single))
         self.canvas.show_guides(view.guides, set(view.selection))
         changes = (
             self.history.geometry(view.component) if self.tool_windows.is_open("history") else None
@@ -1227,6 +1229,34 @@ class MainWindow(QMainWindow):
         self.properties.show_node(paths[0] if len(paths) == 1 else None)
         self.update_overlay()
         self.state_changed()
+
+    def _pick_alignment(self, field: str, point: str, to: str) -> None:
+        """A pick button of the alignment in Properties: the Align tool picks that end
+        on the canvas, then it is back to Select."""
+        if len(self.selection) != 1:
+            return
+        path = self.selection[0]
+        self.set_tool("align")
+        self.tool.begin(path, only=field, point=point, to=to)
+
+    def alignment_link(self, path: NodePath | None) -> tuple:
+        """How the shape at ``path`` is aligned, for the canvas: its point and the point
+        it is kept on, each (name, x, y); (None, None) when it is not aligned, while a
+        tool is busy, or when either point cannot be found."""
+        if path is None or self.tool.busy:
+            return None, None
+        try:
+            align = self.document.node(path).align
+            if align is None:
+                return None, None
+            results = self.document.results
+            point = next((p for p in results.node_points(path) if p[0] == align.point), None)
+            target = next(
+                ((n, x, y) for n, _, x, y in results.align_targets(path) if n == align.to), None
+            )
+        except Exception:  # noqa: BLE001 - not built: nothing to show
+            return None, None
+        return point, target
 
     def _select_quietly(self, paths: list[NodePath]) -> None:
         """Select what was clicked on the canvas: it is where the user looks, so it

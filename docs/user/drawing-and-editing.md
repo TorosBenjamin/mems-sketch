@@ -78,6 +78,17 @@ after every change, so parts stay attached when parameters change.
 3. Fine-tune the offset (e.g. 1 µm overlap) in **Properties**. **Edit →
    Remove alignment** takes it off and leaves the shape where it is.
 
+While you pick, the point a click would take is named next to the cursor.
+
+A selected aligned shape shows its alignment on the canvas: a ring on the
+point it is kept on and a dot on its own point, named, with a dashed arrow
+between them when an offset sets them apart.
+
+In **Properties**, *Align to another shape's point* has a pick button beside
+**Point** and beside **To**: it picks just that end on the canvas and keeps
+the other end and the offset (Esc changes nothing). The **To** list groups
+the points of each shape together.
+
 In **Shapes**, a link icon marks an aligned shape; hover it for e.g. `bottom
 at spring.end`.
 

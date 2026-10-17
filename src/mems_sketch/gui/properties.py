@@ -159,6 +159,9 @@ class PropertyEditor(QScrollArea):
     applied = Signal()
     previewed = Signal(object)  # the node as the fields describe it, while a value is dragged
     pick_corners = Signal()  # "Pick on the canvas" in a corners card: the Corners tool
+    # A pick button of the alignment: "point" or "to", with the point and target the
+    # form has now (the other one is kept).
+    pick_alignment = Signal(str, str, str)
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -519,17 +522,48 @@ class PropertyEditor(QScrollArea):
         own.addItems([name for name, _, _ in self.document.results.node_points(path)] or ["center"])
         _choose(own, align.point if align else "center")
         target = _combo()
-        target.addItems([name for name, *_ in self.document.results.align_targets(path)])
+        shape = None
+        for name, *_ in self.document.results.align_targets(path):
+            if shape is not None and name.split(".")[0] != shape:
+                target.insertSeparator(target.count())  # the points of one shape together
+            shape = name.split(".")[0]
+            target.addItem(name)
         target.setPlaceholderText("choose a point")
         _choose(target, align.to if align else "")
-        form.addRow("Point", self._applies(own))
+        editable = not self.document.read_only
+
+        def picker(field: str, tip: str) -> QToolButton:
+            button = QToolButton()
+            icons.bind(button, "point")
+            button.setToolTip(tip)
+            button.setEnabled(editable)
+            button.clicked.connect(
+                lambda: self.pick_alignment.emit(
+                    field, own.currentText().strip(), target.currentText().strip()
+                )
+            )
+            return button
+
+        form.addRow(
+            "Point",
+            _with_button(self._applies(own), picker("point", "Pick the point on the canvas")),
+        )
         explain = (
             "Moves the shape so that its *Point* lands on *To* (another shape's point), "
             "plus the offset, and keeps it there whenever anything changes."
         )
         if type(node).placed:
             explain += "\n\nWhile aligned, x and y do not move it; rotation and mirroring do."
-        form.addRow("To", _with_help(self._applies(target), explain))
+        form.addRow(
+            "To",
+            _with_help(
+                _with_button(
+                    self._applies(target),
+                    picker("to", "Pick the point to align to on the canvas"),
+                ),
+                explain,
+            ),
+        )
         # Switching alignment off applies at once; switching it on waits for a point.
         box.clicked.connect(lambda on: self.apply() if not on or target.currentText() else None)
         offsets = {}
@@ -1083,6 +1117,17 @@ def _message(exc: Exception) -> str:
                 for e in errors()
             )
     return str(exc)
+
+
+def _with_button(widget: QWidget, button: QToolButton) -> QWidget:
+    """``widget`` with a small button after it."""
+    row = QWidget()
+    line = QHBoxLayout(row)
+    line.setContentsMargins(0, 0, 0, 0)
+    line.setSpacing(2)
+    line.addWidget(widget, 1)
+    line.addWidget(button)
+    return row
 
 
 def _with_help(widget: QWidget, text: str) -> QWidget:

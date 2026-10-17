@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QMessageBox, QToolButton
+from PySide6.QtWidgets import QComboBox, QMessageBox
 
 from mems_sketch.core.shapes import Align, RectShape
 from mems_sketch.gui.app import MainWindow
@@ -54,9 +54,33 @@ def test_properties_of_a_long_component_name_fit_the_panel(resonator, qtbot):
     resonator.tree.select_paths([placed_plate(resonator)])
     editor = resonator.properties
     qtbot.waitUntil(lambda: editor.widget().width() <= editor.viewport().width())
-    opener = next(b for b in editor.findChildren(QToolButton) if b.objectName() == "open-component")
-    assert opener.full_text() == "Open std.perforated_plate"
-    assert opener.geometry().right() <= editor.viewport().width()
+    assert editor.widget().minimumSizeHint().width() <= editor.viewport().width()
+    assert not editor.horizontalScrollBar().isVisible()
+
+
+def test_help_sits_by_the_label_so_fields_are_as_wide(window):
+    doc = window.document
+    doc.nodes.add(RectShape(name="bar", layer="device", x0=0, y0=0, x1=100, y1=20))
+    doc.nodes.add(
+        RectShape(
+            name="post",
+            layer="device",
+            x0=0,
+            y0=0,
+            x1=10,
+            y1=30,
+            align=Align(point="bottom", to="bar.top"),
+        )
+    )
+    window.tool_windows.open("properties")
+    window.tree.select_paths([sorted(doc.results.inspection())[1]])
+    combos = [c for c in window.properties.findChildren(QComboBox) if c.isVisible()]
+    point, target = combos[-2:]
+    assert point.width() == target.width()
+    assert (
+        point.mapTo(window, point.rect().topLeft()).x()
+        == target.mapTo(window, target.rect().topLeft()).x()
+    )
 
 
 def test_a_long_card_heading_is_shortened_not_widening(resonator, qtbot):
@@ -105,3 +129,21 @@ def test_points_keep_the_room_for_the_list_until_one_is_chosen(window):
     panel = window.points
     panel.select(None)
     assert panel.form_host.maximumHeight() == HINT_HEIGHT_PX
+
+
+def test_a_panel_dragged_narrower_than_it_can_be_closes(window):
+    windows = window.tool_windows
+    windows.open("properties")
+    main = windows.main
+    before = main.sizes()
+    assert before[2] > 0
+    main.setSizes([before[0], before[1] + before[2], 0])  # as a drag past its minimum leaves it
+    main.splitterMoved.emit(main.width(), 2)
+    assert not windows.is_open("properties")
+    windows.open("properties")
+    assert main.sizes()[2] > 0  # back at a usable size
+
+
+def test_the_editor_does_not_close_when_dragged(window):
+    main = window.tool_windows.main
+    assert not main.isCollapsible(1)

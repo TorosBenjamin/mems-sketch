@@ -114,14 +114,16 @@ too: the rounding belongs to the placement, not to the library.
 ## Properties
 
 The selected shape's fields. The name is the title (click to rename), with an
-eye beside it that hides or shows the shape. Under it, what the shape is in
-words (*Rectangle*, *Placed component*, *Subtract*); a placed component has
-**Open …** to open it in its own tab.
+eye beside it that hides or shows the shape; the panel's header says what the
+shape is in words (*Rectangle*, *Placed component*, *Subtract*). A placed
+component's **Component** row names it once, with a pencil button that opens
+it in its own tab; the button's arrow replaces it with another component.
 
-The fields come in cards: *Geometry* (or *Placement* for a placed component),
-*Parameters of …*, *Align to another shape's point* and *Modifiers*. The
-chevron in a card's corner folds it away; it stays folded for that kind of
-shape, also next time. Units in labels are lighter (*Finger width µm*). A hidden shape is not drawn,
+The fields come in parts, each a heading over a line: *Geometry* (or
+*Placement* for a placed component), *Parameters of …*, *Align to another
+shape's point* and *Modifiers*. The chevron by a heading folds that part away;
+it stays folded for that kind of shape, also next time. The fields of all the
+parts line up, and a **?** sits by the name of the field it explains. Units in labels are lighter (*Finger width µm*). A hidden shape is not drawn,
 exported or checked, but it keeps its points: shapes aligned to it, or using
 its points, stay where they are.
 

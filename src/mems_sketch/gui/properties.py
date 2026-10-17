@@ -56,7 +56,7 @@ from mems_sketch.core.shapes import (
     Shape,
 )
 from mems_sketch.editing import EditSession
-from mems_sketch.gui import icons, theme
+from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.actions import OPERATIONS, PRIMITIVES
 from mems_sketch.gui.canvas import layer_color
 from mems_sketch.gui.help import HelpButton
@@ -196,6 +196,8 @@ class PropertyEditor(QScrollArea):
         self._editors: dict[str, typing.Callable[[], object]] = {}
         self._scope: dict[str, float] = {}
         self._offered: tuple[str, ...] = ()  # names completed besides those of the scope
+        # The tool window's header says what the shape is ("Rectangle").
+        self.header_context = widgets.header_context()
         self._show_placeholder("Select a shape to edit its properties.")
         # Leaving a text field applies it, as Enter does: an edit is never lost by
         # clicking elsewhere (another field, the canvas, another shape).
@@ -225,11 +227,14 @@ class PropertyEditor(QScrollArea):
         body.setObjectName("properties-body")
         layout = QVBoxLayout(body)
         layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(8)  # between the cards
+        layout.setSpacing(4)  # between the parts
+        # One header row: what it is (its icon; the kind in words is in the panel's
+        # header), its name and whether it is drawn.
         title = QHBoxLayout()
         title.setSpacing(6)
         glyph = QLabel()
         glyph.setPixmap(icons.pixmap(node.icon_name(), 18))
+        glyph.setToolTip(kind_title(node))
         name = ElidedLineEdit(
             node.name or "",
             tip="The shape's name: click to rename (alignments and expressions follow)",
@@ -243,27 +248,8 @@ class PropertyEditor(QScrollArea):
         title.addWidget(name, 1)
         title.addWidget(self._enabled_toggle(node))
         layout.addLayout(title)
-        # What it is, in words ("Placed component", not "ref"), and for a placed
-        # component a way to open it.
-        what = QHBoxLayout()
-        what.setContentsMargins(24, 0, 0, 0)
-        what.setSpacing(6)
-        kind = QLabel(kind_title(node))
-        kind.setObjectName("muted")
-        kind.setMinimumWidth(0)
-        what.addWidget(kind)
-        what.addStretch(1)
-        component = getattr(node, "component", None)
-        if component:
-            opener = _ElidedButton(f"Open {component}")
-            icons.bind(opener, "edit")
-            opener.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            opener.setToolTip(f"Open {component} in its own tab")
-            opener.setObjectName("open-component")
-            opener.clicked.connect(lambda: self.open_component.emit(component))
-            what.addWidget(opener)
-        layout.addLayout(what)
         layout.addSpacing(4)
+        self.header_context.setText(kind_title(node))
         self.name_edit = name
         self._editors["name"] = lambda: name.text().strip() or None
         main = _section("Placement" if type(node).placed else "Geometry", node.kind)
@@ -287,6 +273,7 @@ class PropertyEditor(QScrollArea):
         needs_apply = bool(node.modifiers) or "points" in fields or "mapping" in fields
         layout.addWidget(self._modifiers_editor(node, path, needs_apply))
         layout.addStretch()
+        _line_up(body)
         self._show(body)
 
     def _enabled_toggle(self, node: Shape) -> QToolButton:
@@ -343,11 +330,7 @@ class PropertyEditor(QScrollArea):
             self._editors[field] = lambda: combo.currentText().strip() or None
             return self._applies(combo)
         if field == "component":
-            combo = _combo()
-            combo.addItems(self.document.component_names())
-            combo.setCurrentText(value)
-            self._editors[field] = combo.currentText
-            return self._applies(combo)
+            return self._component_field(field, value)
         if typing.get_origin(annotation) is list and args == (str,):  # names, e.g. keep_out
             edit = QLineEdit(", ".join(value))
             edit.setPlaceholderText("shape names, comma-separated")
@@ -357,6 +340,43 @@ class PropertyEditor(QScrollArea):
             return edit
         optional = type(None) in args
         return self._value_editor(field, value, optional)
+
+    def _component_field(self, field: str, value: str) -> QWidget:
+        """The component a placement places: its name, and a button that opens it in
+        its own tab, whose menu replaces it with another component."""
+        chosen = [value]
+        row = QWidget()
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(4)
+        label = QLabel(_qualified_html(value))
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setToolTip(value)
+        label.setMinimumWidth(0)
+        label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        line.addWidget(label, 1)
+        opener = QToolButton()
+        opener.setObjectName("open-component")
+        icons.bind(opener, "edit")
+        opener.setToolTip(f"Open {value} in its own tab")
+        opener.setAutoRaise(True)
+        opener.clicked.connect(lambda: self.open_component.emit(value))
+        others = [n for n in self.document.component_names() if n != value]
+        if others and not self.document.read_only:
+            opener.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+            menu = QMenu(opener)
+            replace = menu.addMenu("Replace with")
+            for other in others:
+
+                def swap(_=False, other=other) -> None:
+                    chosen[0] = other
+                    self.apply()
+
+                replace.addAction(other, swap)
+            opener.setMenu(menu)
+        line.addWidget(opener)
+        self._editors[field] = lambda: chosen[0]
+        return row
 
     def _layer_picker(self, value: str) -> QComboBox:
         """The layers a shape can be on, each with the colour of the layer it lands
@@ -605,13 +625,10 @@ class PropertyEditor(QScrollArea):
         if type(node).placed:
             explain += "\n\nWhile aligned, x and y do not move it; rotation and mirroring do."
         form.addRow(
-            "To",
-            _with_help(
-                _with_button(
-                    self._applies(target),
-                    picker("to", "Pick the point to align to on the canvas"),
-                ),
-                explain,
+            _label_with_help("To", explain),
+            _with_button(
+                self._applies(target),
+                picker("to", "Pick the point to align to on the canvas"),
             ),
         )
         # Switching alignment off applies at once; switching it on waits for a point.
@@ -880,6 +897,7 @@ class PropertyEditor(QScrollArea):
     def _show_interface(self) -> None:
         """What a component offers whoever places it, as text: its description,
         public parameters and declared points (for one that cannot be edited)."""
+        self.header_context.setText("")
         name = self.document.active
         definition = self.document.definition_of(name)
         try:
@@ -969,6 +987,7 @@ class PropertyEditor(QScrollArea):
         self.setWidget(content)
 
     def _show_placeholder(self, text: str) -> None:
+        self.header_context.setText("")
         body = QWidget()
         body.setObjectName("properties-body")  # the island's colour, as with a shape shown
         label = QLabel(text)
@@ -1088,12 +1107,16 @@ def _focusable(body: QWidget) -> list[QWidget]:
     ]
 
 
+COMBO_MIN_PX = 64  # the narrowest a list of the form gets
+
+
 def _combo() -> QComboBox:
     """A combo box that may shrink below its longest item (long names never widen
     the panel; the list still opens wide enough)."""
     combo = QComboBox()
     combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
     combo.setMinimumContentsLength(4)
+    combo.setMinimumWidth(COMBO_MIN_PX)  # below its hint, which counts the placeholder too
     combo.view().setTextElideMode(Qt.TextElideMode.ElideNone)
     return combo
 
@@ -1119,41 +1142,6 @@ def kind_title(node: Shape) -> str:
     op = getattr(node, "op", None)  # a boolean says which operation it is
     title = KIND_TITLES.get(op) or KIND_TITLES.get(node.kind)
     return title or node.kind.replace("_", " ").capitalize()
-
-
-class _ElidedButton(QToolButton):
-    """A text-and-icon button whose text ends in "…" when the panel is narrow, so a
-    long name never makes the panel wider than it is."""
-
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self._full = text
-        self.setText(text)
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-
-    def full_text(self) -> str:
-        return self._full
-
-    def sizeHint(self) -> QSize:  # room for the whole text
-        hint = super().sizeHint()
-        metrics = self.fontMetrics()
-        extra = metrics.horizontalAdvance(self._full) - metrics.horizontalAdvance(self.text())
-        return QSize(hint.width() + extra, hint.height())
-
-    def minimumSizeHint(self) -> QSize:
-        hint = super().minimumSizeHint()
-        return QSize(
-            self.iconSize().width() + self.fontMetrics().horizontalAdvance("Open…") + 16,
-            hint.height(),
-        )
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._elide(event.size().width())
-
-    def _elide(self, width: int) -> None:
-        room = width - self.iconSize().width() - 16
-        self.setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, room))
 
 
 class Section(QGroupBox):
@@ -1200,7 +1188,7 @@ class Section(QGroupBox):
 
     def _elide_title(self) -> None:
         indicator = 24 if self.isCheckable() else 0  # the check box before the heading
-        room = self.width() - indicator - 50  # the padding and the fold chevron
+        room = self.width() - indicator - 30  # the fold chevron
         shown = self.fontMetrics().elidedText(self._title, Qt.TextElideMode.ElideRight, room)
         if shown != super().title():
             super().setTitle(shown)
@@ -1233,12 +1221,12 @@ class Section(QGroupBox):
         super().resizeEvent(event)
         self._elide_title()
         self._toggle.adjustSize()
-        self._toggle.move(self.width() - self._toggle.width() - 6, 5)
+        self._toggle.move(self.width() - self._toggle.width(), 4)
         self._toggle.raise_()
 
 
 SECTION_MIN_PX = 120  # the narrowest a card gets (its heading then ends in "…")
-SECTION_FOLDED_PX = 30  # a folded card: just its heading
+SECTION_FOLDED_PX = 28  # a folded card: just its heading
 FOLDED_KEY = "properties/folded"  # the folded cards, "kind/section"
 QWIDGETSIZE_MAX = (1 << 24) - 1
 
@@ -1250,6 +1238,15 @@ def _settings() -> QSettings:
 def _section(title: str, kind: str = "") -> Section:
     """A card of the form (see :class:`Section`); ``kind`` remembers it folded."""
     return Section(title, f"{kind}/{title.split(' of ')[0]}" if kind else "")
+
+
+def _qualified_html(name: str) -> str:
+    """``std.perforated_plate`` with where it is from ("std.") in a lighter colour."""
+    head, dot, last = name.rpartition(".")
+    if not dot:
+        return html.escape(name)
+    muted = theme.color("muted").name()
+    return f"<span style='color:{muted}'>{html.escape(head)}.</span>{html.escape(last)}"
 
 
 def _label(text: str) -> QLabel:
@@ -1330,12 +1327,35 @@ def _with_button(widget: QWidget, button: QToolButton) -> QWidget:
     return row
 
 
-def _with_help(widget: QWidget, text: str) -> QWidget:
-    """``widget`` with a "?" after it that explains ``text``."""
+LINE_UP_MAX_PX = 110  # the widest the labels of a form are made to line up to
+
+
+def _line_up(body: QWidget) -> None:
+    """Give the labels of every part of the form one width, so that the fields of
+    all the parts start at the same place."""
+    forms = body.findChildren(QFormLayout)
+    labels = [
+        item.widget()
+        for form in forms
+        for row in range(form.rowCount())
+        if (item := form.itemAt(row, QFormLayout.ItemRole.LabelRole)) and item.widget()
+    ]
+    if labels:
+        # Up to a point: one very long label ("Initial finger overlap") would
+        # otherwise narrow every field of the form.
+        width = min(max(label.sizeHint().width() for label in labels), LINE_UP_MAX_PX)
+        for label in labels:
+            label.setMinimumWidth(width)
+
+
+def _label_with_help(text: str, help_text: str) -> QWidget:
+    """A field's label with a "?" right after it that explains ``help_text``: the
+    "?" sits by the name, so every field of the form is as wide as the others."""
     row = QWidget()
     line = QHBoxLayout(row)
     line.setContentsMargins(0, 0, 0, 0)
     line.setSpacing(2)
-    line.addWidget(widget, 1)
-    line.addWidget(HelpButton(text))
+    line.addWidget(_label(text))
+    line.addWidget(HelpButton(help_text))
+    line.addStretch(1)
     return row

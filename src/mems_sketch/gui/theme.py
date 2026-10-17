@@ -460,11 +460,15 @@ QPushButton:disabled {{ color: {muted}; }}
 QCheckBox, QRadioButton {{ spacing: 6px; }}
 QScrollArea {{ background: {island}; border: none; }}
 QWidget#properties-body {{ background: {island}; }}
-QGroupBox#section {{
-    border: none; border-top: 1px solid {border_strong}; margin-top: 18px; padding-top: 8px;
-    font-weight: 600;
+QGroupBox#section {{  /* a card of the Properties form: heading inside, folds away */
+    background: {window}; border: 1px solid {border}; border-radius: {radius_card}px;
+    margin-top: 4px; padding: 28px 10px 6px 10px; font-weight: 600;
 }}
-QGroupBox#section::title {{ subcontrol-origin: margin; left: 0; top: 6px; padding: 0; }}
+QGroupBox#section::title {{
+    subcontrol-origin: padding; subcontrol-position: top left; left: 10px; top: 8px; padding: 0;
+}}
+QToolButton#section-toggle {{ padding: 2px; border-radius: {radius_small}px; }}
+QLabel#unit {{ color: {muted}; }}
 QGroupBox#section::indicator {{
     width: 13px; height: 13px; border: 1px solid {input_border}; border-radius: {radius_small}px;
     background: {editor};

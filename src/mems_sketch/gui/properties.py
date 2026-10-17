@@ -19,10 +19,12 @@ apply (turn into real shapes) and remove. "Add modifier" adds one at the end.
 from __future__ import annotations
 
 import contextlib
+import html
+import re
 import typing
 
 import shiboken6
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -54,10 +56,12 @@ from mems_sketch.core.shapes import (
     Shape,
 )
 from mems_sketch.editing import EditSession
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, theme
+from mems_sketch.gui.actions import OPERATIONS, PRIMITIVES
 from mems_sketch.gui.canvas import layer_color
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import component_icon, parse_value, read_only_kind, swatch_icon
+from mems_sketch.gui.settings import APPLICATION, ORGANIZATION
 from mems_sketch.gui.value_edit import ElidedLineEdit, ExpandedEdit, ValueEdit
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
@@ -162,6 +166,7 @@ class PropertyEditor(QScrollArea):
     # A pick button of the alignment: "point" or "to", with the point and target the
     # form has now (the other one is kept).
     pick_alignment = Signal(str, str, str)
+    open_component = Signal(str)  # "Open …" by a placed component's kind
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -203,7 +208,7 @@ class PropertyEditor(QScrollArea):
         body.setObjectName("properties-body")
         layout = QVBoxLayout(body)
         layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(4)
+        layout.setSpacing(8)  # between the cards
         title = QHBoxLayout()
         title.setSpacing(6)
         glyph = QLabel()
@@ -217,21 +222,42 @@ class PropertyEditor(QScrollArea):
         name.returnPressed.connect(self.apply)
         name.setReadOnly(self.document.read_only)
         name.setMinimumWidth(60)
-        kind = QLabel(node.kind)
-        kind.setObjectName("muted")
         title.addWidget(glyph)
         title.addWidget(name, 1)
-        title.addWidget(kind)
         title.addWidget(self._enabled_toggle(node))
         layout.addLayout(title)
+        # What it is, in words ("Placed component", not "ref"), and for a placed
+        # component a way to open it.
+        what = QHBoxLayout()
+        what.setContentsMargins(24, 0, 0, 0)
+        what.setSpacing(6)
+        kind = QLabel(kind_title(node))
+        kind.setObjectName("muted")
+        what.addWidget(kind)
+        what.addStretch(1)
+        component = getattr(node, "component", None)
+        if component:
+            opener = QToolButton()
+            opener.setText(f"Open {component}")
+            icons.bind(opener, "edit")
+            opener.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            opener.setToolTip(f"Open {component} in its own tab")
+            opener.setObjectName("open-component")
+            opener.clicked.connect(lambda: self.open_component.emit(component))
+            what.addWidget(opener)
+        layout.addLayout(what)
+        layout.addSpacing(4)
         self.name_edit = name
         self._editors["name"] = lambda: name.text().strip() or None
-        form = _form()
-        layout.addLayout(form)
+        main = _section("Placement" if type(node).placed else "Geometry", node.kind)
+        form = _form(main)
+        layout.addWidget(main)
 
         self._add_fields(form, node, node.kind, "", skip=_SPECIAL)
 
         fields = type(node).model_fields
+        if form.rowCount() == 0:  # nothing of its own to set (e.g. an operation)
+            main.hide()
         if "points" in fields:
             form.addRow("Points (x, y per line)", self._points_editor(node.points))
         if "mapping" in fields:
@@ -398,7 +424,7 @@ class PropertyEditor(QScrollArea):
             label = labels.get(field) or _LABELS.get(field, field.replace("_", " ").capitalize())
             widget = self._field_editor(key + field, info.annotation, getattr(model, field))
             widgets[field] = widget
-            form.addRow(label, widget)
+            form.addRow(_label(label), widget)
         return widgets
 
     def _make_parameter(self, edit: ValueEdit, value) -> None:
@@ -456,7 +482,7 @@ class PropertyEditor(QScrollArea):
         return edit
 
     def _params_editor(self, node: Shape) -> QWidget:
-        box = _section(f"Parameters of {node.component}")
+        box = _section(f"Parameters of {node.component}", node.kind)
         form = _form(box)
         try:
             target = self.document.resolve(node.component)  # as the edited component sees it
@@ -500,7 +526,7 @@ class PropertyEditor(QScrollArea):
                 widget.setToolTip(
                     f"'{field}' is internal to {node.component}: clear it (it cannot be set here)"
                 )
-            form.addRow(label, widget)
+            form.addRow(_label(label), widget)
 
         def read():
             values = {field: reader() for field, reader in readers.items()}
@@ -511,7 +537,7 @@ class PropertyEditor(QScrollArea):
         return box
 
     def _align_editor(self, node: Shape, path: NodePath) -> QWidget:
-        box = _section("Align to another shape's point")
+        box = _section("Align to another shape's point", node.kind)
         box.setCheckable(True)
         box.setChecked(node.align is not None)
         form = _form(box)
@@ -594,7 +620,7 @@ class PropertyEditor(QScrollArea):
 
     def _modifiers_editor(self, node: Shape, path: NodePath, with_apply: bool) -> QWidget:
         """The modifier stack: one card each, then "Add modifier" (and Apply, for the form)."""
-        box = _section("Modifiers")
+        box = _section("Modifiers", node.kind)
         column = QVBoxLayout(box)
         column.setContentsMargins(0, 6, 0, 4)
         column.setSpacing(6)
@@ -1059,11 +1085,97 @@ def _choose(combo: QComboBox, value: str) -> None:
     combo.setCurrentText(value)
 
 
-def _section(title: str) -> QGroupBox:
-    """A titled section: flat, with one divider above it (see the theme)."""
-    box = QGroupBox(title)
-    box.setObjectName("section")
-    return box
+KIND_TITLES = (
+    {"ref": "Placed component", "boolean": "Boolean"} | dict(PRIMITIVES) | dict(OPERATIONS)
+)
+
+
+def kind_title(node: Shape) -> str:
+    """A shape's kind in words: "Rectangle", "Placed component", "Subtract"."""
+    op = getattr(node, "op", None)  # a boolean says which operation it is
+    title = KIND_TITLES.get(op) or KIND_TITLES.get(node.kind)
+    return title or node.kind.replace("_", " ").capitalize()
+
+
+class Section(QGroupBox):
+    """A card of the form (the geometry, a component's parameters, the alignment, the
+    modifiers): its own background and a bold heading, and a chevron that folds it
+    away. Folded cards are remembered per kind of shape (``key``), between sessions."""
+
+    def __init__(self, title: str, key: str = "") -> None:
+        super().__init__(title)
+        self.setObjectName("section")
+        self.key = key
+        self._collapsed = False
+        self._toggle = QToolButton(self)
+        self._toggle.setObjectName("section-toggle")
+        self._toggle.setAutoRaise(True)
+        self._toggle.setIconSize(QSize(12, 12))
+        self._toggle.clicked.connect(lambda: self.set_collapsed(not self._collapsed))
+        self._restored = False
+        self._show_toggle()
+
+    @property
+    def collapsed(self) -> bool:
+        return self._collapsed
+
+    def set_collapsed(self, collapsed: bool, remember: bool = True) -> None:
+        self._collapsed = collapsed
+        for child in self.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            if child is not self._toggle:
+                child.setVisible(not collapsed)
+        self.setMaximumHeight(SECTION_FOLDED_PX if collapsed else QWIDGETSIZE_MAX)
+        self._show_toggle()
+        if remember and self.key:
+            folded = set(_settings().value(FOLDED_KEY, [], type=list) or [])
+            folded = folded | {self.key} if collapsed else folded - {self.key}
+            _settings().setValue(FOLDED_KEY, sorted(folded))
+
+    def _show_toggle(self) -> None:
+        icons.bind(self._toggle, "down" if self._collapsed else "up")
+        self._toggle.setToolTip("Show this section" if self._collapsed else "Fold this section")
+
+    def showEvent(self, event) -> None:
+        if not self._restored:  # its contents are made by now
+            self._restored = True
+            folded = _settings().value(FOLDED_KEY, [], type=list) or []
+            if self.key in folded:
+                self.set_collapsed(True, remember=False)
+        super().showEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._toggle.adjustSize()
+        self._toggle.move(self.width() - self._toggle.width() - 6, 5)
+        self._toggle.raise_()
+
+
+SECTION_FOLDED_PX = 30  # a folded card: just its heading
+FOLDED_KEY = "properties/folded"  # the folded cards, "kind/section"
+QWIDGETSIZE_MAX = (1 << 24) - 1
+
+
+def _settings() -> QSettings:
+    return QSettings(ORGANIZATION, APPLICATION)
+
+
+def _section(title: str, kind: str = "") -> Section:
+    """A card of the form (see :class:`Section`); ``kind`` remembers it folded."""
+    return Section(title, f"{kind}/{title.split(' of ')[0]}" if kind else "")
+
+
+def _label(text: str) -> QLabel:
+    """A field's label, its unit in brackets ("Finger width (µm)") in a lighter colour."""
+    match = re.fullmatch(r"(.*?)\s*\(([^()]*)\)", text)
+    label = QLabel(text)
+    if match:
+        label.setTextFormat(Qt.TextFormat.RichText)
+        muted = theme.color("muted").name()
+        label.setText(
+            f"{html.escape(match[1])} <span style='color:{muted}'>{html.escape(match[2])}</span>"
+        )
+        label.setToolTip(text)
+    return label
 
 
 def _form(parent: QWidget | None = None) -> QFormLayout:

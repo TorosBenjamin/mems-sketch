@@ -361,7 +361,22 @@ class SelectTool(Tool):
         text = f"Move Δx {dx:g} µm, Δy {dy:g} µm"
         if snap:
             text += f"   {snap[1]} on {snap[2]} (release with Shift to align it there)"
-        self.window.live(text, _offset_label(dx, dy, snap[2] if snap else None))
+        label = _offset_label(dx, dy, snap[2] if snap else None)
+        offset = self._new_offset(dx, dy, modifiers)
+        if offset is not None:  # an aligned shape: the drag changes its offset
+            label = f"offset {offset[0]:g}, {offset[1]:g} µm"
+        self.window.live(text, label)
+
+    def _new_offset(self, dx, dy, modifiers) -> tuple[float, float] | None:
+        """The offset a drag gives one aligned shape (None: not one aligned shape, a
+        drag with Alt, which takes the alignment off, or an offset that is an
+        expression)."""
+        if modifiers & ALT or self._plan is None or len(self._plan.roots) != 1:
+            return None
+        align = self.document.node(self._plan.roots[0]).align
+        if align is None or not all(isinstance(v, int | float) for v in (align.dx, align.dy)):
+            return None
+        return align.dx + dx, align.dy + dy
 
     def release(self, x, y, modifiers) -> None:
         if self.gizmo_dragging:

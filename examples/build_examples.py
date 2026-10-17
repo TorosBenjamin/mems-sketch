@@ -11,14 +11,12 @@ from pathlib import Path
 
 from mems_sketch import (
     Align,
-    BooleanShape,
-    CircleShape,
     ComponentDef,
     Instance,
     ParamDef,
+    PerforateModifier,
     Project,
     RectShape,
-    Repeat,
     load_library,
     save,
 )
@@ -36,45 +34,44 @@ library = Project(name="mems_std", top=None, process=surface, process_name="surf
 library.define_component(
     ComponentDef(
         name="perforated_plate",
-        description="Square plate with a grid of round release holes",
+        description="Square plate with a grid of release holes, round or rounded squares",
         parameters=[
             ParamDef(name="size", default=160, min=10, description="Edge length (µm)"),
             ParamDef(name="pitch", default=20, min=2, description="Hole pitch (µm)"),
             ParamDef(
-                name="hole_r",
-                default="pitch / 6",
+                name="hole",
+                default="pitch / 3",
                 min=0.5,
+                max="pitch",
+                description="Hole size (µm), follows the pitch",
+            ),
+            ParamDef(
+                name="corner_radius",
+                default="hole / 2",
+                min=0,
+                description="Corner radius of the holes (µm): 0 square, half the size round",
+            ),
+            ParamDef(
+                name="margin",
+                default="(pitch - hole) / 2",
                 internal=True,
-                description="Hole radius (µm), follows the pitch",
+                description="From the plate's edge to the holes (µm)",
             ),
         ],
         shapes=[
-            BooleanShape(
+            RectShape(
                 name="plate",
-                op="subtract",
-                a=[
-                    RectShape(
-                        name="outline",
-                        layer="device",
-                        x0="-size/2",
-                        y0="-size/2",
-                        x1="size/2",
-                        y1="size/2",
-                    )
-                ],
-                b=[
-                    CircleShape(
-                        name="holes",
-                        layer="device",
-                        x="-size/2 + pitch/2",
-                        y="-size/2 + pitch/2",
-                        radius="hole_r",
-                        repeat=Repeat(
-                            columns="floor(size/pitch)",
-                            rows="floor(size/pitch)",
-                            dx="pitch",
-                            dy="pitch",
-                        ),
+                layer="device",
+                x0="-size/2",
+                y0="-size/2",
+                x1="size/2",
+                y1="size/2",
+                modifiers=[
+                    PerforateModifier(
+                        pitch="pitch",
+                        hole_size="hole",
+                        corner_radius="corner_radius",
+                        margin="margin",
                     )
                 ],
             )

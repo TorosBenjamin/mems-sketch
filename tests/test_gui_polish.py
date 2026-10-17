@@ -504,13 +504,13 @@ def test_a_read_only_component_shows_its_interface(resonator):
     assert tree.topLevelItemCount() == 1
     assert tree.topLevelItem(0).data(0, DETAIL_ROLE) == "interface only"
     labels = [lab.text() for lab in resonator.properties.findChildren(QLabel)]
-    assert "size" in labels and "pitch" in labels and "hole_r" not in labels  # internal
+    assert "size" in labels and "pitch" in labels and "margin" not in labels  # internal
     assert not resonator.properties.findChildren(QLineEdit)  # text, not inputs
-    assert resonator.parameters._names == ["size", "pitch"]
+    assert resonator.parameters._names == ["size", "pitch", "hole", "corner_radius"]
     assert resonator.hit(0, 0) is None
     resonator.settings.set("editor/show_implementation", True)
     assert tree.topLevelItem(0).data(0, DETAIL_ROLE) != "interface only"  # its shapes
-    assert "hole_r" in resonator.parameters._names
+    assert "margin" in resonator.parameters._names
 
 
 def test_placed_library_components_do_not_open_up_in_the_shape_list(resonator):

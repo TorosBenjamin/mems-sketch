@@ -372,3 +372,35 @@ def test_clicking_out_of_the_wider_editor_applies_it(qtbot):
     field.expanded.setPlainText("width * 2")
     field.expanded.hide()  # what clicking elsewhere does to the popup
     assert applied == ["width * 2"] and field.expanded is None
+
+
+def test_no_menu_starts_or_ends_with_a_separator_or_has_two_in_a_row(window, qtbot):
+    from PySide6.QtWidgets import QMenu
+
+    def shown(menu):
+        return ["---" if a.isSeparator() else a.text() for a in menu.actions() if a.isVisible()]
+
+    menu = QMenu()
+    menu.addSeparator()
+    menu.addAction("Open")
+    menu.addSeparator()
+    menu.addSeparator()  # an empty group between them
+    menu.addAction("Delete")
+    menu.addSeparator()
+    widgets.tidy_separators(menu)
+    assert shown(menu) == ["Open", "---", "Delete"]
+
+    # A real one: a built-in component's menu ended with a separator (#120).
+    tree = window.components.tree
+    builtin = next(
+        tree.topLevelItem(i).child(0)
+        for i in range(tree.topLevelItemCount())
+        if tree.topLevelItem(i).text(0) == "Built-in"
+    )
+    menu = window.components.menu_for(builtin)
+    menu.popup(window.mapToGlobal(window.rect().center()))  # tidied as it opens
+    qtbot.waitUntil(menu.isVisible)
+    entries = shown(menu)
+    menu.close()
+    assert entries[0] != "---" and entries[-1] != "---"
+    assert "---,---" not in ",".join(entries)

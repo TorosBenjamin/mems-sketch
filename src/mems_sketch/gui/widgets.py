@@ -12,6 +12,7 @@
 - :class:`Card` and :func:`page`: a page (the Process page) of sections, each a
   card with its title, actions and "?", at a readable width.
 - :func:`placeholder`: a muted message in a list or table while it is empty.
+- :class:`MenuTidier`: no menu starts or ends with a separator, or shows two in a row.
 - Dialogs: :class:`SideList` (the column of pages in Settings and New Project),
   :func:`form` (labelled fields) and :func:`with_help` (a field and its "?").
 
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
     QLayout,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -451,3 +453,27 @@ def dialog_margins(layout: QLayout) -> QLayout:
     layout.setContentsMargins(pad, pad, pad, pad)
     layout.setSpacing(theme.metric("space_l"))
     return layout
+
+
+def tidy_separators(menu: QMenu) -> None:
+    """Show only the separators between visible entries: none first or last, none
+    twice in a row (a menu built in groups may have an empty group)."""
+    previous_shown = None  # the last visible entry: an action or a separator
+    for action in menu.actions():
+        if action.isSeparator():
+            action.setVisible(previous_shown is not None and not previous_shown.isSeparator())
+            if action.isVisible():
+                previous_shown = action
+        elif action.isVisible():
+            previous_shown = action
+    if previous_shown is not None and previous_shown.isSeparator():
+        previous_shown.setVisible(False)
+
+
+class MenuTidier(QObject):
+    """Installed on the application: tidies every menu's separators as it opens."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Show and isinstance(watched, QMenu):
+            tidy_separators(watched)
+        return False

@@ -49,8 +49,8 @@ afterwards.
 
 **Moving keeps things parametric.** A move changes what the shape stores,
 relative to its parent: `plate/2 + 39` moved by 11 becomes `plate/2 + 50`.
-An aligned shape keeps its alignment and changes its offset (Alt-drag removes
-the alignment instead). Primitives have no rotation of their own, so rotating
+An aligned shape keeps its alignment and changes its offset, shown by the
+cursor while you drag (Alt-drag removes the alignment instead). Primitives have no rotation of their own, so rotating
 one wraps it in a transform.
 
 **Cut, copy and paste** (Ctrl+X, Ctrl+C, Ctrl+V; in the Edit menu and the
@@ -114,7 +114,14 @@ too: the rounding belongs to the placement, not to the library.
 ## Properties
 
 The selected shape's fields. The name is the title (click to rename), with an
-eye beside it that hides or shows the shape. A hidden shape is not drawn,
+eye beside it that hides or shows the shape. Under it, what the shape is in
+words (*Rectangle*, *Placed component*, *Subtract*); a placed component has
+**Open …** to open it in its own tab.
+
+The fields come in cards: *Geometry* (or *Placement* for a placed component),
+*Parameters of …*, *Align to another shape's point* and *Modifiers*. The
+chevron in a card's corner folds it away; it stays folded for that kind of
+shape, also next time. Units in labels are lighter (*Finger width µm*). A hidden shape is not drawn,
 exported or checked, but it keeps its points: shapes aligned to it, or using
 its points, stay where they are.
 

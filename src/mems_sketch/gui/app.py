@@ -259,6 +259,7 @@ class MainWindow(QMainWindow):
         self.properties.previewed.connect(self._preview_node)
         self.properties.pick_corners.connect(lambda: self.set_tool("corners"))
         self.properties.pick_alignment.connect(self._pick_alignment)
+        self.properties.open_component.connect(self.open_component)
         self._double_shift = DoubleShift(self)
         self._double_shift.pressed.connect(self.search)
         self.winId()  # the native window, which every key typed in this window reaches first

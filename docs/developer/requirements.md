@@ -653,7 +653,7 @@ ten times larger than that, so the numbers hold with room to spare.
   rebuilds only what depends on it.
 - **QS-6** (Should, exists) A component placed or arrayed many times is **built
   once** and instanced, unless its copies differ (MOD-2).
-- **QS-7** (Must, new; [#61](https://github.com/TorosBenjamin/mems-sketch/issues/61)) **Only what depends on a change is rebuilt,** down to
+- **QS-7** (Must, exists; [#61](https://github.com/TorosBenjamin/mems-sketch/issues/61)) **Only what depends on a change is rebuilt,** down to
   single shapes, not whole components: the dependencies go through
   expressions, points, alignments, modifiers and `layer_map`. Shapes that do
   not read the changed value, and layers it does not reach, cost nothing.

@@ -430,7 +430,9 @@ NB_MODULE(_core, m) {
             "Stop this engine's builds (another thread may call it while one runs): they raise "
             "BuildCancelled soon, and what they had finished stays in the cache.")
         .def_prop_ro("cached", [](const Engine& e) { return e.cache->size(); },
-                     "How many component builds the cache holds.");
+                     "How many component builds the cache holds.")
+        .def_prop_ro("cached_nodes", [](const Engine& e) { return e.cache->nodes(); },
+                     "How many evaluated shapes the cache holds (each with what it read).");
 
     nb::class_<mems::Expression>(m, "Expression", "A parsed expression.")
         .def(nb::init<std::string_view>(), "text"_a)

@@ -191,6 +191,12 @@ class Engine:
         """How many component builds the cache holds (shared with its trials)."""
         return 0 if self._root is None else self._root.cached
 
+    @property
+    def cached_nodes(self) -> int:
+        """How many evaluated shapes the cache holds: after an edit, a shape the
+        edit does not reach comes from here."""
+        return 0 if self._root is None else self._root.cached_nodes
+
     def clear(self) -> None:
         """Forget every cached build."""
         self._cells.clear()

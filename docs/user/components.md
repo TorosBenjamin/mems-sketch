@@ -45,7 +45,7 @@ The **Parameters** panel lists the current component's parameters: default,
 min, max, a trial value and the resolved value.
 
 - A **default** is a number or an expression over other parameters
-  (`hole_r` defaulting to `pitch / 6`) and process constants
+  (`margin` defaulting to `(pitch - hole) / 2`) and process constants
   (`process.min_gap`).
 - **Min**, **max** and *integer* limit what can be passed in. A limit can be
   an expression over the other parameters (an anchor's enclosure with max

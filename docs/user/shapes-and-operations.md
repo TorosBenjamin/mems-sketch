@@ -8,7 +8,7 @@ input, so a subtraction stays editable and parametric.
 
 | Kind | Shape | Notes |
 |---|---|---|
-| Primitive | `rect`, `polygon`, `circle`, `arc`, `path` | `arc` is an annular sector (a ring at 360°); `path` is a centreline with a width and flush, square or round ends |
+| Primitive | `rect`, `polygon`, `circle`, `arc`, `path` | `rect` takes a `corner_radius` (clamped to half the shorter side: a fully rounded square is a circle, a rectangle a stadium); `arc` is an annular sector (a ring at 360°); `path` is a centreline with a width and flush, square or round ends |
 | Reference | `ref` | A placed component, with its parameter values and position |
 | Operation | `transform` | Move, rotate, mirror and scale its shapes as one piece |
 | | `boolean` | `a` subtract, intersect or XOR `b` |
@@ -46,6 +46,7 @@ They are cards in Properties (**Add modifier**).
 | **Polar array** | `count` copies around a centre, `step` degrees apart, turned with the circle or keeping their orientation |
 | **Mirror** | The shape and its mirror image across a vertical or horizontal line, a guide (`about: centerline`), or through a point (`about: mass.center`) |
 | **Corners** | Chosen corners rounded or chamfered, each with its own radius (see [the Corners tool](drawing-and-editing.md#rounding-single-corners)) |
+| **Perforate** | Holes on a square or hex grid, only where a whole hole fits (see [Perforation](#perforation)) |
 
 - **The order matters:** mirroring an array is not arraying a mirror.
 - **Values can refer to anything in reach**, including other shapes' points
@@ -67,6 +68,39 @@ Example: two combs, mirrored about the plate's centre, three of each:
   - {kind: mirror, axis: x, x: mass.center.x}
   - {kind: array, columns: 3, dx: 120}
 ```
+
+## Perforation
+
+**Perforate** fills any shape (a rectangle, a polygon, a boolean's result)
+with release holes on a grid:
+
+```yaml
+plate:
+  kind: polygon
+  layer: device
+  points: [[0, 0], [300, 0], [300, 200], [0, 200]]
+  modifiers:
+  - kind: perforate
+    pitch: 20             # from one hole to the next
+    grid: hex             # or square (the default); hex rows are pitch × √3/2 apart
+    hole_size: 6          # hole_height too, for oblong holes
+    corner_radius: 1      # 0: square holes; leave it out for round ones
+    margin: 5             # holes stay this far inside the outline
+    keep_out: [anchor]    # shapes the holes keep clear of (keep_out_margin, else margin)
+```
+
+- **Only whole holes:** a hole goes where it fits completely inside the
+  outline shrunk by the margin, so there are no half holes at the edges.
+- **The holes follow the shape:** resize or reshape it and they refill.
+- **Centred:** the grid is centred on the shape, so the pattern stays
+  symmetric; `x`, `y` put a hole's centre at a chosen place instead.
+- **Hole shapes:** `hole_size` × `hole_height` with the corners rounded by
+  `corner_radius`: round by default (half the size), square at 0, a rounded
+  square in between, a slot when oblong.
+- **Keep-out shapes** are named shapes of any layer: an anchor, or a
+  `layer_map` bringing another layer's geometry in.
+- Thousands of holes stay quick: one hole shape is placed at every site and
+  cut out in one go. `std.perforated_plate` is a rectangle with this modifier.
 
 ## Sizes and the minimal box
 

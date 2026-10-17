@@ -89,7 +89,7 @@ def test_comparing_a_commit_with_the_design_now(window, commit):
     panel = window.history
     first = panel.versions.topLevelItem(2).data(0, KEY_ROLE)
     panel.choose(("since", first[1]))
-    assert panel.title.text().endswith(f"From {first[1][:7]} to now")
+    assert panel.compared.text() == f"From {first[1][:7]} to now"
     assert change_rows(panel) == ["top", "  shape beam: x1 40 → 50; y1 4 → 8"]
 
 
@@ -116,8 +116,8 @@ def test_committing_from_the_panel(window):
     panel.commit_button.click()
     assert versions(panel)[:2] == ["Uncommitted changes", "Longer beam"]
     assert not window.document.dirty and not panel.commit_box.isVisible()
-    assert panel.title.text().endswith("Since the last commit")
-    assert " · " in panel.title.text()  # the branch comes first
+    assert panel.compared.text() == "Since the last commit"  # over the changes
+    assert panel.title.text() == window.document.history.branch  # the header: the branch
 
 
 def test_restoring_a_commit_from_the_panel(window, commit):

@@ -99,6 +99,7 @@ MODIFIER_TITLES = {
     "polar_array": "Polar array",
     "mirror": "Mirror",
     "corners": "Corners",
+    "perforate": "Perforate",
 }
 MODIFIER_LABELS = {  # per kind, then per field
     "array": {"columns": "Columns", "rows": "Rows", "dx": "Step x", "dy": "Step y"},
@@ -116,6 +117,17 @@ MODIFIER_LABELS = {  # per kind, then per field
         "y": "Line at y",
         "keep": "Keep the original",
     },
+    "perforate": {
+        "grid": "Grid",
+        "pitch": "Pitch",
+        "row_pitch": "Row pitch",
+        "hole_size": "Hole size",
+        "hole_height": "Hole height",
+        "corner_radius": "Corner radius",
+        "margin": "Margin",
+        "keep_out": "Keep clear of",
+        "keep_out_margin": "Keep-out margin",
+    },
 }
 MODIFIER_TIPS = {
     "array": "Copies on a grid; i and j are each copy's column and row",
@@ -125,6 +137,8 @@ MODIFIER_TIPS = {
     "a guide, or through a point",
     "corners": "Chosen corners rounded or cut, each with its own radius: pick them on the "
     "canvas with the Corners tool (O)",
+    "perforate": "Holes on a square or hex grid, only where a whole hole fits inside the "
+    "margin and clear of the shapes to keep clear of; they refill when the shape changes",
 }
 SELF_POINTS = ("self.center", "self.left", "self.right", "self.top", "self.bottom")
 # What modifier fields are offered of the node itself.
@@ -151,6 +165,7 @@ PAIR_LABELS = {  # (kind, first field) -> row label, where the default does not 
     ("arc", "x"): "Centre",
     ("polar_array", "x"): "Centre",
     ("mirror", "x"): "Line at",
+    ("perforate", "x"): "Hole at",
 }
 
 
@@ -173,7 +188,9 @@ class PropertyEditor(QScrollArea):
         self.document = document
         self.setWidgetResizable(True)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # The fields shrink to the panel; only a panel narrower than they can go
+        # scrolls sideways, so nothing is ever cut off out of reach.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.path: NodePath | None = None
         self.hide_implementation = False  # a read-only component: show its interface
         self._editors: dict[str, typing.Callable[[], object]] = {}
@@ -233,12 +250,12 @@ class PropertyEditor(QScrollArea):
         what.setSpacing(6)
         kind = QLabel(kind_title(node))
         kind.setObjectName("muted")
+        kind.setMinimumWidth(0)
         what.addWidget(kind)
         what.addStretch(1)
         component = getattr(node, "component", None)
         if component:
-            opener = QToolButton()
-            opener.setText(f"Open {component}")
+            opener = _ElidedButton(f"Open {component}")
             icons.bind(opener, "edit")
             opener.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             opener.setToolTip(f"Open {component} in its own tab")
@@ -331,6 +348,13 @@ class PropertyEditor(QScrollArea):
             combo.setCurrentText(value)
             self._editors[field] = combo.currentText
             return self._applies(combo)
+        if typing.get_origin(annotation) is list and args == (str,):  # names, e.g. keep_out
+            edit = QLineEdit(", ".join(value))
+            edit.setPlaceholderText("shape names, comma-separated")
+            edit.returnPressed.connect(self.apply)
+            edit.setReadOnly(self.document.read_only)
+            self._editors[field] = lambda: [n.strip() for n in edit.text().split(",") if n.strip()]
+            return edit
         optional = type(None) in args
         return self._value_editor(field, value, optional)
 
@@ -1069,7 +1093,7 @@ def _combo() -> QComboBox:
     the panel; the list still opens wide enough)."""
     combo = QComboBox()
     combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-    combo.setMinimumContentsLength(6)
+    combo.setMinimumContentsLength(4)
     combo.view().setTextElideMode(Qt.TextElideMode.ElideNone)
     return combo
 
@@ -1097,13 +1121,51 @@ def kind_title(node: Shape) -> str:
     return title or node.kind.replace("_", " ").capitalize()
 
 
+class _ElidedButton(QToolButton):
+    """A text-and-icon button whose text ends in "…" when the panel is narrow, so a
+    long name never makes the panel wider than it is."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self._full = text
+        self.setText(text)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+    def full_text(self) -> str:
+        return self._full
+
+    def sizeHint(self) -> QSize:  # room for the whole text
+        hint = super().sizeHint()
+        metrics = self.fontMetrics()
+        extra = metrics.horizontalAdvance(self._full) - metrics.horizontalAdvance(self.text())
+        return QSize(hint.width() + extra, hint.height())
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        return QSize(
+            self.iconSize().width() + self.fontMetrics().horizontalAdvance("Open…") + 16,
+            hint.height(),
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._elide(event.size().width())
+
+    def _elide(self, width: int) -> None:
+        room = width - self.iconSize().width() - 16
+        self.setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, room))
+
+
 class Section(QGroupBox):
     """A card of the form (the geometry, a component's parameters, the alignment, the
     modifiers): its own background and a bold heading, and a chevron that folds it
-    away. Folded cards are remembered per kind of shape (``key``), between sessions."""
+    away. Folded cards are remembered per kind of shape (``key``), between sessions.
+
+    A long heading ends in "…" rather than widening the panel."""
 
     def __init__(self, title: str, key: str = "") -> None:
         super().__init__(title)
+        self._title = title
         self.setObjectName("section")
         self.key = key
         self._collapsed = False
@@ -1118,6 +1180,30 @@ class Section(QGroupBox):
     @property
     def collapsed(self) -> bool:
         return self._collapsed
+
+    def title(self) -> str:  # the whole heading, also when it is shown shortened
+        return self._title
+
+    def setTitle(self, title: str) -> None:
+        self._title = title
+        super().setTitle(title)
+        self._elide_title()
+
+    def minimumSizeHint(self) -> QSize:
+        """As wide as the fields need, not as the heading: that one is shortened."""
+        hint = super().minimumSizeHint()
+        layout = self.layout()
+        if layout is None:
+            return QSize(min(hint.width(), SECTION_MIN_PX), hint.height())
+        sides = self.width() - self.contentsRect().width()
+        return QSize(max(layout.minimumSize().width() + sides, SECTION_MIN_PX), hint.height())
+
+    def _elide_title(self) -> None:
+        indicator = 24 if self.isCheckable() else 0  # the check box before the heading
+        room = self.width() - indicator - 50  # the padding and the fold chevron
+        shown = self.fontMetrics().elidedText(self._title, Qt.TextElideMode.ElideRight, room)
+        if shown != super().title():
+            super().setTitle(shown)
 
     def set_collapsed(self, collapsed: bool, remember: bool = True) -> None:
         self._collapsed = collapsed
@@ -1145,11 +1231,13 @@ class Section(QGroupBox):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._elide_title()
         self._toggle.adjustSize()
         self._toggle.move(self.width() - self._toggle.width() - 6, 5)
         self._toggle.raise_()
 
 
+SECTION_MIN_PX = 120  # the narrowest a card gets (its heading then ends in "…")
 SECTION_FOLDED_PX = 30  # a folded card: just its heading
 FOLDED_KEY = "properties/folded"  # the folded cards, "kind/section"
 QWIDGETSIZE_MAX = (1 << 24) - 1

@@ -83,6 +83,11 @@ others:
 - **Motion:** `motion.run(owner, step, duration)` calls `step(t)` from 0 to 1
   and jumps to the end when the user turned on *Reduce motion* (and in tests).
   Keep it short: `motion.SHORT` for panels, `motion.VIEW` for the canvas.
+- **Scroll bars** float over every scroll area by themselves (`scrollbars.py`,
+  installed with the theme). Turn one off with the usual
+  `setVerticalScrollBarPolicy(ScrollBarAlwaysOff)`; nothing else is needed.
+- **Status signs:** `icons.icon("error" | "warning" | "info" | "ok")`, at the
+  theme's `icon_size` like any other icon.
 
 ## An export format
 

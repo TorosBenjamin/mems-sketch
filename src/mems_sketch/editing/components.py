@@ -351,6 +351,8 @@ _NOT_EXPRESSIONS = {
     "ends",
     "corners",
     "mapping",
+    "grid",
+    "keep_out",
 }
 
 

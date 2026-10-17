@@ -27,6 +27,11 @@ public:
     static Region polygon(const Wire& outline);
 
     static Region rect(double x0, double y0, double x1, double y1);
+    // A rectangle with every corner rounded by radius, clamped to half the
+    // shorter side. Fully rounded it is built as what it is: a circle (one
+    // edge) when square, else a stadium (two half circles and two straight
+    // sides), with no zero-length edges between the arcs.
+    static Region rounded_rect(double x0, double y0, double x1, double y1, double radius);
     static Region polygon(std::span<const Point> points);  // straight segments
     static Region circle(Point centre, double radius);
     // An annular sector from from_deg to to_deg, counter-clockwise; a ring

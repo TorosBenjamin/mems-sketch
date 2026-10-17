@@ -112,8 +112,14 @@ or path edge you are drawing, a corner's radius. Pointing at a shape for a
 moment says what it is: its name, kind and layer, or the component it places.
 Over the selection the cursor shows that a drag moves it.
 
+Scroll bars float over a panel's edge instead of taking a strip of it. A bar
+shows while the content moves or the pointer is in the panel, widens when you
+point at it, and fades out a moment later; while it is gone, clicks go to what
+is under it.
+
 **Settings → Appearance → Reduce motion** turns the animations off: the view
-jumps, notes appear and go at once, and picked shapes do not glow.
+jumps, notes and scroll bars appear and go at once, and picked shapes do not
+glow.
 
 ## Settings
 
@@ -155,6 +161,9 @@ only some colours:
 - `dark` (`true` or `false`) says whether it is a dark theme; it is taken from
   the parent when left out. **View → Dark canvas** goes by it.
 - Colours are `#rrggbb`, or `#aarrggbb` with transparency.
+- The error, warning, info and done signs are drawn in `icons` `red`, `amber`,
+  `blue` and `green`. `amber` is a yellow dark enough to read on the window's
+  background; left out, the sign uses `yellow`.
 
 The theme appears in *Interface theme* and *Canvas background* the next time
 Settings opens. A theme that cannot be used (a misspelt colour name, a size

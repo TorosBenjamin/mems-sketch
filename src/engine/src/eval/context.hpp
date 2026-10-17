@@ -27,6 +27,8 @@ class Outline {
 public:
     Outline(Layers layers, Instances instances) : layers_(std::move(layers)), instances_(std::move(instances)) {}
     const std::vector<mgeom::Point>& hull() const;
+    const Layers& layers() const { return layers_; }
+    const Instances& instances() const { return instances_; }
 
 private:
     Layers layers_;

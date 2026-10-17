@@ -45,4 +45,5 @@ what the restore changed as uncommitted changes; commit it to keep it.
 
 A saved project that is not in a repository gets **Initialize git here**.
 Branches, merging, push and pull stay with your usual git tools; the panel's
-header shows the current branch.
+header shows the current branch, and the line over the changes says what they
+are compared with (*Since the last commit*, *Commit 1a2b3c4*).

@@ -22,8 +22,9 @@ Semantics:
   the top level.
 * Any node can carry ``modifiers``, applied in order like Blender's modifier
   stack: ``array`` (copies on a grid, indices ``i`` and ``j``),
-  ``polar_array`` (copies around a centre) and ``mirror`` (the node plus its
-  mirror image). See :mod:`mems_sketch.core.shapes.modifiers`. The earlier
+  ``polar_array`` (copies around a centre), ``mirror`` (the node plus its
+  mirror image), ``corners`` (chosen corners rounded) and ``perforate``
+  (holes on a grid, wholly inside the node). See :mod:`mems_sketch.core.shapes.modifiers`. The earlier
   ``repeat`` field is still read: it is an array modifier.
 * ``enabled=False`` skips a node, e.g. to try a variant in the GUI.
 * A ``guide`` is a construction line: it draws nothing, but has points and
@@ -77,6 +78,7 @@ from mems_sketch.core.shapes.modifiers import (
     CornersModifier,
     MirrorModifier,
     Modifier,
+    PerforateModifier,
     PolarArrayModifier,
     new_modifier,
 )
@@ -153,6 +155,7 @@ __all__ = [
     "OffsetShape",
     "Operation",
     "PathShape",
+    "PerforateModifier",
     "Point",
     "PolarArrayModifier",
     "PolygonShape",

@@ -141,6 +141,7 @@ CANVAS_OPTIONS = {
     "show_scale_bar": "canvas/show_scale_bar",
     "gizmo_size_px": "canvas/gizmo_size_px",
     "zoom_step": "canvas/zoom_step",
+    "scrolling": "canvas/scrolling",
     "draft_quality": "canvas/draft_quality",
     "max_fps": "canvas/max_fps",
 }
@@ -1323,23 +1324,38 @@ class MainWindow(QMainWindow):
                 return True
         return False
 
+    def box_touches(self, x0: float, x1: float) -> bool:
+        """Whether a box dragged from ``x0`` to ``x1`` selects what it touches (else
+        what is entirely inside it), as the ``editor/box_selection`` setting has it."""
+        mode = self.settings.get("editor/box_selection")
+        return mode == "touching" or (mode == "direction" and x1 < x0)
+
     def select_box(self, x0: float, y0: float, x1: float, y1: float, additive: bool) -> None:
-        """Select the top-level shapes lying entirely inside a box."""
+        """Select the top-level shapes in a box dragged from ``(x0, y0)`` to ``(x1, y1)``:
+        those it touches, or those entirely inside it (see :meth:`box_touches`)."""
         if self.implementation_hidden():
             return
         box = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
-        inside = [
-            p
-            for p, geometry in self.view.node_regions
-            if (b := geometry.bbox()) is not None
-            and _box_contains(box, b[0], b[1])
-            and _box_contains(box, b[2], b[3])
-        ]
-        inside += [  # guides draw nothing: they are inside when both ends are
-            path[:1]
-            for path, _name, start, end in self.view.guides
-            if _box_contains(box, *start) and _box_contains(box, *end)
-        ]
+        if self.box_touches(x0, x1):
+            inside = [p for p, geometry in self.view.node_regions if geometry.overlaps_box(*box)]
+            inside += [  # guides draw nothing: a guide is touched where its line is
+                path[:1]
+                for path, _name, start, end in self.view.guides
+                if _segment_meets_box(start, end, box)
+            ]
+        else:
+            inside = [
+                p
+                for p, geometry in self.view.node_regions
+                if (b := geometry.bbox()) is not None
+                and _box_contains(box, b[0], b[1])
+                and _box_contains(box, b[2], b[3])
+            ]
+            inside += [  # guides draw nothing: they are inside when both ends are
+                path[:1]
+                for path, _name, start, end in self.view.guides
+                if _box_contains(box, *start) and _box_contains(box, *end)
+            ]
         paths = list(dict.fromkeys([*self.selection, *inside])) if additive else inside
         self._select_quietly(paths)
 
@@ -1744,6 +1760,19 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+
+def _segment_meets_box(start, end, box: tuple[float, float, float, float]) -> bool:
+    """Whether the segment from ``start`` to ``end`` has a point in the box."""
+    (ax, ay), (bx, by) = start, end
+    left, bottom, right, top = box
+    if max(ax, bx) < left or min(ax, bx) > right or max(ay, by) < bottom or min(ay, by) > top:
+        return False
+    sides = [
+        (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+        for cx, cy in ((left, bottom), (right, bottom), (right, top), (left, top))
+    ]
+    return min(sides) <= 0 <= max(sides)
 
 
 def _box_contains(box: tuple[float, float, float, float], x: float, y: float) -> bool:

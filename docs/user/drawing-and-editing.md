@@ -2,9 +2,12 @@
 
 ## The canvas
 
-- **Zoom** with the wheel; **pan** with the middle or right button, or Space +
-  drag in any tool; **F** fits the design. The buttons in the bottom-right
-  corner zoom and fit too.
+- **Zoom** with the mouse wheel, a **pinch** on a touchpad, or Ctrl + scroll;
+  **pan** with two fingers on a touchpad, the middle or right button, or Space +
+  drag in any tool; **F** (or a two-finger double tap) fits the design. The
+  buttons in the bottom-right corner zoom and fit too. *Preferences → Canvas →
+  Scrolling* says what scrolling does if your device is taken for the other
+  kind (a mouse wheel zooms, a touchpad pans).
 - The **canvas modes** float in the top-right corner: Select, Hand, Move,
   Rotate, Align, Corners, Measure, Angle.
 - The selection is outlined in orange; the shape under the cursor is outlined
@@ -27,7 +30,7 @@ several.
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Select** | V | Click to select (Ctrl/Shift adds), drag the selection to move it, drag on empty space for a box. A drag snaps a point of the moved shapes to another shape's point, else to the grid (Ctrl: no snapping); release with **Shift** on a snapped point to *align* there. |
+| **Select** | V | Click to select (Ctrl/Shift adds), drag the selection to move it, drag on empty space for a box: it selects what it touches (dashed), or what is entirely inside it (solid), as *Preferences → Editor → Box selection* says (also: by the direction you drag). A drag snaps a point of the moved shapes to another shape's point, else to the grid (Ctrl: no snapping); release with **Shift** on a snapped point to *align* there. |
 | **Hand** | H | The left button pans (for trackpads). |
 | **Move** | M | A gizmo: drag the red arrow along x, the green along y, the centre freely. Or click a base point, then where it goes. **Edit → Move by…** takes a typed dx, dy; arrow keys nudge by a grid step (Shift: a tenth). |
 | **Rotate** | R | Drag anywhere to turn the selection about its centre; the angle follows the mouse (Ctrl: 15° steps). **Shift+click** sets another pivot (snaps to points), Esc goes back to the centre; a click without dragging selects. **Rotate 90°** is Ctrl+R / Ctrl+Shift+R; **Mirror** is in the right-click menu. |

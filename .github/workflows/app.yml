@@ -100,7 +100,7 @@ jobs:
           if (-not $test.WaitForExit(600000)) { $test.Kill(); throw "the self-test did not finish" }
           if (Test-Path selftest.log) { Get-Content selftest.log }
           if ($test.ExitCode -ne 0) { throw "the self-test failed (exit code $($test.ExitCode))" }
-          Compress-Archive -Path dist\mems-sketch -DestinationPath "out\MEMS_Sketch-$version-windows-portable.zip"
+          Compress-Archive -Path dist\mems-sketch -DestinationPath "out\MEMS-Sketch-$version-Windows-x64-Portable.zip"
           choco install innosetup -y --no-progress
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "/DSourceDir=$PWD\dist\mems-sketch" "/DOutputDir=$PWD\out" packaging\windows\mems-sketch.iss
           if ($LASTEXITCODE -ne 0) { throw "the installer was not built" }
@@ -113,7 +113,7 @@ jobs:
           "$app/Contents/MacOS/mems-sketch" --self-test
           mkdir -p dmg && cp -R "$app" dmg/ && ln -s /Applications dmg/Applications
           hdiutil create -volname "MEMS Sketch" -srcfolder dmg -ov -format UDZO \
-            "out/MEMS_Sketch-${{ steps.version.outputs.version }}-macos-arm64.dmg"
+            "out/MEMS-Sketch-${{ steps.version.outputs.version }}-macOS-arm64.dmg"
 
       - uses: actions/upload-artifact@v4
         with:

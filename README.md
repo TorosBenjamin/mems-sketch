@@ -23,14 +23,17 @@ compensation, mask preparation) and simulation are out of scope.
 [releases page](https://github.com/TorosBenjamin/mems-sketch/releases): nothing
 else needs to be installed.
 
-- **Windows:** `MEMS_Sketch-<version>-windows-setup.exe` installs it for you
-  (no administrator rights needed); the `-windows-portable.zip` runs from any
-  folder. Windows may warn about an unknown publisher (the app is not signed
+- **Windows:** `MEMS-Sketch-<version>-Windows-x64-Setup.exe` installs it for
+  you (no administrator rights needed); the `-Windows-x64-Portable.zip` runs
+  from any folder. Windows may warn about an unknown publisher (the app is not signed
   yet): *More info* → *Run anyway*.
 - **macOS** (Apple silicon): open the `.dmg` and drag *MEMS Sketch* to
   Applications. The first time, right-click it and choose *Open* (it is not
   signed yet).
 - **Linux:** make the `.AppImage` executable (`chmod +x`) and run it.
+- **Python package:** `mems-sketch-<version>-python-wheels.zip` holds the
+  wheels for every system; unzip it and
+  `pip install "mems-sketch[gui]" --find-links <the folder>`.
 
 From the source, with Python 3.11 or newer:
 

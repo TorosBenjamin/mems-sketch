@@ -50,6 +50,10 @@ def _position(xy: tuple[float, float] | None) -> str:
     return "error" if xy is None else f"{xy[0]:.4g}, {xy[1]:.4g}"
 
 
+HINT_HEIGHT_PX = 32  # the form's place while no point is chosen
+QWIDGETSIZE_MAX = (1 << 24) - 1
+
+
 class PointsPanel(_Panel):
     """See the module docstring."""
 
@@ -301,13 +305,18 @@ class PointsPanel(_Panel):
             self.form.deleteLater()
         self.form = self._form(key)
         self.form_host.layout().addWidget(self.form)
+        # Nothing chosen: one line of hint, and the list keeps the room.
+        self.form_host.setMaximumHeight(HINT_HEIGHT_PX if key is None else QWIDGETSIZE_MAX)
 
     def _form(self, key: Key | None) -> QWidget:
         form = QWidget()
         layout = QFormLayout(form)
         layout.setContentsMargins(0, 0, 0, 0)
         if key is None:
-            return widgets.EmptyState("Select a point to see where it is.")
+            hint = QLabel("Select a point to see where it is.")
+            hint.setObjectName("muted")
+            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            return hint
         title = QLabel(reference(key))
         font = QFont(title.font())
         font.setBold(True)

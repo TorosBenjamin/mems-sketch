@@ -87,6 +87,16 @@ Parameters and their checks stay with the Python model. Placements are plain
   definition, the components it places, parameter values, process constants,
   an imported file's digest. Identical placements are built once, and after an
   edit only the changed components and those containing them are rebuilt.
+- Inside a component, every **shape** is cached the same way (requirement
+  QS-7; `cached_render` in `src/eval/evaluator.cpp`): by the shape as written
+  (with what it holds), the values its expressions read, the points of the
+  shapes it uses (and which geometry they came from, for minimal boxes), the
+  fingerprints of the components it places, its level and the layer stack.
+  After an edit only the shapes it reaches are evaluated again: the changed
+  shape, the operations holding it and the shapes using its points; the rest
+  come from the cache, and so do the records of the nodes inside a shape. What
+  is left is merging each list's shapes per layer, which only collects shapes
+  that do not touch.
 - The cache is in memory; the keys are designed so that it could be persisted
   later.
 - Shapes are evaluated in the order their alignments need; a loop is an

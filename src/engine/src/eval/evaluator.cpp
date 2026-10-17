@@ -160,8 +160,140 @@ NodeResult render_node(const Json& node, Builder& builder, const std::string& co
         result.points.box = bbox_of(result.layers, result.instances);
         result.points.outline = std::make_shared<Outline>(result.layers, result.instances);
     }
-    if (builder.recording()) result.inner = result.shift * placement_of(node, Context{builder, component, first, scope});
+    result.inner = result.shift * placement_of(node, Context{builder, component, first, scope});
     return result;
+}
+
+}  // namespace
+
+// What the node cache keeps: the node as evaluated and, when it was evaluated
+// while records were made, the records of the nodes inside it (by their path
+// below it).
+struct CachedNode {
+    NodeResult result;
+    bool has_records = false;
+    std::vector<std::pair<NodePath, NodeRecord>> records;
+};
+
+namespace {
+
+void strings_in(const Json& value, std::vector<std::string>& out) {
+    if (value.is_string()) out.push_back(value.get<std::string>());
+    else if (value.is_array() || value.is_object())
+        for (const auto& item : value) strings_in(item, out);
+}
+
+void references_in(const Json& value, std::vector<std::string>& out) {
+    if (value.is_object()) {
+        if (value.value("kind", std::string()) == "ref" && value.contains("component") && value["component"].is_string())
+            out.push_back(value["component"].get<std::string>());
+        for (const auto& item : value) references_in(item, out);
+    } else if (value.is_array()) {
+        for (const auto& item : value) references_in(item, out);
+    }
+}
+
+void append_number(std::string& key, double value) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, "%.17g", value);
+    key += buffer;
+}
+
+void append_points(std::string& key, const Points& p) {
+    key += p.name;
+    for (const double v : {p.box.x0, p.box.y0, p.box.x1, p.box.y1, p.transform.dx, p.transform.dy, p.transform.angle_deg,
+                           p.transform.scale})
+        key += ',', append_number(key, v);
+    key += p.transform.mirror_x ? "m" : "-";
+    for (const auto& [name, q] : p.declared) key += ';' + name + '=', append_number(key, q.x), key += ',', append_number(key, q.y);
+    char buffer[32];  // the geometry its minimal box is taken of: the same object for the same node result
+    std::snprintf(buffer, sizeof buffer, "@%p", static_cast<const void*>(p.outline.get()));
+    key += buffer;
+}
+
+// Everything evaluating ``node`` reads, as a key: the node itself, the values
+// and the other nodes' points its expressions use, the components it places,
+// the level and the layer stack. None when it cannot be told (then it is
+// evaluated every time).
+std::optional<std::string> node_key(const Json& node, Builder& builder, const std::string& component,
+                                    const Variables& variables, const Scope& scope) {
+    const Project& project = builder.project();
+    std::string key = component;
+    key += '\x1f';
+    key += builder.level() ? *builder.level() : std::string("-");
+    key += '\x1f';
+    key += project.stack_key();
+    key += '\x1f';
+    key += node.dump();
+    std::vector<std::string> texts;
+    strings_in(node, texts);
+    std::set<std::string> names;
+    for (const auto& text : texts) {
+        try {
+            for (const auto& name : names_in(text)) names.insert(name);
+        } catch (const ExpressionError&) {  // not an expression (a name, a layer)
+        }
+    }
+    for (const auto& name : names) {
+        if (const auto found = variables.find(name); found != variables.end()) {
+            key += '\x1f' + name + '=';
+            append_number(key, found->second);
+        }
+    }
+    std::set<std::string> dependencies;
+    point_dependencies(node, dependencies);
+    for (const auto& name : dependencies) {
+        key += '\x1f' + name + ':';
+        if (const auto found = scope.find(name); found != scope.end()) append_points(key, found->second);
+        else key += '!';
+    }
+    std::vector<std::string> references;
+    references_in(node, references);
+    for (const auto& reference : references) {
+        try {
+            key += '\x1f' + reference + '#' + project.fingerprint(project.qualify(reference, component));
+        } catch (const std::exception&) {
+            return std::nullopt;  // the evaluation reports it
+        }
+    }
+    return key;
+}
+
+bool below(const NodePath& path, const NodePath& prefix) {
+    return path.size() > prefix.size() && std::equal(prefix.begin(), prefix.end(), path.begin());
+}
+
+// render_node, from the node cache when nothing it reads has changed. While
+// records are made, the records of the nodes inside it are kept with it and
+// made again from there.
+NodeResult cached_render(const Json& node, Builder& builder, const std::string& component, const Variables& variables,
+                         const Scope& scope) {
+    const auto key = node_key(node, builder, component, variables, scope);
+    if (!key) return render_node(node, builder, component, variables, scope);
+    Records* records = builder.recording();
+    const NodePath& path = builder.path();
+    const auto hit = builder.cache().find_node(*key);
+    if (hit && (!records || hit->has_records)) {
+        mgeom::check_interrupted();
+        if (records)
+            for (const auto& [relative, record] : hit->records) {
+                NodePath full = path;
+                full.insert(full.end(), relative.begin(), relative.end());
+                records->emplace(std::move(full), record);
+            }
+        return hit->result;
+    }
+    auto made = std::make_shared<CachedNode>();
+    made->result = render_node(node, builder, component, variables, scope);
+    if (records) {
+        made->has_records = true;
+        for (auto it = records->lower_bound(path); it != records->end() && below(it->first, path); ++it)
+            made->records.emplace_back(NodePath(it->first.begin() + path.size(), it->first.end()), it->second);
+        // Built before without records: keep that result (other nodes' keys name its geometry).
+        if (hit) made->result = hit->result;
+    }
+    builder.cache().put_node(*key, made);
+    return made->result;
 }
 
 }  // namespace
@@ -458,7 +590,7 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
             ~Pop() { path.pop_back(); }
         } pop{path};
         try {
-            result = render_node(node, builder, component, variables, visible);
+            result = cached_render(node, builder, component, variables, visible);
         } catch (const mgeom::Interrupted&) {
             throw;  // not the shape's fault, hidden or not
         } catch (const mgeom::GeometryError& error) {
@@ -606,9 +738,27 @@ std::shared_ptr<const Built> BuildCache::put(std::shared_ptr<const Built> built)
     return built_.try_emplace(built->key, std::move(built)).first->second;
 }
 
+std::shared_ptr<const CachedNode> BuildCache::find_node(const std::string& key) const {
+    const std::lock_guard lock(mutex_);
+    const auto found = nodes_.find(key);
+    return found == nodes_.end() ? nullptr : found->second;
+}
+
+void BuildCache::put_node(const std::string& key, std::shared_ptr<const CachedNode> node) {
+    const std::lock_guard lock(mutex_);
+    if (nodes_.size() >= max_nodes_) nodes_.clear();  // as for components: start again
+    nodes_.insert_or_assign(key, std::move(node));
+}
+
+size_t BuildCache::nodes() const {
+    const std::lock_guard lock(mutex_);
+    return nodes_.size();
+}
+
 void BuildCache::clear() {
     const std::lock_guard lock(mutex_);
     built_.clear();
+    nodes_.clear();
 }
 
 size_t BuildCache::size() const {

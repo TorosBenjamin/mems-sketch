@@ -44,7 +44,9 @@ Each place shows one window at a time; the left side splits when Components
 and Shapes (or Layers) are both open. Every panel has a **?** in its header:
 hover it for what the panel is for. The same **?** explains things in place
 elsewhere (alignment, points, the process, each setting). Which windows are
-open, and their sizes, are remembered. **View → Panels** lists them too.
+open, and their sizes, are remembered. **View → Panels** lists them too. Drag
+a panel's edge past the narrowest it can be and it closes; it opens again at
+the size it had.
 
 ## Tabs and split view
 

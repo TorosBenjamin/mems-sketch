@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, QMimeData, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -1476,6 +1476,8 @@ class MessagesPanel(QListWidget):
         self.itemClicked.connect(self._activated)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._context_menu)
+        size = theme.metric("icon_size")
+        self.setIconSize(QSize(size, size))
 
     counts_changed = Signal(int, int)  # errors, violations not waived
 

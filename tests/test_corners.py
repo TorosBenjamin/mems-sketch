@@ -179,3 +179,16 @@ def test_corners_of_an_aligned_shape_are_where_it_is_shown():
     session.corners.add(path, 70, 64, radius=1)
     assert session.node(path).modifiers[0].corners[0].at == "self.top_right"
     assert session.corners.rounded(path) == [(0, (70, 64))]
+
+
+def test_a_corners_rounding_is_drawn_tangent_to_its_edges():
+    from mems_sketch.editing.corners import CornerShape
+
+    s = 0.5**0.5
+    corner = CornerShape((10.0, 10.0), ((-1.0, 0.0), (0.0, -1.0)), (-s, -s), math.pi / 2)
+    arc = corner.arc(2)
+    assert arc[0] == pytest.approx((8, 10)) and arc[-1] == pytest.approx((10, 8))
+    middle = arc[len(arc) // 2]
+    assert math.dist(middle, (10, 10)) == pytest.approx(2 * (2**0.5 - 1))  # on the bisector
+    assert corner.arc(2, "chamfer") == [pytest.approx((8, 10)), pytest.approx((10, 8))]
+    assert corner.handle(2) == pytest.approx((10 - 2 * s, 10 - 2 * s))

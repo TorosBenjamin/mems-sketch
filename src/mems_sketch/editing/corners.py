@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+from dataclasses import dataclass
 from typing import Any
 
 from mems_sketch.core.component import Geometry
@@ -26,9 +27,71 @@ from mems_sketch.core.transform import IDENTITY, Transform
 from mems_sketch.editing.commands import Commands
 
 TOLERANCE_UM = 0.002  # positions this close are the same corner
+FIT_SLACK_UM = 1e-6  # a radius this much over the largest still counts as fitting
 MIN_TURN_DEG = 15.0  # a vertex where the outline turns less is part of a curve
 
 Position = tuple[float, float]
+ARC_STEPS = 16  # points along a previewed rounding
+
+
+@dataclass(frozen=True)
+class CornerShape:
+    """A corner as the canvas draws it (component frame): where it is, the unit
+    vectors along its two edges and along the bisector between them (into the
+    wedge the rounding is drawn in), and how far the outline turns there."""
+
+    point: Position
+    edges: tuple[Position, Position]
+    bisector: Position
+    turn: float  # radians, 0 to π
+
+    def tangent(self, radius: float) -> float:
+        """How far along each edge a rounding of ``radius`` starts."""
+        return radius * math.tan(self.turn / 2)
+
+    def handle(self, radius: float) -> Position:
+        """Where the handle of a rounding of ``radius`` is: that far along the bisector."""
+        return (
+            self.point[0] + self.bisector[0] * radius,
+            self.point[1] + self.bisector[1] * radius,
+        )
+
+    def arc(self, radius: float, style: str = "round") -> list[Position]:
+        """The outline a rounding (or chamfer) of ``radius`` makes there, from one
+        edge to the other: what to draw while it is dragged."""
+        if radius <= 0:
+            return []
+        (ux, uy), (vx, vy) = self.edges
+        px, py = self.point
+        if style == "chamfer":
+            return [(px + ux * radius, py + uy * radius), (px + vx * radius, py + vy * radius)]
+        t = self.tangent(radius)
+        a, b = (px + ux * t, py + uy * t), (px + vx * t, py + vy * t)
+        half = (math.pi - self.turn) / 2  # half the angle between the edges
+        if half <= 1e-9:
+            return [a, b]
+        distance = radius / math.sin(half)
+        cx, cy = px + self.bisector[0] * distance, py + self.bisector[1] * distance
+        start = math.atan2(a[1] - cy, a[0] - cx)
+        sweep = math.remainder(math.atan2(b[1] - cy, b[0] - cx) - start, 2 * math.pi)
+        return [
+            (
+                cx + radius * math.cos(start + sweep * i / ARC_STEPS),
+                cy + radius * math.sin(start + sweep * i / ARC_STEPS),
+            )
+            for i in range(ARC_STEPS + 1)
+        ]
+
+
+@dataclass(frozen=True)
+class RoundedCorner:
+    """A recorded corner of a node, as the Corners tool shows it."""
+
+    index: int  # in the corners modifier
+    shape: CornerShape
+    radius: float
+    style: str
+    fits: bool  # False: its radius is larger than the corner takes (the build fails)
 
 
 class CornerEdits(Commands):
@@ -77,6 +140,12 @@ class CornerEdits(Commands):
         """
         geometry, own, to_component = self._before(path)
         target = to_component.inverted().apply(x, y)
+        return self._largest(path, geometry, own, target)
+
+    def _largest(
+        self, path: NodePath, geometry: Geometry, own: NodePoints, target: Position
+    ) -> float | None:
+        """:meth:`max_radius` of the corner at ``target`` (the node's frame)."""
         variables = self._variables(path, own)
         taken: list[tuple[Position, float]] = []  # the other rounded corners: where, radius
         found = self._modifier(self.session.node(path))
@@ -104,6 +173,41 @@ class CornerEdits(Commands):
                             largest = min(largest, length / uses)
                         return max(largest, 0.0)
         return None
+
+    def shape(self, path: NodePath, x: float, y: float) -> CornerShape | None:
+        """The corner at ``(x, y)`` (component frame) as the canvas draws it; None
+        if there is no corner there."""
+        geometry, _, to_component = self._before(path)
+        return _corner_shape(geometry, to_component, to_component.inverted().apply(x, y))
+
+    def shown(self, path: NodePath) -> list[RoundedCorner]:
+        """The node's recorded corners with their shapes, radii and whether each
+        fits (its radius is at most what the corner takes, with the others as
+        they are): what the Corners tool draws handles and error marks for."""
+        found = self._modifier(self.session.node(path))
+        if found is None:
+            return []
+        _, modifier = found
+        geometry, own, to_component = self._before(path)
+        variables = self._variables(path, own)
+        result = []
+        for index, corner in enumerate(modifier.corners):
+            try:
+                where = CornersModifier(corners=[corner]).positions(variables)[0]
+                radius = float(evaluate(corner.radius, variables))
+            except ValueError:
+                continue
+            shape = _corner_shape(geometry, to_component, where)
+            if shape is None:  # no longer a corner: the messages panel says so
+                continue
+            largest = self._largest(path, geometry, own, where)
+            fits = largest is None or radius <= largest + FIT_SLACK_UM
+            result.append(RoundedCorner(index, shape, radius, corner.style, fits))
+        return result
+
+    def failing(self, path: NodePath) -> list[Position]:
+        """Where the node's corners are whose radius does not fit (component frame)."""
+        return [c.shape.point for c in self.shown(path) if not c.fits]
 
     def at(self, path: NodePath, x: float, y: float) -> int | None:
         """The recorded corner at ``(x, y)`` (component frame), if any."""
@@ -290,6 +394,33 @@ class CornerEdits(Commands):
         if found is None:
             raise ValueError(f"'{_label(node)}' has no rounded corners")
         return found
+
+
+def _corner_shape(
+    geometry: Geometry, to_component: Transform, target: Position
+) -> CornerShape | None:
+    """The corner of ``geometry`` at ``target`` (the node's frame), in the component's
+    frame; None when no vertex is there."""
+    for layer in geometry.layer_names():
+        for polygon in geometry.polygons(layer):
+            for ring in [polygon.hull.tolist(), *(h.tolist() for h in polygon.holes)]:
+                for index, point in enumerate(ring):
+                    if not _same(tuple(point), target):
+                        continue
+                    before, after = ring[index - 1], ring[(index + 1) % len(ring)]
+                    p = to_component.apply(*point)
+                    edges = tuple(_unit(p, to_component.apply(*q)) for q in (before, after))
+                    bisector = _unit(
+                        (0.0, 0.0), (edges[0][0] + edges[1][0], edges[0][1] + edges[1][1])
+                    )
+                    return CornerShape(p, edges, bisector, _turn(ring, index))
+    return None
+
+
+def _unit(a: Position, b: Position) -> Position:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy)
+    return (dx / length, dy / length) if length > 0 else (0.0, 0.0)
 
 
 def _turning(ring: list[Position]) -> list[Position]:

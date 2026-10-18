@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import time
 import weakref
+from dataclasses import dataclass
 
 import numpy as np
 import shiboken6
@@ -68,6 +69,21 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.transform import Transform
 from mems_sketch.gui import icons, motion
 from mems_sketch.gui import theme as themes
+
+CORNER_HANDLE_PX = 4.5  # a rounded corner's handle (radius)
+CORNER_ERROR_PX = 9  # the ring round a corner whose radius does not fit
+
+
+@dataclass(frozen=True)
+class CornerHandle:
+    """A rounded corner's handle (µm): the corner, the handle, its label, and
+    whether the corner's radius fits."""
+
+    corner: tuple[float, float]
+    handle: tuple[float, float]
+    label: str = ""
+    fits: bool = True
+
 
 POINT_SIZES = {  # marker size in pixels
     "declared": 9,  # the edited component's own points
@@ -304,6 +320,8 @@ class LayoutCanvas(QGraphicsView):
         # The selected shape's alignment: its point and the point it is aligned to,
         # each (name, x, y) in µm (see show_alignment).
         self._alignment: tuple[tuple[str, float, float], tuple[str, float, float]] | None = None
+        self._corner_handles: list[CornerHandle] = []  # the Corners tool's handles
+        self._corner_preview: list[tuple[float, float]] = []  # a rounding being dragged
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
         self._caption: tuple[str, str] = ("", "")
@@ -1318,6 +1336,43 @@ class LayoutCanvas(QGraphicsView):
             return
         super().keyReleaseEvent(event)
 
+    def show_corner_handles(self, handles: list[CornerHandle]) -> None:
+        """The Corners tool's handles: one per rounded corner, on the bisector at its
+        radius from the corner, with the radius by it; a corner whose radius does
+        not fit is ringed in the error colour."""
+        self._corner_handles = list(handles)
+        self.viewport().update()
+
+    def show_corner_preview(self, points: list[tuple[float, float]]) -> None:
+        """The outline a rounding being dragged makes (µm); empty: none."""
+        self._corner_preview = list(points)
+        self.viewport().update()
+
+    def _draw_corners(self, painter: QPainter) -> None:
+        def px(point):
+            return self.mapFromScene(QPointF(*point)).toPointF()
+
+        rail = QColor(self.theme["pick"])
+        if len(self._corner_preview) > 1:
+            pen = QPen(QColor(self.theme["highlight"]), 2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPolyline(QPolygonF([px(p) for p in self._corner_preview]))
+        for handle in self._corner_handles:
+            corner, at = px(handle.corner), px(handle.handle)
+            if not handle.fits:
+                painter.setPen(QPen(QColor(self.theme["violation"]), 2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(corner, CORNER_ERROR_PX, CORNER_ERROR_PX)
+            painter.setPen(QPen(rail, 1, Qt.PenStyle.DashLine))
+            painter.drawLine(corner, at)
+            painter.setPen(QPen(rail, 1.5))
+            painter.setBrush(QColor(self.theme["background"]))
+            painter.drawEllipse(at, CORNER_HANDLE_PX, CORNER_HANDLE_PX)
+            if handle.label:
+                color = None if handle.fits else QColor(self.theme["violation"])
+                self._draw_chip(painter, at + QPointF(8, -6), handle.label, color)
+
     def show_alignment(
         self,
         point: tuple[str, float, float] | None,
@@ -1456,6 +1511,8 @@ class LayoutCanvas(QGraphicsView):
             self._draw_alignment(painter)
         if self._gizmo is not None:
             self._draw_gizmo(painter)
+        if self._corner_handles or self._corner_preview:
+            self._draw_corners(painter)
         label = self.cursor_label or self.hover_label
         if label:
             self._draw_cursor_label(painter, label)
@@ -1669,7 +1726,9 @@ class LayoutCanvas(QGraphicsView):
             x = self._cursor_at.x() - CURSOR_LABEL_OFFSET - width
         self._draw_chip(painter, QPointF(max(x, 4), y), text)
 
-    def _draw_chip(self, painter: QPainter, at: QPointF, text: str) -> None:
+    def _draw_chip(
+        self, painter: QPainter, at: QPointF, text: str, color: QColor | None = None
+    ) -> None:
         """A small label on a rounded background, readable on any drawing."""
         font = QFont(self.font())
         font.setBold(True)
@@ -1686,7 +1745,7 @@ class LayoutCanvas(QGraphicsView):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(background)
         painter.drawRoundedRect(box, 4, 4)
-        painter.setPen(QColor(self.theme["overlay"]))
+        painter.setPen(color or QColor(self.theme["overlay"]))
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def grid_step(self) -> float:

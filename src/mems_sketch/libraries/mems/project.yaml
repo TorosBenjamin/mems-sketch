@@ -4,7 +4,10 @@ description: MEMS components and example processes
 version: 1
 top: null
 process: surface
-processes: {surface: processes/surface}
+processes:
+  surface: processes/surface
+  polysilicon: processes/polysilicon
+  soi: processes/soi
 components:
   anchor: components/anchors/anchor
   comb_drive: components/electrodes/comb_drive

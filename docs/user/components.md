@@ -209,7 +209,9 @@ installed as plugins (`mems-sketch-cli rules` lists them).
 
 A process (layers, layer stack, constants and rules) can be shared like
 components: a library can hold processes, typically one per fab process, kept
-by whoever looks after it. Choose the one the project uses under **Process**
+by whoever looks after it. The bundled `mems` library has three example
+processes; [Processes and process libraries](process-libraries.md) shows them
+and how to write your own. Choose the one the project uses under **Process**
 at the top of the tab: the project's own, or `library.process`.
 
 On a library's process:

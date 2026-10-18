@@ -6,6 +6,7 @@ import pytest
 from helpers import read_gds
 
 from mems_sketch.cli import main
+from mems_sketch.storage import load
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -62,3 +63,16 @@ def test_examples_are_up_to_date(tmp_path):
     for generated in tmp_path.rglob("*.yaml"):
         committed = EXAMPLES / generated.relative_to(tmp_path)
         assert committed.read_text() == generated.read_text(), committed
+
+
+def test_new_process_starts_a_process_library(tmp_path, capsys):
+    folder = tmp_path / "fab"
+    assert main(["new-process", str(folder), "--from", "mems.polysilicon"]) == 0
+    library = load(folder)
+    assert library.top is None and list(library.processes) == ["fab"]
+    assert "poly1_min_width" in library.processes["fab"].rules
+    assert "mems.polysilicon" in library.processes["fab"].description
+    assert main(["new-process", str(tmp_path / "blank"), "--from", "empty"]) == 0
+    assert load(tmp_path / "blank").processes["blank"].rules == {}
+    assert main(["new-process", str(tmp_path / "x"), "--from", "mems.nope"]) != 0
+    assert "no process 'mems.nope'" in capsys.readouterr().err

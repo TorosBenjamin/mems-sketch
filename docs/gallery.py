@@ -55,6 +55,11 @@ def limits(parameter) -> str:
     return ", ".join(parts)
 
 
+def _given(value) -> str:
+    """A port's direction or width as written; inherited when not given."""
+    return "*as at*" if value is None else f"`{number(value)}`"
+
+
 def cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
@@ -106,6 +111,14 @@ def page(name: str) -> str:
                     f"| `{parameter.name}` | `{cell(number(parameter.default))}` "
                     f"| {cell(limits(parameter))} | {cell(what)} |"
                 )
+            if definition.ports:
+                lines += ["", "| Port | At | Direction | Width | |", "|---|---|---|---|---|"]
+                for port in definition.ports:
+                    lines.append(
+                        f"| `{port.name}` | `{cell(port.at or 'origin')}` "
+                        f"| {cell(_given(port.direction))} | {cell(_given(port.width))} "
+                        f"| {cell(port.description)} |"
+                    )
             lines += ["", f"*Tags: {', '.join(definition.tags)}*", ""]
     return "\n".join(lines).rstrip() + "\n"
 

@@ -494,10 +494,18 @@ mgeom::Box bbox_of(const Layers& layers, const Instances& instances) {
     return box;
 }
 
+double port_angle(double degrees) {
+    double a = std::fmod(degrees, 360.0);
+    if (a < 0) a += 360.0;
+    a = std::round(a * 1e9) / 1e9;  // turning by 90° leaves no 89.99999999
+    return a >= 360.0 ? 0.0 : a + 0.0;  // and no -0
+}
+
 Port placed(const Port& port, const mgeom::Transform& t) {
     const double a = port.angle_deg * std::numbers::pi / 180;
     const mgeom::Point at = t.apply(port.at), ahead = t.apply({port.at.x + std::cos(a), port.at.y + std::sin(a)});
-    return {at, std::atan2(ahead.y - at.y, ahead.x - at.x) * 180 / std::numbers::pi, port.width * t.scale, port.layer};
+    const double angle = std::atan2(ahead.y - at.y, ahead.x - at.x) * 180 / std::numbers::pi;
+    return {at, port_angle(angle), port.width * t.scale, port.layer};
 }
 
 Instances placed(const Instances& instances, const mgeom::Transform& t) {
@@ -792,6 +800,7 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
         } else if (from) {
             made_port.angle_deg = from->angle_deg;
         }
+        made_port.angle_deg = port_angle(made_port.angle_deg);
         made_port.width = given("width") ? ctx.value(port["width"]) : from ? from->width : 0.0;
         if (made_port.width < 0) throw BuildError("port '" + name + "': its width cannot be negative");
         made_port.layer = given("layer") ? layer(port["layer"].get<std::string>()) : from ? from->layer : layer("level");

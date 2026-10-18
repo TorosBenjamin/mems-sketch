@@ -43,7 +43,8 @@ using PointMap = std::map<std::string, mgeom::Point, std::less<>>;
 
 // Where a wire attaches to a component (mems_sketch.core.user_component.PortDef):
 // a point, the direction a wire leaves it in (degrees, counter-clockwise from
-// +x), the width of wire it expects and the layer the wire runs on (resolved).
+// +x, in [0, 360)), the width of wire it expects and the layer the wire runs on
+// (resolved).
 // A placed component's port ``drive`` is also its point ``port.drive``.
 struct Port {
     mgeom::Point at;
@@ -55,6 +56,8 @@ using PortMap = std::map<std::string, Port, std::less<>>;
 
 // A port moved, turned and mirrored by ``t``: its direction turns with it.
 Port placed(const Port& port, const mgeom::Transform& t);
+// An angle in [0, 360) degrees, as ports have them.
+double port_angle(double degrees);
 
 struct Built;
 

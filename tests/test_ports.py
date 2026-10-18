@@ -71,7 +71,7 @@ def test_placed_ports_turn_and_mirror_with_the_component():
     turned, mirrored = records[((0, 0),)].ports, records[((0, 1),)].ports
     assert tuple(turned["signal"][:4]) == pytest.approx((100, 10, 90, 4))
     assert turned["signal"].layer == "metal"
-    assert tuple(mirrored["up"][:3]) == pytest.approx((0, 40, -90))  # flipped in y: now down
+    assert tuple(mirrored["up"][:3]) == pytest.approx((0, 40, 270))  # flipped in y: now down
 
 
 def test_array_copies_have_their_ports_by_index():

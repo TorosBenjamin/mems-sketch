@@ -105,6 +105,41 @@ Points are drawn on the canvas only while you work with them: with the Points
 panel open, or while aligning (**View → Overlays → Always show points** to
 see them all the time).
 
+## Ports
+
+A **port** is where a wire attaches: a point, plus what a wire needs to meet
+it cleanly. A component declares its ports next to its points:
+
+```yaml
+ports:
+  drive: {at: fixed_spine.bottom, direction: down, width: spine_width}
+```
+
+- **At**, **X**, **Y**: where it is, measured like a declared point.
+- **Direction**: the way a wire leaves it: `right`, `up`, `left`, `down`, or
+  an angle in degrees (counter-clockwise from +x; an expression).
+- **Width**: the width of wire it expects (empty: any).
+- **Layer**: the layer the wire runs on, like a shape's: `level` (the
+  default), `level+1`, `metal`.
+
+Where the component is placed, its ports come with it, turned and mirrored
+with the placement: `comb1.port.drive` is a point of the placement, so
+another shape can be aligned to it, an expression can use
+`comb1.port.drive.x` (and `.angle`, `.width`), and a placement can be aligned
+**by** its port (*Point* `port.drive`). An array's copies have theirs by index:
+`comb1.port.drive[2]`, counted along the rows.
+
+In the **Points** panel the component's ports follow its points: **Add port**
+(the arrow button), then set the fields in the form below the list. A placed
+component's ports are listed with its points (`port.drive`); right-click one
+and **Re-export as a port of this component**: the new port is at it and takes
+its direction, width and layer unless you give it others. On the canvas a
+selected placement shows its ports as arrows pointing the way a wire leaves,
+and the component's own ports are drawn with its points.
+
+The bundled electrodes have ports (`mems.comb_drive` has `drive`), and so does
+`std.bond_pad` (`signal`); the galleries list them.
+
 ## Libraries
 
 A library is a folder of components (any project folder works), added from

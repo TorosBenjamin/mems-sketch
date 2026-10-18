@@ -136,13 +136,17 @@ Bond and probe pads.
 
 ![std.bond_pad](../images/gallery/std/bond_pad.png)
 
-Square bond or probe pad on the component's level, with an opening on the level above (passivation, or metal on the pad) inset by `margin`; set `opening` to 0 for a pad without one.
+Square bond or probe pad on the component's level, with an opening on the level above (passivation, or metal on the pad) inset by `margin`; set `opening` to 0 for a pad without one. Port: signal, on its right edge.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
 | `size` | `100` | > 2 * margin | Pad edge length (µm) |
 | `margin` | `8` | ≥ 0 | Pad around the opening (µm) |
 | `opening` | `1` | ≥ 0, ≤ 1, whole | 1: an opening on the level above; 0: none |
+
+| Port | At | Direction | Width | |
+|---|---|---|---|---|
+| `signal` | `pad.right` | `right` | `size / 4` | Where a wire leaves the pad; turn the pad to leave another side |
 
 *Tags: pad, bond pad, probe, wire bond, contact*
 

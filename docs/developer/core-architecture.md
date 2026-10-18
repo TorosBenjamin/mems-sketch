@@ -364,7 +364,8 @@ engine.update(component_name, def_json)  # an edit: only what depends on it rebu
 build = engine.build("resonator", params)  # cached; raises with the node path on error
 build.layers()  # names of layers with geometry
 build.points()  # declared alignment points, µm
-build.records()  # per node: frame, shift, bounding box, points
+build.ports()  # ports: position, direction, wire width, layer
+build.records()  # per node: frame, shift, bounding box, points, a placement's ports
 build.outlines(layer, chord_um)  # rings for drawing, as NumPy arrays
 build.instances(layer)  # (prototype, transform) pairs for drawing
 build.snapped(layer, grid_um=0.001, chord_um=0.005)  # integer rings + snapping report

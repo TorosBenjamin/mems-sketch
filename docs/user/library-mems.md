@@ -221,7 +221,7 @@ Comb drives and electrodes that move or sense.
 
 ![mems.comb_drive](../images/gallery/mems/comb_drive.png)
 
-Interdigitated comb: a fixed comb (bottom spine) and a moving comb (top spine), centred on the finger overlap. A voltage pulls the moving comb in along -y with a force of about n ε₀ t V² / gap (n moving fingers, t the thickness), the same at any overlap. The fixed spine sits on an anchor along its length (`anchored`; 0 for none); the moving spine is narrow enough to release and attaches to what it moves. Points: moving and fixed, the middle of each spine's outer edge.
+Interdigitated comb: a fixed comb (bottom spine) and a moving comb (top spine), centred on the finger overlap. A voltage pulls the moving comb in along -y with a force of about n ε₀ t V² / gap (n moving fingers, t the thickness), the same at any overlap. The fixed spine sits on an anchor along its length (`anchored`; 0 for none); the moving spine is narrow enough to release and attaches to what it moves. Points: moving and fixed, the middle of each spine's outer edge. Port: drive, the fixed comb's connection.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
@@ -238,13 +238,17 @@ Interdigitated comb: a fixed comb (bottom spine) and a moving comb (top spine), 
 | `total` | `(fingers + 1) * finger_width + fingers * finger_width + 2 * fingers * gap` |  | *(derived)* Width of the spines (µm); the fixed comb has one finger more |
 | `x_start` | `-total / 2` |  | *(derived)* |
 
+| Port | At | Direction | Width | |
+|---|---|---|---|---|
+| `drive` | `fixed_spine.bottom` | `down` | `spine_width` | The fixed comb's connection, off the middle of its spine |
+
 *Tags: electrode, comb drive, actuator, capacitive, resonator*
 
 ### `mems.comb_drive_with_stops`
 
 ![mems.comb_drive_with_stops](../images/gallery/mems/comb_drive_with_stops.png)
 
-Comb drive (as `comb_drive`, anchored) with motion limiters: tabs at both ends of the moving spine stop on anchored posts after `travel` towards the fixed comb, before the fingers can reach the fixed spine or snap sideways. Points: moving and fixed, as on the comb drive.
+Comb drive (as `comb_drive`, anchored) with motion limiters: tabs at both ends of the moving spine stop on anchored posts after `travel` towards the fixed comb, before the fingers can reach the fixed spine or snap sideways. Points: moving and fixed, and the port drive, as on the comb drive.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
@@ -260,13 +264,17 @@ Comb drive (as `comb_drive`, anchored) with motion limiters: tabs at both ends o
 | `total` | `(2 * fingers + 1) * finger_width + 2 * fingers * gap` |  | *(derived)* Width of the spines (µm) |
 | `spine_bottom` | `-overlap / 2 + finger_length` |  | *(derived)* Lower edge of the moving spine (µm) |
 
+| Port | At | Direction | Width | |
+|---|---|---|---|---|
+| `drive` | `comb.port.drive` | *as at* | *as at* | The fixed comb's connection |
+
 *Tags: electrode, comb drive, actuator, stop, motion limiter, capacitive*
 
 ### `mems.differential_comb`
 
 ![mems.differential_comb](../images/gallery/mems/differential_comb.png)
 
-Differential comb pair: two anchored combs facing each other across one moving spine (the shuttle). Moving along +y engages the upper comb and disengages the lower one by the same amount, so their capacitance difference follows the motion linearly; as an actuator, each comb pulls one way. Point: shuttle, the middle of the shared moving spine.
+Differential comb pair: two anchored combs facing each other across one moving spine (the shuttle). Moving along +y engages the upper comb and disengages the lower one by the same amount, so their capacitance difference follows the motion linearly; as an actuator, each comb pulls one way. Point: shuttle, the middle of the shared moving spine. Ports: lower and upper, each comb's connection.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
@@ -277,13 +285,18 @@ Differential comb pair: two anchored combs facing each other across one moving s
 | `overlap` | `20` | ≥ 0, < finger_length | Initial finger overlap of each comb (µm) |
 | `moving_spine_width` | `4` | > 0 | Shuttle width (µm) |
 
+| Port | At | Direction | Width | |
+|---|---|---|---|---|
+| `lower` | `lower.port.drive` | *as at* | *as at* | The lower comb's connection |
+| `upper` | `upper.port.drive` | *as at* | *as at* | The upper comb's connection |
+
 *Tags: electrode, comb drive, differential, sense, capacitive*
 
 ### `mems.parallel_plate`
 
 ![mems.parallel_plate](../images/gallery/mems/parallel_plate.png)
 
-Gap-closing (parallel-plate) electrodes: moving fingers up from a moving spine, each with a fixed finger `gap` to its right and `far_gap` to its left, so that moving along +x closes the small gaps and opens the large ones. Each fixed finger hangs from its own anchor above. The capacitance is about n ε₀ t L / gap (n moving fingers, t the thickness, L the length); beyond a third of the gap the electrostatic pull wins (pull-in). Point: moving, the middle of the moving spine's bottom edge, where it attaches.
+Gap-closing (parallel-plate) electrodes: moving fingers up from a moving spine, each with a fixed finger `gap` to its right and `far_gap` to its left, so that moving along +x closes the small gaps and opens the large ones. Each fixed finger hangs from its own anchor above. The capacitance is about n ε₀ t L / gap (n moving fingers, t the thickness, L the length); beyond a third of the gap the electrostatic pull wins (pull-in). Point: moving, the middle of the moving spine's bottom edge, where it attaches. Port: fixed, above the fixed electrodes' anchors, which a bus joins.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
@@ -298,6 +311,10 @@ Gap-closing (parallel-plate) electrodes: moving fingers up from a moving spine, 
 | `pitch` | `2 * finger_width + gap + far_gap` |  | *(derived)* From one moving finger to the next (µm) |
 | `x_start` | `-fingers * pitch / 2` |  | *(derived)* |
 
+| Port | At | Direction | Width | |
+|---|---|---|---|---|
+| `fixed` | `fixed_anchors.top` | `up` | `anchor_size` | The fixed electrodes: their anchors, joined above (or on a level below) |
+
 *Tags: electrode, parallel plate, gap closing, capacitive, sense, accelerometer*
 
 ## Devices
@@ -308,7 +325,7 @@ Whole devices made of the parts, as examples to place, copy and change.
 
 ![mems.lateral_resonator](../images/gallery/mems/lateral_resonator.png)
 
-Lateral comb-drive resonator: a perforated proof mass hung on two folded flexures (above and below), driven and sensed by comb drives on its left and right, everything joined by short stems so that it all releases. It moves along x; its resonant frequency is about √(k / m) / 2π with k twice one flexure's `stiffness` and m the mass. As it is, it passes every check of `mems.surface`; for a process with a larger undercut or minimum width, widen the anchors and fingers to its rules.
+Lateral comb-drive resonator: a perforated proof mass hung on two folded flexures (above and below), driven and sensed by comb drives on its left and right, everything joined by short stems so that it all releases. It moves along x; its resonant frequency is about √(k / m) / 2π with k twice one flexure's `stiffness` and m the mass. As it is, it passes every check of `mems.surface`; for a process with a larger undercut or minimum width, widen the anchors and fingers to its rules. Ports: drive and sense, the combs' connections.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
@@ -320,13 +337,18 @@ Lateral comb-drive resonator: a perforated proof mass hung on two folded flexure
 | `width` | `columns * 10 + 2.5` |  | *(derived)* Mass width (µm) |
 | `height` | `rows * 10 + 2.5` |  | *(derived)* Mass height (µm) |
 
+| Port | At | Direction | Width | |
+|---|---|---|---|---|
+| `drive` | `left_comb.port.drive` | *as at* | *as at* | The driving comb's connection |
+| `sense` | `right_comb.port.drive` | *as at* | *as at* | The sensing comb's connection |
+
 *Tags: device, resonator, comb drive, folded flexure, example*
 
 ### `mems.accelerometer`
 
 ![mems.accelerometer](../images/gallery/mems/accelerometer.png)
 
-Single-axis lateral accelerometer: a perforated proof mass on two folded flexures (above and below), sensing x with four banks of gap-closing electrodes, two above and two below the mass. The right-hand banks are mirrored, so moving along +x closes their large gaps where the left-hand ones close their small ones: left minus right is a differential signal. Its sensitivity is m / k (displacement per acceleration), k twice one flexure's `stiffness`. As it is, it passes every check of `mems.surface`; for a process with a larger undercut or minimum width, widen the anchors and fingers to its rules.
+Single-axis lateral accelerometer: a perforated proof mass on two folded flexures (above and below), sensing x with four banks of gap-closing electrodes, two above and two below the mass. The right-hand banks are mirrored, so moving along +x closes their large gaps where the left-hand ones close their small ones: left minus right is a differential signal. Its sensitivity is m / k (displacement per acceleration), k twice one flexure's `stiffness`. As it is, it passes every check of `mems.surface`; for a process with a larger undercut or minimum width, widen the anchors and fingers to its rules. Ports: one per bank's fixed electrodes (upper_left, …); the left ones together against the right ones.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
@@ -338,5 +360,12 @@ Single-axis lateral accelerometer: a perforated proof mass on two folded flexure
 | `stem` | `4` | ≥ 2 | Gap bridged by the stems that join the parts to the mass (µm) |
 | `width` | `columns * 10 + 2.5` |  | *(derived)* Mass width (µm) |
 | `height` | `rows * 10 + 2.5` |  | *(derived)* Mass height (µm) |
+
+| Port | At | Direction | Width | |
+|---|---|---|---|---|
+| `upper_left` | `upper_left_bank.port.fixed` | *as at* | *as at* | Fixed electrodes of the upper left bank |
+| `upper_right` | `upper_right_bank.port.fixed` | *as at* | *as at* | Fixed electrodes of the upper right bank |
+| `lower_left` | `lower_left_bank.port.fixed` | *as at* | *as at* | Fixed electrodes of the lower left bank |
+| `lower_right` | `lower_right_bank.port.fixed` | *as at* | *as at* | Fixed electrodes of the lower right bank |
 
 *Tags: device, accelerometer, inertial, parallel plate, folded flexure, example*

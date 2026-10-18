@@ -5,7 +5,8 @@ description: >-
   moves along x; its resonant frequency is about √(k / m) / 2π with k twice
   one flexure's `stiffness` and m the mass. As it is, it passes every check
   of `mems.surface`; for a process with a larger undercut or minimum width,
-  widen the anchors and fingers to its rules.
+  widen the anchors and fingers to its rules. Ports: drive and sense, the
+  combs' connections.
 tags: [device, resonator, comb drive, folded flexure, example]
 parameters:
   columns: {default: 16, min: 8, integer: true, description: Holes across the mass}
@@ -15,6 +16,9 @@ parameters:
   stem: {default: 4, min: 2, description: Gap bridged by the stems that join the parts to the mass (µm)}
   width: {default: columns * 10 + 2.5, internal: true, description: Mass width (µm)}
   height: {default: rows * 10 + 2.5, internal: true, description: Mass height (µm)}
+ports:
+  drive: {at: left_comb.port.drive, description: The driving comb's connection}
+  sense: {at: right_comb.port.drive, description: The sensing comb's connection}
 shapes:
   mass: {ref: proof_mass, columns: columns, rows: rows}
   upper_flexure:

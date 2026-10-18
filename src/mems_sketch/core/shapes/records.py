@@ -20,7 +20,8 @@ if TYPE_CHECKING:
 class Port(NamedTuple):
     """A port as built (see :class:`~mems_sketch.core.user_component.PortDef`): where
     it is (µm), the direction a wire leaves it in (degrees, counter-clockwise from
-    +x), the wire width it expects (0: any) and the layer the wire runs on."""
+    +x, in [0, 360)), the wire width it expects (0: any) and the layer the wire
+    runs on."""
 
     x: float
     y: float
@@ -34,7 +35,8 @@ class Port(NamedTuple):
         dx, dy = t.apply_vector(
             math.cos(math.radians(self.angle)), math.sin(math.radians(self.angle))
         )
-        return Port(x, y, math.degrees(math.atan2(dy, dx)), self.width * t.mag, self.layer)
+        angle = round(math.degrees(math.atan2(dy, dx)) % 360.0, 9)
+        return Port(x, y, 0.0 if angle >= 360.0 else angle + 0.0, self.width * t.mag, self.layer)
 
 
 @dataclass

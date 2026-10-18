@@ -455,6 +455,18 @@ QPushButton:disabled {{ color: {muted}; }}
 QCheckBox, QRadioButton {{ spacing: 6px; }}
 QScrollArea {{ background: {island}; border: none; }}
 QWidget#properties-body {{ background: {island}; }}
+QListWidget#picker-list {{ background: transparent; border: none; outline: none; }}
+QListWidget#picker-list::item {{ background: transparent; }}
+QLineEdit#picker-search {{ padding: 6px 8px; border-radius: {radius_control}px; }}
+QFrame#picker-line {{ background: {border}; border: none; margin: 0 2px; }}
+QToolButton#picker-browse {{ color: {accent}; padding: 4px 6px; }}
+QFrame#search-divider {{ background: {border}; border: none; }}
+QLabel#preview-picture {{ background: {window}; border-radius: {radius_card}px; }}
+QScrollArea#preview-scroll, QWidget#preview-body {{ background: transparent; }}
+QLabel#keycap {{
+    color: {muted}; background: {window}; border: 1px solid {border_strong};
+    border-radius: {radius_small}px; padding: 0 5px; font-size: 11px;
+}}
 QGroupBox#section {{  /* a part of the Properties form: a heading over a line, folds away */
     background: transparent; border: none; border-top: 1px solid {border}; border-radius: 0;
     margin-top: 0; padding: 26px 0 2px 0; font-weight: 600;

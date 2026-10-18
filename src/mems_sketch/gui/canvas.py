@@ -37,6 +37,7 @@ from PySide6.QtGui import (
     QAction,
     QBrush,
     QColor,
+    QCursor,
     QFont,
     QFontMetricsF,
     QInputDevice,
@@ -137,6 +138,8 @@ _PATHS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 # Placed copies past this many are drawn without a cached picture each (the
 # pictures would take more memory than they save time).
 MAX_CACHED_ITEMS = 2000
+GHOST_FILL = 0.35  # a component being placed: its fill, against its layer's colour
+GHOST_OPACITY = 0.75
 
 
 def own_path(geometry: Geometry, layer: str) -> QPainterPath:
@@ -284,6 +287,7 @@ class LayoutCanvas(QGraphicsView):
         self._space = False  # Space held: the left button pans
         self._left_down = False
         self._drag_items: list = []
+        self._ghost: QGraphicsItem | None = None  # a component being placed
         self._ruler_items: list = []
         self._rulers: list[tuple[float, float, float, float]] = []  # distances, for ticks
         self._box_item: QGraphicsRectItem | None = None
@@ -802,6 +806,56 @@ class LayoutCanvas(QGraphicsView):
         for item in self._drag_items:
             item.setPos(0, 0)
             item.setTransform(item.placement * transform)  # placed first, then turned
+
+    def show_ghost(
+        self, geometry: Geometry | None, colors: dict[str, QColor] | None = None
+    ) -> None:
+        """A component being placed, drawn faintly in its layers' colours; it follows
+        :meth:`move_ghost` until it is put down. None takes it away."""
+        if self._ghost is not None:
+            self.scene().removeItem(self._ghost)
+            self._ghost = None
+        if geometry is None:
+            return
+        colors = colors or {}
+        ghost = QGraphicsRectItem()  # holds the layers; draws nothing itself
+        ghost.setPen(QPen(Qt.PenStyle.NoPen))
+        names = geometry.layer_names()
+        for leaf, at in geometry.leaves():
+            for layer, region in leaf.own.items():
+                if region.is_empty():
+                    continue
+                color = QColor(
+                    colors.get(layer) or layer_color(names.index(layer) if layer in names else 0)
+                )
+                item = QGraphicsPathItem(own_path(leaf, layer), ghost)
+                item.setTransform(qtransform(at))
+                pen = QPen(color, 1)
+                pen.setCosmetic(True)
+                item.setPen(pen)
+                fill = QColor(color)
+                fill.setAlphaF(GHOST_FILL)
+                item.setBrush(QBrush(fill))
+        ghost.setOpacity(GHOST_OPACITY)
+        ghost.setZValue(1100)
+        self.scene().addItem(ghost)
+        self._ghost = ghost
+
+    def cursor_um(self) -> tuple[float, float]:
+        """Where the mouse is, in µm; the middle of the view when it is elsewhere."""
+        at = self.viewport().mapFromGlobal(QCursor.pos())
+        if not self.viewport().rect().contains(at):
+            at = self.viewport().rect().center()
+        point = self.mapToScene(at)
+        return point.x(), point.y()
+
+    def move_ghost(self, x: float, y: float) -> None:
+        if self._ghost is not None:
+            self._ghost.setPos(x, y)
+
+    @property
+    def ghost(self) -> QGraphicsItem | None:
+        return self._ghost
 
     def clear_drag_preview(self) -> None:
         for item in self._drag_items:

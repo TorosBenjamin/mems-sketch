@@ -117,7 +117,7 @@ def test_the_main_menu_has_an_icon_by_each_entry(window):
 def test_right_click_on_empty_space_offers_adding_there(window):
     window.tree.select_paths([])
     menu = window.actions_.context_menu(0, 0)
-    assert labels(menu) == ["Add", "Place component", "Paste", "Select all", "Fit"]
+    assert labels(menu) == ["Add", "Place component…", "Paste", "Select all", "Fit"]
 
 
 def test_right_click_on_a_selection_offers_what_can_be_done_to_it(window):
@@ -180,10 +180,7 @@ def test_a_list_of_points_is_grouped_under_each_shape(qtbot):
     combo.grab()  # the chosen one is drawn with its shape muted
 
 
-def test_the_place_menu_and_the_layer_stack_mute_qualifiers(window):
-    from mems_sketch.gui.style import QUALIFIED
-
-    assert window.actions_.place.property(QUALIFIED)
+def test_the_layer_stack_mutes_qualifiers(window):
     window.open_process()
     table = window.area.process_view.layers.layers
     assert isinstance(table.itemDelegateForColumn(3), QualifiedDelegate)

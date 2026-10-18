@@ -16,7 +16,8 @@
   the top left says what is shown. **View → Overlays** switches each of these
   on or off.
 - **Right-click** (a click; a right drag pans) for **Add** (a primitive
-  starting where you clicked), **Place component**, and for the selection:
+  starting where you clicked), **Place component…** (placed where you clicked),
+  and for the selection:
   combine, offset, fillet, transform, layer map, make or unpack component,
   rotate 90°, mirror, duplicate and delete.
 

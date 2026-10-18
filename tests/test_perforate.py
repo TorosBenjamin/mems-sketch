@@ -167,11 +167,10 @@ def test_too_many_holes_is_an_error_not_a_hang(doc):
         doc.nodes.add(rect(x1=1e5, y1=1e5, modifiers=[tiny]))
 
 
-def test_the_standard_plate_has_round_holes_by_default():
+def test_the_standard_plate_is_freed_by_the_etch_by_default():
     from pathlib import Path
 
     doc = EditSession.open_project(Path(__file__).parent.parent / "examples" / "resonator")
     doc.set_active("mems.perforated_plate")
-    assert len(holes(doc)) == 64  # 8 × 8 at a pitch of 20 on 160
-    hole = 20 / 3
-    assert area_um2(doc) == near(160 * 160 - 64 * math.pi * (hole / 2) ** 2, 64 * math.pi * hole)
+    assert len(holes(doc)) == 256  # 16 × 16 at a pitch of 10 on 162.5: a 2.5 µm rim
+    assert area_um2(doc) == near(162.5 * 162.5 - 256 * 7.5 * 7.5, 256 * 4 * 7.5)

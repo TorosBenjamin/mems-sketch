@@ -1,0 +1,21 @@
+description: >-
+  Dimples on the level's dimple layer (`level.dimple`), in a grid from the
+  origin along +x and +y: placed under a mass, they make bumps that keep it
+  from sticking to the substrate after release. Only for a level with a
+  dimple layer (the polysilicon process's poly1).
+tags: [dimple, anti-stiction, mass]
+parameters:
+  columns: {default: 4, min: 1, integer: true, description: Dimples across (x)}
+  rows: {default: 4, min: 1, integer: true, description: Dimples up (y)}
+  pitch: {default: 40, min: size, min_exclusive: true, description: From one dimple to the next (µm)}
+  size: {default: 4, min: 0, min_exclusive: true, description: Dimple edge length (µm)}
+shapes:
+  dimples:
+    kind: rect
+    layer: level.dimple
+    x0: -size/2
+    y0: -size/2
+    x1: size/2
+    y1: size/2
+    modifiers:
+    - {kind: array, columns: columns, rows: rows, dx: pitch, dy: pitch}

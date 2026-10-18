@@ -1,0 +1,21 @@
+description: >-
+  Guided beam: a beam along +y from an anchor at the origin, its free end
+  meant to be held parallel (guided) by what it carries, so that it bends in
+  an S. Sideways (x) it is a spring of stiffness E t w³ / L³ (`stiffness`).
+  Point: tip, the middle of the free end, where the mass attaches.
+tags: [spring, beam, guided, flexure]
+parameters:
+  length: {default: 120, min: 0, min_exclusive: true, description: "Beam length, L (µm)"}
+  beam_width: {default: 2, min: 0, min_exclusive: true, description: "Beam width, w (µm)"}
+  anchor_size: {default: 20, min: 4, min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure"}
+  youngs_modulus: {default: 160, min: 0, min_exclusive: true, description: "Young's modulus of the structural layer, E (GPa; 160 for polysilicon)"}
+  thickness: {default: 2, min: 0, min_exclusive: true, description: "Thickness of the structural layer, t (µm)"}
+  stiffness:
+    default: youngs_modulus * 1000 * thickness * beam_width ** 3 / length ** 3
+    internal: true
+    description: "Sideways stiffness at the tip (N/m)"
+points:
+  tip: {y: anchor_size / 2 + length}
+shapes:
+  pad: {ref: anchor, size: anchor_size}
+  beam: {kind: rect, x0: -beam_width/2, y0: anchor_size/2, x1: beam_width/2, y1: anchor_size/2 + length}

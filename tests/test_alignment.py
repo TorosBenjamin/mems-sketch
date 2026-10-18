@@ -114,7 +114,7 @@ def test_points_can_be_measured_from_a_shape_and_passed_up():
         Instance("pad", "mems.anchor", {"size": 40}, align=Align(point="bottom", to="s.tip"))
     )
     spring_top = 2 * 2 * 15 + 3
-    assert bbox(project, layer="anchor")[1] == pytest.approx(spring_top + 3)
+    assert bbox(project, layer="anchor")[1] == pytest.approx(spring_top + 2)  # the enclosure
 
 
 def test_align_a_reference_with_rotation():

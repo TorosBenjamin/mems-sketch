@@ -1,0 +1,70 @@
+description: >-
+  Single-axis lateral accelerometer: a perforated proof mass on two folded
+  flexures (above and below), sensing x with four banks of gap-closing
+  electrodes, two above and two below the mass. The right-hand banks are
+  mirrored, so moving along +x closes their large gaps where the left-hand
+  ones close their small ones: left minus right is a differential signal.
+  Its sensitivity is m / k (displacement per acceleration), k twice one
+  flexure's `stiffness`. As it is, it passes every check of `mems.surface`;
+  for a process with a larger undercut or minimum width, widen the anchors
+  and fingers to its rules.
+tags: [device, accelerometer, inertial, parallel plate, folded flexure, example]
+parameters:
+  columns: {default: 26, min: 20, integer: true, description: Holes across the mass}
+  rows: {default: 14, min: 4, integer: true, description: Holes up the mass}
+  flexure_length: {default: 120, min: 20, description: Inner beam length of the flexures (µm)}
+  fingers: {default: 8, min: 1, integer: true, description: Moving fingers of each electrode bank}
+  bank_offset: {default: 74, min: 50, description: From the mass's centre line to the middle of each bank (µm)}
+  stem: {default: 4, min: 2, description: Gap bridged by the stems that join the parts to the mass (µm)}
+  width: {default: columns * 10 + 2.5, internal: true, description: Mass width (µm)}
+  height: {default: rows * 10 + 2.5, internal: true, description: Mass height (µm)}
+shapes:
+  mass: {ref: proof_mass, columns: columns, rows: rows}
+  upper_flexure:
+    ref: folded_flexure
+    length: flexure_length
+    align: {point: attach, to: mass.attach_top, dy: stem}
+  lower_flexure:
+    ref: folded_flexure
+    length: flexure_length
+    rotation: 180
+    align: {point: attach, to: mass.attach_bottom, dy: -stem}
+  upper_left_bank:
+    ref: parallel_plate
+    fingers: fingers
+    align: {point: moving, to: mass.attach_top, dx: -bank_offset, dy: stem}
+  upper_right_bank:  # mirrored left to right: flipped in y, turned 180°
+    ref: parallel_plate
+    fingers: fingers
+    rotation: 180
+    mirror_x: true
+    align: {point: moving, to: mass.attach_top, dx: bank_offset, dy: stem}
+  lower_left_bank:  # the lower right one mirrored left to right
+    ref: parallel_plate
+    fingers: fingers
+    mirror_x: true
+    align: {point: moving, to: mass.attach_bottom, dx: -bank_offset, dy: -stem}
+  lower_right_bank:
+    ref: parallel_plate
+    fingers: fingers
+    rotation: 180
+    align: {point: moving, to: mass.attach_bottom, dx: bank_offset, dy: -stem}
+  stems:
+    kind: transform
+    children:
+      upper_stems:
+        kind: rect
+        x0: -bank_offset - 1.5
+        y0: height/2
+        x1: -bank_offset + 1.5
+        y1: height/2 + stem
+        modifiers:
+        - {kind: array, columns: 3, dx: bank_offset}
+      lower_stems:
+        kind: rect
+        x0: -bank_offset - 1.5
+        y0: -height/2 - stem
+        x1: -bank_offset + 1.5
+        y1: -height/2
+        modifiers:
+        - {kind: array, columns: 3, dx: bank_offset}

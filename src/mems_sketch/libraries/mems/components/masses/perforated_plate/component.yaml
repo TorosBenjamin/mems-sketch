@@ -1,24 +1,32 @@
-description: Square plate with a grid of release holes, round or rounded squares
+description: >-
+  Square plate centred on the origin, with a grid of release holes (square,
+  rounded or round) so that the etch frees it: the webs between holes, and
+  the rim, are `web` wide. Where four webs meet, the nearest hole corner is
+  0.71 webs away (more with rounded holes): keep that under the process's
+  undercut. The holes are centred, so the rim is between one web and one
+  web plus a pitch wide.
+tags: [mass, plate, proof mass, perforated, release holes]
 parameters:
-  size: {default: 160, min: 10, description: Edge length (µm)}
-  pitch: {default: 20, min: 2, description: Hole pitch (µm)}
+  size: {default: 162.5, min: 10, description: "Edge length (µm): a whole number of pitches plus a web gives a rim one web wide"}
+  pitch: {default: 10, min: web + 0.5, description: "Hole pitch (µm); at least a web and the smallest hole"}
   hole:
-    default: pitch / 3
+    default: pitch - web
     min: 0.5
     max: pitch
-    description: Hole size (µm), follows the pitch
+    max_exclusive: true
+    description: Hole size (µm); by default the pitch less a web
   corner_radius:
-    default: hole / 2
+    default: 0
     min: 0
-    description: 'Corner radius of the holes (µm): 0 square, half the size round'
+    description: "Corner radius of the holes (µm): 0 square, half the size round; rounder holes leave more between their corners"
+  web: {default: 2.5, min: 0, min_exclusive: true, internal: true, description: Between neighbouring holes (µm)}
   margin:
-    default: (pitch - hole) / 2
+    default: pitch - hole
     internal: true
     description: From the plate's edge to the holes (µm)
 shapes:
   plate:
     kind: rect
-    layer: device
     x0: -size/2
     y0: -size/2
     x1: size/2

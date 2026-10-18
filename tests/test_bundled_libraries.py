@@ -25,13 +25,16 @@ def same_geometry(a, b) -> bool:
 
 
 def test_every_project_has_the_bundled_libraries():
-    assert bundled_names() == ["mems"]
+    assert bundled_names() == ["mems", "std"]
     project = Project()
     mems = project.libraries["mems"]
-    assert mems.bundled == "mems" and mems.version == 1 and mems.description
+    assert mems.bundled == "mems" and mems.version == 2 and mems.description
     assert {"anchor", "comb_drive", "serpentine_spring", "perforated_plate"} <= set(mems.components)
     assert "surface" in mems.processes
     assert not project.render("mems.comb_drive").is_empty()
+    std = project.libraries["std"]
+    assert std.bundled == "std" and std.version == 1 and not std.processes
+    assert {"cross_mark", "vernier", "bond_pad", "die_frame"} <= set(std.components)
 
 
 def test_each_project_has_its_own_copy():
@@ -52,7 +55,7 @@ def test_a_project_saves_them_as_bundled_with_their_version(tmp_path):
     project.components["top"].shapes = [RefShape(name="c", component="mems.comb_drive")]
     save(project, tmp_path / "chip")
     manifest = (tmp_path / "chip" / "project.yaml").read_text()
-    assert "libraries: {mems: bundled@1}" in manifest
+    assert "libraries: {mems: bundled@2, std: bundled@1}" in manifest
     again = load(tmp_path / "chip")
     assert again.libraries["mems"].bundled == "mems" and not again.load_notes
     assert same_geometry(again.render("top"), project.render("top"))
@@ -62,21 +65,21 @@ def test_one_under_another_name(tmp_path):
     folder = tmp_path / "chip"
     save(new_project("chip"), folder)
     manifest = folder / "project.yaml"
-    text = manifest.read_text().replace("{mems: bundled@1}", "{m: 'bundled:mems'}")
+    text = manifest.read_text().replace("mems: bundled@2", "m: 'bundled:mems'")
     manifest.write_text(text)
     project = load(folder)
     assert project.libraries["m"].bundled == "mems" and "m.anchor" in project.component_names()
     save(project, folder)
-    assert "m: 'bundled:mems@1'" in manifest.read_text()
+    assert "m: 'bundled:mems@2'" in manifest.read_text()
 
 
 def test_another_version_is_noted_and_an_unknown_one_refused(tmp_path):
     folder = tmp_path / "chip"
     save(new_project("chip"), folder)
     manifest = folder / "project.yaml"
-    manifest.write_text(manifest.read_text().replace("bundled@1", "bundled@0"))
+    manifest.write_text(manifest.read_text().replace("mems: bundled@2", "mems: bundled@0"))
     assert any("saved with version 0" in note for note in load(folder).load_notes)
-    manifest.write_text(manifest.read_text().replace("{mems: bundled@0}", "{x: 'bundled:nope'}"))
+    manifest.write_text(manifest.read_text().replace("mems: bundled@0", "x: 'bundled:nope'"))
     with pytest.raises(ProjectFormatError, match="no bundled library 'nope'"):
         load(folder)
 
@@ -85,7 +88,7 @@ def test_one_file_documents_list_them_too(tmp_path):
     project = new_project("chip")
     project.components["top"].shapes = [RefShape(name="a", component="mems.anchor")]
     path = write_project(project, tmp_path / "chip.yaml")
-    assert "bundled@1" in path.read_text()
+    assert "mems: bundled@2" in path.read_text()
     assert same_geometry(read_project(path).render("top"), project.render("top"))
 
 
@@ -108,7 +111,9 @@ def old_project(tmp_path: Path) -> Path:
     folder = save(new_project("old"), tmp_path / "old")
     (folder / "components" / "top" / "component.yaml").write_text(OLD_TOP)
     manifest = folder / "project.yaml"
-    manifest.write_text(manifest.read_text().replace("libraries: {mems: bundled@1}\n", ""))
+    manifest.write_text(
+        manifest.read_text().replace("libraries: {mems: bundled@2, std: bundled@1}\n", "")
+    )
     return folder
 
 

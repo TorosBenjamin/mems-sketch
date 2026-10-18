@@ -1,0 +1,19 @@
+description: >-
+  Box-in-box alignment mark: a square frame on the component's level and a
+  box on the level above, centred in it with `gap` all round. Measured
+  overlay is the difference between opposite gaps.
+tags: [alignment, mark, overlay, box]
+parameters:
+  outer: {default: 60, min: 2 * frame + 2 * gap, min_exclusive: true, description: Outer edge of the frame (µm)}
+  frame: {default: 8, min: 0, min_exclusive: true, description: Frame width (µm)}
+  gap: {default: 6, min: 0, min_exclusive: true, description: Gap between the frame and the box (µm)}
+  inner: {default: outer - 2 * frame - 2 * gap, internal: true, description: Edge of the box (µm)}
+shapes:
+  frame_ring:
+    kind: boolean
+    op: subtract
+    a:
+      outside: {kind: rect, x0: -outer/2, y0: -outer/2, x1: outer/2, y1: outer/2}
+    b:
+      inside: {kind: rect, x0: -(outer/2 - frame), y0: -(outer/2 - frame), x1: outer/2 - frame, y1: outer/2 - frame}
+  box: {kind: rect, layer: level+1, x0: -inner/2, y0: -inner/2, x1: inner/2, y1: inner/2}

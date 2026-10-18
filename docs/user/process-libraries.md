@@ -26,7 +26,10 @@ constants too (`process.t_poly1`), for expressions and for what reads them
 later.
 
 The `mems` components draw on `level` and `level.anchor`, so they work on any
-of them: a comb drive placed on poly2 gets poly2's anchors.
+of them: a comb drive placed on poly2 gets poly2's anchors. Their defaults are
+sized for `mems.surface` (2 µm lines and gaps, a 2 µm undercut): on a process
+with a larger undercut or minimum width, widen the anchors and fingers to its
+rules.
 
 ## Writing your own
 

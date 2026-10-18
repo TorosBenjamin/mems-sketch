@@ -28,7 +28,7 @@ A library's manifest is a project's, usually with `top: null`:
 format: mems-sketch/2
 name: resonator
 top: top                          # null: a library
-libraries: {mems: bundled@1}      # bundled (with the version saved with), or folders
+libraries: {mems: bundled@2, std: bundled@1}   # bundled (with the version saved with), or folders
 process: mems.surface             # a process of its own (main), or a library's
 overrides:                        # changes to a library's process
   constants: {undercut: 3}
@@ -171,7 +171,7 @@ as a list of rows, so readers accept both (`formats.rows`). `.mat` uses scipy
 format: mems-sketch/2
 name: resonator
 top: top
-libraries: {mems: bundled@1, fab: ../fab}   # folders relative to the document
+libraries: {mems: bundled@2, fab: ../fab}   # folders relative to the document
 process: main                               # and overrides, as in project.yaml
 processes: {main: {...}}                    # as process.yaml
 imports: {padframe: {file, cell, layers, data: <bytes>}}

@@ -1,0 +1,30 @@
+description: >-
+  Gap ladder: pairs of blocks, the gap between them `start` in the first row
+  and `step` wider in each next one, rows stacked along +y from the origin
+  (the gaps are at x = 0 to the gap's width). The narrowest gap that opens is
+  the smallest resolved space.
+tags: [test structure, resolution, gap, space, metrology]
+parameters:
+  count: {default: 8, min: 2, integer: true, description: Number of rows}
+  start: {default: 2, min: 0, min_exclusive: true, description: Gap in the first row (µm)}
+  step: {default: 0.5, min: 0, description: Gap added from one row to the next (µm)}
+  block: {default: 20, min: 0, min_exclusive: true, description: Width of each block (µm)}
+  height: {default: 10, min: 0, min_exclusive: true, description: Height of each block (µm)}
+  space: {default: 10, min: 0, min_exclusive: true, description: Between rows (µm)}
+shapes:
+  left_blocks:
+    kind: rect
+    x0: -block
+    y0: 0
+    x1: 0
+    y1: height
+    modifiers:
+    - {kind: array, rows: count, dy: height + space}
+  right_blocks:
+    kind: rect
+    x0: start + j * step
+    y0: 0
+    x1: start + j * step + block
+    y1: height
+    modifiers:
+    - {kind: array, rows: count, dy: height + space}

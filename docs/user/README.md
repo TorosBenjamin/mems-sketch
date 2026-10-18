@@ -11,13 +11,17 @@ design rules, and exported for the rest of the flow.
    put together, libraries and the process.
 4. **[Processes and process libraries](process-libraries.md)**: the example
    processes, and writing your fab's as a library.
-5. **[Drawing and editing](drawing-and-editing.md)**: the canvas, the tools,
+5. **The bundled libraries**: galleries of every component, with its
+   parameters: **[mems](library-mems.md)** (springs, electrodes, masses,
+   devices) and **[std](library-std.md)** (alignment marks, test structures,
+   pads, the die frame).
+6. **[Drawing and editing](drawing-and-editing.md)**: the canvas, the tools,
    Properties, aligning parts.
-6. **[Shapes, operations and modifiers](shapes-and-operations.md)**: what a
+7. **[Shapes, operations and modifiers](shapes-and-operations.md)**: what a
    component is made of.
-7. **[Files, import and export](files.md)**: the project folder, other
+8. **[Files, import and export](files.md)**: the project folder, other
    formats, GDS import, the command line.
-8. **[History](history.md)**: what changed, committing and restoring with git.
+9. **[History](history.md)**: what changed, committing and restoring with git.
 
 Looking for the Python API or how the tool works inside? See the
 [developer guide](../developer/README.md).

@@ -1,0 +1,42 @@
+description: >-
+  Rectangular proof mass centred on the origin, sized by its holes so that
+  the rim and the webs are all `web` wide and the etch frees it everywhere.
+  Holes keep clear of an attachment zone at the middle of each edge
+  (`attach` wide, `attach_depth` deep): deepen them where a spring or a
+  spine needs solid material to land on (a zone wider than twice the
+  undercut stays stuck). Points: attach_top, attach_bottom, attach_left and
+  attach_right, the middles of the edges.
+tags: [mass, proof mass, perforated, release holes, accelerometer, resonator]
+parameters:
+  columns: {default: 20, min: 1, integer: true, description: Holes across (x)}
+  rows: {default: 16, min: 1, integer: true, description: Holes up (y)}
+  pitch: {default: 10, min: web, min_exclusive: true, description: Hole pitch (µm)}
+  web: {default: 2.5, min: 0, min_exclusive: true, description: "Between holes, and the rim (µm); where four webs meet the nearest hole is 0.71 webs away: keep that under the undercut"}
+  attach: {default: 6, min: 0, description: Width of the attachment zones (µm)}
+  attach_depth: {default: 2.5, min: 0, description: "Depth of the attachment zones (µm); a web deep, they keep the rim"}
+  width: {default: columns * pitch + web, internal: true, description: Width (µm)}
+  height: {default: rows * pitch + web, internal: true, description: Height (µm)}
+points:
+  attach_top: {y: height / 2}
+  attach_bottom: {y: -height / 2}
+  attach_left: {x: -width / 2}
+  attach_right: {x: width / 2}
+shapes:
+  zone_top: {kind: rect, x0: -attach/2, y0: height/2 - attach_depth, x1: attach/2, y1: height/2}
+  zone_bottom: {kind: rect, x0: -attach/2, y0: -height/2, x1: attach/2, y1: -height/2 + attach_depth}
+  zone_left: {kind: rect, x0: -width/2, y0: -attach/2, x1: -width/2 + attach_depth, y1: attach/2}
+  zone_right: {kind: rect, x0: width/2 - attach_depth, y0: -attach/2, x1: width/2, y1: attach/2}
+  mass:
+    kind: rect
+    x0: -width/2
+    y0: -height/2
+    x1: width/2
+    y1: height/2
+    modifiers:
+    - kind: perforate
+      pitch: pitch
+      hole_size: pitch - web
+      corner_radius: 0
+      margin: web
+      keep_out: [zone_top, zone_bottom, zone_left, zone_right]
+      keep_out_margin: 0

@@ -1,0 +1,47 @@
+description: >-
+  Gap-closing (parallel-plate) electrodes: moving fingers up from a moving
+  spine, each with a fixed finger `gap` to its right and `far_gap` to its
+  left, so that moving along +x closes the small gaps and opens the large
+  ones. Each fixed finger hangs from its own anchor above. The capacitance is
+  about n ε₀ t L / gap (n moving fingers, t the thickness, L the length);
+  beyond a third of the gap the electrostatic pull wins (pull-in). Point:
+  moving, the middle of the moving spine's bottom edge, where it attaches.
+tags: [electrode, parallel plate, gap closing, capacitive, sense, accelerometer]
+parameters:
+  fingers: {default: 8, min: 1, integer: true, description: Moving fingers}
+  finger_width: {default: 2, min: 0, min_exclusive: true, description: Finger width (µm)}
+  length: {default: 60, min: 0, min_exclusive: true, description: "Overlap of moving and fixed fingers, L (µm)"}
+  gap: {default: 2, min: 0, min_exclusive: true, description: The gap that closes (µm)}
+  far_gap: {default: 6, min: gap, description: "The gap on the other side, that opens (µm)"}
+  spine_width: {default: 4, min: 0, min_exclusive: true, description: Moving spine width (µm)}
+  clearance: {default: 4, min: 0, min_exclusive: true, description: "Between the moving fingers' tips and the fixed anchors, and between the fixed fingers and the moving spine (µm)"}
+  anchor_size: {default: 9, min: 4, min_exclusive: true, max: pitch - 2, description: "Fixed fingers' anchor pads (µm); neighbours stay 2 µm apart"}
+  pitch: {default: 2 * finger_width + gap + far_gap, internal: true, description: From one moving finger to the next (µm)}
+  x_start: {default: -fingers * pitch / 2, internal: true}
+points:
+  moving: {y: -spine_width}
+shapes:
+  spine: {kind: rect, x0: x_start, y0: -spine_width, x1: x_start + fingers * pitch, y1: 0}
+  moving_fingers:
+    kind: rect
+    x0: x_start + far_gap / 2
+    y0: 0
+    x1: x_start + far_gap / 2 + finger_width
+    y1: length + clearance
+    modifiers:
+    - {kind: array, columns: fingers, dx: pitch}
+  fixed_fingers:
+    kind: rect
+    x0: x_start + far_gap / 2 + finger_width + gap
+    y0: clearance
+    x1: x_start + far_gap / 2 + 2 * finger_width + gap
+    y1: length + 2 * clearance
+    modifiers:
+    - {kind: array, columns: fingers, dx: pitch}
+  fixed_anchors:
+    ref: anchor
+    size: anchor_size
+    x: x_start + far_gap / 2 + 1.5 * finger_width + gap
+    y: length + 2 * clearance + anchor_size / 2
+    modifiers:
+    - {kind: array, columns: fingers, dx: pitch}

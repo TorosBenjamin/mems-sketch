@@ -1,7 +1,7 @@
 format: mems-sketch/2
 name: resonator
 top: top
-libraries: {mems: bundled@1}
+libraries: {mems: bundled@2, std: bundled@1}
 process: mems.surface
 overrides:
   rules:

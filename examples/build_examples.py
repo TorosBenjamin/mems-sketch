@@ -49,7 +49,7 @@ project.define_component(
 )
 
 project.top_component.description = "Comb-driven resonator"
-for name, value in {"plate": 160, "pitch": 20, "w_finger": "process.min_gap"}.items():
+for name, value in {"plate": 162.5, "pitch": 10, "w_finger": "process.min_gap"}.items():
     project.set_variable(name, value)
 comb = {"fingers": 16, "finger_width": "w_finger", "gap": "w_finger"}
 project.add(Instance("mass", "mems.perforated_plate", {"size": "plate", "pitch": "pitch"}))

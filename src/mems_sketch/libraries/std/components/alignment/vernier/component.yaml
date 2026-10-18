@@ -1,0 +1,36 @@
+description: >-
+  Vernier scale reading misalignment along x: a main scale on the component's
+  level (lines `pitch` apart, below) and a vernier on the level above (lines
+  `pitch + step` apart, above), each with a longer centre line. The vernier
+  line that lines up with a main-scale line, counted from the centre, times
+  `step` is the offset; it reads up to ± lines × step. Turn it 90° to read y.
+  Its center is between the two centre lines.
+tags: [alignment, vernier, overlay, metrology]
+parameters:
+  lines: {default: 5, min: 1, integer: true, description: Lines on each side of the centre line}
+  pitch: {default: 10, min: line_width, min_exclusive: true, description: Main-scale pitch (µm)}
+  step: {default: 0.5, min: 0, min_exclusive: true, description: "Resolution: how much longer the vernier pitch is (µm)"}
+  line_width: {default: 2, min: 0, min_exclusive: true, description: Line width (µm)}
+  length: {default: 20, min: 0, min_exclusive: true, description: Line length (µm)}
+  gap: {default: 2, min: 0, description: Between the two scales (µm)}
+  vernier_pitch: {default: pitch + step, internal: true, description: Vernier pitch (µm)}
+shapes:
+  main_scale:
+    kind: rect
+    x0: -lines * pitch - line_width/2
+    y0: -length
+    x1: -lines * pitch + line_width/2
+    y1: 0
+    modifiers:
+    - {kind: array, columns: 2 * lines + 1, dx: pitch}
+  main_centre: {kind: rect, x0: -line_width/2, y0: -1.5 * length, x1: line_width/2, y1: -length}
+  vernier_scale:
+    kind: rect
+    layer: level+1
+    x0: -lines * vernier_pitch - line_width/2
+    y0: gap
+    x1: -lines * vernier_pitch + line_width/2
+    y1: gap + length
+    modifiers:
+    - {kind: array, columns: 2 * lines + 1, dx: vernier_pitch}
+  vernier_centre: {kind: rect, layer: level+1, x0: -line_width/2, y0: gap + length, x1: line_width/2, y1: gap + 1.5 * length}

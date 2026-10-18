@@ -43,7 +43,7 @@ from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.canvas import MARK_RADIUS_PX, ChangeMark, LayoutCanvas
 
 UNCOMMITTED = ("uncommitted",)
-MOVED = "moved"  # a mark's kind besides ADDED, REMOVED and "changed"
+MOVED = "moved"  # a mark's status besides ADDED, REMOVED and "changed"
 MOVE_TOLERANCE_UM = 1e-6  # a box that moved less than this did not move
 CARD_REACH_PX = 40  # the card stays while the cursor is this close to its mark
 BOX = tuple[float, float, float, float]
@@ -58,14 +58,14 @@ class Mark:
     text. ``change`` is the change listed for it (None for a shape that moved)."""
 
     name: str
-    kind: str
+    status: str
     box: BOX
     lines: list[str] = field(default_factory=list)
     change: Change | None = None
 
     @property
     def edited(self) -> bool:
-        return self.kind != MOVED
+        return self.status != MOVED
 
 
 def find_marks(
@@ -460,17 +460,19 @@ class ComparisonView(QWidget):
             )
         side = self.side_button.isChecked()
         self.canvas.show_marks(
-            [d for d, m in zip(drawn, self.marks, strict=True) if m.kind != REMOVED or not side]
+            [d for d, m in zip(drawn, self.marks, strict=True) if m.status != REMOVED or not side]
         )
         self.old_canvas.show_marks(
-            [d for d, m in zip(drawn, self.marks, strict=True) if m.kind == REMOVED] if side else []
+            [d for d, m in zip(drawn, self.marks, strict=True) if m.status == REMOVED]
+            if side
+            else []
         )
 
     def _mark_color(self, mark: Mark) -> str:
         """Added and removed shapes in the canvas's colours for them; the others in
         the colour of a change."""
-        if mark.kind in (ADDED, REMOVED):
-            return self.canvas.theme["added" if mark.kind == ADDED else "removed"]
+        if mark.status in (ADDED, REMOVED):
+            return self.canvas.theme["added" if mark.status == ADDED else "removed"]
         return theme.color("vcs_changed").name()
 
     # -- modes and steps ------------------------------------------------------------------
@@ -507,7 +509,7 @@ class ComparisonView(QWidget):
         x0, y0, x1, y1 = mark.box
         canvas = (
             self.old_canvas
-            if mark.kind == REMOVED and self.side_button.isChecked()
+            if mark.status == REMOVED and self.side_button.isChecked()
             else self.canvas
         )
         canvas.zoom_to(QRectF(x0, y0, max(x1 - x0, 1e-3), max(y1 - y0, 1e-3)))
@@ -544,9 +546,9 @@ class ComparisonView(QWidget):
     def _mark_of(self, canvas: LayoutCanvas, index: int) -> Mark | None:
         side = self.side_button.isChecked()
         if canvas is self.old_canvas:
-            shown = [m for m in self.marks if m.kind == REMOVED]
+            shown = [m for m in self.marks if m.status == REMOVED]
         else:
-            shown = [m for m in self.marks if m.kind != REMOVED or not side]
+            shown = [m for m in self.marks if m.status != REMOVED or not side]
         return shown[index] if 0 <= index < len(shown) else None
 
     def _near_card(self, canvas: LayoutCanvas, pos: QPoint) -> bool:
@@ -558,7 +560,9 @@ class ComparisonView(QWidget):
 
     def _show_card(self, mark: Mark) -> None:
         self._card_mark = mark
-        can_roll_back = self.key == UNCOMMITTED and mark.change is not None and mark.kind != REMOVED
+        can_roll_back = (
+            self.key == UNCOMMITTED and mark.change is not None and mark.status != REMOVED
+        )
         self.card.fill(mark, can_roll_back, self.component)
         self._place_card(mark)
         self.card.show()
@@ -567,7 +571,7 @@ class ComparisonView(QWidget):
     def _place_card(self, mark: Mark) -> None:
         canvas = (
             self.old_canvas
-            if mark.kind == REMOVED and self.side_button.isChecked()
+            if mark.status == REMOVED and self.side_button.isChecked()
             else self.canvas
         )
         at = canvas.viewport().mapTo(self, canvas.mapFromScene(mark.box[2], mark.box[3]))
@@ -629,11 +633,15 @@ class _Card(QFrame):
 
     def fill(self, mark: Mark, can_roll_back: bool, component: str) -> None:
         muted = theme.color("muted").name()
-        kind = {ADDED: "added", REMOVED: "removed", MOVED: "not edited"}.get(mark.kind, "edited")
-        self.title.setText(f"<b>{_escape(mark.name)}</b> <span style='color:{muted}'>{kind}</span>")
+        status = {ADDED: "added", REMOVED: "removed", MOVED: "not edited"}.get(
+            mark.status, "edited"
+        )
+        self.title.setText(
+            f"<b>{_escape(mark.name)}</b> <span style='color:{muted}'>{status}</span>"
+        )
         self.lines.setText("<br>".join(_escape(line) for line in mark.lines))
         accent = theme.color("accent").name()
-        links = [] if mark.kind == ADDED else ["<a href='old'>Show old</a>"]
+        links = [] if mark.status == ADDED else ["<a href='old'>Show old</a>"]
         if can_roll_back:
             links.append("<a href='back'>Roll back this shape</a>")
         style = f"<style>a {{ color: {accent}; text-decoration: none; }}</style>"

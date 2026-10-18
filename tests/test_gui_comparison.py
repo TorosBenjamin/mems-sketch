@@ -48,7 +48,7 @@ def resize(window, path, **fields):
 
 
 def marks(view):
-    return [(m.name, m.kind) for m in view.marks]
+    return [(m.name, m.status) for m in view.marks]
 
 
 def test_an_edited_shape_is_marked_and_one_it_moved_is_ringed(window):

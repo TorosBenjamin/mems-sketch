@@ -45,6 +45,11 @@ Result render_ref(const Json& node, const Context& ctx) {
     auto built = ctx.builder.build_on(target, values, level);
     Result result;
     for (const auto& [name, point] : built->points) result.points.emplace(name, placement.apply(point));
+    for (const auto& [name, port] : built->ports) {  // each port is a point too: pad.port.signal
+        const Port moved = placed(port, placement);
+        result.points.emplace("port." + name, moved.at);
+        result.ports.emplace(name, moved);
+    }
     result.instances.push_back({std::move(built), placement});
     return result;
 }

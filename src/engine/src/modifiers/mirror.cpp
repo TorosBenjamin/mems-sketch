@@ -65,7 +65,7 @@ Result apply_mirror(const Json& modifier, const Produce& produce, const Variable
         layers.add(placed(original.layers, image));
         for (auto& instance : placed(original.instances, image)) instances.push_back(std::move(instance));
     }
-    return {layers.merged(), original.points, std::move(instances)};
+    return {layers.merged(), original.points, std::move(instances), original.ports};
 }
 
 }  // namespace mems

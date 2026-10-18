@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <numbers>
+#include <optional>
 #include <set>
 
 #include "../model/shape_tree.hpp"
@@ -151,7 +153,7 @@ NodeResult render_node(const Json& node, Builder& builder, const std::string& co
     first["j"] = 0.0;
     Result made = produce(first);
     NodeResult result{std::move(made.layers), std::move(made.instances),
-                      Points{label_of(node), {}, std::move(made.points), {}, {}}, {}, {}};
+                      Points{label_of(node), {}, std::move(made.points), {}, {}, std::move(made.ports)}, {}, {}};
     result.points.box = bbox_of(result.layers, result.instances);
     result.points.outline = std::make_shared<Outline>(result.layers, result.instances);
     if (node.contains("align") && !node["align"].is_null()) {
@@ -159,6 +161,7 @@ NodeResult render_node(const Json& node, Builder& builder, const std::string& co
         for (auto& [layer, region] : result.layers) region = region.transformed(result.shift);
         result.instances = placed(result.instances, result.shift);
         for (auto& [name, point] : result.points.declared) point = result.shift.apply(point);
+        for (auto& [name, port] : result.points.ports) port = placed(port, result.shift);
         result.points.box = bbox_of(result.layers, result.instances);
         result.points.outline = std::make_shared<Outline>(result.layers, result.instances);
     }
@@ -208,6 +211,11 @@ void append_points(std::string& key, const Points& p) {
         key += ',', append_number(key, v);
     key += p.transform.mirror_x ? "m" : "-";
     for (const auto& [name, q] : p.declared) key += ';' + name + '=', append_number(key, q.x), key += ',', append_number(key, q.y);
+    for (const auto& [name, port] : p.ports) {  // a port's direction, width and layer can be inherited
+        key += '>' + name + '=';
+        for (const double v : {port.at.x, port.at.y, port.angle_deg, port.width}) append_number(key, v), key += ',';
+        key += port.layer;
+    }
     char buffer[32];  // the geometry its minimal box is taken of: the same object for the same node result
     std::snprintf(buffer, sizeof buffer, "@%p", static_cast<const void*>(p.outline.get()));
     key += buffer;
@@ -356,6 +364,11 @@ double Points::measure(const std::string& path) const {
         const mgeom::Point p = point(path.substr(0, dot));
         return path.substr(dot + 1) == "x" ? p.x : p.y;
     }
+    if (path.rfind("port.", 0) == 0 && dot != std::string::npos) {
+        const Port p = port(path.substr(5, dot - 5));
+        if (path.substr(dot + 1) == "angle") return p.angle_deg;
+        if (path.substr(dot + 1) == "width") return p.width;
+    }
     if (path == "min.angle") return minimal().angle_deg;
     if (path == "min.width") return minimal().box.width();
     if (path == "min.height") return minimal().box.height();
@@ -396,17 +409,38 @@ std::optional<MeasureName> measure_name(const std::string& name) {
     const size_t first = name.find('.');
     if (first == std::string::npos || first == 0) return std::nullopt;
     std::string path = name.substr(first + 1);
-    const auto coordinate = [](const std::string& text) {  // point.x, point.y
-        const size_t dot = text.find('.');
-        return dot != std::string::npos && dot > 0 && text.find('.', dot + 1) == std::string::npos &&
-               (text.substr(dot + 1) == "x" || text.substr(dot + 1) == "y");
+    // A point's name: one word, or a placed component's port (port.drive).
+    const auto point_name = [](const std::string& text) {
+        const std::string word = text.rfind("port.", 0) == 0 ? text.substr(5) : text;
+        return !word.empty() && word.find('.') == std::string::npos;
+    };
+    const auto ending = [](const std::string& text, std::initializer_list<const char*> ends) {
+        const size_t dot = text.rfind('.');
+        if (dot == std::string::npos || dot == 0) return std::string();
+        for (const char* end : ends)
+            if (text.compare(dot + 1, std::string::npos, end) == 0) return text.substr(0, dot);
+        return std::string();
+    };
+    const auto coordinate = [&](const std::string& text) {  // point.x, port.drive.y
+        const std::string point = ending(text, {"x", "y"});
+        return !point.empty() && point_name(point);
+    };
+    const auto port_measure = [&](const std::string& text) {  // port.drive.angle, port.drive.width
+        const std::string point = ending(text, {"angle", "width"});
+        return point.rfind("port.", 0) == 0 && point_name(point);
     };
     const bool min = path.rfind("min.", 0) == 0;
     const std::string rest = min ? path.substr(4) : std::string();
-    if (path == "width" || path == "height" || coordinate(path) ||
+    if (path == "width" || path == "height" || coordinate(path) || port_measure(path) ||
         (min && (rest == "width" || rest == "height" || rest == "angle" || coordinate(rest))))
         return MeasureName{name.substr(0, first), std::move(path)};
     return std::nullopt;
+}
+
+Port Points::port(const std::string& name) const {
+    const auto found = ports.find(name);
+    if (found == ports.end()) throw BuildError("shape '" + this->name + "' has no port '" + name + "'");
+    return placed(found->second, transform);
 }
 
 Points Points::seen_through(const mgeom::Transform& t) const {
@@ -458,6 +492,12 @@ mgeom::Box bbox_of(const Layers& layers, const Instances& instances) {
     mgeom::Box box = bbox_of(layers);
     for (const auto& instance : instances) include(box, box_of(instance));
     return box;
+}
+
+Port placed(const Port& port, const mgeom::Transform& t) {
+    const double a = port.angle_deg * std::numbers::pi / 180;
+    const mgeom::Point at = t.apply(port.at), ahead = t.apply({port.at.x + std::cos(a), port.at.y + std::sin(a)});
+    return {at, std::atan2(ahead.y - at.y, ahead.x - at.x) * 180 / std::numbers::pi, port.width * t.scale, port.layer};
 }
 
 Instances placed(const Instances& instances, const mgeom::Transform& t) {
@@ -608,7 +648,8 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
         }
         if (Records* records = builder.recording(); records && !records->count(path))
             records->emplace(path, NodeRecord{result.layers, result.instances, result.points.name,
-                                              result.points.declared, result.inner, result.shift});
+                                              result.points.declared, result.inner, result.shift,
+                                              result.points.ports});
         visiting[k] = false;
         results[k] = std::move(result.layers);
         placements[k] = std::move(result.instances);
@@ -706,22 +747,55 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
     first["i"] = 0.0;
     first["j"] = 0.0;
     const Context ctx{*this, qualified, first, rendered.local};
+    // Where a point or port is measured from: its ``at``, a point of a top-level
+    // shape (a placed component's port ``pad.port.signal`` among them) or of its
+    // own box, else the origin.
+    auto base_of = [&](const Json& item, const char* what) -> mgeom::Point {
+        if (!item.contains("at") || !item["at"].is_string()) return {0.0, 0.0};
+        const std::string at = item["at"].get<std::string>();
+        if (is_bbox_point(at) || (at.rfind("min.", 0) == 0 && is_bbox_point(at.substr(4)))) return whole.point(at);
+        const std::string node = at.substr(0, at.find('.'));
+        const auto found = rendered.local.find(node);
+        if (found == rendered.local.end())
+            throw BuildError(std::string(what) + " '" + item.at("name").get<std::string>() + "' is at '" + at +
+                             "', but there is no shape '" + node + "'");
+        return found->second.point(at.substr(at.find('.') + 1));
+    };
     for (const auto& point : definition->shapes->points) {
-        const std::string name = point.at("name").get<std::string>();
-        mgeom::Point base{0.0, 0.0};
-        if (point.contains("at") && point["at"].is_string()) {
-            const std::string at = point["at"].get<std::string>();
-            if (is_bbox_point(at) || (at.rfind("min.", 0) == 0 && is_bbox_point(at.substr(4)))) {
-                base = whole.point(at);
-            } else {
-                const std::string node = at.substr(0, at.find('.'));
-                const auto found = rendered.local.find(node);
-                if (found == rendered.local.end())
-                    throw BuildError("point '" + name + "' is at '" + at + "', but there is no shape '" + node + "'");
-                base = found->second.point(at.substr(at.find('.') + 1));
-            }
+        const mgeom::Point base = base_of(point, "point");
+        built.points[point.at("name").get<std::string>()] = {base.x + ctx.number(point, "x", 0.0),
+                                                             base.y + ctx.number(point, "y", 0.0)};
+    }
+    // Its ports, measured like its points. One at a placed component's port
+    // takes that port's direction, width and layer unless it gives its own.
+    for (const auto& port : definition->shapes->ports) {
+        const std::string name = port.at("name").get<std::string>();
+        const mgeom::Point base = base_of(port, "port");
+        std::optional<Port> from;
+        if (port.contains("at") && port["at"].is_string()) {
+            const std::string at = port["at"].get<std::string>();
+            const size_t dot = at.find('.');
+            if (dot != std::string::npos && at.compare(dot + 1, 5, "port.") == 0)
+                from = rendered.local.at(at.substr(0, dot)).port(at.substr(dot + 6));
         }
-        built.points[name] = {base.x + ctx.number(point, "x", 0.0), base.y + ctx.number(point, "y", 0.0)};
+        auto given = [&](const char* key) { return port.contains(key) && !port[key].is_null(); };
+        Port made_port;
+        made_port.at = {base.x + ctx.number(port, "x", 0.0), base.y + ctx.number(port, "y", 0.0)};
+        if (given("direction")) {
+            const Json& direction = port["direction"];
+            const std::string word = direction.is_string() ? direction.get<std::string>() : std::string();
+            made_port.angle_deg = word == "right" ? 0.0
+                                  : word == "up"  ? 90.0
+                                  : word == "left" ? 180.0
+                                  : word == "down" ? 270.0
+                                                   : ctx.value(direction);
+        } else if (from) {
+            made_port.angle_deg = from->angle_deg;
+        }
+        made_port.width = given("width") ? ctx.value(port["width"]) : from ? from->width : 0.0;
+        if (made_port.width < 0) throw BuildError("port '" + name + "': its width cannot be negative");
+        made_port.layer = given("layer") ? layer(port["layer"].get<std::string>()) : from ? from->layer : layer("level");
+        built.ports[name] = made_port;
     }
     return cache_->put(std::move(made));
 }

@@ -37,7 +37,7 @@ from mems_sketch.core.shapes import (
     Shape,
     TransformShape,
 )
-from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef
+from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef, PortDef
 from mems_sketch.engine import Build, Engine
 from mems_sketch.export.base import export, register_exporter
 from mems_sketch.storage import load, load_library, save
@@ -76,6 +76,7 @@ __all__ = [
     "PointDef",
     "PolarArrayModifier",
     "PolygonShape",
+    "PortDef",
     "Process",
     "Project",
     "RectShape",

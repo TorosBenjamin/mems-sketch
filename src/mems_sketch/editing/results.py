@@ -16,6 +16,7 @@ from mems_sketch.core.shapes import (
     NodePath,
     NodePoints,
     NodeRecord,
+    Port,
     Shape,
     container_of,
     frame_of,
@@ -362,6 +363,20 @@ class Results:
         """Positions of a component's declared points (trial values included)."""
         component = component or self.session.active
         return self._build(component).points()
+
+    def declared_ports(self, component: str | None = None) -> dict[str, Port]:
+        """A component's ports as built (trial values included)."""
+        component = component or self.session.active
+        return self._build(component).ports()
+
+    def node_ports(self, path: NodePath, component: str | None = None) -> dict[str, Port]:
+        """The ports of a placed component at ``path`` (an array's copies' by index
+        too), in its component's frame."""
+        record = self.inspection(component)
+        if path not in record:
+            return {}
+        frame = frame_of(record, path)
+        return {name: port.transformed(frame) for name, port in record[path].ports.items()}
 
     def selection_center(self, paths: list[NodePath]) -> tuple[float, float] | None:
         """Centre of the bounding box of the given shapes, in the component's frame."""

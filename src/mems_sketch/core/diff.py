@@ -150,6 +150,7 @@ def _component(name: str, old: ComponentDef | None, new: ComponentDef | None) ->
     for what, before, after in (
         ("parameter", old.parameters, new.parameters),
         ("point", old.points, new.points),
+        ("port", old.ports, new.ports),
     ):
         changes += _named(name, what, before, after)
     changes += _shapes(name, old.shapes, new.shapes, (), 0, (), None)

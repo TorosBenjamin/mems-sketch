@@ -136,9 +136,15 @@ class Actions:
         for name, tool in w.tools.items():
             if name == first_drawing:
                 tools_menu.addSeparator()
+            # Measure starts measuring distances; N (below) measures angles.
+            slot = (
+                (lambda _=False: w.measure("distance"))
+                if name == "measure"
+                else (lambda _=False, n=name: w.set_tool(n))
+            )
             action = act(
                 tool.label,
-                lambda _=False, n=name: w.set_tool(n),
+                slot,
                 tool.shortcut or None,
                 tools_menu if tool.listed else None,
                 tool.icon,
@@ -146,6 +152,13 @@ class Actions:
             action.setCheckable(True)
             group.addAction(action)
             self.tools[name] = action
+        # The Measure tool in its angle mode, listed right after Measure.
+        self.measure_angle = act("Measure angle", lambda: w.measure("angle"), "N", None, "angle")
+        entries = tools_menu.actions()
+        after = entries.index(self.tools["measure"]) + 1
+        tools_menu.insertAction(
+            entries[after] if after < len(entries) else None, self.measure_angle
+        )
         tools_menu.addSeparator()
         act("Clear rulers", w.clear_rulers, None, tools_menu, "clear")
 

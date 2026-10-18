@@ -229,12 +229,11 @@ def test_the_mode_palette_switches_tools(window):
         "Rotate",
         "Align",
         "Corners",
-        "Measure",
-        "Measure angle",
+        "Measure",  # distances and angles: its modes are in the status bar
     ]
     assert all(b.isVisible() for b in buttons.values())
     palette = window.canvas.mode_palette
-    assert palette.height() >= 8 * 24  # sized to hold its buttons
+    assert palette.height() >= 7 * 24  # sized to hold its buttons
     buttons["Measure"].click()
     assert window.tool.name == "measure" and buttons["Measure"].isChecked()
 

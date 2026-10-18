@@ -304,6 +304,7 @@ class LayoutCanvas(QGraphicsView):
         self._left_down = False
         self._drag_items: list = []
         self._ghost: QGraphicsItem | None = None  # a component being placed
+        self._snap_marker: _SnapMarker | None = None  # where a click would snap
         self._ruler_items: list = []
         self._rulers: list[tuple[float, float, float, float]] = []  # distances, for ticks
         self._box_item: QGraphicsRectItem | None = None
@@ -786,6 +787,28 @@ class LayoutCanvas(QGraphicsView):
         for item in items:
             self.scene().addItem(item)
         self._points[style] = items
+
+    def show_snap_marker(self, at: tuple[float, float] | None, kind: str = "point") -> None:
+        """Mark where a click would snap (``kind``: "point" or "edge"); None hides it."""
+        if at is None:
+            if self._snap_marker is not None:
+                self._snap_marker.hide()
+            return
+        if self._snap_marker is None:
+            self._snap_marker = _SnapMarker(QColor(self.theme["snap"]))
+            self.scene().addItem(self._snap_marker)
+        self._snap_marker.ringed = kind != "edge"
+        self._snap_marker.setPos(*at)
+        self._snap_marker.show()
+        self._snap_marker.update()
+
+    @property
+    def snap_marker(self) -> tuple[str, float, float] | None:
+        """The shown snap marker: its kind and where, or None."""
+        marker = self._snap_marker
+        if marker is None or not marker.isVisible():
+            return None
+        return "point" if marker.ringed else "edge", marker.pos().x(), marker.pos().y()
 
     def show_drag_preview(self, geometry: Geometry, colors: dict[str, QColor]) -> None:
         """Draw what is being dragged on top; move it with :meth:`move_drag_preview`."""
@@ -1776,6 +1799,33 @@ def _length_text(um: float) -> str:
     if um < 1:
         return f"{um * 1000:g} nm"
     return f"{um:g} µm"
+
+
+SNAP_DOT_PX = 5  # a snap marker's dot
+SNAP_RING_PX = 13  # ... and the ring around it on a point (not on an edge)
+
+
+class _SnapMarker(QGraphicsEllipseItem):
+    """Where a click would snap: a dot, ringed on a point (a shape's point or a
+    corner), alone on an edge, where it follows the cursor. Same size at any zoom."""
+
+    def __init__(self, color: QColor) -> None:
+        super().__init__(-SNAP_RING_PX / 2, -SNAP_RING_PX / 2, SNAP_RING_PX, SNAP_RING_PX)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.setZValue(1160)
+        self.color = color
+        self.ringed = True  # on a point; a plain dot on an edge
+
+    def paint(self, painter, option, widget=None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self.ringed:
+            painter.setPen(QPen(self.color, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(self.rect())
+        painter.setPen(QPen(QColor("white"), 1))
+        painter.setBrush(self.color)
+        half = SNAP_DOT_PX / 2
+        painter.drawEllipse(QRectF(-half, -half, SNAP_DOT_PX, SNAP_DOT_PX))
 
 
 class _PointMarker(QGraphicsEllipseItem):

@@ -36,6 +36,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, ClassVar
 
+import numpy as np
 from PySide6.QtCore import Qt
 
 from mems_sketch.core.shapes import (
@@ -1019,100 +1020,150 @@ def _handle(shape, radius: float, style: str, fits: bool):
     return CornerHandle(shape.point, shape.handle(radius), label, fits)
 
 
+DISTANCE, ANGLE = "distance", "angle"  # the Measure tool's modes
+MEASURE_MODE_KEY = "measure/mode"  # app setting: the mode it was last used in
+
+
+class SnapTargets:
+    """What a measurement snaps to, best first: a shape's named point, a corner of
+    anything drawn, else the nearest point of an edge. Placed components count
+    too, as they are placed (the geometry is flattened into the component's frame).
+    """
+
+    def __init__(self, points: list[Candidate], geometry=None) -> None:
+        self.points = points
+        corners, starts, ends = [], [], []
+        if geometry is not None:
+            for layer in geometry.layer_names():
+                for polygon in geometry.polygons(layer):
+                    for ring in (polygon.hull, *polygon.holes):
+                        loop = np.asarray(ring, dtype=float).reshape(-1, 2)
+                        if len(loop) < 2:
+                            continue
+                        corners.append(loop)
+                        starts.append(loop)
+                        ends.append(np.roll(loop, -1, axis=0))
+        empty = np.empty((0, 2))
+        self.corners = np.concatenate(corners) if corners else empty
+        self.starts = np.concatenate(starts) if starts else empty
+        self.ends = np.concatenate(ends) if ends else empty
+
+    def nearest(self, x: float, y: float, reach: float) -> tuple[float, float, str] | None:
+        """The point to snap ``(x, y)`` to within ``reach`` µm, with what it is: the
+        point's name, ``corner`` or ``edge``; None when nothing is that close."""
+        best = None
+        for label, px, py in self.points:
+            distance = math.hypot(px - x, py - y)
+            if distance < reach and (best is None or distance < best[0]):
+                best = (distance, px, py, label)
+        if best is not None:
+            return best[1], best[2], best[3]
+        if len(self.corners):
+            distances = np.hypot(self.corners[:, 0] - x, self.corners[:, 1] - y)
+            index = int(np.argmin(distances))
+            if distances[index] < reach:
+                cx, cy = self.corners[index]
+                return float(cx), float(cy), "corner"
+        if len(self.starts):
+            along = self.ends - self.starts
+            lengths = np.einsum("ij,ij->i", along, along)
+            lengths[lengths == 0] = 1.0
+            where = np.array([x, y])
+            t = np.clip(np.einsum("ij,ij->i", where - self.starts, along) / lengths, 0, 1)
+            feet = self.starts + along * t[:, None]
+            distances = np.hypot(feet[:, 0] - x, feet[:, 1] - y)
+            index = int(np.argmin(distances))
+            if distances[index] < reach:
+                fx, fy = feet[index]
+                return float(fx), float(fy), "edge"
+        return None
+
+
 class MeasureTool(Tool):
-    """Click two points to measure; the rulers stay (per component) until cleared."""
+    """Measure a distance (two clicks) or an angle (the vertex, then a point on
+    each arm); the rulers stay, per component, until cleared.
+
+    Points snap to the shapes' points, to the corners and edges of everything
+    drawn (placed components too) and else to the grid; a dot shows where. The
+    mode is switched in the status bar, or with D (distance) and N (angle).
+    """
 
     name, label, shortcut = "measure", "Measure", "D"
     edits = False
     cursor = Qt.CursorShape.CrossCursor
     icon = "measure"
 
-    def reset(self) -> None:
-        self._start: tuple[float, float] | None = None
-        self._end: tuple[float, float] | None = None
-        self._snap: Candidate | None = None
-        self._candidates: list[Candidate] | None = None
-
-    @property
-    def busy(self) -> bool:
-        return self._start is not None
-
-    def hint(self) -> str:
-        if self._start is None:
-            return "Measure: click the first point (snaps to shape points; Ctrl: no snapping)"
-        return "Measure: click the second point (Esc cancels)"
-
-    def _points(self) -> list[Candidate]:
-        if self._candidates is None:
-            self._candidates = self.document.results.all_points()
-        return self._candidates
-
-    def press(self, x, y, modifiers) -> None:
-        px, py, _ = self.snap(x, y, self._points(), modifiers)
-        if self._start is None:
-            self._start = (px, py)
-            self.window.prompt(self.hint())
-            return
-        ruler = (*self._start, px, py)
-        self.reset()
-        self.window.add_ruler(ruler)
-        self.window.prompt(self.hint())
-
-    def move(self, x, y, modifiers, left) -> None:
-        px, py, label = self.snap(x, y, self._points(), modifiers)
-        self._snap = (label, px, py) if label else None
-        self.canvas.show_points("snap", [self._snap] if self._snap else [])
-        if self._start is not None:
-            self._end = (px, py)
-            self.window.draw_rulers(extra=(*self._start, px, py))
-            dx, dy = px - self._start[0], py - self._start[1]
-            self.window.prompt(f"Distance {math.hypot(dx, dy):.3f} µm  (dx {dx:.3f}, dy {dy:.3f})")
-
-    def hover_label(self, x, y) -> str | None:
-        return self.snap(x, y, self._points(), NONE, grid=False)[2]
-
-    def markers(self) -> dict[str, list[Candidate]]:
-        return {"anchor": [("start", *self._start)]} if self._start else {}
-
-    def cancel(self) -> bool:
-        busy = super().cancel()
-        self.canvas.show_points("snap", [])
-        self.window.draw_rulers()
-        return busy
-
-
-class AngleTool(Tool):
-    """Click the vertex, then a point on each arm; the angle stays like a ruler."""
-
-    name, label, shortcut = "angle", "Measure angle", "N"
-    edits = False
-    cursor = Qt.CursorShape.CrossCursor
-    icon = "angle"
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__(window)
+        settings = getattr(window, "settings", None)
+        mode = settings.value(MEASURE_MODE_KEY, DISTANCE) if settings is not None else DISTANCE
+        self.mode = mode if mode in (DISTANCE, ANGLE) else DISTANCE
 
     def reset(self) -> None:
-        self._placed: list[tuple[float, float]] = []  # the vertex, then the first arm
-        self._candidates: list[Candidate] | None = None
+        self._placed: list[tuple[float, float]] = []  # the points clicked so far
+        self._targets: SnapTargets | None = None
 
     @property
     def busy(self) -> bool:
         return bool(self._placed)
 
+    @property
+    def needed(self) -> int:
+        return 2 if self.mode == DISTANCE else 3
+
+    def set_mode(self, mode: str) -> None:
+        """Measure distances or angles (what was being measured is dropped)."""
+        if mode not in (DISTANCE, ANGLE):
+            raise ValueError(f"unknown measure mode '{mode}'")
+        if mode != self.mode:
+            self.cancel()
+        self.mode = mode
+        settings = getattr(self.window, "settings", None)
+        if settings is not None:
+            settings.set_value(MEASURE_MODE_KEY, mode)
+        if self.window.tool is self:
+            self.window.prompt(self.hint())
+            self.window.tool_status.show_for(self)
+
     def hint(self) -> str:
+        snapping = "snaps to points, corners and edges; Ctrl: no snapping"
+        if self.mode == DISTANCE:
+            if not self._placed:
+                return f"Measure: click the first point ({snapping}; N: angles)"
+            return "Measure: click the second point (Esc cancels)"
         if not self._placed:
-            return "Angle: click the vertex (snaps to shape points; Ctrl: no snapping)"
+            return f"Angle: click the vertex ({snapping}; D: distances)"
         if len(self._placed) == 1:
             return "Angle: click a point on the first arm (Esc cancels)"
         return "Angle: click a point on the second arm (Shift: 15° steps, Esc cancels)"
 
-    def _points(self) -> list[Candidate]:
-        if self._candidates is None:
-            self._candidates = self.document.results.all_points()
-        return self._candidates
+    def targets(self) -> SnapTargets:
+        if self._targets is None:
+            results = self.document.results
+            try:
+                geometry = results.geometry()
+            except Exception:  # noqa: BLE001 - it does not build: the named points only
+                geometry = None
+            self._targets = SnapTargets(results.all_points(), geometry)
+        return self._targets
 
-    def _locate(self, x, y, modifiers) -> tuple[float, float, str | None]:
-        px, py, label = self.snap(x, y, self._points(), modifiers)
-        if len(self._placed) == 2 and modifiers & SHIFT:  # the second arm in 15° steps
-            (vx, vy), (ax, ay) = self._placed
+    def locate(self, x, y, modifiers) -> tuple[float, float, str | None]:
+        """Where a click at ``(x, y)`` puts a point, and what it snapped to."""
+        if modifiers & CTRL:
+            return x, y, None
+        if self.setting("snapping/points", True):
+            found = self.targets().nearest(x, y, self.reach)
+            if found is not None:
+                return found
+        if self.setting("snapping/grid", True):
+            step = self.canvas.grid_step()
+            return _um(round(x / step) * step), _um(round(y / step) * step), None
+        return x, y, None
+
+    def _point(self, x, y, modifiers) -> tuple[float, float, str | None]:
+        px, py, label = self.locate(x, y, modifiers)
+        if self.mode == ANGLE and len(self._placed) == 2 and modifiers & SHIFT:
+            (vx, vy), (ax, ay) = self._placed  # the second arm in 15° steps
             first = math.atan2(ay - vy, ax - vx)
             turn = math.atan2(py - vy, px - vx) - first
             turn = math.radians(round(math.degrees(turn) / 15) * 15)
@@ -1122,41 +1173,47 @@ class AngleTool(Tool):
         return px, py, label
 
     def press(self, x, y, modifiers) -> None:
-        px, py, _ = self._locate(x, y, modifiers)
-        if len(self._placed) < 2:
-            if self._placed and (px, py) == self._placed[0]:
-                return  # an arm needs a point other than the vertex
-            self._placed.append((px, py))
+        px, py, _ = self._point(x, y, modifiers)
+        if self.mode == ANGLE and self._placed and (px, py) == self._placed[0]:
+            return  # an arm needs a point other than the vertex
+        self._placed.append((px, py))
+        if len(self._placed) < self.needed:
             self.window.prompt(self.hint())
             return
-        if (px, py) == self._placed[0]:
-            return
-        ruler = (*self._placed[0], *self._placed[1], px, py)
+        ruler = tuple(v for point in self._placed for v in point)
         self.reset()
+        self.canvas.show_snap_marker(None)
         self.window.add_ruler(ruler)
         self.window.prompt(self.hint())
 
     def move(self, x, y, modifiers, left) -> None:
-        px, py, label = self._locate(x, y, modifiers)
-        self.canvas.show_points("snap", [(label, px, py)] if label else [])
-        if len(self._placed) == 1:
-            self.window.draw_rulers(extra=(*self._placed[0], px, py))
+        px, py, label = self._point(x, y, modifiers)
+        kind = None if label is None else "edge" if label == "edge" else "point"
+        self.canvas.show_snap_marker((px, py) if kind else None, kind)
+        if not self._placed:
+            return
+        self.window.draw_rulers(extra=(*(v for point in self._placed for v in point), px, py))
+        if self.mode == DISTANCE:
+            dx, dy = px - self._placed[0][0], py - self._placed[0][1]
+            self.window.prompt(f"Distance {math.hypot(dx, dy):.3f} µm  (dx {dx:.3f}, dy {dy:.3f})")
         elif len(self._placed) == 2:
-            vertex, first = self._placed
-            self.window.draw_rulers(extra=(*vertex, *first, px, py))
-            sweep = angle_between(vertex, first, (px, py))[1]
+            sweep = angle_between(self._placed[0], self._placed[1], (px, py))[1]
             self.window.prompt(f"Angle {sweep:.2f}°")
 
     def hover_label(self, x, y) -> str | None:
-        return self.snap(x, y, self._points(), NONE, grid=False)[2]
+        return self.locate(x, y, NONE)[2]
 
     def markers(self) -> dict[str, list[Candidate]]:
-        names = ("vertex", "arm")
+        names = ("start",) if self.mode == DISTANCE else ("vertex", "arm")
         return {"anchor": [(n, *p) for n, p in zip(names, self._placed, strict=False)]}
+
+    def design_changed(self) -> None:
+        super().design_changed()
+        self._targets = None  # the geometry changed
 
     def cancel(self) -> bool:
         busy = super().cancel()
-        self.canvas.show_points("snap", [])
+        self.canvas.show_snap_marker(None)
         self.window.draw_rulers()
         return busy
 
@@ -1588,7 +1645,6 @@ TOOLS: tuple[type[Tool], ...] = (
     AlignTool,
     CornersTool,
     MeasureTool,
-    AngleTool,
     RectTool,
     CircleTool,
     PolygonTool,

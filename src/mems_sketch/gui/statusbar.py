@@ -13,6 +13,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
     QFrame,
@@ -50,11 +51,34 @@ class ToolStatus(QWidget):
             0.001, 1e6, 3, " µm", "The width of paths drawn with the Path tool"
         )
         self.angle_box = _number(1, 90, 1, " °", "The Rotate tool snaps to multiples of this angle")
+        # The Measure tool's modes, side by side: Distance | Angle.
+        self.measure_modes = QWidget()
+        modes = QHBoxLayout(self.measure_modes)
+        modes.setContentsMargins(0, 0, 0, 0)
+        modes.setSpacing(1)
+        self.mode_buttons: dict[str, QToolButton] = {}
+        group = QButtonGroup(self.measure_modes)
+        for mode, text, icon, tip in (
+            ("distance", "Distance", "measure", "Measure distances: two clicks (D)"),
+            ("angle", "Angle", "angle", "Measure angles: the vertex, then each arm (N)"),
+        ):
+            button = QToolButton()
+            button.setText(text)
+            icons.bind(button, icon)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            button.setCheckable(True)
+            button.setAutoRaise(True)
+            button.setToolTip(tip)
+            button.setFixedHeight(STATUS_HEIGHT)
+            group.addButton(button)
+            modes.addWidget(button)
+            self.mode_buttons[mode] = button
         self.tool_widgets: dict[str, tuple[QWidget, QWidget]] = {}
         for key, label, widget in (
             ("layer", "Layer", self.layer_box),
             ("width", "Width", self.width_box),
             ("angle", "Step", self.angle_box),
+            ("mode", "", self.measure_modes),
         ):
             caption = QLabel(f" {label}")
             caption.setObjectName("muted")
@@ -94,7 +118,11 @@ class ToolStatus(QWidget):
             "layer": tool.draws and getattr(tool, "uses_layer", True),
             "width": tool.name == "path",
             "angle": tool.name == "rotate",
+            "mode": tool.name == "measure",
         }
+        mode = getattr(tool, "mode", None)
+        if mode in self.mode_buttons:
+            self.mode_buttons[mode].setChecked(True)
         for key, widgets in self.tool_widgets.items():
             for widget in widgets:
                 widget.setVisible(shown[key])

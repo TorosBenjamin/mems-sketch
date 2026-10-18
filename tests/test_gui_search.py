@@ -62,9 +62,9 @@ def test_choosing_a_component_opens_it(window):
     window.search("Components")
     dialog = window._find_dialog
     dialog.search.setText("comb")
-    assert shown(window) == ["comb_drive"]
+    assert shown(window) == ["mems.comb_drive"]
     dialog._run(dialog.list.currentItem(), open_it=True)  # Ctrl+Enter; Enter places it
-    assert window.view.component == "comb_drive"
+    assert window.view.component == "mems.comb_drive"
 
 
 def test_choosing_a_parameter_shows_it_in_its_panel(window):

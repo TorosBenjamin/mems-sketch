@@ -557,7 +557,8 @@ test passing and updates this document.
    Python backend has turned curves into segments before an operation).
    One difference is deliberate: a bevelled offset cuts every corner at the
    distance from it, where KLayout's sizing agrees only on right angles.
-   The built-in components became an ordinary library, and the C++ engine
+   The built-in components became an ordinary library (since then the
+   bundled `mems` library), and the C++ engine
    is now the only backend: `mems_sketch.engine` builds through
    `_core.Engine` (a cache shared across versions of a project, node records
    for the editor, imported cells passed in as polygons), `Geometry` holds a

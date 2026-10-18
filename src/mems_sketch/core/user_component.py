@@ -177,10 +177,15 @@ class ComponentDef(_Model):
     ``level`` is the level of the layer stack it is on unless a placement says
     otherwise; without one it is on the level of whatever places it
     (:mod:`mems_sketch.core.levels`).
+
+    ``category`` is where it is shown (``springs``, ``electrodes/comb``): the
+    folder it is in, not part of its name. ``tags`` are words to find it by.
     """
 
     name: str
     description: str = ""
+    category: str = ""
+    tags: list[str] = Field(default_factory=list)
     level: str | None = None
     parameters: list[ParamDef] = Field(default_factory=list)
     points: list[PointDef] = Field(default_factory=list)
@@ -193,6 +198,13 @@ class ComponentDef(_Model):
         if not all(part.isidentifier() for part in name.split("/")):
             raise ValueError(f"'{name}' is not a valid component name")
         return name
+
+    @field_validator("category")
+    @classmethod
+    def _valid_category(cls, category: str) -> str:
+        if category and not all(part.isidentifier() for part in category.split("/")):
+            raise ValueError(f"'{category}' is not a category: folder names, like 'springs'")
+        return category
 
     @model_validator(mode="after")
     def _shapes_named(self):

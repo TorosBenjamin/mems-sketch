@@ -257,7 +257,7 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture
 def project(tmp_path):
-    for name in ("resonator", "libraries"):
+    for name in ("resonator",):
         shutil.copytree(
             EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
         )
@@ -367,6 +367,7 @@ def test_frame_and_islands_have_their_own_colours(window, name, qtbot):
     from mems_sketch.gui.theme import tokens
 
     window.settings.set("appearance/ui_theme", name)
+    window.components.tree.collapseAll()  # so the island shows below the rows
     qtbot.wait(20)
     image = window.grab().toImage()
     stripe = window.tool_windows.findChild(QWidget, "tool-window-stripe-left")
@@ -463,8 +464,8 @@ def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path)
     panel = window.area.process_view.rules
     panel.refresh()
     items = [panel.process.itemText(k) for k in range(panel.process.count())]
-    assert items == ["main", "fab.surface"]
-    panel.process.activated.emit(1)
+    assert items == ["main", "mems.surface", "fab.surface"]
+    panel.process.activated.emit(2)
     assert window.document.project.process_name == "fab.surface"
     table = panel.rules
     row = [table.item(r, 0).text() for r in range(table.rowCount())].index("device_min_width")

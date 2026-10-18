@@ -56,7 +56,7 @@ def test_errors_are_reported_not_raised(window):
 
 
 def test_component_parameters_show_declared_defaults(window):
-    window.add_component("comb_drive")
+    window.add_component("mems.comb_drive")
     fields = window.properties.findChildren(QLineEdit)
     assert any(f.placeholderText() == "10" for f in fields)  # default finger count
     window.document.parameters.set("n", 4.0)
@@ -86,18 +86,13 @@ def test_open_example_project_with_library(window, tmp_path):
         tmp_path / "resonator",
         ignore=shutil.ignore_patterns(".mems-sketch"),
     )
-    shutil.copytree(
-        EXAMPLES / "libraries",
-        tmp_path / "libraries",
-        ignore=shutil.ignore_patterns(".mems-sketch"),
-    )
     window.open_project(str(tmp_path / "resonator" / "project.yaml"))
     assert window.document.project.name == "resonator"
     labels = [
         window.components.tree.topLevelItem(i).text(0)
         for i in range(window.components.tree.topLevelItemCount())
     ]
-    assert labels == ["resonator", "std", "Built-in"]
+    assert labels == ["resonator", "mems"]
     assert window.messages.item(0).text() == "No rule violations."
 
 

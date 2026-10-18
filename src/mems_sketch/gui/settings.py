@@ -309,7 +309,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         "editor/show_implementation",
         False,
-        "Show how library and built-in components are built",
+        "Show how library components are built",
         "Editor",
         "Components",
         "A component you cannot edit shows its interface: public parameters, points and "

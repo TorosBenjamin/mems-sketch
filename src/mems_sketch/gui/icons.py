@@ -142,8 +142,6 @@ ICONS = {
     + '<path d="M6.5 6.5h3v3h-3z" fill="{blue}" fill-opacity=".35" stroke="none"/>',
     "component_imported": _CHIP.replace("{purple}", "{green}")  # an imported cell: green
     + '<path d="M6.5 6.5h3v3h-3z" fill="{green}" fill-opacity=".35" stroke="none"/>',
-    "component_builtin": _CHIP.replace("{purple}", "{orange}")  # a built-in: orange
-    + '<path d="M6.5 6.5h3v3h-3z" fill="{orange}" fill-opacity=".35" stroke="none"/>',
     "guide": '<path d="M3 13 13 3" stroke="{blue}" stroke-dasharray="2 1.6"/>'
     '<circle cx="3" cy="13" r="1.4" fill="{blue}" stroke="none"/>'
     '<circle cx="13" cy="3" r="1.4" fill="{blue}" stroke="none"/>',
@@ -181,8 +179,6 @@ ICONS = {
     + '<path d="M8 5.8v4.2M6.3 8.4 8 10.1l1.7-1.7" stroke="{purple}"/>',
     "library": '<path d="M2.5 2.5h4v11h-4zM6.5 2.5h3.2v11H6.5z"/>'
     '<path d="M10 3.2l3-.8 2.2 10.8-3 .8z" stroke="{blue}"/>',
-    "builtin": '<path d="M8 1.8 13.6 5v6L8 14.2 2.4 11V5z"/><path d="M2.4 5 8 8.2 13.6 5M8 8.2v6" '
-    'stroke="{orange}"/>',
     "top": '<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" '
     'fill="{yellow}" fill-opacity=".35" stroke="{yellow}"/>',
     "lock": '<rect x="3.2" y="7" width="9.6" height="7" rx="1"/><path d="M5.2 7V5a2.8 2.8 0 0 1 '

@@ -151,13 +151,8 @@ def test_read_only_tabs_cannot_be_dragged(window, tmp_path):
         tmp_path / "resonator",
         ignore=shutil.ignore_patterns(".mems-sketch"),
     )
-    shutil.copytree(
-        examples / "libraries",
-        tmp_path / "libraries",
-        ignore=shutil.ignore_patterns(".mems-sketch"),
-    )
     window.open_project(str(tmp_path / "resonator"))
-    window.open_component("std.perforated_plate")
+    window.open_component("mems.perforated_plate")
     window.canvas.fit()
     drag(window, (5, 5), (30, 5))  # its shapes are hidden: nothing to take hold of
     assert window.selection == [] and not window.document.can_undo()

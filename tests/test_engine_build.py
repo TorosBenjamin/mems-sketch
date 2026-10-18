@@ -71,13 +71,24 @@ _recorded: dict[str, object] | None = None
 
 
 # Fields added after the recording, left out of a case's key while they hold
-# their defaults (what the recorded result was built without).
-_LATER_FIELDS = {("rect", "corner_radius"): 0.0}
+# their defaults (what the recorded result was built without); a component's
+# own fields are under None.
+_LATER_FIELDS = {("rect", "corner_radius"): 0.0, (None, "category"): "", (None, "tags"): []}
+# What components were called when the recording was made: the built-ins and
+# the example library's plate are the bundled mems library's now.
+OLD_NAMES = {
+    "mems.anchor": "anchor",
+    "mems.comb_drive": "comb_drive",
+    "mems.serpentine_spring": "serpentine_spring",
+    "mems.perforated_plate": "std.perforated_plate",
+}
 
 
 def _as_recorded(value):
     if isinstance(value, dict):
         kind = value.get("kind")
+        if kind == "ref" and value.get("component") in OLD_NAMES:
+            value = {**value, "component": OLD_NAMES[value["component"]]}
         return {
             k: _as_recorded(v)
             for k, v in value.items()
@@ -96,7 +107,11 @@ def case_key(project: Project, component: str, params=None, what: str = "geometr
 
     data = {
         "components": dump(project.components),
-        "libraries": {n: dump(lib.components) for n, lib in sorted(project.libraries.items())},
+        "libraries": {  # the bundled ones were built-ins, not in the key
+            n: dump(lib.components)
+            for n, lib in sorted(project.libraries.items())
+            if not lib.bundled
+        },
         "constants": project.process.constants,
         "levels": [(lv.layer, lv.roles) for lv in project.process.levels],
         "default_level": project.process.default_level,
@@ -139,13 +154,18 @@ def python_points(project: Project, component: str) -> dict[str, tuple[float, fl
 
 
 def assert_same(
-    project: Project, component: str, params=None, tolerance=CURVED_NM, recorded_as=None
+    project: Project,
+    component: str,
+    params=None,
+    tolerance=CURVED_NM,
+    recorded_as=None,
+    recorded_component=None,
 ):
     """Both backends give the same geometry, or both refuse it. ``recorded_as``: the
     project as the recording had it (a component since rewritten to the same
-    geometry)."""
+    geometry); ``recorded_component``: what the component was called then."""
     try:
-        python = python_regions(recorded_as or project, component, params)
+        python = python_regions(recorded_as or project, recorded_component or component, params)
     except Exception as python_error:  # noqa: BLE001
         with pytest.raises(ValueError):
             engine_regions(project, component, params)
@@ -162,15 +182,7 @@ def assert_same(
     return "same"
 
 
-def all_components(project: Project) -> list[str]:
-    names = [*project.components]
-    names += [
-        f"{lib}.{n}" for lib, library in project.libraries.items() for n in library.components
-    ]
-    return names
-
-
-# std.perforated_plate as recorded: a rectangle less an array of circles. It is
+# mems.perforated_plate as recorded: a rectangle less an array of circles. It is
 # a perforate modifier now (#83), with the holes where they were.
 RECORDED_PLATE = """
 description: Square plate with a grid of round release holes
@@ -200,26 +212,44 @@ shapes:
 """
 
 
-def as_recorded(folder: str) -> Project:
+def recorded_plate() -> ComponentDef:
     import yaml
 
     from mems_sketch.storage.component_format import component_from_data
 
-    plate, _ = component_from_data("perforated_plate", yaml.safe_load(RECORDED_PLATE))
-    old = load(EXAMPLES / folder)
-    for components in [old.components, *(lib.components for lib in old.libraries.values())]:
-        if "perforated_plate" in components:
-            components["perforated_plate"] = plate
-    return old
+    return component_from_data("perforated_plate", yaml.safe_load(RECORDED_PLATE))[0]
 
 
-@pytest.mark.parametrize("folder", ["resonator", "libraries/mems_std"])
-def test_the_examples(folder):
-    """Every example component the engine builds matches; the others say why not."""
-    project = load(EXAMPLES / folder)
-    recorded_as = as_recorded(folder)
-    for name in all_components(project):
+def test_the_example_project():
+    """Every component of the example project the engine builds matches; the
+    plate it places too, as it was recorded."""
+    from mems_sketch.core.project import Library
+
+    project = load(EXAMPLES / "resonator")
+    recorded_as = load(EXAMPLES / "resonator")
+    recorded_as.libraries["std"] = Library("std", {"perforated_plate": recorded_plate()})
+    for name in project.components:
         assert assert_same(project, name, recorded_as=recorded_as) == "same", name
+    assert (
+        assert_same(
+            project,
+            "mems.perforated_plate",
+            recorded_as=recorded_as,
+            recorded_component="std.perforated_plate",
+        )
+        == "same"
+    )
+
+
+def test_the_bundled_plate():
+    """The bundled library's plate (as a project of its own), as recorded when it was
+    the example library's."""
+    from mems_sketch.libraries import BUNDLED_FOLDER
+
+    project = load(BUNDLED_FOLDER / "mems")
+    recorded_as = load(Path(__file__).parent / "data" / "mems_std")
+    recorded_as.components["perforated_plate"] = recorded_plate()
+    assert assert_same(project, "perforated_plate", recorded_as=recorded_as) == "same"
 
 
 BUILT_IN_CASES = [  # (component, parameters, built: else both refuse)
@@ -240,8 +270,14 @@ BUILT_IN_CASES = [  # (component, parameters, built: else both refuse)
 
 
 @pytest.mark.parametrize("name, params, built", BUILT_IN_CASES)
-def test_built_in_components(name, params, built):
-    result = assert_same(new_project("built-ins"), name, params, tolerance=STRAIGHT_NM)
+def test_the_former_built_in_components(name, params, built):
+    result = assert_same(
+        new_project("built-ins"),
+        f"mems.{name}",
+        params,
+        tolerance=STRAIGHT_NM,
+        recorded_component=name,
+    )
     assert (result == "same") == built, result
 
 

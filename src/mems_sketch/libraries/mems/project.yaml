@@ -1,0 +1,12 @@
+format: mems-sketch/2
+name: mems
+description: MEMS components and example processes
+version: 1
+top: null
+process: surface
+processes: {surface: processes/surface}
+components:
+  anchor: components/anchors/anchor
+  comb_drive: components/electrodes/comb_drive
+  serpentine_spring: components/springs/serpentine_spring
+  perforated_plate: components/masses/perforated_plate

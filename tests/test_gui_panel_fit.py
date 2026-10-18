@@ -32,7 +32,7 @@ def window(qtbot, monkeypatch):
 
 @pytest.fixture
 def resonator(window, tmp_path):
-    for name in ("resonator", "libraries"):
+    for name in ("resonator",):
         shutil.copytree(
             EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
         )
@@ -41,11 +41,11 @@ def resonator(window, tmp_path):
 
 
 def placed_plate(window):
-    """The path of ``mass``, which places ``std.perforated_plate``."""
+    """The path of ``mass``, which places ``mems.perforated_plate``."""
     return next(
         path
         for path in sorted(window.document.results.inspection())
-        if getattr(window.document.node(path), "component", "") == "std.perforated_plate"
+        if getattr(window.document.node(path), "component", "") == "mems.perforated_plate"
     )
 
 
@@ -89,7 +89,7 @@ def test_a_long_card_heading_is_shortened_not_widening(resonator, qtbot):
     card = next(
         s for s in resonator.properties.findChildren(Section) if s.title().startswith("Parameters")
     )
-    assert card.title() == "Parameters of std.perforated_plate"  # the whole heading
+    assert card.title() == "Parameters of mems.perforated_plate"  # the whole heading
     assert card.minimumSizeHint().width() < card.fontMetrics().horizontalAdvance(card.title())
 
 

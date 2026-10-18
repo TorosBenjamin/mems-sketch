@@ -88,8 +88,8 @@ def test_rename_component_updates_references():
     project.rename_component("bar", "beam")
     assert project.find("b1").component == "beam"
     assert area(project) == pytest.approx(90)
-    with pytest.raises(ValueError, match="already exists"):
-        project.rename_component("beam", "anchor")
+    project.rename_component("beam", "anchor")  # not taken: the bundled one is mems.anchor
+    assert project.find("b1").component == "anchor"
 
 
 def test_used_components_are_kept_and_removing_the_top_leaves_a_library():

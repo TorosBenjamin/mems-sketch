@@ -54,22 +54,22 @@ def opener(window) -> QToolButton:
 
 
 def test_a_placed_component_says_so_and_opens(window):
-    window.add_component("anchor")
+    window.add_component("mems.anchor")
     node = window.document.node(window.selection[0])
     assert kind_title(node) == "Placed component"
     assert window.properties.header_context.text() == "Placed component"
     assert "Placement" in sections(window)
     assert not window.properties.findChildren(QComboBox, "component")  # shown once, as text
     opener(window).click()
-    assert window.document.active == "anchor"
+    assert window.document.active == "mems.anchor"
 
 
 def test_the_open_button_menu_replaces_the_placed_component(window):
-    window.add_component("anchor")
+    window.add_component("mems.anchor")
     path = window.selection[0]
     replace = opener(window).menu().actions()[0].menu()
-    next(a for a in replace.actions() if a.text() == "comb_drive").trigger()
-    assert window.document.node(path).component == "comb_drive"
+    next(a for a in replace.actions() if a.text() == "mems.comb_drive").trigger()
+    assert window.document.node(path).component == "mems.comb_drive"
 
 
 def test_a_folded_card_stays_folded_for_that_kind_of_shape(window, qtbot):
@@ -87,8 +87,8 @@ def test_a_folded_card_stays_folded_for_that_kind_of_shape(window, qtbot):
 
 
 def test_units_in_labels_are_lighter(window):
-    window.add_component("anchor")
-    labels = [lab for lab in window.properties.findChildren(QLabel) if "<span" in lab.text()]
+    window.add_component("mems.anchor")
+    labels = [lab for lab in window.properties.findChildren(QLabel) if "µm</span>" in lab.text()]
     assert labels and all("µm" in lab.toolTip() or "(" in lab.toolTip() for lab in labels)
 
 

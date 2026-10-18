@@ -390,14 +390,14 @@ def test_no_menu_starts_or_ends_with_a_separator_or_has_two_in_a_row(window, qtb
     widgets.tidy_separators(menu)
     assert shown(menu) == ["Open", "---", "Delete"]
 
-    # A real one: a built-in component's menu ended with a separator (#120).
+    # A real one: a library component's menu ended with a separator (#120).
     tree = window.components.tree
-    builtin = next(
-        tree.topLevelItem(i).child(0)
+    library = next(
+        tree.topLevelItem(i).child(0).child(0)  # in its first category
         for i in range(tree.topLevelItemCount())
-        if tree.topLevelItem(i).text(0) == "Built-in"
+        if tree.topLevelItem(i).text(0) == "mems"
     )
-    menu = window.components.menu_for(builtin)
+    menu = window.components.menu_for(library)
     menu.popup(window.mapToGlobal(window.rect().center()))  # tidied as it opens
     qtbot.waitUntil(menu.isVisible)
     entries = shown(menu)

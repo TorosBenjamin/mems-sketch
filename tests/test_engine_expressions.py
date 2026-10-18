@@ -178,14 +178,18 @@ def test_edge_cases(text):
 
 
 def project_expressions():
-    """Every string value in the example projects that Python can parse."""
+    """Every string value in the example projects and the bundled libraries that
+    Python can parse."""
+    from mems_sketch.libraries import BUNDLED_FOLDER
+
     found = set()
-    root = Path(__file__).parent.parent / "examples"
+    roots = [Path(__file__).parent.parent / "examples", BUNDLED_FOLDER]
 
     def walk(value):
         if isinstance(value, dict):
-            for item in value.values():
-                walk(item)
+            for key, item in value.items():
+                if key != "libraries":  # where they are, not expressions
+                    walk(item)
         elif isinstance(value, list):
             for item in value:
                 walk(item)
@@ -196,8 +200,9 @@ def project_expressions():
                 return
             found.add(value)
 
-    for path in root.rglob("*.yaml"):
-        walk(yaml.safe_load(path.read_text()))
+    for root in roots:
+        for path in root.rglob("*.yaml"):
+            walk(yaml.safe_load(path.read_text()))
     return sorted(found)
 
 

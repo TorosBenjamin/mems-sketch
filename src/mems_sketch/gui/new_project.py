@@ -85,7 +85,9 @@ class NewProjectDialog(QDialog):
         self.libraries.setMinimumHeight(90)
         self.libraries.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.libraries.itemSelectionChanged.connect(self._validate)
-        widgets.placeholder(self.libraries, "No libraries: only the built-in components.")
+        widgets.placeholder(
+            self.libraries, "No libraries of your own: the bundled ones (mems) are always there."
+        )
         add = widgets.action_button(
             "plus",
             "Add a library: a folder of components (a library or another project)",

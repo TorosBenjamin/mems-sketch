@@ -1,7 +1,8 @@
 """A quick check that an installed or bundled mems-sketch works: what a
 release's packages are tested with (``mems-sketch --self-test``).
 
-It builds a component that places a built-in one, checks the design rules in
+It builds a component that places components of the bundled mems library
+(so the bundled libraries are in the package), checks the design rules in
 a background process (as the editor does on big designs), writes and reads
 back a GDS file, and opens and closes the main window. Each step prints a
 line, and also goes to the file MEMS_SKETCH_SELFTEST_LOG names, if any (a
@@ -39,8 +40,8 @@ def run(window: bool = True) -> None:
 
     project = new_project("self-test")
     project.components["top"].shapes = [
-        RefShape(name="comb", component="comb_drive"),
-        RefShape(name="spring", component="serpentine_spring", x=200),
+        RefShape(name="comb", component="mems.comb_drive"),
+        RefShape(name="spring", component="mems.serpentine_spring", x=200),
     ]
     geometry = project.render("top")
     assert not geometry.is_empty(), "the test design drew nothing"

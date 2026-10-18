@@ -1692,6 +1692,10 @@ class MainWindow(QMainWindow):
     def wrap(self, operation: str) -> None:
         self._select_result(lambda: self.document.nodes.wrap(self.selection, operation))
 
+    def connect(self) -> None:
+        """Join the selected shapes' ends with a connection, and select it."""
+        self._select_result(lambda: self.document.nodes.connect(self.selection))
+
     def make_component(self) -> None:
         if not self.selection:
             self.report_error("select the shapes to turn into a component first")

@@ -185,6 +185,8 @@ class Actions:
         for op, label in OPERATIONS:
             menu = combine if op in BOOLEANS else operations
             self.operations[op] = act(label, lambda _=False, o=op: w.wrap(o), menu=menu, icon=op)
+        self.connect = act("Connect", lambda: w.connect(), menu=operations, icon="connection")
+        self.connect.setToolTip("Join the selected shapes' ends (their ports) with a connection")
         operations.addSeparator()
         operations.addAction(self.make)
         operations.addAction(self.unpack)
@@ -302,6 +304,7 @@ class Actions:
         combine.setEnabled(several and editable)
         for op in ("offset", "fillet", "transform", "layer_map"):
             item(menu, self.operations[op])
+        item(menu, self.connect, enabled=several)
         item(menu, self.make)
         item(menu, self.unpack, enabled=reference)
         orient = menu.addMenu(self.rotate_left.icon(), "Rotate && mirror")

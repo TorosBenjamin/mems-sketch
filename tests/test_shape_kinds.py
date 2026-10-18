@@ -11,6 +11,7 @@ from mems_sketch.core.project import new_project
 from mems_sketch.core.shapes import (
     KINDS,
     SHAPE_ADAPTER,
+    ConnectionShape,
     RectShape,
     RefShape,
     TransformShape,
@@ -60,8 +61,13 @@ def bbox(shape):
     return None if box is None else tuple(round(v * 1000) for v in box)
 
 
+# Kinds that cannot be built alone: a connection joins other shapes' ends
+# (tests/test_connections.py builds it beside them).
+NOT_ALONE = {ConnectionShape}
+
+
 def test_every_kind_has_a_sample():
-    assert {type(s) for s in SAMPLES} == set(KINDS)
+    assert {type(s) for s in SAMPLES} == set(KINDS) - NOT_ALONE
 
 
 @pytest.mark.parametrize("kind", KINDS, ids=lambda k: k.kind_name())

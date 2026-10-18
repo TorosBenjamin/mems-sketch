@@ -291,6 +291,15 @@ measurements and checks: see its design, [The Sketch language](language.md).
   stadium). A polar pattern for round membranes is not there yet.
 - **SHP-15** (Could, new; [#98](https://github.com/TorosBenjamin/mems-sketch/issues/98)) More factory shapes: **regular polygon** (n sides),
   **ellipse** (exact), **spiral** (Archimedean, with a width).
+- **SHP-16** (Should, exists; [#192](https://github.com/TorosBenjamin/mems-sketch/issues/192)) **Connections:** the area joining beam
+  ends, made from their ports (PNT-6), with the corners between the beams
+  rounded (`inner_radius`) and the outer ones (`radius`); the beams are not
+  changed. Paths have ports at their ends. Every way an end can be wrong is an
+  error naming it, never a silently wrong shape: a port off its shape or
+  facing into it, on a rounded corner or curve, wider than its beam, facing
+  away from the others, ends that overlap, a radius that does not fit (with
+  the largest that does), ends on different layers. **Operations → Connect**
+  joins the selected beams by their facing ports.
 
 ### Modifiers
 

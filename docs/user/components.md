@@ -26,7 +26,9 @@ shown like any other, and **Copy into the project** makes an editable copy. A
 plain rectangle is the `rect` shape.
 
 Double-click opens a component in a tab. Drag one onto the canvas, or use
-**Place**, to put it into the component you are editing. Right-click for the
+**Place** (Shift+A, see [the window](the-window.md#placing-components)), to put
+it into the component you are editing. With nothing selected, Properties shows
+the open component's **Description**, shown wherever it is placed from. Right-click for the
 rest: rename (every reference follows), duplicate, delete, set as top, new
 private component, make shared or private, copy a library component into the
 project, add or remove a library, make the project a library. The **+**
@@ -60,7 +62,7 @@ min, max, a trial value and the resolved value.
   Where the component is placed, internal parameters are not offered.
 - A **trial** value shows the component with another value without changing
   the design: it is not saved or undone and only affects that component's own
-  tab. It also works on library and built-in components, so you can try a
+  tab. It also works on library components, so you can try a
   spring with more turns before using it.
 - Values passed to a placed component are evaluated where it is placed;
   parameters left out take their defaults.

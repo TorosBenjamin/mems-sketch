@@ -184,7 +184,7 @@ def test_right_click_opens_the_menu_and_right_drag_pans(window, menus):
     canvas = window.canvas
     centre = QPointF(canvas.viewport().rect().center())
     right_click(canvas, centre)
-    assert len(menus) == 1 and {"Add", "Place component", "Rectangle"} <= set(menus[0])
+    assert len(menus) == 1 and {"Add", "Place component…", "Rectangle"} <= set(menus[0])
     before = canvas.mapToScene(centre.toPoint())
     right_click(canvas, centre, QPointF(40, 0))
     assert len(menus) == 1  # a drag pans instead

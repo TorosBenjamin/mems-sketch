@@ -55,10 +55,13 @@ def test_a_collapsed_category_stays_collapsed(window):
 
 
 def test_tags_are_shown_and_searched(window):
+    from mems_sketch.gui.search import RESULT_ROLE
+
     window.document.project.components["spring"] = ComponentDef(name="spring", tags=["flexure"])
     window.components.refresh()
     window.search("Components")
     dialog = window._find_dialog
     dialog.search.setText("flexure")
-    titles = [dialog.list.topLevelItem(i).text(0) for i in range(dialog.list.topLevelItemCount())]
-    assert "spring" in titles
+    items = [dialog.list.topLevelItem(i) for i in range(dialog.list.topLevelItemCount())]
+    titles = [i.data(0, RESULT_ROLE).title for i in items if i.data(0, RESULT_ROLE)]
+    assert titles == ["spring"]

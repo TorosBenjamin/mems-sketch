@@ -11,11 +11,10 @@ import functools
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCursor, QKeySequence
 from PySide6.QtWidgets import QMenu
 
 from mems_sketch.gui import icons, theme
-from mems_sketch.gui.style import QUALIFIED
 
 if TYPE_CHECKING:
     from mems_sketch.gui.app import MainWindow
@@ -140,8 +139,8 @@ class Actions:
             action = act(
                 tool.label,
                 lambda _=False, n=name: w.set_tool(n),
-                tool.shortcut,
-                tools_menu,
+                tool.shortcut or None,
+                tools_menu if tool.listed else None,
                 tool.icon,
             )
             action.setCheckable(True)
@@ -162,10 +161,8 @@ class Actions:
                 else (lambda _=False, k=kind: w.add_primitive(k))
             )
             act(label, slot, menu=self.add, icon=kind)
-        self.place = insert.addMenu("Place component")
-        self.place.setProperty(QUALIFIED, True)
-        icons.bind(self.place.menuAction(), "place")
-        self.place.aboutToShow.connect(self._fill_place_menu)
+        # A popup that searches the components (see mems_sketch.gui.component_picker).
+        self.place = act("Place component…", lambda: w.place_popup(), "Shift+A", insert, "place")
 
         operations = self.operations_menu = QMenu("&Operations", w)
         combine = self.combine = operations.addMenu("Combine")
@@ -243,13 +240,6 @@ class Actions:
         visit(self.root)
         return list(found.values())
 
-    def _fill_place_menu(self) -> None:
-        w = self.window
-        self.place.clear()
-        for name in w.document.component_names():
-            if name != w.document.active:
-                make_action(w, name, lambda _=False, n=name: w.add_component(n), menu=self.place)
-
     def context_menu(self, x: float, y: float) -> QMenu:
         """The editor's right-click menu at ``(x, y)`` µm, for what is selected.
 
@@ -281,15 +271,9 @@ class Actions:
                     (lambda _=False, k=kind: w.start_drawing(k, x, y)) if kind in w.tools else None
                 )
                 item(add, source, slot)
-            place = menu.addMenu(self.place.menuAction().icon(), "Place component")
-            place.setProperty(QUALIFIED, True)
-            for name in w.document.component_names():
-                if name != w.document.active:
-                    action = make_action(menu, name, lambda _=False, n=name: w.add_component(n))
-                    place.addAction(action)
-                    action.setEnabled(editable)
+            # The Place popup, by the cursor; the component lands where the click was.
+            item(menu, self.place, lambda: w.place_popup(at=(x, y), near=QCursor.pos()))
             add.setEnabled(editable)
-            place.setEnabled(editable and not place.isEmpty())
             menu.addSeparator()
             item(menu, self.paste, enabled=w.can_paste())
             item(menu, self.select_all).setEnabled(True)  # selecting changes nothing

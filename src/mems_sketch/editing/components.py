@@ -201,6 +201,16 @@ class ComponentEdits(Commands):
 
         self.session.edit(f"Put {name} on {level or 'the level it is placed on'}", change)
 
+    def set_description(self, name: str, text: str) -> None:
+        """What a project component is, in a sentence or two: shown where it is
+        placed from (the Place popup, Search Everywhere) and by its parameters."""
+        text = " ".join(text.split())
+
+        def change(project: Project) -> None:
+            project.components[name].description = text
+
+        self.session.edit(f"Describe {name}", change)
+
     def _check_name(self, name: str, owner: str | None = None, moving: str | None = None) -> str:
         """The path of a new component ``name`` (private to ``owner``), if it is free
         (``moving``: the component that will have it)."""

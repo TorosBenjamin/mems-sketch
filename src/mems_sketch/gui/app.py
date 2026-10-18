@@ -15,7 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QColor, QKeySequence
+from PySide6.QtGui import QCloseEvent, QColor, QCursor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -33,9 +33,10 @@ from mems_sketch.core.shapes import NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
 from mems_sketch.export.base import available_exporters, options_of, title_of
-from mems_sketch.gui import icons, motion, theme
+from mems_sketch.gui import component_picker, icons, motion, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
+from mems_sketch.gui.component_picker import PlacePopup
 from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.export_dialog import ExportOptionsDialog, remember, remembered
 from mems_sketch.gui.history_panel import HistoryPanel
@@ -474,7 +475,14 @@ class MainWindow(QMainWindow):
 
     def search(self, scope: str = ALL) -> None:
         """Search Everywhere (Shift twice): components, shapes, parameters, commands."""
-        dialog = SearchDialog(self.search_results(), scope, self)
+        dialog = SearchDialog(
+            self.search_results(),
+            scope,
+            self,
+            describe=lambda entry: component_picker.component_info(
+                self.document, entry, self.layers.colors
+            ),
+        )
         center = self.geometry().center()
         dialog.move(center.x() - dialog.width() // 2, self.geometry().top() + 90)
         self._find_dialog = dialog
@@ -488,23 +496,32 @@ class MainWindow(QMainWindow):
     def search_results(self) -> list[Result]:
         """Everything Search Everywhere can find, in the order it lists them."""
         project = self.document.project
-        results = [
-            Result(
-                name,
-                "Components",
-                lambda n=name: self.open_component(n),
-                detail=_component_detail(project, name),
-                icon=icons.icon(component_icon(project, name)),
+        placeable = {e.name: e for e in component_picker.entries(self.document)}
+        editable = not self.document.read_only
+        results = []
+        for name in [
+            *project.components,
+            *(
+                f"{lib}.{c}"
+                for lib, library in project.libraries.items()
+                for c in library.components
+            ),
+        ]:
+            entry = placeable.get(name) or component_picker.Entry(  # e.g. the one edited
+                name, component_picker.source_of(project, name), icon=component_icon(project, name)
             )
-            for name in [
-                *project.components,
-                *(
-                    f"{lib}.{c}"
-                    for lib, library in project.libraries.items()
-                    for c in library.components
-                ),
-            ]
-        ]
+            can_place = editable and name in placeable
+            results.append(
+                Result(
+                    name,
+                    "Components",
+                    lambda n=name: self.open_component(n),
+                    detail=_component_detail(project, name),
+                    icon=icons.icon(component_icon(project, name)),
+                    entry=entry,
+                    place=(lambda n=name: self.start_placing(n)) if can_place else None,
+                )
+            )
         results += [
             Result(
                 shape.name or f"({shape.kind})",
@@ -543,10 +560,7 @@ class MainWindow(QMainWindow):
         """A component dragged from the explorer onto a canvas: place it there."""
         if view is not self.area.current:
             self.area.set_current(view)
-        if name == view.component:
-            self.report_error("a component cannot be placed inside itself")
-            return
-        self._select_result(lambda: self.document.nodes.add_component(name, x, y))
+        self.place_component_at(name, x, y)
 
     def split_view(self) -> None:
         view = self.area.split_view()
@@ -855,7 +869,7 @@ class MainWindow(QMainWindow):
         self.find_action_action, self.dark_action = actions.find, actions.dark
         self.tool_actions, self.operation_actions = actions.tools, actions.operations
         self.setting_actions = actions.settings_toggles
-        self.primitive_menu, self.component_menu = actions.add, actions.place
+        self.primitive_menu = actions.add
         bar = build_toolbar(self)
         self.addToolBar(bar)
         self.title_bar = TitleBar(self, bar)
@@ -1583,6 +1597,49 @@ class MainWindow(QMainWindow):
 
     def add_component(self, name: str) -> None:
         self._select_result(lambda: self.document.nodes.add_component(name))
+
+    # -- placing components (see mems_sketch.gui.component_picker) ------------
+
+    def place_popup(
+        self, at: tuple[float, float] | None = None, near: QPoint | None = None
+    ) -> PlacePopup | None:
+        """The Place popup: by ``near`` (global), else by the mouse on the canvas, else
+        under the Place button. A component chosen follows the cursor until a click
+        puts it down, or, with ``at`` (µm, a right-click), lands there."""
+        if self.document.read_only:
+            self.report_error("this component cannot be edited: copy it into the project first")
+            return None
+        popup = PlacePopup(component_picker.entries(self.document), self)
+        if at is None:
+            popup.chosen.connect(self.start_placing)
+        else:
+            popup.chosen.connect(lambda name: self.place_component_at(name, *at))
+        popup.browse.connect(lambda: self.search("Components"))
+        if near is None:
+            cursor = QCursor.pos()
+            viewport = self.canvas.viewport()
+            if viewport.rect().contains(viewport.mapFromGlobal(cursor)):
+                near = cursor
+            else:
+                button = self.place_button
+                near = button.mapToGlobal(button.rect().bottomLeft())
+        popup.popup(near)
+        self._place_popup = popup
+        return popup
+
+    def start_placing(self, name: str) -> None:
+        """Put ``name`` under the cursor; a click places it (see ``PlaceTool``)."""
+        self.set_tool("place")
+        if not self.tools["place"].begin(name):
+            self.set_tool("select")
+
+    def place_component_at(self, name: str, x: float, y: float) -> None:
+        """Place ``name`` with its origin at ``(x, y)`` µm and remember it as recent."""
+        if name == self.document.active:
+            self.report_error("a component cannot be placed inside itself")
+            return
+        component_picker.remember(name)
+        self._select_result(lambda: self.document.nodes.add_component(name, x, y))
 
     def wrap(self, operation: str) -> None:
         self._select_result(lambda: self.document.nodes.wrap(self.selection, operation))

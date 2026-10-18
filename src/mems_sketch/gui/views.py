@@ -142,7 +142,7 @@ class ComponentView(QWidget):
 
     def tooltip(self) -> str:
         if self.read_only:
-            where = "library" if "." in self.component else "built-in"
+            where = "library" if "." in self.component else "imported"
             return f"{self.component} — {where} component, read-only (trial values work)"
         top = " (top)" if self.component == self.document.project.top else ""
         changed = ", changed since the last save" if self.document.modified(self.component) else ""

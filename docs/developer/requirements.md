@@ -338,6 +338,17 @@ measurements and checks: see its design, [The Sketch language](language.md).
   intersection of two edges, the point where a line is tangent to a curve.
   They can be aligned to and used in expressions, and they follow the design
   like other points.
+- **PNT-6** (Must, exists; [#181](https://github.com/TorosBenjamin/mems-sketch/issues/181)) **A component declares ports**, where wires
+  attach: a point (measured like a declared point), the direction a wire
+  leaves it in (`right`, `up`, `left`, `down` or an angle), the wire width it
+  expects and the layer it runs on (level-relative, like a shape's), all
+  expressions. Placed, a port moves, turns and mirrors with the component and
+  is a point of the placement (`comb1.port.drive`: aligned to, measured with
+  `.x`, `.y`, `.angle`, `.width`, and a placement aligned by it); an array's
+  copies have theirs by index (`comb1.port.drive[2]`). A port at a placed
+  component's port takes its direction, width and layer unless it gives its
+  own, so ports are re-exported like points. The editor declares them in the
+  Points panel and draws a selected placement's ports as arrows.
 
 ### Measurements
 

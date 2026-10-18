@@ -315,6 +315,7 @@ class LayoutCanvas(QGraphicsView):
         self._change_items: list = []
         self._marks: list[ChangeMark] = []
         self._points: dict[str, list] = {}
+        self._ports: dict[str, list] = {}
         self._pan_from: QPointF | None = None
         self._right_from: QPointF | None = None  # right press: a click, until it drags
         self.left_pans = False  # hand mode: the left button pans
@@ -805,6 +806,32 @@ class LayoutCanvas(QGraphicsView):
         for item in items:
             self.scene().addItem(item)
         self._points[style] = items
+
+    def show_ports(
+        self, style: str, ports: list[tuple[str, float, float, float]], labels: bool = False
+    ) -> None:
+        """Mark ports (name, x, y, angle in degrees) with arrows pointing the way a
+        wire leaves, in a point style's colour; replaces that style's port markers."""
+        for item in self._ports.pop(style, []):
+            self.scene().removeItem(item)
+        color = QColor(self.theme[style])
+        items = []
+        for name, x, y, angle in ports:
+            marker = _PortMarker(color)
+            marker.setPos(x, y)
+            marker.setRotation(-angle)  # it ignores the view's flip: y points down for it
+            marker.setToolTip(name)
+            items.append(marker)
+            if labels:
+                text = QGraphicsSimpleTextItem(name)
+                text.setBrush(color)
+                text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+                text.setPos(x, y)
+                text.setZValue(1100)
+                items.append(text)
+        for item in items:
+            self.scene().addItem(item)
+        self._ports[style] = items
 
     def show_snap_marker(self, at: tuple[float, float] | None, kind: str = "point") -> None:
         """Mark where a click would snap (``kind``: "point" or "edge"); None hides it."""
@@ -1906,6 +1933,26 @@ class _PointMarker(QGraphicsEllipseItem):
         half = self._size / 2
         painter.drawLine(QPointF(-half, 0), QPointF(half, 0))
         painter.drawLine(QPointF(0, -half), QPointF(0, half))
+
+
+class _PortMarker(QGraphicsPathItem):
+    """A port: a small circle where it is and an arrow the way a wire leaves it,
+    the same size in pixels at any zoom (turned with setRotation)."""
+
+    LENGTH_PX = 16
+
+    def __init__(self, color: QColor) -> None:
+        path = QPainterPath()
+        path.addEllipse(QPointF(0, 0), 3, 3)
+        path.moveTo(3, 0)
+        path.lineTo(self.LENGTH_PX, 0)
+        path.moveTo(self.LENGTH_PX - 5, -4)
+        path.lineTo(self.LENGTH_PX, 0)
+        path.lineTo(self.LENGTH_PX - 5, 4)
+        super().__init__(path)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.setPen(QPen(color, 1.8))
+        self.setZValue(1100)
 
 
 def angle_between(

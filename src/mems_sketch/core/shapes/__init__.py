@@ -91,7 +91,7 @@ from mems_sketch.core.shapes.points import (
     point_names,
     point_values,
 )
-from mems_sketch.core.shapes.records import NodeRecord, frame_of, transform_of
+from mems_sketch.core.shapes.records import NodeRecord, Port, frame_of, transform_of
 from mems_sketch.core.shapes.registry import (
     BY_KIND,
     PRIMITIVE_KINDS,
@@ -159,6 +159,7 @@ __all__ = [
     "Point",
     "PolarArrayModifier",
     "PolygonShape",
+    "Port",
     "Primitive",
     "RectShape",
     "RefShape",

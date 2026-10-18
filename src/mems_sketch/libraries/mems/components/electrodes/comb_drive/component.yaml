@@ -5,7 +5,7 @@ description: >-
   thickness), the same at any overlap. The fixed spine sits on an anchor along
   its length (`anchored`; 0 for none); the moving spine is narrow enough to
   release and attaches to what it moves. Points: moving and fixed, the middle
-  of each spine's outer edge.
+  of each spine's outer edge. Port: drive, the fixed comb's connection.
 tags: [electrode, comb drive, actuator, capacitive, resonator]
 parameters:
   fingers: {default: 10, min: 1, integer: true, description: Moving fingers}
@@ -36,6 +36,12 @@ parameters:
 points:
   moving: {y: -overlap/2 + finger_length + moving_spine_width}
   fixed: {y: overlap/2 - finger_length - spine_width}
+ports:
+  drive:
+    at: fixed_spine.bottom
+    direction: down
+    width: spine_width
+    description: The fixed comb's connection, off the middle of its spine
 shapes:
   fixed_fingers:
     kind: rect

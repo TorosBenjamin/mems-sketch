@@ -139,7 +139,7 @@ Result apply_perforate(const Json& modifier, const Produce& produce, const Varia
             if (fits[k]) holes.push_back(hole.transformed(mgeom::Transform::translation(sites[k].x, sites[k].y)));
         result.emplace(layer, holes.empty() ? region : region - mgeom::Region::unite(holes));
     }
-    return {result, made.points};
+    return {result, made.points, {}, made.ports};
 }
 
 }  // namespace mems

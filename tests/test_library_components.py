@@ -161,6 +161,25 @@ def test_documented_points(name, which, expected):
     assert point(name, which) == pytest.approx(expected)
 
 
+@pytest.mark.parametrize(
+    "name, which, expected",
+    [
+        # (x, y, angle, width): off the outside of the fixed spine, as wide as it
+        ("mems.comb_drive", "drive", (0, -40, 270, 10)),
+        ("mems.comb_drive_with_stops", "drive", (0, -40, 270, 10)),  # its comb's
+        ("mems.differential_comb", "upper", (0, 104, 90, 10)),  # the turned comb's: up
+        ("mems.parallel_plate", "fixed", (2, 77, 90, 9)),  # above the anchors
+        ("std.bond_pad", "signal", (50, 0, 0, 25)),
+        ("mems.lateral_resonator", "drive", (-159.25, 0, 180, 10)),  # the left comb's
+        ("mems.accelerometer", "lower_right", (72, -156.25, 270, 9)),
+    ],
+)
+def test_documented_ports(name, which, expected):
+    port = Engine().load(on()).build(name).ports()[which]
+    assert tuple(port[:4]) == pytest.approx(expected)
+    assert port.layer == "device"  # on the level they are placed on
+
+
 def test_the_stiffness_follows_the_formula():
     """E t w³ / L³ for the guided beam, in N/m (GPa · µm⁴ / µm³ = kN/m, so × 1000)."""
     values = defaults("mems.guided_beam")

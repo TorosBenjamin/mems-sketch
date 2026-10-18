@@ -4,7 +4,7 @@ Frontends (the GUI, the CLI, scripts) never build geometry or touch files
 themselves; they go through a session, which uses the rest of the backend
 (project model, engine, storage, rules, export). Edits are grouped:
 ``session.components``, ``.nodes``, ``.modifiers``, ``.moves``, ``.points``,
-``.parameters`` and ``.process``; ``session.results`` is what the components evaluate to.
+``.ports``, ``.parameters`` and ``.process``; ``session.results`` is what the components evaluate to.
 
 * One component is **active**, e.g. the one in the GUI's current tab. Shape edits,
   parameters and points refer to it. Any component can be active; library
@@ -51,6 +51,7 @@ from mems_sketch.editing.naming import fresh_name
 from mems_sketch.editing.nodes import NodeEdits
 from mems_sketch.editing.parameters import ParameterEdits
 from mems_sketch.editing.points import PointEdits
+from mems_sketch.editing.ports import PortEdits
 from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
 from mems_sketch.engine import Engine
@@ -93,6 +94,7 @@ class EditSession:
         self.imports = ImportEdits(self)
         self.moves = MoveEdits(self)
         self.points = PointEdits(self)
+        self.ports = PortEdits(self)
         self.parameters = ParameterEdits(self)
         self.process = ProcessEdits(self)
         self.history = History(self)

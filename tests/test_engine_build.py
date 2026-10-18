@@ -73,7 +73,12 @@ _recorded: dict[str, object] | None = None
 # Fields added after the recording, left out of a case's key while they hold
 # their defaults (what the recorded result was built without); a component's
 # own fields are under None.
-_LATER_FIELDS = {("rect", "corner_radius"): 0.0, (None, "category"): "", (None, "tags"): []}
+_LATER_FIELDS = {
+    ("rect", "corner_radius"): 0.0,
+    (None, "category"): "",
+    (None, "tags"): [],
+    (None, "ports"): [],
+}
 # What components were called when the recording was made: the built-ins and
 # the example library's plate are the bundled mems library's now.
 OLD_NAMES = {

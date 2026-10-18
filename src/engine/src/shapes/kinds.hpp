@@ -26,5 +26,6 @@ Result render_guide(const Json& node, const Context& ctx);
 Result render_offset(const Json& node, const Context& ctx);
 Result render_fillet(const Json& node, const Context& ctx);
 Result render_layer_map(const Json& node, const Context& ctx);
+Result render_connection(const Json& node, const Context& ctx);
 
 }  // namespace mems

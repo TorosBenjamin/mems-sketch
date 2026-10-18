@@ -53,6 +53,7 @@ add_library(mems_engine
     src/shapes/offset.cpp
     src/shapes/fillet.cpp
     src/shapes/layer_map.cpp
+    src/shapes/connection.cpp
     src/modifiers/modifiers.cpp
     src/modifiers/array.cpp
     src/modifiers/polar_array.cpp

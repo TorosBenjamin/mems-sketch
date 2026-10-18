@@ -88,6 +88,9 @@ void point_dependencies(const Json& node, std::set<std::string>& found) {
             for (const auto& name : modifier.value("keep_out", Json::array()))  // a perforation's
                 if (name.is_string()) found.insert(name.get<std::string>());
         }
+        if (node.value("kind", std::string()) == "connection")  // the ends it joins: beam.port.end
+            for (const auto& end : node.value("ends", Json::array()))
+                if (end.is_string()) found.insert(end.get<std::string>().substr(0, end.get<std::string>().find('.')));
     }
     for (const auto& [key, value] : node.items())
         if (is_child_list(key, value))

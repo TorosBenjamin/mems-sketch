@@ -14,7 +14,6 @@ from mems_sketch.core.shapes import RefShape
 from mems_sketch.gui import component_picker
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.component_picker import (
-    BUILT_IN,
     ENTRY_ROLE,
     HEADING_ROLE,
     THIS_PROJECT,
@@ -64,11 +63,11 @@ def placed(window) -> list[str]:
 
 
 def test_the_popup_lists_recent_components_then_each_source(window):
-    component_picker.remember("anchor")
+    component_picker.remember("mems.anchor")
     popup = window.place_popup(near=QPoint(100, 100))
-    assert headings(popup_items(popup)) == ["Recent", THIS_PROJECT, BUILT_IN]
+    assert headings(popup_items(popup)) == ["Recent", THIS_PROJECT, "mems"]
     names = [e.name for e in (i.data(ENTRY_ROLE) for i in popup_items(popup)) if e]
-    assert names[0] == "anchor"  # recent first
+    assert names[0] == "mems.anchor"  # recent first
     assert window.document.active not in names  # not inside itself
     assert "widget" in names
 
@@ -77,7 +76,7 @@ def test_typing_ranks_the_matches_in_one_list(window):
     popup = window.place_popup(near=QPoint(100, 100))
     popup.search.setText("serp")
     rows = popup.rows()
-    assert [r.data(ENTRY_ROLE).name for r in rows] == ["serpentine_spring"]
+    assert [r.data(ENTRY_ROLE).name for r in rows] == ["mems.serpentine_spring"]
     popup.search.setText("zzz")
     assert not popup.rows() and popup.nothing.isVisible()
 
@@ -91,23 +90,23 @@ def test_typing_in_the_list_searches(window):
 
 def test_enter_puts_the_component_under_the_cursor_and_a_click_places_it(window):
     popup = window.place_popup(near=QPoint(100, 100))
-    popup.search.setText("anchor")
+    popup.search.setText("mems.anchor")
     key(popup.search, Qt.Key.Key_Return)
     tool = window.tool
-    assert tool.name == "place" and tool.component == "anchor"
+    assert tool.name == "place" and tool.component == "mems.anchor"
     assert window.canvas.ghost is not None
     tool.move(41, 19, NONE, False)
     assert window.canvas.ghost.pos().x() == pytest.approx(40)  # snapped to the grid
     tool.press(41, 19, NONE)
-    assert placed(window) == ["anchor"]
+    assert placed(window) == ["mems.anchor"]
     ref = window.document.shapes[-1]
     assert (ref.x, ref.y) == pytest.approx((40, 20))
     assert window.tool.name == "select" and window.canvas.ghost is None
-    assert component_picker.recent()[0] == "anchor"
+    assert component_picker.recent()[0] == "mems.anchor"
 
 
 def test_esc_lets_the_component_go(window):
-    window.start_placing("anchor")
+    window.start_placing("mems.anchor")
     window.escape()
     assert window.tool.name == "select"
     assert window.canvas.ghost is None and placed(window) == []
@@ -115,10 +114,10 @@ def test_esc_lets_the_component_go(window):
 
 def test_from_a_right_click_it_lands_where_the_click_was(window):
     popup = window.place_popup(at=(100.0, -50.0), near=QPoint(100, 100))
-    popup.search.setText("anchor")
+    popup.search.setText("mems.anchor")
     key(popup.search, Qt.Key.Key_Return)
     ref = window.document.shapes[-1]
-    assert (ref.component, ref.x, ref.y) == ("anchor", 100, -50)
+    assert (ref.component, ref.x, ref.y) == ("mems.anchor", 100, -50)
     assert window.tool.name == "select"
 
 
@@ -143,43 +142,41 @@ def tab_items(dialog):
 
 def test_the_components_tab_lists_them_by_source_with_a_preview(window):
     dialog = components_tab(window)
-    assert headings(tab_items(dialog)) == [THIS_PROJECT, BUILT_IN]
+    assert headings(tab_items(dialog)) == [THIS_PROJECT, "mems"]
     assert dialog.preview.isVisible() and dialog.source.isVisible()
     dialog.search.setText("comb")
     current = dialog.list.currentItem().data(0, RESULT_ROLE)
-    assert current.title == "comb_drive"
+    assert current.title == "mems.comb_drive"
     assert "comb" in dialog.preview.description.text().lower()
     assert "fingers" in dialog.preview.details.text()  # its parameters
 
 
 def test_a_source_folds_away_and_stays_folded(window):
     dialog = components_tab(window)
-    built_in = next(
-        i for i in tab_items(dialog) if (i.data(0, HEADING_ROLE) or ("",))[0] == BUILT_IN
-    )
-    dialog.list.itemClicked.emit(built_in, 0)
+    mems = next(i for i in tab_items(dialog) if (i.data(0, HEADING_ROLE) or ("",))[0] == "mems")
+    dialog.list.itemClicked.emit(mems, 0)
     rows = [i.data(0, RESULT_ROLE).title for i in tab_items(dialog) if i.data(0, RESULT_ROLE)]
-    assert "anchor" not in rows
+    assert "mems.anchor" not in rows
     dialog.close()
     again = components_tab(window)
     rows = [i.data(0, RESULT_ROLE).title for i in tab_items(again) if i.data(0, RESULT_ROLE)]
-    assert "anchor" not in rows  # remembered
+    assert "mems.anchor" not in rows  # remembered
     again.search.setText("anch")  # searching shows what matches, folded or not
     rows = [i.data(0, RESULT_ROLE).title for i in tab_items(again) if i.data(0, RESULT_ROLE)]
-    assert rows == ["anchor"]
+    assert rows == ["mems.anchor"]
 
 
 def test_one_source_can_be_chosen(window):
     dialog = components_tab(window)
-    dialog.source.setCurrentText(BUILT_IN)
-    assert headings(tab_items(dialog)) == [BUILT_IN]
+    dialog.source.setCurrentText("mems")
+    assert headings(tab_items(dialog)) == ["mems"]
 
 
 def test_enter_places_and_ctrl_enter_opens(window):
     dialog = components_tab(window)
-    dialog.search.setText("anchor")
+    dialog.search.setText("mems.anchor")
     key(dialog.search, Qt.Key.Key_Return)
-    assert window.tool.name == "place" and window.tool.component == "anchor"
+    assert window.tool.name == "place" and window.tool.component == "mems.anchor"
     window.escape()
     dialog = components_tab(window)
     dialog.search.setText("widget")
@@ -199,7 +196,7 @@ def test_the_all_tab_still_opens_a_component(window):
 
 
 def test_a_components_picture_shows_its_geometry(window):
-    picture = thumbnail(window.document.results.geometry("anchor"), {}, QSize(120, 80))
+    picture = thumbnail(window.document.results.geometry("mems.anchor"), {}, QSize(120, 80))
     image = picture.toImage()
     assert not picture.isNull()
     centre = image.pixelColor(image.width() // 2, image.height() // 2)

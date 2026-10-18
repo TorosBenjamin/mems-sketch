@@ -1,13 +1,16 @@
 # Extending
 
-## A built-in component
+## A component of a bundled library
 
-Built-in components are ordinary components in a library that ships with the
-tool, `components/builtin/` (a project folder without a top component, see
-[File formats](file-formats.md)). Add a component folder there and list it in
-its `project.yaml`; draw on `level` and `level.anchor` rather than named
-layers, so it works on any level of any project's layer stack. Both backends
-build it like any other component, and its parameters' limits are its checks.
+The bundled libraries are ordinary library folders in
+`src/mems_sketch/libraries/` (`mems/`, a project folder without a top
+component, see [File formats](file-formats.md)). Add a component folder in
+the category folder it belongs to (`components/springs/<name>/`) and list it in
+the library's `project.yaml`; draw on `level` and `level.anchor` rather than
+named layers, so it works on any level of any project's layer stack. The
+engine builds it like any other component, and its parameters' limits are its
+checks. Raise the library's `version` when a change could change designs that
+use it. A new bundled library is a new folder there: every project gets it.
 There is no Python API for components that compute their own geometry: a
 component is always data, so the C++ engine can build it.
 

@@ -9,7 +9,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 ROOT = Path(SPECPATH).parent  # noqa: F821 - set by PyInstaller
 ICONS = ROOT / "packaging" / "icons"
 
-datas = collect_data_files("mems_sketch")  # built-in components, icons, examples in the package
+datas = collect_data_files("mems_sketch")  # bundled libraries, icons, themes in the package
 datas += copy_metadata("mems-sketch")  # its version and entry points (exporters are found by them)
 hidden = collect_submodules("mems_sketch")  # plugins are imported by name, at run time
 

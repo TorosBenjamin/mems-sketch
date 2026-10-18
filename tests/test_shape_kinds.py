@@ -35,7 +35,7 @@ def samples():
     """One node of every kind: the primitives' defaults, every wrap, a reference."""
     shapes = [kind.default(LAYER) for kind in KINDS if kind.category in ("primitive", "guide")]
     shapes += [wrap_shapes(op, f"w_{op}", two_rects()) for kind in KINDS for op in kind.wraps]
-    shapes.append(RefShape(component="anchor", x=5))
+    shapes.append(RefShape(component="mems.anchor", x=5))
     return shapes
 
 

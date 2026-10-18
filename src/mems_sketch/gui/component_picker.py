@@ -2,7 +2,7 @@
 Components tab of Search Everywhere.
 
 The components that can be placed in the open component are listed by where
-they are from (this project, each library, the built-in ones), matched by what
+they are from (this project, each library, imported cells), matched by what
 is typed (every word must be in the name or the description; names that start
 with it come first) and drawn as rows by :class:`RowDelegate`: an icon, the
 name, then muted the description or where it is from. A source's heading folds
@@ -43,7 +43,7 @@ from mems_sketch.gui import icons, theme
 from mems_sketch.gui.settings import APPLICATION, ORGANIZATION
 
 THIS_PROJECT = "This project"
-BUILT_IN = "Built-in"
+IMPORTED = "Imported"
 RECENT = "Recent"
 RECENT_KEY = "place/recent"  # the names placed last, newest first
 RECENT_MOST = 3
@@ -63,17 +63,18 @@ KEYCAP_HEIGHT = 18  # rows shown before the list scrolls
 
 @dataclass(frozen=True)
 class Entry:
-    """A component that can be placed: the name to place it by, where it is from
-    and what it is (its description's first sentence)."""
+    """A component that can be placed: the name to place it by, where it is from,
+    what it is (its description's first sentence) and its tags."""
 
     name: str
     source: str
     description: str = ""
     icon: str = "component"
+    tags: tuple[str, ...] = ()
 
     @property
     def short(self) -> str:
-        """The name without where it is from (``perforated_plate`` for ``std.perforated_plate``)."""
+        """The name without where it is from (``perforated_plate`` for ``mems.perforated_plate``)."""
         return self.name.rsplit(".", 1)[-1]
 
     @property
@@ -83,7 +84,7 @@ class Entry:
     def score(self, words: list[str]) -> int | None:
         """How well it matches (lower is better), or None when a word is missing."""
         name = self.name.lower()
-        haystack = f"{name} {self.source} {self.description}".lower()
+        haystack = f"{name} {self.source} {self.description} {' '.join(self.tags)}".lower()
         if not all(word in haystack for word in words):
             return None
         if not words:
@@ -101,7 +102,8 @@ def first_sentence(text: str) -> str:
 
 def entries(document) -> list[Entry]:
     """The components that can be placed in the open component, by source: this
-    project's, each library's (by name), then the built-in ones."""
+    project's, each library's (by name, the bundled ones among them), then imported
+    cells."""
     from mems_sketch.gui.panels import component_icon  # panels imports widgets that use this
 
     project = document.project
@@ -111,21 +113,22 @@ def entries(document) -> list[Entry]:
             continue
         source = source_of(project, name)
         try:
-            description = first_sentence(document.definition_of(name).description or "")
+            definition = document.definition_of(name)
+            description, tags = first_sentence(definition.description or ""), definition.tags
         except Exception:  # noqa: BLE001 - a component that does not load: no description
-            description = ""
-        found.append(Entry(name, source, description, component_icon(project, name)))
-    order = {THIS_PROJECT: 0, BUILT_IN: 2}
+            description, tags = "", []
+        found.append(Entry(name, source, description, component_icon(project, name), tuple(tags)))
+    order = {THIS_PROJECT: 0, IMPORTED: 2}
     return sorted(found, key=lambda e: (order.get(e.source, 1), e.source, e.short.lower()))
 
 
 def source_of(project, name: str) -> str:
-    """Where a component is from: this project, a library (its name), or built in."""
+    """Where a component is from: this project, a library (its name), or imported."""
     if name in project.components:
         return THIS_PROJECT
     if "." in name:
         return name.split(".", 1)[0]
-    return BUILT_IN
+    return IMPORTED
 
 
 def sources(found: list[Entry]) -> list[str]:
@@ -650,7 +653,7 @@ class ComponentPreview(QWidget):
         name = info.name.rsplit(".", 1)[-1]
         self.title.setText(
             f"<span style='font-size:15px; font-weight:600'>{_html(name)}</span>"
-            f"&nbsp;&nbsp;<span style='color:{muted}'>{_html(info.source.lower() if info.source == BUILT_IN else info.source)}</span>"
+            f"&nbsp;&nbsp;<span style='color:{muted}'>{_html(info.source.lower() if info.source == IMPORTED else info.source)}</span>"
         )
         self.description.setText(info.description or "No description.")
         rows = []

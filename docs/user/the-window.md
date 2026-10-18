@@ -36,7 +36,7 @@ an option that can be switched on or off (**View → Dark canvas**) has a check
 box.
 
 Names from somewhere else are written with where they are from, as you type
-them: `std.perforated_plate` (a library's component), `base.top` (a shape's
+them: `mems.perforated_plate` (a library's component), `base.top` (a shape's
 point), `device.anchor` (a level's layer). The part before the dot is in a
 lighter colour so the name stands out, in the Place popup, in the process
 list and in the layer stack's levels.
@@ -45,8 +45,9 @@ list and in the layer stack's levels.
 
 **Place** (Shift+A) opens a popup listing the components you can put into
 the one you are editing: the ones you placed last first, then this project's,
-each library's and the built-in ones. Type to search (part of a name, a
-library or the description; names that start with it come first), Up/Down to
+each library's (the bundled `mems` among them). Type to search (part of a
+name, a library, the description or a tag; names that start with it come
+first), Up/Down to
 choose, Enter or a click to take it: the component follows the cursor, its
 origin snapping to points and the grid (Ctrl: no snapping), until a click puts
 it down. Esc lets it go. From a right-click on the canvas it lands where you
@@ -104,7 +105,7 @@ on one side and watch the resonator that uses it on the other.
   the top component, a lock a read-only one.
 - Right-click a tab to close it, the others or all, or to open it in the
   other pane.
-- Library and built-in components open **read-only** and show their
+- Library components open **read-only** and show their
   interface, as a library does in code: the geometry, the description, the
   public parameters and the points. How they are built stays hidden
   (**View → Show implementation of read-only components** shows it).

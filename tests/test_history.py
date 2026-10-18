@@ -117,7 +117,9 @@ def test_a_changed_shape_says_what_changed():
 
 def test_changed_parameters_of_a_placement_are_named_one_by_one():
     def placed(fingers):
-        return RefShape(name="comb", component="comb_drive", params={"fingers": fingers, "gap": 2})
+        return RefShape(
+            name="comb", component="mems.comb_drive", params={"fingers": fingers, "gap": 2}
+        )
 
     [change] = diff_projects(project(placed(16)), project(placed(10)))
     assert change.details == ("params.fingers 16 → 10",)

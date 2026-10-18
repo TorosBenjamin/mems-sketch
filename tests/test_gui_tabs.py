@@ -30,11 +30,6 @@ def example(window, tmp_path):
         tmp_path / "resonator",
         ignore=shutil.ignore_patterns(".mems-sketch"),
     )
-    shutil.copytree(
-        EXAMPLES / "libraries",
-        tmp_path / "libraries",
-        ignore=shutil.ignore_patterns(".mems-sketch"),
-    )
     window.open_project(str(tmp_path / "resonator" / "project.yaml"))
     return window
 
@@ -60,9 +55,9 @@ def test_components_open_in_tabs_with_their_own_selection(example):
 
 def test_double_click_on_a_placed_component_opens_it(example):
     w = example
-    w._tree_double_clicked(w.tree.topLevelItem(0), 0)  # mass: std.perforated_plate
-    assert w.document.active == "std.perforated_plate"
-    assert tab_names(w)[-1] == "std.perforated_plate (read-only)"
+    w._tree_double_clicked(w.tree.topLevelItem(0), 0)  # mass: mems.perforated_plate
+    assert w.document.active == "mems.perforated_plate"
+    assert tab_names(w)[-1] == "mems.perforated_plate (read-only)"
     w.open_component("top")
     w._view_double_clicked(w.area.current, -118.5, 46)  # suspension_left's anchor
     assert w.document.active == "suspension"
@@ -70,7 +65,7 @@ def test_double_click_on_a_placed_component_opens_it(example):
 
 def test_library_tabs_are_read_only_but_take_trial_values(example):
     w = example
-    w.open_component("std.perforated_plate")
+    w.open_component("mems.perforated_plate")
     assert w.document.read_only and "viewing" in w.windowTitle()
     w.add_primitive("rect")
     assert any("read-only" in t for t in w.toasts.texts())
@@ -100,12 +95,12 @@ def test_undo_goes_back_to_the_tab_of_the_change(example):
     w.document.parameters.set("turns", 5)
     w.open_component("top")
     w.add_primitive("rect")
-    w.open_component("std.perforated_plate")
+    w.open_component("mems.perforated_plate")
     w.document.undo()  # the rectangle, added in top
     assert w.document.active == "top" and w.area.current.component == "top"
     w.document.undo()  # the spring turns, changed in suspension
     assert w.area.current.component == "suspension"
-    assert tab_names(w) == ["top", "suspension", "std.perforated_plate (read-only)"]
+    assert tab_names(w) == ["top", "suspension", "mems.perforated_plate (read-only)"]
     w.document.redo()
     assert w.area.current.component == "suspension"
     w.document.redo()
@@ -154,18 +149,18 @@ def test_tabs_are_remembered_per_project(example, tmp_path):
     w = example
     w.open_component("suspension")
     w.split_view()
-    w.open_component("std.perforated_plate")
+    w.open_component("mems.perforated_plate")
     w.open_project(str(tmp_path / "resonator"))  # reopen: tabs come back
     assert tab_names(w, 0) == ["top", "suspension"]
-    assert tab_names(w, 1) == ["suspension", "std.perforated_plate (read-only)"]
-    assert w.document.active == "std.perforated_plate"
+    assert tab_names(w, 1) == ["suspension", "mems.perforated_plate (read-only)"]
+    assert w.document.active == "mems.perforated_plate"
 
 
 def test_new_reference_placed_in_a_tab_does_not_change_other_tabs_selection(example):
     w = example
     w.tree.select_paths([((0, 1),)])
     w.open_component("suspension")
-    w._select_result(lambda: w.document.nodes.add_component("anchor"))
+    w._select_result(lambda: w.document.nodes.add_component("mems.anchor"))
     w.open_component("top")
     assert w.selection == [((0, 1),)]
     assert isinstance(w.document.node(((0, 1),)), RefShape)

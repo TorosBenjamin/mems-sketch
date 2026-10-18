@@ -50,8 +50,10 @@ from mems_sketch.storage.project_files import (
     apply_overrides,
     imported_from_data,
     imports_data,
-    load_library,
+    library_entry,
     manifest_data,
+    migrate_builtin_references,
+    open_library,
     private_names,
     process_data,
     process_from_data,
@@ -78,7 +80,10 @@ def is_document(path: str | Path) -> bool:
 
 def project_data(project: Project, folder: str | Path | None = None) -> dict[str, Any]:
     """The project as one tree; library paths relative to ``folder`` (the document's)."""
-    libraries = {n: _library_path(lib.path, folder) for n, lib in project.libraries.items()}
+    libraries = {
+        n: library_entry(lib) if lib.bundled else _library_path(lib.path, folder)
+        for n, lib in project.libraries.items()
+    }
     data = {k: v for k, v in manifest_data(project, libraries).items() if v != {}}
     data["processes"] = {name: process_data(p) for name, p in project.processes.items()}
     if project.imports:
@@ -91,7 +96,7 @@ def project_data(project: Project, folder: str | Path | None = None) -> dict[str
         private = {
             child: component(f"{name}/{child}") for child in private_names(project.components, name)
         }
-        return component_data(project.components[name], private)
+        return component_data(project.components[name], private, category=True)
 
     data["components"] = {n: component(n) for n in project.components if "/" not in n}
     return data
@@ -106,6 +111,7 @@ def project_from_data(data: Any, folder: str | Path | None = None) -> Project:
             raise DocumentError("this is a geometry file: import it as a component instead")
         raise DocumentError(f"not a {FORMAT} project document")
     base = Path(folder) if folder is not None else Path.cwd()
+    notes: list[str] = []
     try:
         components, _ = read_components(
             data.get("components") or {}, lambda entry, _where: (entry, None), None
@@ -115,8 +121,8 @@ def project_from_data(data: Any, folder: str | Path | None = None) -> Project:
             components=components,
             top=data.get("top"),
             libraries={
-                n: load_library(n, p if Path(p).is_absolute() else base / p)
-                for n, p in (data.get("libraries") or {}).items()
+                str(n): open_library(str(n), e, base, notes)
+                for n, e in (data.get("libraries") or {}).items()
             },
             imports={
                 n: imported_from_data(n, e, e.get("data") or b"")
@@ -126,7 +132,9 @@ def project_from_data(data: Any, folder: str | Path | None = None) -> Project:
                 str(n): process_from_data(d or {}) for n, d in (data.get("processes") or {}).items()
             },
             process_name=str(data.get("process") or "main"),
+            load_notes=notes,
         )
+        migrate_builtin_references(project)
         apply_overrides(project, data.get("overrides") or {})
         return project
     except DocumentError:

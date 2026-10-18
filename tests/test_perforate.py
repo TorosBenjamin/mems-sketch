@@ -171,7 +171,7 @@ def test_the_standard_plate_has_round_holes_by_default():
     from pathlib import Path
 
     doc = EditSession.open_project(Path(__file__).parent.parent / "examples" / "resonator")
-    doc.set_active("std.perforated_plate")
+    doc.set_active("mems.perforated_plate")
     assert len(holes(doc)) == 64  # 8 × 8 at a pitch of 20 on 160
     hole = 20 / 3
     assert area_um2(doc) == near(160 * 160 - 64 * math.pi * (hole / 2) ** 2, 64 * math.pi * hole)

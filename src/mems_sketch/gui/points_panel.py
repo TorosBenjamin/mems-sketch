@@ -538,12 +538,20 @@ class PointsPanel(_Panel):
         line.addWidget(HelpButton(explain))
         layout.addRow("Position", row)
         if not self.document.read_only:
-            button = QPushButton(icons.icon("add"), "Re-export")
-            button.setToolTip(
-                "Make it a point of this component, for whoever places it (measured from "
-                "this one, so it follows it)"
-            )
-            button.clicked.connect(lambda: self.name_point(key))
+            if key[1].startswith("port."):  # a placed component's port: one of ours
+                button = QPushButton(icons.icon("port"), "Re-export as a port")
+                button.setToolTip(
+                    "Make it a port of this component, at this one and with its direction, "
+                    "width and layer"
+                )
+                button.clicked.connect(lambda: self.name_port(key))
+            else:
+                button = QPushButton(icons.icon("add"), "Re-export")
+                button.setToolTip(
+                    "Make it a point of this component, for whoever places it (measured from "
+                    "this one, so it follows it)"
+                )
+                button.clicked.connect(lambda: self.name_point(key))
             layout.addRow(button)
 
 

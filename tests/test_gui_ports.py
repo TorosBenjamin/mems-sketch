@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QPushButton
 
 from mems_sketch import ComponentDef, PortDef, RefShape
 from mems_sketch.core.shapes import RectShape
@@ -97,7 +97,10 @@ def test_a_placed_port_is_re_exported_as_a_port(window):
     window.tool_windows.open("points")
     panel = window.points
     assert ("p1", "port.signal") in rows(panel)  # a point of the placement
-    panel.name_port(("p1", "port.signal"))
+    panel.select(("p1", "port.signal"))
+    [button] = [b for b in panel.form.findChildren(QPushButton) if "Re-export" in b.text()]
+    assert button.text() == "Re-export as a port"
+    button.click()
     [port] = window.document.active_definition.ports
     assert (port.name, port.at) == ("signal", "p1.port.signal")
     assert window.document.results.declared_ports()["signal"].angle == pytest.approx(90)

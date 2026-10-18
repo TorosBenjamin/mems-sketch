@@ -92,7 +92,7 @@ def test_open_example_project_with_library(window, tmp_path):
         window.components.tree.topLevelItem(i).text(0)
         for i in range(window.components.tree.topLevelItemCount())
     ]
-    assert labels == ["resonator", "mems"]
+    assert labels == ["resonator", "mems", "std"]
     assert window.messages.item(0).text() == "No rule violations."
 
 

@@ -18,12 +18,17 @@ The **Components** panel lists every component once:
   [Libraries](#libraries));
 - **Imported** layouts, if any (see [files](files.md#importing-layouts)).
 
-`mems`, the bundled MEMS library, has `mems.anchor`, `mems.comb_drive`,
-`mems.serpentine_spring` and `mems.perforated_plate`, and the example process
-`mems.surface`. They are ordinary components: they draw on the level they are
-placed on (an anchor's opening on that level's anchor layer), their limits are
-shown like any other, and **Copy into the project** makes an editable copy. A
-plain rectangle is the `rect` shape.
+Two libraries are bundled: `mems` has anchors, springs (folded flexures,
+crab legs, serpentines, …), electrodes (comb drives, gap-closing plates),
+proof masses and two whole devices, a resonator and an accelerometer, and the
+example processes such as `mems.surface`; `std` has the parts any layout
+uses, whatever the device: alignment marks, Verniers, test structures, bond
+pads and a die frame. Their galleries, [mems](library-mems.md) and
+[std](library-std.md), show every component with its parameters. They are
+ordinary components: they draw on the level they are placed on (an anchor's
+opening on that level's anchor layer), their limits are shown like any other,
+and **Copy into the project** makes an editable copy. A plain rectangle is the
+`rect` shape.
 
 Double-click opens a component in a tab. Drag one onto the canvas, or use
 **Place** (Shift+A, see [the window](the-window.md#placing-components)), to put
@@ -107,13 +112,13 @@ the Components panel's **+** or listed in `project.yaml`:
 
 ```yaml
 libraries:
-  mems: bundled@1        # a bundled one, and the version the project was saved with
+  mems: bundled@2        # a bundled one, and the version the project was saved with
   fab: ../fab-library    # a folder of your own
 ```
 
 Its components are placed as `fab.plate`. **Bundled** libraries ship with
 mems-sketch and every project has them without listing them: `mems` (MEMS
-components and example processes) for now. A project lists them anyway, with
+components and example processes) and `std` (generic layout parts). A project lists them anyway, with
 their version, so that opening it with a release whose library changed says
 so. Libraries are read-only:
 to change a library component for one project, right-click it and **Copy into

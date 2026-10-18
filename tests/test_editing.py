@@ -566,7 +566,7 @@ def test_create_saves_a_named_project_with_libraries_and_a_process(tmp_path):
     )
     assert folder == tmp_path / "chip" and doc.path == folder and not doc.dirty
     assert doc.project.name == "chip" and doc.project.top == "top"
-    assert list(doc.project.libraries) == ["mems", "mems_std"]
+    assert list(doc.project.libraries) == ["mems", "std", "mems_std"]
     resonator = EditSession.open_project(EXAMPLES / "resonator")
     assert doc.project.process == resonator.project.process
     again = EditSession.open_project(folder)

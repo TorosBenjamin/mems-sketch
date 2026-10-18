@@ -1,0 +1,22 @@
+description: >-
+  Resolution star (Siemens star): wedges and gaps of equal angle around the
+  centre, from `inner` to `radius`. Features shrink towards the centre; the
+  radius where wedges merge or vanish gives the resolution, about
+  2π r / (2 spokes) there. At the inner radius they are
+  π inner / spokes wide.
+tags: [test structure, resolution, star, siemens star, metrology]
+parameters:
+  spokes: {default: 24, min: 3, integer: true, description: Number of wedges}
+  radius: {default: 100, min: inner, min_exclusive: true, description: Outer radius (µm)}
+  inner: {default: 20, min: 0, min_exclusive: true, description: "Inner radius, where the wedges stop (µm)"}
+  half: {default: 90 / spokes, internal: true, description: Half a wedge's angle (°)}
+shapes:
+  wedges:
+    kind: polygon
+    points:
+    - [inner * cos(-half * pi / 180), inner * sin(-half * pi / 180)]
+    - [radius * cos(-half * pi / 180), radius * sin(-half * pi / 180)]
+    - [radius * cos(half * pi / 180), radius * sin(half * pi / 180)]
+    - [inner * cos(half * pi / 180), inner * sin(half * pi / 180)]
+    modifiers:
+    - {kind: polar_array, count: spokes}

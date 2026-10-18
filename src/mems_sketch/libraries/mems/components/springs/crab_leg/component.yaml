@@ -1,0 +1,25 @@
+description: >-
+  Crab-leg spring: a thigh along +x from an anchor at the origin, then a shin
+  along +y to where the mass attaches. The thigh makes it softer along the
+  shin's length than a plain beam, the shin sideways. Across the shin (x) its
+  stiffness is E t w³ (4 Lt + Ls) / (Ls³ (Lt + Ls)) (`stiffness`, equal widths;
+  Fedder's crab-leg model). Point: attach, the middle of the shin's end.
+tags: [spring, crab-leg, flexure]
+parameters:
+  thigh: {default: 60, min: 0, min_exclusive: true, description: "Thigh length, Lt (µm)"}
+  shin: {default: 120, min: 0, min_exclusive: true, description: "Shin length, Ls (µm)"}
+  beam_width: {default: 2, min: 0, min_exclusive: true, description: "Beam width, w (µm)"}
+  anchor_size: {default: 20, min: 4, min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure"}
+  youngs_modulus: {default: 160, min: 0, min_exclusive: true, description: "Young's modulus of the structural layer, E (GPa; 160 for polysilicon)"}
+  thickness: {default: 2, min: 0, min_exclusive: true, description: "Thickness of the structural layer, t (µm)"}
+  knee: {default: anchor_size / 2 + thigh, internal: true, description: Where the thigh meets the shin (µm)}
+  stiffness:
+    default: youngs_modulus * 1000 * thickness * beam_width ** 3 * (4 * thigh + shin) / (shin ** 3 * (thigh + shin))
+    internal: true
+    description: "Stiffness across the shin, x (N/m)"
+points:
+  attach: {x: knee - beam_width / 2, y: shin}
+shapes:
+  pad: {ref: anchor, size: anchor_size}
+  thigh_beam: {kind: rect, x0: anchor_size/2, y0: -beam_width/2, x1: knee, y1: beam_width/2}
+  shin_beam: {kind: rect, x0: knee - beam_width, y0: beam_width/2, x1: knee, y1: shin}

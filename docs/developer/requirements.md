@@ -136,16 +136,20 @@ but should not have to program. Scripting is there for those who want it.
   geometry: it is evaluated from its parameters.
 - **CMP-2** (Must, exists) **Bundled libraries** ship with the tool, one
   per domain, and every project has them without a path (listed as
-  `mems: bundled@1`, with the version saved with). `mems` has `anchor`,
-  `comb_drive`, `serpentine_spring` and `perforated_plate`, with their
-  parameters and points (`serpentine_spring`: `start`, `end`; `comb_drive`:
-  `moving`, `fixed`), and the example processes `surface`, `polysilicon`
+  `mems: bundled@2`, with the version saved with). `mems` has anchors,
+  springs (with their stiffness as a derived parameter), electrodes, masses
+  and two devices, each with the points things attach at, and the example
+  processes `surface`, `polysilicon`
   (two-poly surface micromachining) and `soi`, with rules on the checks. They use relative
   layers ([CMP-10](#components-and-parameters)), not a layer parameter. The
   earlier built-ins are these components: old files are changed when opened.
   A library's components are in **categories** (the folders they are in, not
   part of their names) and may have **tags**. `rectangle` is retired: `rect`
-  does the same.
+  does the same. `std` has the generic parts: alignment marks, Verniers,
+  test structures, bond pads and a die frame. Every bundled component builds
+  at its defaults and limits, and the springs, anchors and devices pass every
+  check of `mems.surface` at their defaults; a gallery page per library is
+  generated from the components.
 - **CMP-3** (Must, exists) Components are **shared** or **private** to
   another (`comb/finger`), and are resolved by name from the inside out: the
   component's own private components, its owner's, the shared ones, then

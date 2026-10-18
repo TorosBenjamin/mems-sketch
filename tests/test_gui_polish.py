@@ -388,7 +388,7 @@ def test_the_explorer_copies_library_components_and_adds_libraries(resonator, tm
         resonator.components.tree.topLevelItem(i).text(0)
         for i in range(resonator.components.tree.topLevelItemCount())
     ]
-    assert groups == ["resonator", "mems", "mems_std"]
+    assert groups == ["resonator", "mems", "std", "mems_std"]
 
 
 def test_a_component_dropped_on_the_canvas_is_placed_there(resonator):

@@ -1,0 +1,15 @@
+format: mems-sketch/2
+name: std
+description: "Generic layout parts for any process: alignment marks, test structures, pads, die frame"
+version: 1
+top: null
+components:
+  cross_mark: components/alignment/cross_mark
+  box_in_box: components/alignment/box_in_box
+  vernier: components/alignment/vernier
+  line_ladder: components/test_structures/line_ladder
+  gap_ladder: components/test_structures/gap_ladder
+  release_test: components/test_structures/release_test
+  resolution_star: components/test_structures/resolution_star
+  bond_pad: components/pads/bond_pad
+  die_frame: components/frame/die_frame

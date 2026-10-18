@@ -1,0 +1,48 @@
+description: >-
+  Folded flexure: two beams rise from an anchor at the origin to a truss, and
+  two outer beams come back down from it, past the anchor, to a shuttle bar
+  below, where the mass attaches. The truss takes up the beams' shortening,
+  so it stays linear over large travel. Sideways (x) the inner and outer
+  pairs are in series: 2 E t w³ / (L³ + Lo³) (`stiffness`), L the inner
+  beams' length and Lo the outer ones'. Point: attach, the middle of the
+  shuttle bar's bottom edge.
+tags: [spring, folded flexure, folded beam, suspension, resonator, flexure]
+parameters:
+  length: {default: 100, min: 0, min_exclusive: true, description: "Inner beam length, L (µm)"}
+  beam_width: {default: 2, min: 0, min_exclusive: true, description: "Beam width, w (µm)"}
+  gap: {default: 4, min: 0, min_exclusive: true, description: "Between neighbouring beams, and between the anchor and the shuttle bar (µm)"}
+  truss: {default: 3, min: 0, min_exclusive: true, description: Width of the truss and of the shuttle bar (µm)}
+  anchor_size: {default: 20, min: "max(4, 2 * beam_width)", min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure"}
+  youngs_modulus: {default: 160, min: 0, min_exclusive: true, description: "Young's modulus of the structural layer, E (GPa; 160 for polysilicon)"}
+  thickness: {default: 2, min: 0, min_exclusive: true, description: "Thickness of the structural layer, t (µm)"}
+  inner_x: {default: anchor_size / 2 - beam_width / 2, internal: true, description: Centre of the inner beams (µm)}
+  outer_x: {default: inner_x + gap + beam_width, internal: true, description: Centre of the outer beams (µm)}
+  top: {default: anchor_size / 2 + length, internal: true, description: Where the beams meet the truss (µm)}
+  bottom: {default: -anchor_size / 2 - gap, internal: true, description: Where the outer beams meet the shuttle bar (µm)}
+  outer_length: {default: top - bottom, internal: true, description: "Outer beam length, Lo (µm)"}
+  stiffness:
+    default: 2 * youngs_modulus * 1000 * thickness * beam_width ** 3 / (length ** 3 + outer_length ** 3)
+    internal: true
+    description: "Sideways stiffness at the shuttle bar (N/m)"
+points:
+  attach: {y: bottom - truss}
+shapes:
+  pad: {ref: anchor, size: anchor_size}
+  inner_beams:
+    kind: rect
+    x0: inner_x - beam_width/2
+    y0: anchor_size/2
+    x1: inner_x + beam_width/2
+    y1: top
+    modifiers:
+    - {kind: mirror, axis: x}
+  outer_beams:
+    kind: rect
+    x0: outer_x - beam_width/2
+    y0: bottom
+    x1: outer_x + beam_width/2
+    y1: top
+    modifiers:
+    - {kind: mirror, axis: x}
+  truss_bar: {kind: rect, x0: -outer_x - beam_width/2, y0: top, x1: outer_x + beam_width/2, y1: top + truss}
+  shuttle: {kind: rect, x0: -outer_x - beam_width/2, y0: bottom - truss, x1: outer_x + beam_width/2, y1: bottom}

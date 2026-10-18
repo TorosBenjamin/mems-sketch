@@ -1,8 +1,13 @@
 description: >-
-  Meandering beam spring running along +y from the origin. Points: start and
-  end, the middle of the outer edge of the first and the last beam.
+  Meandering beam spring running along +y from the origin: beams `span` long
+  across, `pitch` apart, joined by bends at alternate ends. Long beams in a
+  small space make it soft along y and sideways; it has no anchor, so place
+  one at either end. Its stiffness has no short closed form (see Fedder's
+  serpentine model): try the turns and the span with trial values. Points:
+  start and end, the middle of the outer edge of the first and the last beam.
+tags: [spring, serpentine, meander, flexure]
 parameters:
-  turns: {default: 3, min: 1, integer: true, description: Number of meanders}
+  turns: {default: 3, min: 1, integer: true, description: "Number of meanders: each adds two beams"}
   beam_width: {default: 3, min: 0, min_exclusive: true, description: Beam width (µm)}
   span: {default: 80, min: 0, min_exclusive: true, description: "Meander span, x (µm)"}
   pitch:

@@ -84,6 +84,33 @@ OLD_NAMES = {
 }
 
 
+# The bundled components' defaults when the recording was made, since changed
+# (#180: an enclosure the example processes' release rules accept, a moving
+# spine and a plate the etch frees, an anchor under the fixed spine): the
+# engine is compared with the recording with them set back.
+RECORDED_DEFAULTS = {
+    "anchor": {"enclosure": 3.0},
+    "comb_drive": {"moving_spine_width": "spine_width", "anchored": 0.0},
+    "perforated_plate": {
+        "size": 160.0,
+        "pitch": 20.0,
+        "hole": "pitch / 3",
+        "corner_radius": "hole / 2",
+        "margin": "(pitch - hole) / 2",
+    },
+}
+# The example's own values then: it uses the plate the etch frees now.
+RECORDED_EXAMPLE = {"top": {"plate": 160.0, "pitch": 20.0}}
+
+
+def set_back(components, defaults) -> None:
+    """Give ``components`` the parameter defaults they were recorded with."""
+    for name, values in defaults.items():
+        for parameter in components[name].parameters:
+            if parameter.name in values:
+                parameter.default = values[parameter.name]
+
+
 def _as_recorded(value):
     if isinstance(value, dict):
         kind = value.get("kind")
@@ -226,7 +253,11 @@ def test_the_example_project():
     from mems_sketch.core.project import Library
 
     project = load(EXAMPLES / "resonator")
+    set_back(project.components, RECORDED_EXAMPLE)
+    set_back(project.libraries["mems"].components, RECORDED_DEFAULTS)
     recorded_as = load(EXAMPLES / "resonator")
+    set_back(recorded_as.components, RECORDED_EXAMPLE)
+    recorded_as.libraries.pop("std")  # bundled now, the example library then
     recorded_as.libraries["std"] = Library("std", {"perforated_plate": recorded_plate()})
     for name in project.components:
         assert assert_same(project, name, recorded_as=recorded_as) == "same", name
@@ -247,6 +278,7 @@ def test_the_bundled_plate():
     from mems_sketch.libraries import BUNDLED_FOLDER
 
     project = load(BUNDLED_FOLDER / "mems")
+    set_back(project.components, RECORDED_DEFAULTS)
     recorded_as = load(Path(__file__).parent / "data" / "mems_std")
     recorded_as.components["perforated_plate"] = recorded_plate()
     assert assert_same(project, "perforated_plate", recorded_as=recorded_as) == "same"
@@ -271,8 +303,10 @@ BUILT_IN_CASES = [  # (component, parameters, built: else both refuse)
 
 @pytest.mark.parametrize("name, params, built", BUILT_IN_CASES)
 def test_the_former_built_in_components(name, params, built):
+    project = new_project("built-ins")
+    set_back(project.libraries["mems"].components, RECORDED_DEFAULTS)
     result = assert_same(
-        new_project("built-ins"),
+        project,
         f"mems.{name}",
         params,
         tolerance=STRAIGHT_NM,

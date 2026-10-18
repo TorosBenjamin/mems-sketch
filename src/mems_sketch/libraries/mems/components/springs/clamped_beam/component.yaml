@@ -1,0 +1,21 @@
+description: >-
+  Clamped-clamped beam: a straight beam along x between two anchors, centred
+  on the origin. Pushed sideways (y) at its middle it is a spring of
+  stiffness 16 E t w³ / L³ (`stiffness`, for the Young's modulus and
+  thickness set here); it also stiffens as it bends far, which a folded
+  flexure avoids. Its center is the beam's middle.
+tags: [spring, beam, fixed-fixed, bridge, flexure]
+parameters:
+  length: {default: 200, min: 0, min_exclusive: true, description: "Beam length between the anchors, L (µm)"}
+  beam_width: {default: 2, min: 0, min_exclusive: true, description: "Beam width, w (µm)"}
+  anchor_size: {default: 20, min: 4, min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure"}
+  youngs_modulus: {default: 160, min: 0, min_exclusive: true, description: "Young's modulus of the structural layer, E (GPa; 160 for polysilicon)"}
+  thickness: {default: 2, min: 0, min_exclusive: true, description: "Thickness of the structural layer, t (µm)"}
+  stiffness:
+    default: 16 * youngs_modulus * 1000 * thickness * beam_width ** 3 / length ** 3
+    internal: true
+    description: "Sideways stiffness at the middle (N/m)"
+shapes:
+  beam: {kind: rect, x0: -length/2, y0: -beam_width/2, x1: length/2, y1: beam_width/2}
+  left_anchor: {ref: anchor, size: anchor_size, x: -(length + anchor_size) / 2}
+  right_anchor: {ref: anchor, size: anchor_size, x: (length + anchor_size) / 2}

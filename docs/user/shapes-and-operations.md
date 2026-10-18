@@ -63,7 +63,7 @@ Example: two combs, mirrored about the plate's centre, three of each:
 ```yaml
 - kind: ref
   name: comb
-  component: comb_drive
+  component: mems.comb_drive
   modifiers:
   - {kind: mirror, axis: x, x: mass.center.x}
   - {kind: array, columns: 3, dx: 120}
@@ -100,7 +100,7 @@ plate:
 - **Keep-out shapes** are named shapes of any layer: an anchor, or a
   `layer_map` bringing another layer's geometry in.
 - Thousands of holes stay quick: one hole shape is placed at every site and
-  cut out in one go. `std.perforated_plate` is a rectangle with this modifier.
+  cut out in one go. `mems.perforated_plate` is a rectangle with this modifier.
 
 ## Sizes and the minimal box
 

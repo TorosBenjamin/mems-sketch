@@ -24,7 +24,7 @@ import json
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from mems_sketch.core.component import DBU_UM, Geometry, builtin_definitions, resolve_params
+from mems_sketch.core.component import DBU_UM, Geometry, resolve_params
 from mems_sketch.core.imports import ImportedCell, ImportedComponent, cell_geometry
 from mems_sketch.core.levels import Stack
 from mems_sketch.core.region import Region
@@ -411,7 +411,6 @@ def project_data(project: Project) -> dict[str, Any]:
             for name, library in project.libraries.items()
         },
         "imports": {name: _imported_data(cell) for name, cell in project.imports.items()},
-        "builtins": {name: component(d) for name, d in builtin_definitions().items()},
     }
 
 

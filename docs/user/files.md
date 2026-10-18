@@ -24,8 +24,8 @@ constants and rules) is shared the way components are.
 
 Files are always written the same way: values equal to their default are left
 out, keys keep a fixed order, and unchanged files are not rewritten. Changing
-one value changes one line. See `examples/resonator` and the library it uses,
-`examples/libraries/mems_std`.
+one value changes one line. See `examples/resonator`, and the bundled library it uses,
+`src/mems_sketch/libraries/mems`.
 
 **File** (in **☰**): New (Ctrl+N), New library, Open (Ctrl+O), Save (Ctrl+S)
 and Save as. Open also takes a one-file project or a legacy `.mems` design;

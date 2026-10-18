@@ -205,8 +205,8 @@ def test_boolean_between_placed_instances(design):
         BooleanShape(
             name="cut",
             op="subtract",
-            a=[Instance("pad", "anchor", {"size": 40})],
-            b=[Instance("slot", "anchor", {"size": 40}, x=15)],
+            a=[Instance("pad", "mems.anchor", {"size": 40})],
+            b=[Instance("slot", "mems.anchor", {"size": 40}, x=15)],
         )
     )
     assert area(design) == pytest.approx(15 * 40)  # what the second pad leaves of the first

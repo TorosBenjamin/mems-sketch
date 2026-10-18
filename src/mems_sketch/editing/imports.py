@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from mems_sketch.core.component import Geometry, is_builtin
+from mems_sketch.core.component import Geometry
 from mems_sketch.core.imports import (
     ImportedCell,
     cells,
@@ -169,12 +169,12 @@ class ImportEdits(Commands):
     def _check_name(self, name: str) -> None:
         if not name.isidentifier():
             raise ValueError(f"'{name}' is not a valid component name")
-        if name in self.project.components or name in self.project.imports or is_builtin(name):
+        if name in self.project.components or name in self.project.imports:
             raise ValueError(f"a component named '{name}' already exists")
 
     def _free_name(self, base: str) -> str:
         taken = set(self.project.components) | set(self.project.imports)
-        if base not in taken and not is_builtin(base):
+        if base not in taken:
             return base
         return fresh_name(base, taken)
 

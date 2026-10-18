@@ -40,7 +40,6 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-LIBRARY = Path(__file__).resolve().parent.parent / "examples" / "libraries" / "mems_std"
 PITCH = 20  # µm between holes
 CASES = {  # name: (plate size µm, plates per side)
     "100": (200, 1),
@@ -58,8 +57,8 @@ def write_project(folder: Path, size: float, copies: int) -> Path:
     shutil.rmtree(folder, ignore_errors=True)  # no editor state from an earlier run
     (folder / "components" / "top").mkdir(parents=True)
     (folder / "project.yaml").write_text(
-        f"format: mems-sketch/2\nname: bench\ntop: top\nlibraries: {{std: {LIBRARY}}}\n"
-        "process: std.surface\ncomponents: {top: components/top}\n"
+        "format: mems-sketch/2\nname: bench\ntop: top\nlibraries: {mems: bundled}\n"
+        "process: mems.surface\ncomponents: {top: components/top}\n"
     )
     array = (
         f"    modifiers:\n    - {{kind: array, columns: {copies}, rows: {copies}, "
@@ -69,7 +68,7 @@ def write_project(folder: Path, size: float, copies: int) -> Path:
     )
     (folder / "components" / "top" / "component.yaml").write_text(
         f"parameters:\n  pitch: {{default: {PITCH}, min: 2}}\nshapes:\n"
-        f"  plate:\n    ref: std.perforated_plate\n    size: {size}\n    pitch: pitch\n{array}"
+        f"  plate:\n    ref: mems.perforated_plate\n    size: {size}\n    pitch: pitch\n{array}"
     )
     return folder / "project.yaml"
 

@@ -35,7 +35,7 @@ an option that can be switched on or off (**View → Dark canvas**) has a check
 box.
 
 Names from somewhere else are written with where they are from, as you type
-them: `std.perforated_plate` (a library's component), `base.top` (a shape's
+them: `mems.perforated_plate` (a library's component), `base.top` (a shape's
 point), `device.anchor` (a level's layer). The part before the dot is in a
 lighter colour so the name stands out, in menus such as **Place**, in the
 process list and in the layer stack's levels.
@@ -80,7 +80,7 @@ on one side and watch the resonator that uses it on the other.
   the top component, a lock a read-only one.
 - Right-click a tab to close it, the others or all, or to open it in the
   other pane.
-- Library and built-in components open **read-only** and show their
+- Library components open **read-only** and show their
   interface, as a library does in code: the geometry, the description, the
   public parameters and the points. How they are built stays hidden
   (**View → Show implementation of read-only components** shows it).

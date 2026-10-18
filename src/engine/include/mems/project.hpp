@@ -14,8 +14,7 @@
 //    "components": {"top": <ComponentDef>, "comb/finger": <ComponentDef>},
 //    "libraries": {"std": {"anchor": <ComponentDef>}},
 //    "imports": {"pads": {"digest": ..., "cell": ..., "layers": {...},
-//                         "geometry": {"device": [[hull, [hole, ...]], ...]}}},
-//    "builtins": {"comb_drive": <ComponentDef>}}
+//                         "geometry": {"device": [[hull, [hole, ...]], ...]}}}}
 //
 // where a ComponentDef is its model_dump(mode="json") without waivers.
 #pragma once
@@ -163,7 +162,6 @@ private:
     std::vector<std::string> library_order_;
     std::map<std::string, Library, std::less<>> libraries_;
     std::map<std::string, Import, std::less<>> imports_;
-    Library builtins_;  // placed by bare name where no local component has it
 
     mutable std::shared_ptr<std::map<std::string, double>> scope_;
     mutable std::shared_ptr<std::map<std::string, std::string>> fingerprints_;

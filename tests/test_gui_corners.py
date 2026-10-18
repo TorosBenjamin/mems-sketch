@@ -125,7 +125,7 @@ def test_the_properties_card_edits_and_removes_corners(window):
 
 
 def test_a_placed_part_can_be_rounded_where_it_is_placed(window):
-    path = window.document.nodes.add_component("anchor", 100, 0)
+    path = window.document.nodes.add_component("mems.anchor", 100, 0)
     window.tree.select_paths([path])
     window.set_tool("corners")
     tool = window.tool

@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
-from mems_sketch.core.component import component_types
 from mems_sketch.core.shapes import NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
@@ -75,10 +74,11 @@ from mems_sketch.gui.views import ComponentView, EditorArea, builds
 from mems_sketch.gui.widgets import MenuTidier
 
 PANEL_HELP = {  # the "?" in each tool window's header
-    "components": "Every component, each listed once: the project's, each library's and "
-    "the built-in ones. A component can be *shared* (at the top of its group) or "
-    "*private* to another one, listed under it and placed only inside it.\n\n"
-    "Double-click to open one in a tab (library and built-in ones read-only); drag it "
+    "components": "Every component, each listed once: the project's and each library's, "
+    "the bundled ones (mems) included, in their categories. A component can be *shared* "
+    "(at the top of its group) or *private* to another one, listed under it and placed "
+    "only inside it.\n\n"
+    "Double-click to open one in a tab (library ones read-only); drag it "
     "onto the canvas, or use Place, to put it in the component you are editing. "
     "Right-click for everything else.",
     "shapes": "The shape tree of the component you are editing, evaluated again "
@@ -493,11 +493,7 @@ class MainWindow(QMainWindow):
                 name,
                 "Components",
                 lambda n=name: self.open_component(n),
-                detail="library"
-                if "." in name
-                else "project"
-                if name in project.components
-                else "built-in",
+                detail=_component_detail(project, name),
                 icon=icons.icon(component_icon(project, name)),
             )
             for name in [
@@ -507,7 +503,6 @@ class MainWindow(QMainWindow):
                     for lib, library in project.libraries.items()
                     for c in library.components
                 ),
-                *component_types(),
             ]
         ]
         results += [
@@ -1915,6 +1910,16 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+
+def _component_detail(project, name: str) -> str:
+    """What Search Everywhere shows by a component: where it is, and its tags."""
+    if name in project.imports:
+        return "imported"
+    where = "library" if "." in name else "project"
+    found = project.definition(name)
+    tags = found[0].tags if found is not None else []
+    return f"{where} · {', '.join(tags)}" if tags else where
 
 
 def _segment_meets_box(start, end, box: tuple[float, float, float, float]) -> bool:

@@ -37,7 +37,7 @@ def test_translate_primitives_references_and_transforms():
     assert (r.x0, r.x1, r.y0, r.y1) == (10, "w + 10", -2, 3)
     poly = translated(PolygonShape(layer="d", points=[(0, 0), (1, 0), (0, 1)]), 1, 1)
     assert poly.points == [(1, 1), (2, 1), (1, 2)]
-    ref = translated(Instance("c", "anchor", x="p + 1"), 4, 0)
+    ref = translated(Instance("c", "mems.anchor", x="p + 1"), 4, 0)
     assert (ref.x, ref.y) == ("p + 5", 0)
     t = translated(TransformShape(children=[RectShape(layer="d", x0=0, y0=0, x1=1, y1=1)]), 3, 3)
     assert (t.x, t.y) == (3, 3) and t.children[0].x0 == 0  # content stays local

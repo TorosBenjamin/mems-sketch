@@ -61,11 +61,11 @@ def test_it_refuses_an_empty_name_or_an_existing_project(dialog, tmp_path):
 
 
 def test_libraries_and_the_process_are_passed_on(dialog):
-    dialog.add_library(str(EXAMPLES / "libraries" / "mems_std"))
+    dialog.add_library(str(Path(__file__).parent / "data" / "mems_std"))
     assert dialog.libraries.count() == 1 and "mems_std" in dialog.libraries.item(0).text()
     dialog.set_process_from(str(EXAMPLES / "resonator"))
     values = dialog.values()
-    assert values["libraries"] == [str(EXAMPLES / "libraries" / "mems_std")]
+    assert values["libraries"] == [str(Path(__file__).parent / "data" / "mems_std")]
     assert values["process_from"] == str(EXAMPLES / "resonator")
     dialog.libraries.item(0).setSelected(True)
     dialog.remove.click()
@@ -76,7 +76,7 @@ def test_new_project_creates_and_saves_it_with_its_libraries(window, tmp_path, m
     def fill(dialog):
         dialog.location.setText(str(tmp_path))
         dialog.name.setText("chip")
-        dialog.add_library(str(EXAMPLES / "libraries" / "mems_std"))
+        dialog.add_library(str(Path(__file__).parent / "data" / "mems_std"))
         return dialog.DialogCode.Accepted
 
     monkeypatch.setattr(window, "show_dialog", fill)

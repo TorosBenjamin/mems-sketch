@@ -17,11 +17,6 @@ def resonator(tmp_path) -> Path:
         tmp_path / "resonator",
         ignore=shutil.ignore_patterns(".mems-sketch"),
     )
-    shutil.copytree(
-        EXAMPLES / "libraries",
-        tmp_path / "libraries",
-        ignore=shutil.ignore_patterns(".mems-sketch"),
-    )
     return tmp_path / "resonator"
 
 
@@ -42,7 +37,7 @@ def test_check_passes_and_fails_with_overrides(resonator, capsys):
 
 
 def test_check_a_single_component(resonator):
-    assert main(["check", str(resonator), "--component", "std.perforated_plate"]) == 0
+    assert main(["check", str(resonator), "--component", "mems.perforated_plate"]) == 0
 
 
 def test_export_writes_the_drawn_geometry(resonator, tmp_path):

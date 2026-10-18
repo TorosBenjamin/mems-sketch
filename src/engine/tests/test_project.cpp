@@ -27,10 +27,10 @@ const char* PROJECT = R"({
     "comb/finger": {"name": "comb/finger", "shapes": []},
     "lonely": {"name": "lonely", "shapes": [{"kind": "ref", "component": "comb/finger"}]}
   },
-  "libraries": {"std": {"pad": {"name": "pad", "shapes": [{"kind": "ref", "component": "anchor"}]}}},
-  "imports": {"logo": {"digest": "abc", "cell": "LOGO", "layers": {"1/0": "metal"}}},
-  "builtins": {"anchor": {"name": "anchor", "parameters": [{"name": "size", "default": 40}]},
-               "comb_drive": {"name": "comb_drive"}}
+  "libraries": {"std": {"pad": {"name": "pad", "shapes": [{"kind": "ref", "component": "mems.anchor"}]}},
+                "mems": {"anchor": {"name": "anchor", "parameters": [{"name": "size", "default": 40}]},
+                         "comb_drive": {"name": "comb_drive"}}},
+  "imports": {"logo": {"digest": "abc", "cell": "LOGO", "layers": {"1/0": "metal"}}}
 })";
 
 }  // namespace
@@ -45,7 +45,7 @@ TEST_CASE("names are resolved from the inside out") {
     CHECK(p.qualify("finger", "comb") == "comb/finger");
     CHECK(p.qualify("finger", "comb/finger") == "comb/finger");
     CHECK(p.qualify("comb", "") == "comb");
-    CHECK(p.qualify("anchor", "std.pad") == "anchor");  // a built-in
+    CHECK(p.qualify("mems.anchor", "std.pad") == "mems.anchor");  // another library's
     CHECK(p.qualify("logo") == "logo");
     CHECK(p.qualify("std.pad", "") == "std.pad");
     CHECK(p.qualify("comb/finger") == "comb/finger");  // from outside: anything
@@ -79,7 +79,7 @@ TEST_CASE("parameter values") {
     CHECK_THROWS_AS(p.variables("comb", {{"fingers", 0.0}}), ModelError);  // below its minimum
     CHECK_THROWS_AS(p.variables("comb", {{"nothing", 1.0}}), ModelError);
     CHECK_THROWS_AS(p.variables("comb", {{"width", std::string("w")}}), mems::ExpressionError);
-    CHECK(p.variables("anchor").at("size") == 40);  // a built-in: a component like any other
+    CHECK(p.variables("mems.anchor").at("size") == 40);  // a library's: a component like any other
 }
 
 TEST_CASE("fingerprints follow what a component depends on") {

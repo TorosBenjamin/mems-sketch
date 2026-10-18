@@ -134,16 +134,21 @@ but should not have to program. Scripting is there for those who want it.
   project's top component, so any project can be placed in another. A
   component has parameters, points and a shape tree. It never stores
   geometry: it is evaluated from its parameters.
-- **CMP-2** (Must, exists) **Built-in components** are an ordinary
-  component library that ships with the tool: `anchor`, `comb_drive`,
-  `serpentine_spring`, with their parameters and points
-  (`serpentine_spring`: `start`, `end`; `comb_drive`: `moving`, `fixed`).
-  They use relative layers ([CMP-10](#components-and-parameters)), not a
-  layer parameter. `rectangle` is retired: `rect` does the same.
+- **CMP-2** (Must, exists) **Bundled libraries** ship with the tool, one
+  per domain, and every project has them without a path (listed as
+  `mems: bundled@1`, with the version saved with). `mems` has `anchor`,
+  `comb_drive`, `serpentine_spring` and `perforated_plate`, with their
+  parameters and points (`serpentine_spring`: `start`, `end`; `comb_drive`:
+  `moving`, `fixed`), and the example process `surface`. They use relative
+  layers ([CMP-10](#components-and-parameters)), not a layer parameter. The
+  earlier built-ins are these components: old files are changed when opened.
+  A library's components are in **categories** (the folders they are in, not
+  part of their names) and may have **tags**. `rectangle` is retired: `rect`
+  does the same.
 - **CMP-3** (Must, exists) Components are **shared** or **private** to
   another (`comb/finger`), and are resolved by name from the inside out: the
   component's own private components, its owner's, the shared ones, then
-  built-ins. `lib.name` names a library's.
+  imported cells. `lib.name` names a library's.
 - **CMP-4** (Must, exists) **Renaming** a component, parameter, shape or point
   updates everything that refers to it.
 - **CMP-5** (Must, exists) A **parameter** has a default (a number or an
@@ -159,12 +164,12 @@ but should not have to program. Scripting is there for those who want it.
   Values outside min/max or not whole when integer are errors.
 - **CMP-7** (Must, exists) A **trial value** shows a component with another
   parameter value without changing the design. It is not saved or undone,
-  affects only that component's own tab, and also works on library and
-  built-in components.
+  affects only that component's own tab, and also works on library
+  components.
 - **CMP-8** (Must, exists) **Make component** turns a selection into a new
   component whose parameters are the ones the selection uses, so nothing
   moves. **Unpack component** does the opposite.
-- **CMP-9** (Must, exists) Library, built-in and imported components open
+- **CMP-9** (Must, exists) Library and imported components open
   **read-only** and show their interface (geometry, description, public
   parameters, points), not how they are built, unless the user asks to see
   it.

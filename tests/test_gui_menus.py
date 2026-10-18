@@ -1,6 +1,6 @@
 """Menus: shortcuts lighter than their labels, check boxes beside options, rounded
 panels with a shadow, icons in the ☰ menu, a right-click menu for what was
-clicked; and qualified names (std.perforated_plate) with where they are from muted."""
+clicked; and qualified names (mems.perforated_plate) with where they are from muted."""
 
 import pytest
 
@@ -160,11 +160,11 @@ def test_a_number_setting_shows_no_trailing_zeros():
 
 
 def test_a_qualified_name_mutes_where_it_is_from():
-    assert split_qualified("std.perforated_plate") == ("std.", "perforated_plate")
+    assert split_qualified("mems.perforated_plate") == ("mems.", "perforated_plate")
     assert split_qualified("anchor") == ("", "anchor")
     assert split_qualified("Save as…") == ("", "Save as…")
-    text = qualified_html("std.perforated_plate")
-    assert text.endswith("</span>perforated_plate") and "std." in text
+    text = qualified_html("mems.perforated_plate")
+    assert text.endswith("</span>perforated_plate") and "mems." in text
 
 
 def test_a_list_of_points_is_grouped_under_each_shape(qtbot):

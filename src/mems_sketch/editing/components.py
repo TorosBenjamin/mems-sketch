@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from mems_sketch.core.component import builtin_definitions, is_builtin
 from mems_sketch.core.expressions import ExpressionError, names_in
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import (
@@ -39,8 +38,7 @@ class ComponentEdits(Commands):
 
         Names are written as the project would write them (``lib.name`` for a
         library component), so they can be opened, placed or explored further.
-        Built-ins place nothing. References with array or mirror modifiers count
-        every copy.
+        References with array or mirror modifiers count every copy.
         """
         project = self.session.project
         counts: dict[str, int] = {}
@@ -74,7 +72,7 @@ class ComponentEdits(Commands):
         self.session.edit(f"Delete component {name}", lambda p: p.remove_component(name))
 
     def copy(self, component: str, name: str | None = None) -> str:
-        """Copy a library, built-in (or local) component into the project, to edit
+        """Copy a library (or local) component into the project, to edit
         it there.
 
         The copy keeps using what the original used: references inside it are
@@ -86,22 +84,15 @@ class ComponentEdits(Commands):
         if project.definition(qualified) is None:
             raise ValueError(f"'{component}' is imported: it has no shapes to copy; place it")
         library, _, path = qualified.rpartition(".")
-        builtin = not library and qualified not in project.components
-        # A local copy stays with its owner; a library or built-in one becomes shared.
-        owner = path.rpartition("/")[0] if not library and not builtin else ""
+        # A local copy stays with its owner; a library's becomes shared.
+        owner = path.rpartition("/")[0] if not library else ""
         stem = path.rpartition("/")[2]
         taken = {k.rpartition("/")[2] for k in project.components if k.rpartition("/")[0] == owner}
-        name = name or (stem if stem not in taken and not is_builtin(stem) else None)
+        name = name or (stem if stem not in taken else None)
         name = name or fresh_name(f"{stem}_copy", taken)
         root = self._check_name(name, owner or None)
         prefix = f"{library}." if library else ""
-        pool = (
-            project.libraries[library].components
-            if library
-            else builtin_definitions()
-            if builtin
-            else project.components
-        )
+        pool = project.libraries[library].components if library else project.components
         # The component and its private components, each with where it goes.
         subtree = {
             prefix + key: root + key[len(path) :]
@@ -143,6 +134,8 @@ class ComponentEdits(Commands):
         project = self.session.project
         if name not in project.libraries:
             raise ValueError(f"no library named '{name}'")
+        if project.libraries[name].bundled:
+            raise ValueError(f"'{name}' is a bundled library: every project has it")
         users = [
             component
             for component, definition in project.components.items()
@@ -217,7 +210,7 @@ class ComponentEdits(Commands):
             raise ValueError(f"'{owner}' is not a component of this project")
         path = f"{owner}/{name}" if owner else name
         project = self.session.project
-        if path in project.components or name in project.imports or is_builtin(name):
+        if path in project.components or name in project.imports:
             where = f" in {owner}" if owner else ""
             raise ValueError(f"a component named '{name}' already exists{where}")
         if owner is not None:  # inner names hide outer ones, so not one placed in there

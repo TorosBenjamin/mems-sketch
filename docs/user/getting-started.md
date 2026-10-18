@@ -43,7 +43,7 @@ rounded corners.
 
 **The project is a folder of text files.** Each component is one small YAML
 file. Changing a value changes one line, so the project lives well in git,
-and the [History](history.md) panel shows what changed between versions.
+and the [Commit and Git](git.md) panels show what changed between versions.
 
 ## A first edit
 

@@ -104,7 +104,7 @@ boundary.
 
 | Stays in Python | Moves to C++ |
 |---|---|
-| The Qt GUI: canvas, tools, panels, History panel | Engine: expression evaluation (`core/expressions.py`) |
+| The Qt GUI: canvas, tools, panels, Commit and Git panels | Engine: expression evaluation (`core/expressions.py`) |
 | The project model: pydantic classes are still the one definition of the file format | Engine: shape kinds, modifiers, alignments and points (`core/shapes/`) |
 | Storage: project folders, documents, git | Engine: the compiler, fingerprints, cache, evaluation order (`core/compiler.py`) |
 | `EditSession`: commands, transactions, undo/redo | Library: geometry, booleans, offsets, fillets, extrusion |

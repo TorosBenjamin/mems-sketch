@@ -139,7 +139,7 @@ def _number(low: float, high: float, decimals: int, suffix: str, tip: str) -> QD
 
 
 GRID_SAMPLE = "grid 0.05 µm"  # what each field is sized for: it keeps that width
-ZOOM_SAMPLE = "100 px/µm"
+ZOOM_SAMPLE = "0.0000 px/µm"  # the widest a zoom of 3 digits reads ("0.0798")
 POSITION_SAMPLE = "x -1000.000  y -1000.000"
 TARGET_MAX_WIDTH = 220  # px at most for the point the cursor would snap to
 HINT_LEAST_PX = 90  # a hint with less room than this is left out, not cut to "Cli…"

@@ -186,6 +186,7 @@ ICONS = {
     "edit": '<path d="M2.4 13.6l.6-3.2 7.9-7.9 2.6 2.6-7.9 7.9z"/><path d="M9.6 3.8l2.6 2.6" '
     'stroke="{blue}"/>',
     "folder": '<path d="M1.8 3.2h4.4l1.5 1.5h6.5v8.6H1.8z"/>',
+    "file": '<path d="M3.5 1.8h6l3 3v9.4h-9z"/><path d="M9.5 1.8v3h3"/>',
     # -- editing ----------------------------------------------------------
     "add": '<path d="M8 3v10M3 8h10" stroke="{green}"/>',  # something added (history)
     "remove": '<path d="M3 8h10" stroke="{red}"/>',  # and removed
@@ -251,6 +252,7 @@ ICONS = {
     "branch": '<circle cx="5" cy="3.8" r="1.4"/><circle cx="5" cy="12.2" r="1.4"/>'
     '<circle cx="11" cy="5.8" r="1.4"/><path d="M5 5.2v5.6M11 7.2c0 2.3-6 1.6-6 3.6"/>',
     "history": '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.6V8l2.4 1.7"/>',
+    "commit": '<circle cx="8" cy="8" r="2.6"/><path d="M1.5 8h3.9M10.6 8h3.9"/>',
     "modified": '<circle cx="8" cy="8" r="3.2" fill="{orange}" stroke="none"/>',
     "properties": '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>'
     '<path d="M5 6h2M5 10h2M9 6h2M9 10h2"/>',

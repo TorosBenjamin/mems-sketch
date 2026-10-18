@@ -78,8 +78,8 @@ from `error`, true and empty.
 
 ### Components
 
-`storage/component_format.py`. Parameters, points and shapes are maps by
-name; a parameter with only a default is `name: default`:
+`storage/component_format.py`. Parameters, points, ports and shapes are
+maps by name; a parameter with only a default is `name: default`:
 
 ```yaml
 description: Comb-driven resonator
@@ -89,6 +89,9 @@ parameters:
   enclosure: {default: 5, max: size / 2, max_exclusive: true}
 points:
   tip: {at: beam.right, x: 2}
+ports:                  # where wires attach; direction, width and layer are optional
+  drive: {at: comb_top.port.drive}            # takes over that port's direction, width, layer
+  bias: {at: mass.bottom, direction: down, width: 6, layer: metal}
 private: {finger: finger}   # private components: their folders, relative to this one
 shapes:
   mass: {ref: mems.perforated_plate, size: plate, pitch: pitch}

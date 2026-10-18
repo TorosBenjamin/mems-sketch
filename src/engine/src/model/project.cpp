@@ -91,7 +91,8 @@ ComponentDef component_from(const Json& j) {
     Json canonical = j;
     canonical.erase("waivers");  // they accept violations; the geometry does not depend on them
     def.canonical = canonical.dump();
-    def.shapes = std::make_shared<const ShapeTree>(ShapeTree{j.value("shapes", Json::array()), j.value("points", Json::array())});
+    def.shapes = std::make_shared<const ShapeTree>(ShapeTree{j.value("shapes", Json::array()), j.value("points", Json::array()),
+                                                         j.value("ports", Json::array())});
     return def;
 }
 

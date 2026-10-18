@@ -41,6 +41,24 @@ public:
 using Layers = std::map<std::string, mgeom::Region, std::less<>>;
 using PointMap = std::map<std::string, mgeom::Point, std::less<>>;
 
+// Where a wire attaches to a component (mems_sketch.core.user_component.PortDef):
+// a point, the direction a wire leaves it in (degrees, counter-clockwise from
+// +x, in [0, 360)), the width of wire it expects and the layer the wire runs on
+// (resolved).
+// A placed component's port ``drive`` is also its point ``port.drive``.
+struct Port {
+    mgeom::Point at;
+    double angle_deg = 0.0;
+    double width = 0.0;
+    std::string layer;
+};
+using PortMap = std::map<std::string, Port, std::less<>>;
+
+// A port moved, turned and mirrored by ``t``: its direction turns with it.
+Port placed(const Port& port, const mgeom::Transform& t);
+// An angle in [0, 360) degrees, as ports have them.
+double port_angle(double degrees);
+
 struct Built;
 
 // A component placed whole (a reference, maybe copied by modifiers, turned by
@@ -54,12 +72,14 @@ struct Instance {
 using Instances = std::vector<Instance>;
 
 // A built component: its own geometry per layer, merged (everything but what
-// it places whole), the components it places whole, and its declared points.
+// it places whole), the components it places whole, its declared points and
+// its ports.
 struct Built {
     std::string key;  // what the build cache knows it by: the same key, the same geometry
     Layers layers;
     Instances instances;
     PointMap points;
+    PortMap ports;
     mgeom::Box box;  // around everything, instances included
 
     // Everything, instances placed and merged in, per layer (worked out once).
@@ -92,6 +112,7 @@ struct NodeRecord {
     std::string name;  // its name, or its kind
     PointMap declared;
     mgeom::Transform inner, shift;
+    PortMap ports;  // a placed component's, as placed
 };
 using Records = std::map<NodePath, NodeRecord>;
 

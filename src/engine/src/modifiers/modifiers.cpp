@@ -57,7 +57,17 @@ std::vector<std::string> self_names(const Json& modifier, const std::vector<std:
 }  // namespace
 
 Points self_points(const Result& own) {
-    return {"self", bbox_of(own.layers, own.instances), own.points, {}, std::make_shared<Outline>(own.layers, own.instances)};
+    return {"self", bbox_of(own.layers, own.instances), own.points, {},
+            std::make_shared<Outline>(own.layers, own.instances), own.ports};
+}
+
+void add_copy_ports(Result& into, const Result& copy, const mgeom::Transform& t, int k) {
+    for (const auto& [name, port] : copy.ports) {
+        const std::string indexed = name + "[" + std::to_string(k) + "]";
+        const Port moved = placed(port, t);
+        into.points.insert_or_assign("port." + indexed, moved.at);
+        into.ports.insert_or_assign(indexed, moved);
+    }
 }
 
 bool uses_self(const Json& modifier, const std::vector<std::string>& extra_names) {

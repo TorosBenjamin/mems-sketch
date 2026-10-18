@@ -1213,14 +1213,32 @@ class MainWindow(QMainWindow):
                 declared = []
         highlighted = {m[0] for m in focus}  # drawn once, highlighted
         self.canvas.show_points("declared", [d for d in declared if d[0] not in highlighted], True)
+        self.canvas.show_ports(
+            "declared", self._ports_of(results.declared_ports) if shown else [], True
+        )
         tool_markers = self.tool.markers()
         selected = results.node_points(single) if shown and single is not None else []
+        selected = [p for p in selected if not p[0].startswith("port.")]  # drawn as arrows
         self.canvas.show_points("selected", [] if "pick" in tool_markers else selected)
+        # A selected placement's ports, always: where its wires attach.
+        self.canvas.show_ports(
+            "selected",
+            self._ports_of(lambda: results.node_ports(single)) if single is not None else [],
+        )
         self.canvas.show_points("focus", focus, labels=True)
         for style in ("pick", "anchor"):
             self.canvas.show_points(style, tool_markers.get(style, []))
         self._place_gizmo()
         self._show_zoom()
+
+    def _ports_of(self, ports) -> list[tuple[str, float, float, float]]:
+        """``ports()``'s ports as markers (name, x, y, angle); none when it fails."""
+        try:
+            found = ports()
+        except Exception:  # noqa: BLE001 - the messages panel shows why
+            return []
+        # An array's first copy is also the node's own: drawn once, by its index.
+        return [(n, p.x, p.y, p.angle) for n, p in found.items() if f"{n}[0]" not in found]
 
     def points_shown(self) -> bool:
         """Points are drawn while you work with them: the Points panel is open (or

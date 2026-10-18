@@ -155,6 +155,51 @@ class PointDef(_Model):
         return check_point_reference(at)
 
 
+# The directions a port's wire can leave in by name, and their angles (degrees).
+DIRECTIONS = {"right": 0.0, "up": 90.0, "left": 180.0, "down": 270.0}
+
+
+class PortDef(_Model):
+    """Where a wire attaches to a component, so a route can meet it cleanly.
+
+    It is at a point measured like a :class:`PointDef`'s (``at``, ``x``, ``y``).
+    ``direction`` is the way a wire leaves it: ``right``, ``up``, ``left``,
+    ``down`` or an angle (degrees, counter-clockwise from +x; an expression);
+    ``width`` the width of wire it expects; ``layer`` the layer the wire runs
+    on, like a shape's (``level``, ``level+1``, ``metal``). At a placed
+    component's port (``at: pad.port.signal``) it takes that port's direction,
+    width and layer unless it gives its own; else it points right, takes any
+    width (0) and is on the component's level.
+
+    Where the component is placed, its port ``drive`` is also its point
+    ``port.drive`` (``comb1.port.drive``), turned and mirrored with it; an
+    array's copies have theirs by index (``comb1.port.drive[2]``).
+    """
+
+    name: str
+    at: str | None = None
+    x: Value = 0.0
+    y: Value = 0.0
+    direction: Value | None = None
+    width: Value | None = None
+    layer: str | None = None
+    description: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, name: str) -> str:
+        if not name.isidentifier() or keyword.iskeyword(name):
+            raise ValueError(f"'{name}' is not a valid port name")
+        return name
+
+    @field_validator("at")
+    @classmethod
+    def _reference(cls, at: str | None) -> str | None:
+        if at is None or at in BBOX_POINTS:
+            return at
+        return check_point_reference(at)
+
+
 class Waiver(_Model):
     """An accepted rule violation (requirement DRC-13): the rule, where its
     violation is (a box in µm), why it is accepted, and a fingerprint of the
@@ -189,6 +234,7 @@ class ComponentDef(_Model):
     level: str | None = None
     parameters: list[ParamDef] = Field(default_factory=list)
     points: list[PointDef] = Field(default_factory=list)
+    ports: list[PortDef] = Field(default_factory=list)
     shapes: list[Shape] = Field(default_factory=list)
     waivers: list[Waiver] = Field(default_factory=list)
 
@@ -231,6 +277,9 @@ class ComponentDef(_Model):
         points = [p.name for p in self.points]
         if len(points) != len(set(points)):
             raise ValueError("point names must be unique")
+        ports = [p.name for p in self.ports]
+        if len(ports) != len(set(ports)):
+            raise ValueError("port names must be unique")
         return self
 
     def references(self) -> set[str]:
@@ -252,6 +301,17 @@ class ComponentDef(_Model):
                 self.points[index] = PointDef.model_validate({**point.model_dump(), "name": new})
                 return
         raise KeyError(f"component '{self.name}' has no point '{old}'")
+
+    def rename_port(self, old: str, new: str) -> None:
+        """Rename one of this component's ports (see :meth:`Project.rename_port` for
+        the components that place it)."""
+        if any(p.name == new for p in self.ports):
+            raise ValueError(f"port '{new}' already exists")
+        for index, port in enumerate(self.ports):
+            if port.name == old:
+                self.ports[index] = PortDef.model_validate({**port.model_dump(), "name": new})
+                return
+        raise KeyError(f"component '{self.name}' has no port '{old}'")
 
     def follow_point_rename(self, nodes: set[str], old: str, new: str) -> None:
         """Update what uses point ``old`` of the nodes named in ``nodes``, which place
@@ -278,17 +338,18 @@ class ComponentDef(_Model):
         self._rewrite_points(change)
 
     def _rewrite_points(self, change: Callable[[str], str | None]) -> None:
-        """Pass the names this component's points measure from through ``change``."""
-        self.points = [
-            p.model_copy(
-                update={
-                    "at": p.at and (change(p.at) or p.at),
-                    "x": rewrite(p.x, change),
-                    "y": rewrite(p.y, change),
-                }
-            )
-            for p in self.points
-        ]
+        """Pass the names this component's points and ports measure from through ``change``."""
+
+        def rewritten(p):
+            update = {"at": p.at and (change(p.at) or p.at), "x": rewrite(p.x, change)}
+            update["y"] = rewrite(p.y, change)
+            for key in ("direction", "width"):
+                if getattr(p, key, None) is not None:
+                    update[key] = rewrite(getattr(p, key), change)
+            return p.model_copy(update=update)
+
+        self.points = [rewritten(p) for p in self.points]
+        self.ports = [rewritten(p) for p in self.ports]
 
 
 def name_shapes(shapes: list[Shape]) -> None:

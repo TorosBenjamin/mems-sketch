@@ -38,19 +38,35 @@ SIZES = ("width", "height")
 MIN_SIZES = ("width", "height", "angle")
 
 
+PORT_MEASURES = ("angle", "width")  # of a placed component's port: port.drive.angle
+
+
 def _is_coordinate(path: str) -> bool:
-    point, dot, axis = path.partition(".")
-    return bool(point) and dot == "." and axis in ("x", "y")
+    point, dot, axis = path.rpartition(".")
+    return dot == "." and axis in ("x", "y") and _is_point(point)
+
+
+def _is_point(name: str) -> bool:  # one word, or a placed component's port (port.drive)
+    word = name.removeprefix("port.")
+    return bool(word) and "." not in word
+
+
+def _is_port_measure(path: str) -> bool:
+    point, dot, measure = path.rpartition(".")
+    return (
+        dot == "." and measure in PORT_MEASURES and point.startswith("port.") and _is_point(point)
+    )
 
 
 def measure_path(name: str) -> tuple[str, str] | None:
     """``(node, path)`` when ``name`` is a node's measure in an expression:
-    ``beam.left.x``, ``beam.width``, ``beam.min.angle``, ``beam.min.top_right.y``."""
+    ``beam.left.x``, ``beam.width``, ``beam.min.angle``, ``beam.min.top_right.y``;
+    a placed component's port: ``comb1.port.drive.x``, ``comb1.port.drive.angle``."""
     node, dot, path = name.partition(".")
     if not node or not dot:
         return None
     rest = path[4:] if path.startswith("min.") else None
-    if path in SIZES or _is_coordinate(path):
+    if path in SIZES or _is_coordinate(path) or _is_port_measure(path):
         return node, path
     if rest is not None and (rest in MIN_SIZES or _is_coordinate(rest)):
         return node, path

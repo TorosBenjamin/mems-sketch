@@ -1,7 +1,7 @@
 // Copies on a grid; the copy's column and row are i and j
-// (mems_sketch.core.shapes.modifiers.ArrayModifier).
-#include <optional>
-
+// (mems_sketch.core.shapes.modifiers.ArrayModifier). The first copy's points
+// and ports are the node's; each copy's ports are also there by its index,
+// counted along the rows (j * columns + i): drive[3].
 #include "modifiers.hpp"
 
 namespace mems {
@@ -13,8 +13,7 @@ Result apply_array(const Json& modifier, const Produce& produce, const Variables
     const int rows = copy_count(ctx, modifier, "rows", 1.0, "array rows");
     const double dx = ctx.number(modifier, "dx", 0.0), dy = ctx.number(modifier, "dy", 0.0);
     LayerSet layers;
-    Instances instances;
-    std::optional<PointMap> declared;
+    Result result;
     for (int j = 0; j < rows; ++j) {
         for (int i = 0; i < columns; ++i) {
             Variables copy = variables;
@@ -23,11 +22,16 @@ Result apply_array(const Json& modifier, const Produce& produce, const Variables
             const Result made = produce(copy);
             const auto t = mgeom::Transform::translation(i * dx, j * dy);
             layers.add(placed(made.layers, t));
-            for (auto& instance : placed(made.instances, t)) instances.push_back(std::move(instance));
-            if (!declared) declared = made.points;  // the first copy sits at the node's own place
+            for (auto& instance : placed(made.instances, t)) result.instances.push_back(std::move(instance));
+            if (i == 0 && j == 0) {  // the first copy sits at the node's own place
+                result.points.insert(made.points.begin(), made.points.end());
+                result.ports.insert(made.ports.begin(), made.ports.end());
+            }
+            add_copy_ports(result, made, t, j * columns + i);
         }
     }
-    return {layers.merged(), declared.value_or(PointMap{}), std::move(instances)};
+    result.layers = layers.merged();
+    return result;
 }
 
 }  // namespace mems

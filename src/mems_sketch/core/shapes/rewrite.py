@@ -200,7 +200,7 @@ def point_renamer(nodes: set[str], old: str, new: str) -> Callable[[str], str | 
 
     def change(name: str) -> str | None:
         head, dot, rest = name.partition(".")
-        if head in nodes and dot and (rest == old or rest.startswith(f"{old}.")):
+        if head in nodes and dot and (rest == old or rest.startswith((f"{old}.", f"{old}["))):
             return f"{head}.{new}{rest[len(old) :]}"
         return None
 

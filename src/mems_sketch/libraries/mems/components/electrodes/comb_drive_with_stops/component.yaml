@@ -2,7 +2,7 @@ description: >-
   Comb drive (as `comb_drive`, anchored) with motion limiters: tabs at both
   ends of the moving spine stop on anchored posts after `travel` towards the
   fixed comb, before the fingers can reach the fixed spine or snap sideways.
-  Points: moving and fixed, as on the comb drive.
+  Points: moving and fixed, and the port drive, as on the comb drive.
 tags: [electrode, comb drive, actuator, stop, motion limiter, capacitive]
 parameters:
   fingers: {default: 10, min: 1, integer: true, description: Moving fingers}
@@ -16,6 +16,8 @@ parameters:
   moving_spine_width: {default: 4, min: 0, min_exclusive: true, internal: true}
   total: {default: (2 * fingers + 1) * finger_width + 2 * fingers * gap, internal: true, description: Width of the spines (µm)}
   spine_bottom: {default: -overlap / 2 + finger_length, internal: true, description: Lower edge of the moving spine (µm)}
+ports:
+  drive: {at: comb.port.drive, description: "The fixed comb's connection"}
 points:
   moving: {y: spine_bottom + moving_spine_width}
   fixed: {y: overlap / 2 - finger_length - 10}

@@ -6,6 +6,7 @@ description: >-
   about n ε₀ t L / gap (n moving fingers, t the thickness, L the length);
   beyond a third of the gap the electrostatic pull wins (pull-in). Point:
   moving, the middle of the moving spine's bottom edge, where it attaches.
+  Port: fixed, above the fixed electrodes' anchors, which a bus joins.
 tags: [electrode, parallel plate, gap closing, capacitive, sense, accelerometer]
 parameters:
   fingers: {default: 8, min: 1, integer: true, description: Moving fingers}
@@ -20,6 +21,12 @@ parameters:
   x_start: {default: -fingers * pitch / 2, internal: true}
 points:
   moving: {y: -spine_width}
+ports:
+  fixed:
+    at: fixed_anchors.top
+    direction: up
+    width: anchor_size
+    description: "The fixed electrodes: their anchors, joined above (or on a level below)"
 shapes:
   spine: {kind: rect, x0: x_start, y0: -spine_width, x1: x_start + fingers * pitch, y1: 0}
   moving_fingers:

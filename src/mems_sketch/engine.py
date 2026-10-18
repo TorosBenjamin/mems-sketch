@@ -28,7 +28,7 @@ from mems_sketch.core.component import DBU_UM, Geometry, resolve_params
 from mems_sketch.core.imports import ImportedCell, ImportedComponent, cell_geometry
 from mems_sketch.core.levels import Stack
 from mems_sketch.core.region import Region
-from mems_sketch.core.shapes import NodePoints, NodeRecord
+from mems_sketch.core.shapes import NodePoints, NodeRecord, Port
 from mems_sketch.core.transform import Transform
 from mems_sketch.core.user_component import ComponentDef, ParamDef, UserComponent
 
@@ -266,11 +266,17 @@ class Build:
         self.params = params
 
     @cached_property
-    def _built(self) -> tuple[Geometry, dict[str, Point]]:
+    def _built(self) -> tuple[Geometry, dict[str, Point], dict[str, Port]]:
         engine = self._engine
         engine.variables(self.component, self.params)  # the model's checks, with its messages
-        key, cells, points = engine._core.tree(self.component, self.params, GRID_UM, CHORD_UM)
-        return _cell(engine, cells, key), {name: tuple(p) for name, p in points.items()}
+        key, cells, points, ports = engine._core.tree(
+            self.component, self.params, GRID_UM, CHORD_UM
+        )
+        return (
+            _cell(engine, cells, key),
+            {name: tuple(p) for name, p in points.items()},
+            {name: Port(*p) for name, p in ports.items()},
+        )
 
     @property
     def geometry(self) -> Geometry:
@@ -323,6 +329,10 @@ class Build:
         """The component's declared alignment points, µm."""
         return self._built[1]
 
+    def ports(self) -> dict[str, Port]:
+        """The component's ports: where they are (µm), their direction, width and layer."""
+        return self._built[2]
+
     def variables(self) -> dict[str, float]:
         """The resolved parameters and process constants the component is built with."""
         return self._engine.variables(self.component, self.params)
@@ -340,12 +350,18 @@ class Build:
             self.component, self.params, GRID_UM, CHORD_UM
         )
         result = {}
-        for path, (layers, instances, name, declared, inner, shift) in records.items():
+        for path, (layers, instances, name, declared, inner, shift, ports) in records.items():
             geometry = _geometry(layers)
             for key, placement in instances:
                 geometry.place(_cell(self._engine, cells, key), _transform(placement))
             points = NodePoints(name, geometry, {k: tuple(p) for k, p in declared.items()})
-            result[path] = NodeRecord(geometry, points, _transform(inner), _transform(shift))
+            result[path] = NodeRecord(
+                geometry,
+                points,
+                _transform(inner),
+                _transform(shift),
+                {k: Port(*p) for k, p in ports.items()},
+            )
         return result
 
     def records(self) -> dict[NodePath, NodeRecord]:

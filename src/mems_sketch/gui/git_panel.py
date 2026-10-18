@@ -29,7 +29,7 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.diff import Change
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.history import Comparison, grouped
-from mems_sketch.gui import widgets
+from mems_sketch.gui import icons, widgets
 from mems_sketch.gui.commit_panel import CHANGE_ROLE, fit_columns, group_row, make_tree
 from mems_sketch.gui.panels import _Panel
 from mems_sketch.storage import git
@@ -58,6 +58,7 @@ class GitPanel(_Panel):
 
     comparison_changed = Signal()  # another comparison is shown: redraw the canvas
     navigate = Signal(object)  # a Change was clicked: show it
+    compare_requested = Signal(object, object, object)  # key, component, Change: a tab
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -88,9 +89,15 @@ class GitPanel(_Panel):
         self.versions.itemSelectionChanged.connect(self._version_chosen)
         self.versions.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.versions.customContextMenuRequested.connect(self._menu)
+        self.versions.itemDoubleClicked.connect(
+            lambda item, _column: self.compare_requested.emit(
+                tuple(item.data(0, KEY_ROLE)), None, None
+            )
+        )
 
         self.changes = make_tree()
         self.changes.itemClicked.connect(self._change_clicked)
+        self.changes.itemDoubleClicked.connect(lambda item, _column: self._compare(item))
         self.compared = QLabel()  # "Commit 1a2b3c4", over the changes
         self.compared.setObjectName("muted")
         self.compared.setContentsMargins(8, 6, 8, 2)
@@ -172,6 +179,11 @@ class GitPanel(_Panel):
             return
         menu = QMenu(self)
         menu.addAction("Show what this commit changed", lambda: self.choose(key))
+        menu.addAction(
+            icons.icon("split"),
+            "Open the comparison",
+            lambda: self.compare_requested.emit(key, None, None),
+        )
         menu.addAction("Compare with the design now", lambda: self.choose(("since", key[1])))
         menu.addSeparator()
         menu.addAction("Restore the project as it was", lambda: self.restore(key[1]))
@@ -239,6 +251,12 @@ class GitPanel(_Panel):
         if self.key[0] == "since":
             return f"From {self.key[1][:7]} to now"
         return f"Commit {self.key[1][:7]}"
+
+    def _compare(self, item: QTreeWidgetItem) -> None:
+        """The comparison tab for the comparison shown, at a change."""
+        change = item.data(0, CHANGE_ROLE)
+        if self.key is not None and isinstance(change, Change):
+            self.compare_requested.emit(self.key, change.component, change)
 
     def _change_clicked(self, item: QTreeWidgetItem) -> None:
         change = item.data(0, CHANGE_ROLE)

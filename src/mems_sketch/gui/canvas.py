@@ -260,6 +260,23 @@ class _PlacedPathItem(ShapeItem):
         self.setTransform(placement)
 
 
+MARK_RADIUS_PX = 9
+
+
+@dataclass(frozen=True)
+class ChangeMark:
+    """A mark on a changed shape, at ``x, y`` (µm): filled for a shape that was
+    edited, a ring for one that only moved because of another change; ``label``
+    numbers it, ``current`` rings it once more (the one stepped to)."""
+
+    x: float
+    y: float
+    label: str
+    filled: bool
+    color: str
+    current: bool = False
+
+
 class LayoutCanvas(QGraphicsView):
     # Left button, in µm, with the keyboard modifiers (for the active tool).
     pressed = Signal(float, float, object)
@@ -296,6 +313,7 @@ class LayoutCanvas(QGraphicsView):
         self._items_by_key: dict[tuple, list[QGraphicsPathItem]] = {}
         self._overlay: list = []
         self._change_items: list = []
+        self._marks: list[ChangeMark] = []
         self._points: dict[str, list] = {}
         self._pan_from: QPointF | None = None
         self._right_from: QPointF | None = None  # right press: a click, until it drags
@@ -1536,11 +1554,55 @@ class LayoutCanvas(QGraphicsView):
             self._draw_gizmo(painter)
         if self._corner_handles or self._corner_preview:
             self._draw_corners(painter)
+        if self._marks:
+            self._draw_marks(painter)
         label = self.cursor_label or self.hover_label
         if label:
             self._draw_cursor_label(painter, label)
         self._round_corners(painter)
         painter.restore()
+
+    def show_marks(self, marks: list[ChangeMark]) -> None:
+        """Marks on changed shapes (see :class:`ChangeMark`), drawn over everything."""
+        self._marks = list(marks)
+        self.viewport().update()
+
+    @property
+    def marks(self) -> list[ChangeMark]:
+        return list(self._marks)
+
+    def mark_at(self, pos: QPoint) -> ChangeMark | None:
+        """The mark under a point of the viewport, if any."""
+        for mark in reversed(self._marks):
+            at = self.mapFromScene(QPointF(mark.x, mark.y))
+            if (at.x() - pos.x()) ** 2 + (at.y() - pos.y()) ** 2 <= (MARK_RADIUS_PX + 3) ** 2:
+                return mark
+        return None
+
+    def _draw_marks(self, painter: QPainter) -> None:
+        font = QFont(self.font())
+        font.setBold(True)
+        font.setPixelSize(MARK_RADIUS_PX + 2)
+        painter.setFont(font)
+        for mark in self._marks:
+            at = QPointF(self.mapFromScene(QPointF(mark.x, mark.y)))
+            radius = MARK_RADIUS_PX + (2 if mark.current else 0)
+            color = QColor(mark.color)
+            if mark.filled:
+                painter.setPen(QPen(QColor("white"), 2))
+                painter.setBrush(color)
+            else:  # moved by another change: a ring
+                painter.setPen(QPen(color, 2.2))
+                painter.setBrush(QColor(self.theme["background"]))
+            painter.drawEllipse(at, radius, radius)
+            if mark.current:
+                painter.setPen(QPen(color, 1.5))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(at, radius + 4, radius + 4)
+            if mark.label:
+                painter.setPen(QColor("white") if mark.filled else color)
+                box = QRectF(at.x() - radius, at.y() - radius, 2 * radius, 2 * radius)
+                painter.drawText(box, Qt.AlignmentFlag.AlignCenter, mark.label)
 
     def _round_corners(self, painter: QPainter) -> None:
         """Paint over the parts of the view outside its island's rounded outline, in

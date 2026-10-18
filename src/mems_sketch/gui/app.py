@@ -39,6 +39,7 @@ from mems_sketch.gui import component_picker, icons, motion, recent_projects, th
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.commit_panel import CommitPanel
+from mems_sketch.gui.comparison_view import UNCOMMITTED, ComparisonView
 from mems_sketch.gui.component_picker import PlacePopup
 from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.export_dialog import ExportOptionsDialog, remember, remembered
@@ -113,15 +114,17 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "without changing the design, on library components too.",
     "commit": "The changes since the last commit, saved or not, by component; the "
     "canvas shows the material added (tinted) and removed (hatched) in the "
-    "component you are editing. Click a change to go to it.\n\n"
+    "component you are editing. Click a change to go to it; double-click it to "
+    "compare the two versions in a tab of their own.\n\n"
     "Check what goes into the commit: a component is the unit. *Commit* saves the "
     "project and commits those files, nothing else; *Amend* replaces the last "
     "commit. Right-click a row to roll it back to the last commit (an ordinary edit, "
     "which Undo takes back), or to add or ignore a file git does not track.",
     "git": "The project's commits. Choose one to see what it changed (on the canvas "
-    "too); right-click it to compare it with the design now, or to restore the "
-    "project (or the component you are editing) as it was: an ordinary edit, which "
-    "Undo takes back. Branches, merging and remotes stay with your git tools for now.",
+    "too), double-click it to compare in a tab; right-click it to compare it with "
+    "the design now, or to restore the project (or the component you are editing) as "
+    "it was: an ordinary edit, which Undo takes back. Branches, merging and remotes "
+    "stay with your git tools for now.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "
@@ -233,7 +236,8 @@ class MainWindow(QMainWindow):
         for panel in self._compared:
             panel.comparison_changed.connect(lambda p=panel: self._comparison_shown(p))
             panel.navigate.connect(self._go_to_change)
-        self.commit_panel.committed.connect(self.git.reload)
+            panel.compare_requested.connect(self.open_comparison)
+        self.commit_panel.committed.connect(self._committed)
         self._build_tool_windows()
 
         self._build_actions()
@@ -262,6 +266,7 @@ class MainWindow(QMainWindow):
         self.components.open_requested.connect(self.open_component)
         self.components.process_requested.connect(self.open_process)
         self.area.process_factory = self._make_process_view
+        self.area.comparison_factory = self._make_comparison_view
         self.components.open_aside_requested.connect(self.open_aside)
         self.layers.visibility_changed.connect(self._set_layer_visible)
         self.tree.collapse_changed.connect(self.state_changed)
@@ -337,6 +342,37 @@ class MainWindow(QMainWindow):
         """The Process tab: the process's constants and layer definitions."""
         self.area.open_process()
         self.state_changed()
+
+    def open_comparison(self, key=UNCOMMITTED, component=None, change=None) -> ComparisonView:
+        """The comparison tab: two versions of a component on the canvas (``key`` as
+        for :meth:`ComparisonView.compare`), at ``change`` if given."""
+        view = self.area.open_comparison()
+        view.set_palette(self.layers.colors, self.layers.visible)
+        view.compare(tuple(key), component, change)
+        self.area.update_titles()
+        return view
+
+    def _committed(self) -> None:
+        """A commit from the Commit panel: the commits and the comparison move on."""
+        self.git.reload()
+        if self.area.comparison_view is not None:
+            self.area.comparison_view.follow()
+
+    def _make_comparison_view(self) -> ComparisonView:
+        view = ComparisonView(self.document)
+        view.error.connect(self.report_error)
+        for canvas in view.canvases():
+            canvas.set_theme(self.canvas_theme)
+            canvas.corner_color = self._frame_color()
+            canvas.configure(**self._canvas_options())
+        return view
+
+    def _canvases(self) -> list[LayoutCanvas]:
+        """Every canvas: the tabs', and the comparison's."""
+        found = [view.canvas for view in self.area.views()]
+        if self.area.comparison_view is not None:
+            found += self.area.comparison_view.canvases()
+        return found
 
     def _make_process_view(self) -> ProcessView:
         view = ProcessView(self.document)
@@ -446,15 +482,15 @@ class MainWindow(QMainWindow):
             self.ui_theme = self._apply_ui_theme()
             self.refresh()  # panels and tabs pick up the new icon colours
         if key in ("appearance/ui_theme", "appearance/canvas_theme"):
-            for view in self.area.views():
-                view.canvas.set_theme(self.canvas_theme)
-                view.canvas.corner_color = self._frame_color()
+            for canvas in self._canvases():
+                canvas.set_theme(self.canvas_theme)
+                canvas.corner_color = self._frame_color()
             self.dark_action.setChecked(theme.get(self.canvas_theme).dark)
             self.update_overlay()
         if key in CANVAS_OPTIONS.values():
             options = self._canvas_options()
-            for view in self.area.views():
-                view.canvas.configure(**options)
+            for canvas in self._canvases():
+                canvas.configure(**options)
             self._show_zoom()
         if key == "editor/show_implementation":
             ComponentView.show_implementation = self.settings.get(key)
@@ -1052,6 +1088,9 @@ class MainWindow(QMainWindow):
         self.layers.refresh()
         if self.area.process_view is not None:
             self.area.process_view.refresh()
+        if self.area.comparison_view is not None:
+            self.area.comparison_view.set_palette(self.layers.colors, self.layers.visible)
+            self.area.comparison_view.follow()
         if self._slow():
             self._build_in_background()
         else:

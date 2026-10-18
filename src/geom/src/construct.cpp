@@ -7,6 +7,7 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <Standard_Failure.hxx>
+#include <TopoDS.hxx>
 
 #include <cmath>
 #include <numbers>
@@ -42,6 +43,30 @@ Point arc_middle(Point a, Point b, Point centre, bool ccw) {
     const double mid = (a0 + a1) / 2;
     const double r = length(minus(a, centre));
     return {centre.x + r * std::cos(mid), centre.y + r * std::sin(mid)};
+}
+
+// Twice the area a closed wire encloses, positive when it runs
+// counter-clockwise: the polygon of its points, plus, for each arc, the
+// circular segment between it and its chord.
+double twice_signed_area(const Wire& outline) {
+    double sum = 0;
+    Point from = outline.start();
+    for (const Wire::Segment& s : outline.segments()) {
+        sum += from.x * s.end.y - s.end.x * from.y;
+        if (s.arc) {
+            const double r = length(minus(from, s.centre));
+            double sweep = angle_of(minus(s.end, s.centre)) - angle_of(minus(from, s.centre));
+            if (s.ccw) {
+                while (sweep <= 0) sweep += 2 * std::numbers::pi;
+            } else {
+                while (sweep >= 0) sweep -= 2 * std::numbers::pi;
+            }
+            sum += r * r * (sweep - std::sin(sweep));
+        }
+        from = s.end;
+    }
+    const Point start = outline.start();
+    return sum + (from.x * start.y - start.x * from.y);
 }
 
 TopoDS_Edge edge_of(Point from, const Wire::Segment& s) {
@@ -89,7 +114,11 @@ Region Region::polygon(const Wire& outline) {
         make.Add(BRepBuilderAPI_MakeEdge(to_occ(from), to_occ(outline.start())).Edge());
     }
     if (!make.IsDone()) throw GeometryError("cannot make an outline of these segments");
-    BRepBuilderAPI_MakeFace face(make.Wire(), /*OnlyPlane=*/true);
+    // Faces are made from counter-clockwise outlines: a clockwise one makes a
+    // face that faces the other way, and a union never merges faces facing
+    // opposite ways (it kept a path's corner piece apart from its bands).
+    const TopoDS_Wire wire = twice_signed_area(outline) < 0 ? TopoDS::Wire(make.Wire().Reversed()) : make.Wire();
+    BRepBuilderAPI_MakeFace face(wire, /*OnlyPlane=*/true);
     if (!face.IsDone()) throw GeometryError("cannot make a face of this outline");
     if (!BRepCheck_Analyzer(face.Face()).IsValid()) {
         throw GeometryError("the outline is not valid (it crosses or touches itself)");
@@ -147,7 +176,12 @@ Region Region::path(const Wire& centreline, double width, PathEnds ends, Join jo
             continue;
         }
         if (join == Join::round || in.arc || out.arc) {
-            pieces.push_back(circle(p, h));
+            // The sector between the bands' ends, not a whole circle: a circle
+            // runs through the bands' corners and touches their sides, which
+            // the union did not always merge (a sharp turn came out in pieces).
+            const Point outward = plus(minus(a, p), minus(b, p));
+            const Point towards = length(outward) > 1e-9 * h ? unit(outward) : t_in;  // a U-turn: ahead
+            pieces.push_back(polygon(Wire(p).line_to(a).arc_through(plus(p, scaled(towards, h)), b)));
             continue;
         }
         // A miter: the outer edges run on by up to half the width past the

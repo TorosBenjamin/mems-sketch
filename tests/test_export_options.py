@@ -162,6 +162,9 @@ def test_the_default_grid_changes_nothing_in_the_example(resonator, tmp_path):
 
 
 def test_the_curve_tolerance_sets_how_finely_curves_are_written(resonator, tmp_path):
+    mass = next(s for s in resonator.components["top"].shapes if s.name == "mass")
+    mass.params["corner_radius"] = 3.75  # round release holes: half the 7.5 µm hole
+
     def points(chord):
         path = export(resonator, tmp_path / f"c{chord}.gds", options={"chord_um": chord})
         layout = read_gds(path)

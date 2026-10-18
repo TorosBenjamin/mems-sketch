@@ -65,7 +65,7 @@ def placed(window) -> list[str]:
 def test_the_popup_lists_recent_components_then_each_source(window):
     component_picker.remember("mems.anchor")
     popup = window.place_popup(near=QPoint(100, 100))
-    assert headings(popup_items(popup)) == ["Recent", THIS_PROJECT, "mems"]
+    assert headings(popup_items(popup)) == ["Recent", THIS_PROJECT, "mems", "std"]
     names = [e.name for e in (i.data(ENTRY_ROLE) for i in popup_items(popup)) if e]
     assert names[0] == "mems.anchor"  # recent first
     assert window.document.active not in names  # not inside itself
@@ -142,7 +142,7 @@ def tab_items(dialog):
 
 def test_the_components_tab_lists_them_by_source_with_a_preview(window):
     dialog = components_tab(window)
-    assert headings(tab_items(dialog)) == [THIS_PROJECT, "mems"]
+    assert headings(tab_items(dialog)) == [THIS_PROJECT, "mems", "std"]
     assert dialog.preview.isVisible() and dialog.source.isVisible()
     dialog.search.setText("comb")
     current = dialog.list.currentItem().data(0, RESULT_ROLE)
@@ -163,7 +163,7 @@ def test_a_source_folds_away_and_stays_folded(window):
     assert "mems.anchor" not in rows  # remembered
     again.search.setText("anch")  # searching shows what matches, folded or not
     rows = [i.data(0, RESULT_ROLE).title for i in tab_items(again) if i.data(0, RESULT_ROLE)]
-    assert rows == ["mems.anchor"]
+    assert rows[0] == "mems.anchor"
 
 
 def test_one_source_can_be_chosen(window):

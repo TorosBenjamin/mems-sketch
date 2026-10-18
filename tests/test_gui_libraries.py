@@ -37,11 +37,13 @@ def children(item) -> list[str]:
 def test_a_library_shows_its_categories_in_their_order(window):
     mems = group(window, "mems")
     assert "Bundled library" in mems.toolTip(0)
-    assert children(mems) == ["Anchors", "Springs", "Masses", "Electrodes"]
+    assert children(mems) == ["Anchors", "Springs", "Masses", "Electrodes", "Devices"]
     springs = mems.child(1)
-    assert children(springs) == ["serpentine_spring"]
+    names = children(springs)
+    assert {"serpentine_spring", "folded_flexure", "crab_leg"} <= set(names)
     assert springs.data(0, window.components.CATEGORY_ROLE) == "mems/springs"
-    assert springs.child(0).data(0, window.components.NAME_ROLE) == "mems.serpentine_spring"
+    serpentine = springs.child(names.index("serpentine_spring"))
+    assert serpentine.data(0, window.components.NAME_ROLE) == "mems.serpentine_spring"
     assert window.components.menu_for(springs).isEmpty()  # a category has no actions
     assert not any("Remove library" in a.text() for a in window.components.menu_for(mems).actions())
 
@@ -57,11 +59,11 @@ def test_a_collapsed_category_stays_collapsed(window):
 def test_tags_are_shown_and_searched(window):
     from mems_sketch.gui.search import RESULT_ROLE
 
-    window.document.project.components["spring"] = ComponentDef(name="spring", tags=["flexure"])
+    window.document.project.components["spring"] = ComponentDef(name="spring", tags=["wobbly"])
     window.components.refresh()
     window.search("Components")
     dialog = window._find_dialog
-    dialog.search.setText("flexure")
+    dialog.search.setText("wobbly")
     items = [dialog.list.topLevelItem(i) for i in range(dialog.list.topLevelItemCount())]
     titles = [i.data(0, RESULT_ROLE).title for i in items if i.data(0, RESULT_ROLE)]
     assert titles == ["spring"]

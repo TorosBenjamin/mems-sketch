@@ -265,8 +265,8 @@ def test_editor_state_is_saved_in_the_project_and_restored(window, example, qtbo
     w.open_component("mems.perforated_plate")
     w.document.set_trial("pitch", 30)
     w.set_tool("measure")
-    click(w, -80, -80)
-    click(w, 80, -80)
+    click(w, -81.25, -81.25)  # the plate's corners
+    click(w, 81.25, -81.25)
     w.layers.visibility_changed.emit("mems.anchor", False)
     w.layers.visible["anchor"] = False
     w.components.collapsed.add("Library: mems")
@@ -291,7 +291,7 @@ def test_editor_state_is_saved_in_the_project_and_restored(window, example, qtbo
     zoom, x, y = left.canvas.view_state()
     assert zoom == pytest.approx(7.5) and (x, y) == pytest.approx((12, 34), abs=1)
     assert other.document.trials == {"mems.perforated_plate": {"pitch": 30}}
-    assert other.rulers["mems.perforated_plate"] == [pytest.approx((-80, -80, 80, -80))]
+    assert other.rulers["mems.perforated_plate"] == [pytest.approx((-81.25, -81.25, 81.25, -81.25))]
     assert other.layers.visible == {"anchor": False}
     assert "Library: mems" in other.components.collapsed
     other.close()

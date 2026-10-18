@@ -174,8 +174,8 @@ Rectangular proof mass centred on the origin, sized by its holes so that the rim
 | `web` | `2.5` | > 0 | Between holes, and the rim (µm); where four webs meet the nearest hole is 0.71 webs away: keep that under the undercut |
 | `attach` | `6` | ≥ 0 | Width of the attachment zones (µm) |
 | `attach_depth` | `2.5` | ≥ 0 | Depth of the attachment zones (µm); a web deep, they keep the rim |
-| `width` | `columns * pitch + web` |  | *(derived)* Width (µm) |
-| `height` | `rows * pitch + web` |  | *(derived)* Height (µm) |
+| `width` | `columns * pitch + web` |  | *(derived)* Mass width (µm) |
+| `height` | `rows * pitch + web` |  | *(derived)* Mass height (µm) |
 
 *Tags: mass, proof mass, perforated, release holes, accelerometer, resonator*
 

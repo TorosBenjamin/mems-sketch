@@ -29,7 +29,12 @@ def test_a_library_shares_its_process(tmp_path):
     assert project.base_process is project.libraries["fab"].processes["surface"]
     assert project.process == project.base_process and project.process is not project.base_process
     assert project.processes == {}  # nothing of its own to save
-    assert project.process_names() == ["mems.surface", "fab.surface"]  # the bundled one too
+    assert project.process_names() == [  # the bundled ones too
+        "mems.surface",
+        "mems.polysilicon",
+        "mems.soi",
+        "fab.surface",
+    ]
     save(project, tmp_path / "chip")
     manifest = (tmp_path / "chip" / "project.yaml").read_text()
     assert "process: fab.surface\n" in manifest and "overrides" not in manifest

@@ -59,6 +59,19 @@ def _parser() -> argparse.ArgumentParser:
     )
     new.set_defaults(handler=_new)
 
+    new_process = commands.add_parser(
+        "new-process", help="create a process library: a process of your own to fill in"
+    )
+    new_process.add_argument("folder", type=Path)
+    new_process.add_argument("--name", help="the process's name (default: the folder's name)")
+    new_process.add_argument(
+        "--from",
+        dest="start",
+        default="mems.surface",
+        help="the process it starts as a copy of (default mems.surface; 'empty' for none)",
+    )
+    new_process.set_defaults(handler=_new_process)
+
     info = commands.add_parser("info", help="list components, parameters and layers")
     info.add_argument("project", type=Path)
     info.set_defaults(handler=_info)
@@ -145,6 +158,39 @@ def _new(args: argparse.Namespace) -> int:
     project = new_project(args.name or args.folder.name, library=args.library)
     save(project, args.folder)
     print(f"created {args.folder}")
+    return 0
+
+
+def _new_process(args: argparse.Namespace) -> int:
+    """A library holding one process, a copy of ``--from``: what to edit into your
+    fab's process (layers, levels, constants, rules), then add as a library."""
+    import copy
+
+    from mems_sketch.core.process import Process
+    from mems_sketch.core.project import Project
+
+    if (args.folder / "project.yaml").exists():
+        raise FileExistsError(f"{args.folder} already contains a project")
+    name = args.name or args.folder.name
+    if not name.isidentifier():
+        raise ValueError(f"'{name}' is not a valid process name: use letters, digits and _")
+    if args.start == "empty":
+        process = Process(description="")
+    else:
+        source = Project(name="source")
+        library, _, process_name = args.start.partition(".")
+        if (
+            library not in source.libraries
+            or process_name not in source.libraries[library].processes
+        ):
+            raise ValueError(f"no process '{args.start}' to start from")
+        process = copy.deepcopy(source.libraries[library].processes[process_name])
+        process.description = f"Started as a copy of {args.start}: make it your fab's process."
+    project = Project(
+        name=name, top=None, components={}, processes={name: process}, process_name=name
+    )
+    save(project, args.folder)
+    print(f"created {args.folder}: edit processes/{name}/process.yaml, then add it as a library")
     return 0
 
 

@@ -1,0 +1,50 @@
+description: >-
+  An example silicon-on-insulator process: a thick single-crystal device layer
+  etched through (DRIE), released by etching the buried oxide under it, with
+  metal pads and an optional back-side cavity in the handle. Typical, round
+  values, not any foundry's rules.
+constants:
+  undercut: 4          # how far the oxide etch reaches under the device layer (µm)
+  min_gap: 3
+  t_device: 25         # thicknesses (µm)
+  t_box: 2
+  t_handle: 400
+  t_metal: 0.5
+layers:
+  device: {gds: [1, 0]}
+  anchor: {gds: [2, 0]}
+  metal: {gds: [3, 0]}
+  cavity: {gds: [4, 0]}
+levels:
+- {layer: cavity}
+- layer: device
+  roles: {anchor: anchor}
+- {layer: metal}
+default_level: device
+rules:
+  device_min_width: {kind: min_width, layers: [device], value: 3}
+  device_min_space:
+    kind: min_space
+    layers: [device]
+    value: 3
+    message: trenches narrower than 3 µm do not etch through 25 µm
+  metal_min_width: {kind: min_width, layers: [metal], value: 10}
+  metal_min_space: {kind: min_space, layers: [metal], value: 10}
+  metal_on_device:
+    kind: enclosure
+    layers: [device, metal]
+    value: 5
+    message: metal pads sit on the device layer, 5 µm inside its edge
+  anchor_in_device: {kind: inside, layers: [anchor, device]}
+  cavity_min_width: {kind: min_width, layers: [cavity], value: 100}
+  cavity_clear_of_anchors:
+    kind: separation
+    layers: [cavity, anchor]
+    value: 50
+    message: anchors stay 50 µm from the back-side cavity, over solid handle
+  device_anchored: {kind: anchored, layers: [device, anchor], severity: warning}
+  device_release:
+    kind: release
+    layers: [device, anchor]
+    undercut: process.undercut
+    severity: warning

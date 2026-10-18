@@ -139,7 +139,8 @@ but should not have to program. Scripting is there for those who want it.
   `mems: bundled@1`, with the version saved with). `mems` has `anchor`,
   `comb_drive`, `serpentine_spring` and `perforated_plate`, with their
   parameters and points (`serpentine_spring`: `start`, `end`; `comb_drive`:
-  `moving`, `fixed`), and the example process `surface`. They use relative
+  `moving`, `fixed`), and the example processes `surface`, `polysilicon`
+  (two-poly surface micromachining) and `soi`, with rules on the checks. They use relative
   layers ([CMP-10](#components-and-parameters)), not a layer parameter. The
   earlier built-ins are these components: old files are changed when opened.
   A library's components are in **categories** (the folders they are in, not

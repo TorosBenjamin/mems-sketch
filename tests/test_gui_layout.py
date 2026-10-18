@@ -464,8 +464,8 @@ def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path)
     panel = window.area.process_view.rules
     panel.refresh()
     items = [panel.process.itemText(k) for k in range(panel.process.count())]
-    assert items == ["main", "mems.surface", "fab.surface"]
-    panel.process.activated.emit(2)
+    assert items == ["main", "mems.surface", "mems.polysilicon", "mems.soi", "fab.surface"]
+    panel.process.activated.emit(4)
     assert window.document.project.process_name == "fab.surface"
     table = panel.rules
     row = [table.item(r, 0).text() for r in range(table.rowCount())].index("device_min_width")

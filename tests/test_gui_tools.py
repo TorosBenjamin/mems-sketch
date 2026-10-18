@@ -209,8 +209,8 @@ def test_measure_works_on_read_only_tabs(window):
 
 
 def test_angle_tool_measures_between_two_arms(window):
-    """Issue #5: an angle ruler."""
-    window.set_tool("angle")
+    """Issue #5: an angle ruler (now a mode of the Measure tool)."""
+    window.measure("angle")
     click(window, 0, 0)  # the vertex
     click(window, 40, 0)  # the first arm, along x
     hover(window, 30, 30)

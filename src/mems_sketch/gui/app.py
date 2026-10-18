@@ -145,7 +145,6 @@ CANVAS_MODES = (  # on the canvas
     "align",
     "corners",
     "measure",
-    "angle",
 )
 # Canvas options and the settings they come from (see gui/settings.py).
 CANVAS_OPTIONS = {
@@ -732,6 +731,11 @@ class MainWindow(QMainWindow):
         self._show_tool_options()
         self.update_overlay()
 
+    def measure(self, mode: str) -> None:
+        """The Measure tool, measuring distances or angles (D, N)."""
+        self.set_tool("measure")
+        self.tools["measure"].set_mode(mode)
+
     def set_left_pans(self, pans: bool) -> None:
         for view in self.area.views():
             view.canvas.left_pans = pans
@@ -900,6 +904,8 @@ class MainWindow(QMainWindow):
         self.layer_box, self.width_box = tool_status.layer_box, tool_status.width_box
         self.angle_box, self.tool_widgets = tool_status.angle_box, tool_status.tool_widgets
         self.layer_box.currentIndexChanged.connect(self._draw_layer_chosen)
+        for mode, button in tool_status.mode_buttons.items():
+            button.clicked.connect(lambda _=False, m=mode: self.measure(m))
         self.width_box.setValue(self.path_width)
         self.width_box.valueChanged.connect(self._path_width_chosen)
         self.angle_box.setValue(self.settings.get("snapping/angle_step"))

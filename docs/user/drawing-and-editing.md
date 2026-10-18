@@ -9,7 +9,7 @@
   Scrolling* says what scrolling does if your device is taken for the other
   kind (a mouse wheel zooms, a touchpad pans).
 - The **canvas modes** float in the top-right corner: Select, Hand, Move,
-  Rotate, Align, Corners, Measure, Angle.
+  Rotate, Align, Corners, Measure.
 - The selection is outlined in orange; the shape under the cursor is outlined
   dashed (what a click would select); rule violations are boxed in red.
 - The x axis is red and the y axis green; a scale bar sits in the corner, and
@@ -37,8 +37,7 @@ several.
 | **Rotate** | R | Drag anywhere to turn the selection about its centre; the angle follows the mouse (Ctrl: 15° steps). **Shift+click** sets another pivot (snaps to points), Esc goes back to the centre; a click without dragging selects. **Rotate 90°** is Ctrl+R / Ctrl+Shift+R; **Mirror** is in the right-click menu. |
 | **Align** | A | Click a shape, one of its points, then the point to put it on (below). |
 | **Corners** | O | Round or chamfer single corners (below). |
-| **Measure** | D | Click two points (they snap) for the distance, dx and dy. Rulers stay until **Tools → Clear rulers**. |
-| **Measure angle** | N | Click the vertex, then a point on each arm; the angle stays like a ruler. |
+| **Measure** | D, N | Two modes, switched in the status bar (**Distance** / **Angle**): D measures a distance (two clicks: the length, dx and dy), N an angle (the vertex, then a point on each arm: two arms and an arc with the angle; Shift: 15° steps). Points snap to the shapes' points, then to the corners and edges of everything drawn, placed components included, then to the grid (Ctrl: no snapping); a dot shows where, ringed on a point and following the cursor along an edge. Rulers stay until **Tools → Clear rulers**. |
 | **Rectangle**, **Circle** | B, C | Drag, or click corner and opposite corner (centre and radius). Shift: a square. |
 | **Polygon**, **Path** | P, W | Click the points; double-click, Enter or (polygon) the first point finishes; Backspace takes back a point. Shift: 0°, 45°, 90° segments. |
 | **Guide** | G | A construction line: draws nothing, but has points and can be mirrored about. |

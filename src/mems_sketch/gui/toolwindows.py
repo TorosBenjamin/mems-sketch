@@ -122,7 +122,10 @@ class ToolWindows(QWidget):
         self.left_side = QSplitter(Qt.Orientation.Vertical)
         self.left_side.addWidget(self._hosts["left-top"])
         self.left_side.addWidget(self._hosts["left-bottom"])
-        self.editor_island = island(editor, inset=0)  # the canvas reaches its edges
+        # The editor's panes are islands of their own (see EditorArea): around them,
+        # only the frame.
+        self.editor_island = island(editor, inset=0)
+        self.editor_island.setObjectName("editor-host")
         self.main = QSplitter(Qt.Orientation.Horizontal)  # the row: left, editor, right
         self.main.addWidget(self.left_side)
         self.main.addWidget(self.editor_island)

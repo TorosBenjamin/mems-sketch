@@ -439,9 +439,16 @@ QComboBox::drop-down {{ border: none; width: 20px; }}
 QComboBox::down-arrow {{ image: url({arrow}); width: 10px; height: 10px; }}
 QComboBox::down-arrow:disabled {{ image: url({arrow_disabled}); }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: none; }}
-QComboBox QAbstractItemView {{
-    background: {editor}; border: 1px solid {border_strong}; selection-background-color: {selected};
+QComboBox {{ combobox-popup: 0; }}  /* every list drops down below its box, alike */
+QComboBox QAbstractItemView {{  /* drawn on the popup's rounded panel (see style.py) */
+    background: transparent; border: none; outline: none;
+    selection-background-color: {selected}; selection-color: {text};
 }}
+QComboBox QAbstractItemView::item {{
+    min-height: 22px; padding: 0 8px; border-radius: {radius_control}px;
+}}
+QComboBox QAbstractItemView::item:hover {{ background: {hover}; }}
+QComboBox QAbstractItemView::item:selected {{ background: {selected}; color: {text}; }}
 
 QPushButton {{
     background: {editor}; border: 1px solid {input_border}; border-radius: {radius_control}px;
@@ -503,6 +510,9 @@ QTableView[visibility="true"]::indicator:checked {{
 QStatusBar {{ background: {frame}; border: none; color: {muted}; min-height: 26px; }}
 QStatusBar::item {{ border: none; }}
 QStatusBar QLabel {{ color: {muted}; padding: 0 6px; }}
+QStatusBar QLabel#status-tool {{ color: {text}; padding: 0 2px; }}
+QStatusBar QLabel#status-hint {{ color: {muted}; }}
+QFrame#status-separator {{ background: {border_strong}; border: none; }}
 QStatusBar QToolButton {{ padding: 2px 5px; }}
 QStatusBar QComboBox, QStatusBar QDoubleSpinBox {{ padding: 0 6px; }}
 QGraphicsView {{ border: none; }}
@@ -522,6 +532,7 @@ QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
 QSplitter#islands::handle {{ background: {frame}; }}  /* the gaps between islands */
+QFrame#editor-host {{ background: transparent; border: none; }}  /* holds the panes' islands */
 QToolTip {{
     background: {tooltip}; color: {text}; border: 1px solid {border_strong}; padding: 4px 6px;
     border-radius: {radius_control}px;

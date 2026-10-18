@@ -152,7 +152,8 @@ def test_parts_of_a_panel_are_divided_by_a_hairline_not_a_bar(window):
     splitters = window.findChildren(QSplitter)
     inner = [s for s in splitters if s.objectName() != "islands"]
     assert {s.objectName() for s in inner} == {"panel-split"}
-    assert len(inner) >= 3  # Points, History, the editor area
+    assert len(inner) >= 2  # Points, History
+    assert window.area.objectName() == "islands"  # split panes are islands, the frame between
     line = theme.color("border_strong").name()
     for split in (s for s in inner if s.count() > 1):  # a 1 px line in the handle's middle
         image = split.handle(1).grab().toImage()
@@ -162,7 +163,8 @@ def test_parts_of_a_panel_are_divided_by_a_hairline_not_a_bar(window):
             assert image.pixelColor(x, y - 1).name() != line  # 1 px thick
         else:  # side by side
             assert image.pixelColor(x - 1, y).name() != line
-    assert sum(s.objectName() == "islands" for s in splitters) == 3  # the gaps between islands
+    # The gaps between islands: the window's three, and the editor's (between its panes).
+    assert sum(s.objectName() == "islands" for s in splitters) == 4
 
 
 def test_the_process_page_is_cards_at_a_readable_width(window):

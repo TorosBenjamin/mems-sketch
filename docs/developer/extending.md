@@ -67,6 +67,15 @@ others:
 - **Dialogs:** `widgets.form()` for labelled fields, `widgets.with_help(field,
   text)` for a field and its **?**, `widgets.dialog_margins(layout)`, and
   `widgets.SideList` for a column of pages (as in Settings).
+- **Qualified names** (`std.perforated_plate`, `base.top`): show them with
+  `widgets.QualifiedCombo` (`add_grouped` puts each qualifier's names under a
+  heading), `widgets.QualifiedDelegate` for a list or table column, or
+  `widgets.qualified_html(name)` in a label: the qualifier muted. A menu of
+  names gets `menu.setProperty(style.QUALIFIED, True)`. Fields you type in stay
+  plain.
+- **Menus** are drawn by `gui/style.py` (muted shortcuts, check boxes, rounded
+  panels with a shadow); don't add `QMenu` rules to the style sheet, or Qt
+  draws menus itself again.
 - **Sizes** come from the theme: `theme.metric("space_m")` and the like.
 - **Saying what happened:** `window.notify(text, kind, action=(label, slot))`
   shows a note over the editor (`kind`: info, success, warning, or error,

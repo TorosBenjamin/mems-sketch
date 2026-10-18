@@ -531,10 +531,7 @@ class LayoutCanvas(QGraphicsView):
         shown = [g for g in geometries if g is not None and not g.is_empty()]
         if not shown or not motion.enabled():
             return
-        outline = QPainterPath()
-        for geometry in shown:
-            for leaf, at in geometry.leaves():
-                outline.addPath(qtransform(at).map(own_path(leaf, "")))
+        outline = _outline(shown)
         self.reveal(outline.boundingRect())
         item = QGraphicsPathItem(outline)
         item.setZValue(1002)
@@ -557,6 +554,15 @@ class LayoutCanvas(QGraphicsView):
         motion.run(
             self, step, motion.PULSE, done=done, easing=QEasingCurve.Type.InQuad, key="pulse"
         )
+
+    def frame(self, *geometries: Geometry) -> None:
+        """Glide to show ``geometries`` as large as they fit, with a margin."""
+        shown = [g for g in geometries if g is not None and not g.is_empty()]
+        if not shown:
+            return
+        rect = _outline(shown).boundingRect()
+        margin = max(rect.width(), rect.height()) * 0.1 + 1
+        self.zoom_to(rect.adjusted(-margin, -margin, margin, margin), animated=True)
 
     def reveal(self, rect: QRectF) -> None:
         """Glide so ``rect`` (µm) is in view: a pan when it fits at this zoom, else
@@ -1688,3 +1694,12 @@ def angle_between(
     if sweep > 180:
         return second, 360 - sweep
     return first, sweep
+
+
+def _outline(geometries) -> QPainterPath:
+    """The outlines of ``geometries`` together, in scene coordinates."""
+    outline = QPainterPath()
+    for geometry in geometries:
+        for leaf, at in geometry.leaves():
+            outline.addPath(qtransform(at).map(own_path(leaf, "")))
+    return outline

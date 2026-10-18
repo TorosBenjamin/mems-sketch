@@ -1266,6 +1266,8 @@ class LayerDefinitionsPanel(_Panel):
         super().__init__()
         self.document = document
         self.layers = _table(self.LAYER_COLUMNS)
+        # A level's layer (device.anchor): the level muted.
+        self.layers.setItemDelegateForColumn(3, widgets.QualifiedDelegate(self.layers))
         self.layers.itemChanged.connect(self._layer_changed)
         card = widgets.Card(
             "Layers",

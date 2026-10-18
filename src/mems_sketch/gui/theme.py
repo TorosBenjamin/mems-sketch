@@ -387,15 +387,7 @@ QToolBar#tools-toolbar QToolButton {{ padding: 5px; margin: 1px 2px; }}
 QMenuBar {{ background: {window}; }}
 QMenuBar::item {{ padding: 4px 8px; border-radius: {radius_control}px; }}
 QMenuBar::item:selected {{ background: {hover}; }}
-QMenu {{
-    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_popup}px;
-    padding: 5px;
-}}
-QMenu::item {{ padding: 5px 24px 5px 8px; border-radius: {radius_control}px; }}
-QMenu::item:selected {{ background: {selected}; }}
-QMenu::item:disabled {{ color: {muted}; }}
-QMenu::separator {{ height: 1px; background: {border_strong}; margin: 4px 6px; }}
-QMenu::icon {{ padding-left: 6px; }}
+/* Menus are drawn by gui/style.py: a QMenu rule here would make Qt draw them instead. */
 
 QDockWidget {{ titlebar-close-icon: none; titlebar-normal-icon: none; }}
 QDockWidget::title {{ background: {window}; padding: 0 10px; text-align: left; }}
@@ -633,7 +625,12 @@ def apply(app: QApplication, name: str) -> str:
     app.setProperty("mems_sketch_theme", theme)
     scrollbars.install(app)
     _applied[id(app)] = _current
+    from mems_sketch.gui.style import MenuPolisher  # it imports this module
+
     app.setStyle("Fusion")
+    if not hasattr(app, "_menu_polisher"):  # once: every menu, in every window
+        app._menu_polisher = MenuPolisher(app)
+        app.installEventFilter(app._menu_polisher)
     app.setPalette(palette(theme))
     t = _current.ui
     app.setStyleSheet(

@@ -163,6 +163,15 @@ nb::dict points_dict(const mems::PointMap& points) {
     return result;
 }
 
+// {name: (x, y, angle, width, layer)}: µm, degrees counter-clockwise from +x.
+nb::dict ports_dict(const mems::PortMap& ports) {
+    nb::dict result;
+    for (const auto& [name, port] : ports)
+        result[nb::str(name.c_str())] =
+            nb::make_tuple(port.at.x, port.at.y, port.angle_deg, port.width, nb::str(port.layer.c_str()));
+    return result;
+}
+
 const char* change_name(mgeom::SnapChange change) {
     switch (change) {
         case mgeom::SnapChange::vanished: return "vanished";
@@ -350,10 +359,11 @@ NB_MODULE(_core, m) {
                 }
                 nb::dict cells;
                 add_cell(*built, cells, grid, chord);
-                return nb::make_tuple(nb::str(built->key.c_str()), cells, points_dict(built->points));
+                return nb::make_tuple(nb::str(built->key.c_str()), cells, points_dict(built->points),
+                                      ports_dict(built->ports));
             },
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
-            "(key, cells, points): the component as cells, {key: (own layers, [(key, transform)])}, its own "
+            "(key, cells, points, ports): the component as cells, {key: (own layers, [(key, transform)])}, its own "
             "under ``key``; each component it places whole is a cell of its own, built and snapped once. "
             "Layers as build() gives them, transforms as (dx, dy, angle, mirror_x, scale).")
         .def(
@@ -410,12 +420,12 @@ NB_MODULE(_core, m) {
                     result[nb::tuple(steps)] = nb::make_tuple(
                         layers_dict(record.layers, grid, chord), instances_list(record.instances, cells, grid, chord),
                         nb::str(record.name.c_str()), points_dict(record.declared), transform_tuple(record.inner),
-                        transform_tuple(record.shift));
+                        transform_tuple(record.shift), ports_dict(record.ports));
                 }
                 return nb::make_tuple(result, cells, error.empty() ? nb::none() : nb::object(nb::str(error.c_str())));
             },
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
-            "({path: (layers, instances, name, declared points, inner, shift)}, cells, error or None): every "
+            "({path: (layers, instances, name, declared points, inner, shift, ports)}, cells, error or None): every "
             "node of the component's own shape tree as evaluated, what it places whole as instances of the "
             "cells (as tree() gives them); transforms as (dx, dy, angle, mirror_x, scale).")
         .def(

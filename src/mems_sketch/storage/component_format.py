@@ -70,6 +70,8 @@ def component_data(
         data["parameters"] = {p.name: _parameter_data(p) for p in definition.parameters}
     if definition.points:
         data["points"] = {p.name: _without_name(p) for p in definition.points}
+    if definition.ports:
+        data["ports"] = {p.name: _without_name(p) for p in definition.ports}
     if private:
         data["private"] = dict(private)
     if definition.shapes:
@@ -91,6 +93,7 @@ def component_from_data(name: str, data: dict[str, Any]) -> tuple[ComponentDef, 
         "level",
         "parameters",
         "points",
+        "ports",
         "private",
         "shapes",
         "waivers",
@@ -109,6 +112,7 @@ def component_from_data(name: str, data: dict[str, Any]) -> tuple[ComponentDef, 
         "level": data.get("level"),
         "parameters": parameters,
         "points": [{"name": str(n), **(v or {})} for n, v in _map(data, "points").items()],
+        "ports": [{"name": str(n), **(v or {})} for n, v in _map(data, "ports").items()],
         "shapes": shapes_from_data(_map(data, "shapes")),
         "waivers": data.get("waivers") or [],
     }

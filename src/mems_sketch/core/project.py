@@ -358,6 +358,22 @@ class Project:
                 if target == component and shape.align and shape.align.point == old:
                     shape.align.point = new
 
+    def rename_port(self, component: str, old: str, new: str) -> None:
+        """Rename a port of a local component, and update the components that place
+        it: what uses its point (``comb1.port.old``, a copy's ``port.old[2]``)."""
+        self.components[component].rename_port(old, new)
+        for user in self.users(component):
+            placing = [shape for shape, target in self.references_of(user) if target == component]
+            self.components[user].follow_point_rename(
+                {shape.name for shape in placing if shape.name}, f"port.{old}", f"port.{new}"
+            )
+            for shape, target in self.references_of(user):  # the rewritten copies
+                if target != component or not shape.align:
+                    continue
+                point = shape.align.point
+                if point == f"port.{old}" or point.startswith(f"port.{old}["):
+                    shape.align.point = f"port.{new}{point[len(old) + 5 :]}"
+
     def rename_component(self, old: str, new: str) -> None:
         """Rename a local component (``new`` is its new short name) and update
         every reference to it."""

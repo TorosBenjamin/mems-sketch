@@ -55,4 +55,8 @@ mgeom::Point point_of(const std::string& reference, const Result& own, const Sco
 // Geometry moved, rotated or mirrored.
 Layers placed(const Layers& layers, const mgeom::Transform& t);
 
+// Copy ``k`` of a repeated node's ports, moved by ``t``, into ``into`` as
+// ``name[k]`` (and its point ``port.name[k]``), so that each copy can be wired.
+void add_copy_ports(Result& into, const Result& copy, const mgeom::Transform& t, int k);
+
 }  // namespace mems

@@ -7,7 +7,8 @@ description: >-
   Its sensitivity is m / k (displacement per acceleration), k twice one
   flexure's `stiffness`. As it is, it passes every check of `mems.surface`;
   for a process with a larger undercut or minimum width, widen the anchors
-  and fingers to its rules.
+  and fingers to its rules. Ports: one per bank's fixed electrodes
+  (upper_left, …); the left ones together against the right ones.
 tags: [device, accelerometer, inertial, parallel plate, folded flexure, example]
 parameters:
   columns: {default: 26, min: 20, integer: true, description: Holes across the mass}
@@ -18,6 +19,11 @@ parameters:
   stem: {default: 4, min: 2, description: Gap bridged by the stems that join the parts to the mass (µm)}
   width: {default: columns * 10 + 2.5, internal: true, description: Mass width (µm)}
   height: {default: rows * 10 + 2.5, internal: true, description: Mass height (µm)}
+ports:
+  upper_left: {at: upper_left_bank.port.fixed, description: Fixed electrodes of the upper left bank}
+  upper_right: {at: upper_right_bank.port.fixed, description: Fixed electrodes of the upper right bank}
+  lower_left: {at: lower_left_bank.port.fixed, description: Fixed electrodes of the lower left bank}
+  lower_right: {at: lower_right_bank.port.fixed, description: Fixed electrodes of the lower right bank}
 shapes:
   mass: {ref: proof_mass, columns: columns, rows: rows}
   upper_flexure:

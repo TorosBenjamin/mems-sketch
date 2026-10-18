@@ -69,7 +69,7 @@ Result apply_corners(const Json& modifier, const Produce& produce, const Variabl
             throw BuildError(buffer);
         }
     }
-    return {result, made.points};
+    return {result, made.points, {}, made.ports};
 }
 
 }  // namespace mems

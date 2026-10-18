@@ -18,7 +18,7 @@ the Components tab of Search Everywhere, with a preview.
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QTransform
@@ -544,6 +544,7 @@ class Info:
     parameters: list[tuple[str, str]]  # name, default as written
     points: list[str]
     picture: QPixmap | None = None
+    ports: list[str] = field(default_factory=list)
 
 
 PICTURE = QSize(268, 150)
@@ -551,7 +552,7 @@ PICTURE = QSize(268, 150)
 
 def component_info(document, entry: Entry, colors: dict[str, QColor]) -> Info:
     """A component's preview: its picture (built at its defaults), description,
-    parameters with their defaults, and the points it declares."""
+    parameters with their defaults, and the points and ports it declares."""
     try:
         definition = document.definition_of(entry.name)
         description = " ".join((definition.description or "").split())
@@ -560,13 +561,14 @@ def component_info(document, entry: Entry, colors: dict[str, QColor]) -> Info:
             for p in definition.parameters
         ]
         points = [p.name for p in getattr(definition, "points", [])]
+        ports = [p.name for p in getattr(definition, "ports", [])]
     except Exception:  # noqa: BLE001 - it does not load: say only what is known
-        description, parameters, points = entry.description, [], []
+        description, parameters, points, ports = entry.description, [], [], []
     try:
         picture = thumbnail(document.results.geometry(entry.name), colors, PICTURE)
     except Exception:  # noqa: BLE001 - it does not build: no picture
         picture = None
-    return Info(entry.name, entry.source, description, parameters, points, picture)
+    return Info(entry.name, entry.source, description, parameters, points, picture, ports)
 
 
 class ComponentPreview(QWidget):
@@ -669,6 +671,11 @@ class ComponentPreview(QWidget):
             rows.append(
                 f"<p style='color:{muted}; font-weight:600; margin:8px 0 0 0'>Points</p>"
                 f"<p style='margin:0'>{_html(', '.join(info.points))}</p>"
+            )
+        if info.ports:
+            rows.append(
+                f"<p style='color:{muted}; font-weight:600; margin:8px 0 0 0'>Ports</p>"
+                f"<p style='margin:0'>{_html(', '.join(info.ports))}</p>"
             )
         self.details.setText("".join(rows))
         self.place_button.setEnabled(can_place)

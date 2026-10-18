@@ -75,7 +75,7 @@ class MenuStyle(QProxyStyle):
     # -- drawing -----------------------------------------------------------
     def drawPrimitive(self, element, option, painter, widget=None) -> None:
         if element == _PE.PE_PanelMenu and isinstance(widget, QMenu):
-            _draw_panel(painter, QRectF(widget.rect()), _shadowed(widget))
+            draw_panel(painter, QRectF(widget.rect()), _shadowed(widget))
             return
         if element == _PE.PE_FrameMenu and isinstance(widget, QMenu):
             return  # the panel has its border
@@ -102,7 +102,7 @@ def _columns(option: QStyleOptionMenuItem) -> int:
     return 0
 
 
-def _draw_panel(painter: QPainter, rect: QRectF, shadowed: bool) -> None:
+def draw_panel(painter: QPainter, rect: QRectF, shadowed: bool) -> None:
     """A menu's rounded panel, and its shadow when it has room for one."""
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)

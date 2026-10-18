@@ -15,7 +15,8 @@ then:
 
 - **Add ▾**: primitives. Rectangle, circle, polygon and path start their
   drawing tool; an arc is added as a default one.
-- **Place ▾**: components to put into the one you are editing.
+- **Place ▾** (Shift+A): components to put into the one you are editing (see
+  [Placing components](#placing-components)).
 - **Operations ▾**: subtract, intersect, XOR, offset, fillet, layer map,
   transform, make component.
 
@@ -25,7 +26,7 @@ parameters too) and settings.
 
 **Right-click on the canvas** offers what fits where you clicked. On empty
 space (which clears the selection) it is adding there: **Add**, **Place
-component**, **Paste**, **Select all** (Ctrl+A) and **Fit**. On a shape it
+component…** (it lands where you clicked), **Paste**, **Select all** (Ctrl+A) and **Fit**. On a shape it
 is what can be done to the selection: the operations, **Rotate & mirror**,
 **Zoom to selection** (Shift+F), **Rename…** (F2, for one shape: its name in
 Properties, ready to type over) and cut, copy, paste, duplicate, delete.
@@ -37,8 +38,31 @@ box.
 Names from somewhere else are written with where they are from, as you type
 them: `std.perforated_plate` (a library's component), `base.top` (a shape's
 point), `device.anchor` (a level's layer). The part before the dot is in a
-lighter colour so the name stands out, in menus such as **Place**, in the
-process list and in the layer stack's levels.
+lighter colour so the name stands out, in the Place popup, in the process
+list and in the layer stack's levels.
+
+### Placing components
+
+**Place** (Shift+A) opens a popup listing the components you can put into
+the one you are editing: the ones you placed last first, then this project's,
+each library's and the built-in ones. Type to search (part of a name, a
+library or the description; names that start with it come first), Up/Down to
+choose, Enter or a click to take it: the component follows the cursor, its
+origin snapping to points and the grid (Ctrl: no snapping), until a click puts
+it down. Esc lets it go. From a right-click on the canvas it lands where you
+clicked instead.
+
+**Browse all components** (or Tab) opens Search Everywhere on its
+**Components** tab: each component with its description, under a heading per
+source. Click a heading to fold that source away (it stays folded; a search
+still shows what matches), or pick one source from the list at the top right.
+Beside the list the chosen component is previewed: a picture of it at its
+defaults, its description, parameters and points. Enter (or **Place**) places
+it, Ctrl+Enter (or **Open**) opens it.
+
+A component's description is the sentence or two you give it: with nothing
+selected, Properties shows the open component's **Description** (the first
+sentence is what the popup shows).
 
 The toolbar is also the window's title bar: minimize, maximize and close are
 at its right end. Drag an empty part of it to move the window, double-click it

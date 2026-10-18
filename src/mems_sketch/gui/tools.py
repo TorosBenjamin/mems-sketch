@@ -98,6 +98,7 @@ class Tool:
     shortcut: ClassVar[str]
     edits: ClassVar[bool] = True  # changes the design, so refused on read-only tabs
     draws: ClassVar[bool] = False  # a drawing tool (started from Add, not a canvas mode)
+    listed: ClassVar[bool] = True  # in the Tools menu (not a tool only started from elsewhere)
     gizmo: ClassVar[str | None] = None  # the gizmo shown on the selection, if any
     hovers: ClassVar[bool] = False  # outline the shape under the cursor
     icon: ClassVar[str] = "select"
@@ -1435,6 +1436,82 @@ class GuideTool(_TwoPointTool):
         self.add(shape, "a guide needs two different end points")
 
 
+class PlaceTool(Tool):
+    """Put down a component chosen in the Place popup or Search Everywhere: it
+    follows the cursor, its origin snapping to points and the grid (Ctrl: not),
+    until a click places it. Esc lets it go; either way Select comes back."""
+
+    name, label, shortcut = "place", "Place component", ""
+    listed = False
+    cursor = Qt.CursorShape.CrossCursor
+    icon = "place"
+
+    def reset(self) -> None:
+        self.component: str | None = None
+        self.at: tuple[float, float] | None = None
+        self.candidates: list[Candidate] = []
+
+    @property
+    def busy(self) -> bool:
+        return self.component is not None
+
+    def hint(self) -> str:
+        if self.component is None:
+            return "Choose a component to place (Shift+A)"
+        return f"Click to place {self.component} (Esc cancels, Ctrl: no snapping)"
+
+    def begin(self, component: str) -> bool:
+        """Start placing ``component``; False (and a message) when it cannot be."""
+        if not self.editable():
+            return False
+        try:
+            geometry = self.document.results.geometry(component)
+        except Exception as exc:  # noqa: BLE001 - it does not build: say why
+            self.window.report_error(f"{component} cannot be placed: {exc}")
+            return False
+        self.reset()
+        self.component = component
+        try:
+            self.candidates = list(self.document.results.all_points())
+        except Exception:  # noqa: BLE001 - nothing to snap to but the grid
+            self.candidates = []
+        self.canvas.show_ghost(geometry, self.window.layers.colors)
+        self.canvas.move_ghost(*self.canvas.cursor_um())
+        self.canvas.set_cursor_label(component.rsplit(".", 1)[-1])
+        self.window.prompt(self.hint())
+        return True
+
+    def move(self, x, y, modifiers, left) -> None:
+        if self.component is None:
+            return
+        x, y, onto = self.snap(x, y, self.candidates, modifiers)
+        self.at = (x, y)
+        self.canvas.move_ghost(x, y)
+        short = self.component.rsplit(".", 1)[-1]
+        self.canvas.set_cursor_label(f"{short} → {onto}" if onto else short)
+
+    def press(self, x, y, modifiers) -> None:
+        if self.component is None:
+            return
+        x, y, _ = self.snap(x, y, self.candidates, modifiers)
+        component = self.component
+        self.reset()
+        self.canvas.show_ghost(None)
+        self.canvas.set_cursor_label(None)
+        self.window.place_component_at(component, x, y)
+        self.window.set_tool("select")
+
+    def cancel(self) -> bool:
+        busy = super().cancel()
+        self.canvas.show_ghost(None)
+        if busy and self.window.tool is self:
+            self.window.set_tool("select")
+        return busy
+
+    def design_changed(self) -> None:
+        """An edit elsewhere (e.g. an undo) keeps the component in hand."""
+
+
 TOOLS: tuple[type[Tool], ...] = (
     SelectTool,
     HandTool,
@@ -1449,6 +1526,7 @@ TOOLS: tuple[type[Tool], ...] = (
     PolygonTool,
     PathTool,
     GuideTool,
+    PlaceTool,
 )
 
 

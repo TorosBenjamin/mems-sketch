@@ -22,7 +22,9 @@ The **Components** panel lists every component once:
   project** makes an editable copy. A plain rectangle is the `rect` shape.
 
 Double-click opens a component in a tab. Drag one onto the canvas, or use
-**Place**, to put it into the component you are editing. Right-click for the
+**Place** (Shift+A, see [the window](the-window.md#placing-components)), to put
+it into the component you are editing. With nothing selected, Properties shows
+the open component's **Description**, shown wherever it is placed from. Right-click for the
 rest: rename (every reference follows), duplicate, delete, set as top, new
 private component, make shared or private, copy a library component into the
 project, add or remove a library, make the project a library. The **+**

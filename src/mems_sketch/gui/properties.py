@@ -211,7 +211,7 @@ class PropertyEditor(QScrollArea):
             self._show_interface()
             return
         if path is None:
-            self._show_placeholder("Select a shape to edit its properties.")
+            self._show_component()
             return
         try:
             node = self.document.node(path)
@@ -985,6 +985,61 @@ class PropertyEditor(QScrollArea):
             old.hide()
             old.deleteLater()
         self.setWidget(content)
+
+    def _show_component(self) -> None:
+        """Nothing selected: the open component's own settings (its description),
+        when it is one of the project's, then how to see a shape's."""
+        name = self.document.active
+        if self.document.read_only or name not in self.document.project.components:
+            self._show_placeholder("Select a shape to edit its properties.")
+            return
+        definition = self.document.project.components[name]
+        body = QWidget()
+        body.setObjectName("properties-body")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(4)
+        title = QHBoxLayout()
+        title.setSpacing(6)
+        glyph = QLabel()
+        glyph.setPixmap(icons.pixmap("component", 18))
+        heading = QLabel(name)
+        heading.setObjectName("heading")
+        title.addWidget(glyph)
+        title.addWidget(heading, 1)
+        layout.addLayout(title)
+        layout.addSpacing(4)
+        part = _section("Component", "component")
+        form = _form(part)
+        description = QLineEdit(definition.description)
+        description.setObjectName("component-description")
+        description.setPlaceholderText("What it is, shown when placing it")
+        description.setToolTip(
+            "A sentence or two on what the component is: the Place popup and Search "
+            "Everywhere show it"
+        )
+
+        def describe() -> None:
+            if description.text().strip() == definition.description.strip():
+                return
+            try:
+                self.document.components.set_description(name, description.text())
+                self.applied.emit()
+            except Exception as exc:  # noqa: BLE001 - reported to the user
+                self.error.emit(_message(exc))
+
+        description.editingFinished.connect(describe)
+        form.addRow("Description", description)
+        layout.addWidget(part)
+        hint = QLabel("Select a shape to edit its properties.")
+        hint.setObjectName("muted")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setContentsMargins(0, 12, 0, 0)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+        self.description_edit = description
+        self._show(body)
+        self.header_context.setText("Component")
 
     def _show_placeholder(self, text: str) -> None:
         self.header_context.setText("")

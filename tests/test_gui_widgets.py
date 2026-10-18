@@ -65,7 +65,7 @@ def test_an_empty_state_has_a_message_and_an_optional_action(qtbot):
 
 
 @pytest.mark.parametrize(
-    ("name", "context"), [("parameters", "top"), ("points", "top"), ("history", "")]
+    ("name", "context"), [("parameters", "top"), ("points", "top"), ("commit", ""), ("git", "")]
 )
 def test_tool_windows_show_what_they_show_and_their_actions_in_the_header(window, name, context):
     window.tool_windows.open(name)
@@ -131,11 +131,14 @@ def test_a_bad_metric_leaves_the_theme_out(tmp_path):
     assert "metrics: header_height" in theme.problems()[0]
 
 
-def test_the_history_panel_explains_why_there_is_no_history_in_its_middle(qtbot, tmp_path):
+@pytest.mark.parametrize("which", ["commit", "git"])
+def test_the_git_panels_explain_why_there_is_no_history_in_their_middle(qtbot, which):
     from mems_sketch.editing import EditSession
-    from mems_sketch.gui.history_panel import HistoryPanel
+    from mems_sketch.gui.commit_panel import CommitPanel
+    from mems_sketch.gui.git_panel import GitPanel
 
-    panel = HistoryPanel(EditSession())  # never saved: no history
+    kind = CommitPanel if which == "commit" else GitPanel
+    panel = kind(EditSession())  # never saved: no history
     qtbot.addWidget(panel)
     panel.show()
     panel.reload()
@@ -148,11 +151,11 @@ def test_parts_of_a_panel_are_divided_by_a_hairline_not_a_bar(window):
 
     window.open_process()
     window.tool_windows.open("points")
-    window.tool_windows.open("history")
+    window.tool_windows.open("git")
     splitters = window.findChildren(QSplitter)
     inner = [s for s in splitters if s.objectName() != "islands"]
     assert {s.objectName() for s in inner} == {"panel-split"}
-    assert len(inner) >= 2  # Points, History
+    assert len(inner) >= 2  # Points, Git
     assert window.area.objectName() == "islands"  # split panes are islands, the frame between
     line = theme.color("border_strong").name()
     for split in (s for s in inner if s.count() > 1):  # a 1 px line in the handle's middle

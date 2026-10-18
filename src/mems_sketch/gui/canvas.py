@@ -739,7 +739,7 @@ class LayoutCanvas(QGraphicsView):
             self._overlay.append(item)
 
     def show_changes(self, added: Geometry | None, removed: Geometry | None) -> None:
-        """What changed between two versions (see the History panel): material added
+        """What changed between two versions (see the Commit and Git panels): material added
         tinted, material removed hatched; None for nothing."""
         for item in self._change_items:
             self.scene().removeItem(item)

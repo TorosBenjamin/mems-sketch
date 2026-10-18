@@ -103,7 +103,7 @@ def save_project(project: Project, folder: str | Path) -> Path:
     manifest = manifest_data(project, libraries)
     manifest["processes"] = {name: f"{PROCESSES_DIR}/{name}" for name in project.processes}
     manifest["components"] = {
-        name: _component_folder(project.components, name)
+        name: component_folder(project.components, name)
         for name in project.components
         if "/" not in name
     }
@@ -118,7 +118,7 @@ def save_project(project: Project, folder: str | Path) -> Path:
         _write(path, yaml_format.dump(process_data(process)))
         written.add(path)
     for name, definition in project.components.items():
-        path = folder / _component_folder(project.components, name) / COMPONENT_FILE
+        path = folder / component_folder(project.components, name) / COMPONENT_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
         private = {child: child for child in private_names(project.components, name)}
         _write(path, yaml_format.dump(component_data(definition, private)))
@@ -133,12 +133,25 @@ def save_project(project: Project, folder: str | Path) -> Path:
     return folder
 
 
-def _component_folder(components: dict[str, ComponentDef], name: str) -> str:
+def component_folder(components: dict[str, ComponentDef], name: str) -> str:
     """Where a component's file goes: its category's folder, then its name (a
     private one inside its owner's folder)."""
     root = name.split("/")[0]
     category = components[root].category if root in components else ""
     return "/".join(p for p in (COMPONENTS_DIR, category, name) if p)
+
+
+def written_by_project(path: str) -> bool:
+    """Whether a file (its path in the project folder, with ``/``) is one a project
+    writes: the manifest, a component's or a process's file, or an imported file."""
+    parts = path.split("/")
+    if parts == [PROJECT_FILE]:
+        return True
+    if parts[0] == COMPONENTS_DIR:
+        return parts[-1] == COMPONENT_FILE
+    if parts[0] == PROCESSES_DIR:
+        return parts[-1] == PROCESS_FILE
+    return parts[0] == IMPORTS_DIR and len(parts) == 2
 
 
 def library_entry(library: Library) -> str:

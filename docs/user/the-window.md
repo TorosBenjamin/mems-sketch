@@ -88,10 +88,10 @@ Panels open and close from the stripes on the window's edges:
 
 | Where | Windows |
 |---|---|
-| Left stripe, top | **Components** |
+| Left stripe, top | **Components**, **Commit** |
 | Left stripe, below | **Shapes**, **Layers** |
-| Left stripe, bottom | **Messages** (runs along the bottom) |
-| Right stripe | **Properties**, **Parameters**, **Points**, **History** |
+| Left stripe, bottom | **Messages**, **Git** (along the bottom) |
+| Right stripe | **Properties**, **Parameters**, **Points** |
 
 Each place shows one window at a time; the left side splits when Components
 and Shapes (or Layers) are both open. Every panel has a **?** in its header:
@@ -140,8 +140,9 @@ status bar keeps the hint for the tool you are using.
 
 The canvas glides to a place rather than jumping: **Fit** (F), the zoom
 buttons, and a problem chosen in Messages. Scrolling or panning takes over at
-once. A shape you pick in the Shapes panel, in Search Everywhere or in History
-glows on the canvas for a moment, and comes into view if it was outside.
+once. A shape you pick in the Shapes panel, in Search Everywhere or in the
+Commit panel glows on the canvas for a moment, and comes into view if it was
+outside.
 Clicking a shape on the canvas selects it without the glow: you are already
 looking at it.
 

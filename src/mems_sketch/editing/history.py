@@ -9,6 +9,13 @@ once and kept.
 Restoring is an ordinary edit (one undo step): the design goes back to how it
 was, and nothing in git changes; commit it to keep it. Committing saves the
 project first and commits its folder only.
+
+The local changes (:meth:`History.local`) group the uncommitted changes by
+what holds them: a component (with its private ones), or the project, its
+process or its imports; and list the other files in the folder git sees
+changed or does not track. Committing some of them commits the files that
+hold them. The project file lists the components, so it goes with any
+component added, removed or moved to another category.
 """
 
 from __future__ import annotations
@@ -18,10 +25,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mems_sketch.core.component import Geometry
-from mems_sketch.core.diff import Change, diff_projects, geometry_changes
+from mems_sketch.core.diff import (
+    CHANGED,
+    IMPORTS,
+    PROCESS,
+    PROJECT,
+    Change,
+    diff_projects,
+    geometry_changes,
+)
 from mems_sketch.core.project import Project
 from mems_sketch.engine import Engine
 from mems_sketch.storage import git
+from mems_sketch.storage.project_files import (
+    IMPORTS_DIR,
+    PROCESSES_DIR,
+    PROJECT_FILE,
+    component_folder,
+    written_by_project,
+)
 
 COMMIT_LIMIT = 200
 MESSAGE_CHARS = 72  # a suggested commit message is at most this long
@@ -34,6 +56,33 @@ class Comparison:
     old: str | None  # the sha, or None for "before the first commit"
     new: str | None  # the sha, or None for the project being edited
     changes: list[Change] = field(default_factory=list)
+
+
+@dataclass
+class LocalGroup:
+    """Uncommitted changes held together: a component and its private ones (``key``
+    is its name), or ``PROJECT``, ``PROCESS`` or ``IMPORTS``."""
+
+    key: str
+    action: str  # ADDED, REMOVED or CHANGED: what happened to it as a whole
+    changes: list[Change] = field(default_factory=list)
+    paths: list[str] = field(default_factory=list)  # the files holding it, in the folder
+
+    @property
+    def component(self) -> bool:
+        return self.key not in (PROJECT, PROCESS, IMPORTS)
+
+
+@dataclass
+class LocalChanges:
+    """What committing could take: the project's changes by group, and the other
+    files in the folder (changed tracked ones, and untracked ones)."""
+
+    groups: list[LocalGroup] = field(default_factory=list)
+    files: list[git.FileStatus] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.groups or self.files)
 
 
 class History:
@@ -133,6 +182,112 @@ class History:
         self.session.changed.emit()  # the uncommitted changes are gone
         return sha
 
+    def local(
+        self,
+        comparison: Comparison | None = None,
+        files: list[git.FileStatus] | None = None,
+    ) -> LocalChanges:
+        """The uncommitted changes, grouped (see the module docstring). Pass the
+        :meth:`uncommitted` comparison or :meth:`other_files` when already known."""
+        if not self.available:
+            return LocalChanges()
+        comparison = comparison or self.uncommitted()
+        old = self.version(comparison.old) if comparison.old is not None else None
+        new = self.session.project
+        groups = grouped(comparison.changes)
+        for group in groups:
+            group.paths = _paths(group.key, old, new)
+        files = self.other_files() if files is None else files
+        return LocalChanges(groups, files)
+
+    def other_files(self) -> list[git.FileStatus]:
+        """The files in the folder, besides the project's own, that differ from the
+        last commit or are untracked (read from the disk)."""
+        if not self.available:
+            return []
+        try:
+            return [f for f in git.status(self.session.path) if not written_by_project(f.path)]
+        except git.GitError:
+            return []
+
+    def commit_local(
+        self, message: str, keys: list[str], files: list[str], amend: bool = False
+    ) -> str:
+        """Save the project and commit the groups ``keys`` of :meth:`local` and the
+        other ``files``; ``amend`` replaces the last commit. Returns the new sha."""
+        if not self.available:
+            raise ValueError("the project is not in a git repository")
+        local = self.local()
+        paths = [p for g in local.groups if g.key in keys for p in g.paths]
+        self.session.save()
+        try:
+            sha = git.commit(self.session.path, message, [*paths, *files], amend)
+        except git.GitError as exc:
+            raise ValueError(str(exc)) from exc
+        self.session.changed.emit()
+        return sha
+
+    def last_message(self) -> str:
+        return git.last_message(self.session.path) if self.available else ""
+
+    def ahead_behind(self) -> tuple[int, int] | None:
+        return git.ahead_behind(self.session.path) if self.available else None
+
+    def track(self, files: list[str]) -> None:
+        """Have git track untracked ``files`` (they then go into commits)."""
+        self._git(git.add, files)
+
+    def ignore(self, file: str) -> None:
+        self._git(git.ignore, file)
+
+    def discard(self, files: list[str]) -> None:
+        """Put changed tracked ``files`` back as in the last commit (no undo)."""
+        self._git(git.discard, files)
+
+    def rollback(self, key: str) -> None:
+        """Bring a group of :meth:`local` back as in the last commit: one undoable
+        edit. A component added since is removed."""
+        sha = git.resolve(self.session.path, "HEAD") if self.available else None
+        if sha is None:
+            raise ValueError("there is no commit to go back to yet")
+        old = self.version(sha) or Project(top=None)
+        if key not in _GROUPS:
+            if key in old.components:
+                self.restore(sha, key)
+                return
+
+            def remove(project: Project) -> None:
+                project.components = {
+                    n: d
+                    for n, d in project.components.items()
+                    if n != key and not n.startswith(key + "/")
+                }
+
+            self.session.edit(f"Roll back {key}", remove)
+            return
+
+        def change(project: Project) -> None:
+            if key == PROJECT:
+                project.name, project.top = old.name, old.top
+            elif key == PROCESS:
+                project.processes = copy.deepcopy(old.processes)
+                project.process_name, project.reasons = old.process_name, dict(old.reasons)
+                own = project.processes.get(old.process_name)
+                project.process = own if own is not None else copy.deepcopy(old.process)
+            else:
+                project.imports = copy.deepcopy(old.imports)
+
+        self.session.edit(f"Roll back the {key.lower()}", change)
+
+    def _git(self, action, *args) -> None:
+        if not self.available:
+            raise ValueError("the project is not in a git repository")
+        try:
+            action(self.session.path, *args)
+        except git.GitError as exc:
+            raise ValueError(str(exc)) from exc
+        self.session.changed.emit()
+
     def staged_elsewhere(self) -> list[str]:
         """Files staged outside the project folder: its commits leave them alone."""
         return git.staged_elsewhere(self.session.path) if self.available else []
@@ -218,6 +373,44 @@ class History:
 
     def _engine(self, rev: str | None) -> Engine:
         return self.session.engine if rev is None else self.engine
+
+
+_GROUPS = (PROJECT, PROCESS, IMPORTS)
+
+
+def grouped(changes: list[Change]) -> list[LocalGroup]:
+    """Changes by what holds them: a component with its private ones, the project,
+    its process, its imports (in the order they come)."""
+    groups: dict[str, LocalGroup] = {}
+    for change in changes:
+        key = change.group if change.group in _GROUPS else change.group.split("/")[0]
+        group = groups.get(key)
+        if group is None:
+            group = groups[key] = LocalGroup(key, CHANGED)
+        if change.what == "component" and change.group == key:
+            group.action = change.action
+        group.changes.append(change)
+    return list(groups.values())
+
+
+def _paths(key: str, old: Project | None, new: Project) -> list[str]:
+    """The files in the project folder that hold a group of local changes."""
+    if key == PROJECT:
+        return [PROJECT_FILE]
+    if key == PROCESS:
+        return [PROJECT_FILE, PROCESSES_DIR]  # overrides are in the project file
+    if key == IMPORTS:
+        return [PROJECT_FILE, IMPORTS_DIR]
+    places = [
+        component_folder(project.components, key)
+        for project in (old, new)
+        if project is not None and key in project.components
+    ]
+    if len(set(places)) != 1 or old is None or key not in old.components:
+        places.append(PROJECT_FILE)  # added, removed or moved: the manifest lists it
+    elif key not in new.components:
+        places.append(PROJECT_FILE)
+    return list(dict.fromkeys(places))
 
 
 def _has(project: Project, component: str) -> bool:

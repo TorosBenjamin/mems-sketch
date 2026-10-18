@@ -21,7 +21,7 @@ design rules, and exported for the rest of the flow.
    component is made of.
 8. **[Files, import and export](files.md)**: the project folder, other
    formats, GDS import, the command line.
-9. **[History](history.md)**: what changed, committing and restoring with git.
+9. **[Git](git.md)**: what changed, committing and restoring with git.
 
 Looking for the Python API or how the tool works inside? See the
 [developer guide](../developer/README.md).

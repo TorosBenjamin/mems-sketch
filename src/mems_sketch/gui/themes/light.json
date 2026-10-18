@@ -22,7 +22,11 @@
     "scroll": "#c9ccd6",
     "expression": "#f1ecfd",
     "error": "#db3b4b",
-    "warning": "#e0a000"
+    "warning": "#e0a000",
+    "vcs_added": "#208a3c",
+    "vcs_changed": "#3574f0",
+    "vcs_removed": "#8c8f96",
+    "vcs_untracked": "#c2410c"
   },
   "canvas": {
     "background": "#ffffff",

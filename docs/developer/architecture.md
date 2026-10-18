@@ -131,7 +131,7 @@ wires the parts; each part only talks to the session:
   items; overlays (selection, violations, points, history changes).
 - `tools.py`: canvas tools (Select, Move, Align, Corners, drawing tools…),
   each a small state machine fed with presses and moves in µm.
-- `panels.py`, `points_panel.py`, `history_panel.py`, `properties.py`: tool
+- `panels.py`, `points_panel.py`, `commit_panel.py`, `git_panel.py`, `properties.py`: tool
   windows; `toolwindows.py` places them around the editor.
 - `actions.py`: every command with its shortcut, menus and toolbar.
 - `settings.py`, `theme.py`, `icons.py`: preferences, the themes (JSON files

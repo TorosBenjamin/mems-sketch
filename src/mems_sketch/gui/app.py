@@ -38,10 +38,11 @@ from mems_sketch.export.base import available_exporters, options_of, title_of
 from mems_sketch.gui import component_picker, icons, motion, recent_projects, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
+from mems_sketch.gui.commit_panel import CommitPanel
 from mems_sketch.gui.component_picker import PlacePopup
 from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.export_dialog import ExportOptionsDialog, remember, remembered
-from mems_sketch.gui.history_panel import HistoryPanel
+from mems_sketch.gui.git_panel import GitPanel
 from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
     INSIDE_ROLE,
@@ -110,15 +111,17 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "parameters": "The component's parameters: the values whoever places it can set. "
     "*Internal* ones (the lock) are only for inside it.\n\n*Trial* tries a value "
     "without changing the design, on library components too.",
-    "history": "What changed, from the project's commits in git. *Uncommitted "
-    "changes* are those since the last commit, saved or not; choose a commit to see "
-    "what it changed. The canvas shows the material added (tinted) and removed "
-    "(hatched) in the component you are editing, with default parameters. Click a "
-    "change to go to it.\n\n"
-    "*Commit* saves the project and commits its folder, nothing else. Right-click a "
-    "commit to compare it with the design now, or to restore the project (or the "
-    "component you are editing) as it was: an ordinary edit, which Undo takes back. "
-    "Branches, merging and remotes stay with your git tools.",
+    "commit": "The changes since the last commit, saved or not, by component; the "
+    "canvas shows the material added (tinted) and removed (hatched) in the "
+    "component you are editing. Click a change to go to it.\n\n"
+    "Check what goes into the commit: a component is the unit. *Commit* saves the "
+    "project and commits those files, nothing else; *Amend* replaces the last "
+    "commit. Right-click a row to roll it back to the last commit (an ordinary edit, "
+    "which Undo takes back), or to add or ignore a file git does not track.",
+    "git": "The project's commits. Choose one to see what it changed (on the canvas "
+    "too); right-click it to compare it with the design now, or to restore the "
+    "project (or the component you are editing) as it was: an ordinary edit, which "
+    "Undo takes back. Branches, merging and remotes stay with your git tools for now.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "
@@ -224,9 +227,13 @@ class MainWindow(QMainWindow):
         self.points.focused.connect(self._point_focused)
         self._hovered_point = None
         self.messages = MessagesPanel()
-        self.history = HistoryPanel(self.document)
-        self.history.comparison_changed.connect(self.update_overlay)
-        self.history.navigate.connect(self._go_to_change)
+        self.commit_panel = CommitPanel(self.document)
+        self.git = GitPanel(self.document)
+        self._compared = [self.commit_panel, self.git]  # the last one shown first
+        for panel in self._compared:
+            panel.comparison_changed.connect(lambda p=panel: self._comparison_shown(p))
+            panel.navigate.connect(self._go_to_change)
+        self.commit_panel.committed.connect(self.git.reload)
         self._build_tool_windows()
 
         self._build_actions()
@@ -271,7 +278,8 @@ class MainWindow(QMainWindow):
             self.layers,
             self.points,
             self.components,
-            self.history,
+            self.commit_panel,
+            self.git,
         ):
             panel.error.connect(self.report_error)
         self.properties.previewed.connect(self._preview_node)
@@ -831,13 +839,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tool_windows)
         for name, title, icon, widget, anchor in (
             ("components", "Components", "component", self.components, "left-top"),
+            ("commit", "Commit", "commit", self.commit_panel, "left-top"),
             ("shapes", "Shapes", "shapes", self.tree, "left-bottom"),
             ("layers", "Layers", "layers", self.layers, "left-bottom"),
             ("messages", "Messages", "messages", self.messages, "bottom"),
+            ("git", "Git", "branch", self.git, "bottom"),
             ("properties", "Properties", "properties", self.properties, "right"),
             ("parameters", "Parameters", "parameters", self.parameters, "right"),
             ("points", "Points", "point", self.points, "right"),
-            ("history", "History", "history", self.history, "right"),
         ):
             self.tool_windows.add(name, title, icon, widget, anchor, PANEL_HELP[name])
         self._restore_tool_windows()
@@ -1074,7 +1083,8 @@ class MainWindow(QMainWindow):
         version = self.document.results.version
         QTimer.singleShot(UPDATING_SHOWN_MS, lambda: self._show_updating(version))
         self.area.update_titles()
-        self.history.refresh()
+        self.commit_panel.refresh()
+        self.git.refresh()
         self.undo_action.setEnabled(self.document.can_undo())
         self.redo_action.setEnabled(self.document.can_redo())
         self._update_title()
@@ -1132,7 +1142,8 @@ class MainWindow(QMainWindow):
         self.properties.hide_implementation = hidden
         self.parameters.refresh()
         self.points.refresh()
-        self.history.refresh()
+        self.commit_panel.refresh()
+        self.git.refresh()
         self._refresh_layer_box()
         self.components.refresh()
         self.tree.rebuild([p for p in view.selection if self._exists(p)])
@@ -1182,9 +1193,13 @@ class MainWindow(QMainWindow):
         self.canvas.show_overlay(results.highlights(view.selection), markers, box)
         self.canvas.show_alignment(*self.alignment_link(single))
         self.canvas.show_guides(view.guides, set(view.selection))
-        changes = (
-            self.history.geometry(view.component) if self.tool_windows.is_open("history") else None
-        )
+        changes = None
+        for panel, name in (
+            (p, "commit" if p is self.commit_panel else "git") for p in self._compared
+        ):
+            if self.tool_windows.is_open(name) and panel.comparison is not None:
+                changes = panel.geometry(view.component)
+                break
         self.canvas.show_changes(*(changes or (None, None)))
         open_ = self.tool_windows.is_open("points")
         focus = (
@@ -1212,8 +1227,14 @@ class MainWindow(QMainWindow):
         the setting says always); the align tool shows its own candidates."""
         return self.settings.get("canvas/always_show_points") or self.tool_windows.is_open("points")
 
+    def _comparison_shown(self, panel) -> None:
+        """A panel shows other changes: its changes go on the canvas."""
+        self._compared.remove(panel)
+        self._compared.insert(0, panel)
+        self.update_overlay()
+
     def _go_to_change(self, change) -> None:
-        """A change clicked in the History panel: open its component and select the
+        """A change clicked in the Commit or Git panel: open its component and select the
         shape (or what held a removed one), panning to it."""
         if change.component is None or not self.document.exists(change.component):
             return

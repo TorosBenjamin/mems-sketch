@@ -410,7 +410,7 @@ behaviours every frontend must keep.
   (QS-7), so it is shown without building anything.
 - **EDT-9** (Could, new; [#88](https://github.com/TorosBenjamin/mems-sketch/issues/88)) **The change a value makes:** while a value is
   dragged or tried, the canvas can show the geometric difference from where
-  it started (material added and removed, as in the History panel, HIS-2).
+  it started (material added and removed, as in the Commit panel, HIS-2).
 - **EDT-10** (Could, new; [#87](https://github.com/TorosBenjamin/mems-sketch/issues/87)) **Annotations:** notes on the canvas, saved with
   the component and alignable like guides, never fabricated. They can
   optionally be exported as GDS text labels (zero-area text records) on a
@@ -595,6 +595,10 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   a commit, as an ordinary edit that can be undone.
 - **HIS-5** (Should, exists) Initialize a repository for a saved project.
   Branches, merging, push and pull stay with the user's git tools.
+- **HIS-6** (Should, exists; [#131](https://github.com/TorosBenjamin/mems-sketch/issues/131)) Commit **some of the changes**: the
+  local changes are listed by component (the unit, being a file of its own),
+  each chosen or not, with the other files in the folder; amend the last
+  commit; roll a component back to the last commit as an undoable edit.
 
 ### Command line and scripting
 

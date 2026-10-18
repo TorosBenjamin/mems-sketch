@@ -86,6 +86,11 @@ class UiColors(_Colors):
     expression: str  # a field holding an expression (a parameter's purple, light)
     error: str
     warning: str
+    # Names in the Commit and Git panels, by what happened to them (as in JetBrains IDEs).
+    vcs_added: str
+    vcs_changed: str
+    vcs_removed: str
+    vcs_untracked: str  # a file git does not track yet
 
 
 class CanvasColors(_Colors):
@@ -474,6 +479,7 @@ QLineEdit#welcome-search {{ padding: 6px 8px; }}
 QListWidget#welcome-list {{ background: transparent; border: none; outline: none; }}
 QListWidget#welcome-list::item {{ background: transparent; }}
 QFrame#search-divider {{ background: {border}; border: none; }}
+QFrame#commit-rule {{ background: {border}; border: none; }}
 QLabel#preview-picture {{ background: {window}; border-radius: {radius_card}px; }}
 QScrollArea#preview-scroll, QWidget#preview-body {{ background: transparent; }}
 QLabel#keycap {{

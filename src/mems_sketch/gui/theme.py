@@ -467,6 +467,12 @@ QListWidget#picker-list::item {{ background: transparent; }}
 QLineEdit#picker-search {{ padding: 6px 8px; border-radius: {radius_control}px; }}
 QFrame#picker-line {{ background: {border}; border: none; margin: 0 2px; }}
 QToolButton#picker-browse {{ color: {accent}; padding: 4px 6px; }}
+QWidget#welcome, QWidget#welcome-main {{ background: {editor}; }}
+QFrame#welcome-side {{ background: {window}; border-right: 1px solid {border}; }}
+QLabel#welcome-title {{ font-size: 18px; font-weight: 600; color: {text}; }}
+QLineEdit#welcome-search {{ padding: 6px 8px; }}
+QListWidget#welcome-list {{ background: transparent; border: none; outline: none; }}
+QListWidget#welcome-list::item {{ background: transparent; }}
 QFrame#search-divider {{ background: {border}; border: none; }}
 QLabel#preview-picture {{ background: {window}; border-radius: {radius_card}px; }}
 QScrollArea#preview-scroll, QWidget#preview-body {{ background: transparent; }}

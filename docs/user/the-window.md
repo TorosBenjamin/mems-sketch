@@ -7,6 +7,17 @@ y axis).
 
 ![The editor with the resonator example](../images/window.png)
 
+## Welcome
+
+Started without a project (or after **File → Close project**), the program
+shows the Welcome window: **New project** (the wizard), **Open…** (a project
+folder's `project.yaml` or a project file) and the projects opened lately,
+pinned ones first, then the most recent. Each shows its folder, when it was
+opened and the git branch it is on. Type to search; Enter or a double-click
+opens one in its own window. Point at a project for its pin; right-click to pin
+it, show its folder or take it off the list. A project whose folder has gone is
+marked missing: opening it asks where it is now.
+
 ## Toolbar
 
 One row: **☰** (every menu is in it; menu paths in this guide such as

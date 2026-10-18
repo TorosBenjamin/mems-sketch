@@ -28,13 +28,14 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QToolButton,
+    QWidget,
 )
 
 from mems_sketch.core.shapes import CornersModifier, NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
 from mems_sketch.export.base import available_exporters, options_of, title_of
-from mems_sketch.gui import component_picker, icons, motion, theme
+from mems_sketch.gui import component_picker, icons, motion, recent_projects, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
 from mems_sketch.gui.component_picker import PlacePopup
@@ -81,6 +82,7 @@ from mems_sketch.gui.toolbar import build_toolbar
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool
 from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import ComponentView, EditorArea, builds
+from mems_sketch.gui.welcome import WelcomeWindow
 from mems_sketch.gui.widgets import MenuTidier
 
 PANEL_HELP = {  # the "?" in each tool window's header
@@ -1789,16 +1791,18 @@ class MainWindow(QMainWindow):
             return self.save_project()
         return answer == QMessageBox.StandardButton.Discard
 
-    def new_project(self, library: bool = False) -> None:
+    def new_project(self, library: bool = False) -> bool:
         """The New Project wizard: name, folder, process and libraries; saved at once.
 
         Unsaved changes are asked about once the wizard is finished, not before.
+        True if a project was made.
         """
         last = Path(self._last_dir())  # the last project's folder: offer the one it is in
         location = last.parent if (last / "project.yaml").exists() else last
         dialog = NewProjectDialog(str(location), library, self)
         if self.show_dialog(dialog) == QDialog.DialogCode.Accepted and self._confirm_discard():
-            self.create_project(**dialog.values())
+            return self.create_project(**dialog.values())
+        return False
 
     def show_dialog(self, dialog: QDialog) -> int:
         """Run a dialog (tests fill it in instead)."""
@@ -1819,38 +1823,41 @@ class MainWindow(QMainWindow):
         if not self._run(create)[0]:
             return False
         self._remember_dir(str(Path(folder) / "project.yaml"))
+        self._remember_project()
         return True
 
     def new_library(self) -> None:
         """A new project without a top component: a set of components to place elsewhere."""
         self.new_project(library=True)
 
-    def open_project(self, path: str | None = None) -> None:
+    def open_project(self, path: str | None = None) -> bool:
         """Open a project; without ``path``, the one chosen in a file dialog.
 
         The file is chosen first. Then, if this window holds a project, the
         user chooses to open it here or in a new window; only opening it here
-        asks about unsaved changes.
+        asks about unsaved changes. True if it opened in this window.
         """
         if not path:
             path, _ = QFileDialog.getOpenFileName(
                 self, "Open project", self._last_dir(), OPEN_FILTER
             )
             if not path:
-                return
+                return False
             if self.document.path is not None or self.document.dirty:
                 where = self.ask_where_to_open(path)
                 if where is None:
-                    return
+                    return False
                 if where == "new":
                     self._remember_dir(path)
                     self.open_in_new_window(path)
-                    return
+                    return False
         if not self._confirm_discard():
-            return
+            return False
         self.save_editor_state()
-        if self._run(lambda: self._open(path))[0]:
+        opened = self._run(lambda: self._open(path))[0]
+        if opened:
             self._remember_dir(path)
+            self._remember_project()
             if self.document.project.load_notes:
                 self.notify("; ".join(self.document.project.load_notes), "warning", seconds=15)
             elif self.document.path is None:
@@ -1861,6 +1868,7 @@ class MainWindow(QMainWindow):
                     ("Save as…", self.save_project_as),
                     seconds=10,
                 )
+        return opened
 
     def ask_where_to_open(self, path: str) -> str | None:
         """``"here"``, ``"new"`` (another window) or None (cancelled)."""
@@ -1919,7 +1927,26 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 return False
         self._remember_dir(str(target / "project.yaml"))
-        return self._run(lambda: self.document.save(target))[0]
+        saved = self._run(lambda: self.document.save(target))[0]
+        if saved:
+            self._remember_project()
+        return saved
+
+    def _remember_project(self) -> None:
+        """Put the project this window holds first among the recent ones (Welcome)."""
+        if self.document.path is not None:
+            project = self.document.project
+            recent_projects.remember(self.document.path, project.name, project.top is None)
+
+    def close_project(self) -> None:
+        """Close the project and this window, and show the Welcome window."""
+        if not self._confirm_discard():
+            return
+        self.save_editor_state()
+        self._save_tool_windows()
+        self._closing_to_welcome = True
+        show_welcome()
+        self.close()
 
     def export_file(self) -> None:
         exporters = available_exporters()
@@ -1983,6 +2010,9 @@ class MainWindow(QMainWindow):
         self.settings.set_value("last_dir", str(Path(path).parent))
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if getattr(self, "_closing_to_welcome", False):  # asked already
+            event.accept()
+            return
         if self._confirm_discard():
             self.save_editor_state()
             self._save_tool_windows()
@@ -2057,11 +2087,53 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     app = QApplication.instance() or QApplication(argv)
     app.setApplicationName("MEMS Sketch")
-    window = MainWindow()
     if len(argv) > 1:
+        window = MainWindow()
         window.open_project(argv[1])
-    window.show()
+        window.show()
+        _windows.append(window)
+    else:
+        show_welcome()
     return app.exec()
+
+
+_windows: list[QWidget] = []  # the windows shown from here, kept while they are open
+
+
+def show_welcome() -> WelcomeWindow:
+    """The Welcome window: a project opened or made from it gets a window of its own."""
+    from mems_sketch import __version__
+
+    theme.apply(QApplication.instance(), Settings(None).get("appearance/ui_theme"))
+    welcome = WelcomeWindow(f"Version {__version__}")
+    welcome.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+    def opened(window: MainWindow) -> None:
+        window.show()
+        _windows.append(window)
+        welcome.close()
+
+    def open_path(path: str) -> None:
+        window = MainWindow()
+        if window.open_project(path):
+            opened(window)
+        else:
+            window.deleteLater()
+            welcome.fill(welcome.search.text())
+
+    def new() -> None:
+        window = MainWindow()
+        if window.new_project():
+            opened(window)
+        else:
+            window.deleteLater()
+
+    welcome.open_project.connect(open_path)
+    welcome.new_project.connect(new)
+    welcome.destroyed.connect(lambda: _windows.remove(welcome) if welcome in _windows else None)
+    _windows.append(welcome)
+    welcome.show()
+    return welcome
 
 
 if __name__ == "__main__":

@@ -79,6 +79,7 @@ class Actions:
         act("Open project…", w.open_project, QKeySequence.StandardKey.Open, file, "open")
         self.save = act("Save", w.save_project, QKeySequence.StandardKey.Save, file, "save")
         act("Save as…", w.save_project_as, QKeySequence.StandardKey.SaveAs, file)
+        act("Close project", w.close_project, None, file)
         file.addSeparator()
         act("Import…", lambda: w.components.import_gds(), "Ctrl+I", file, "import")
         act("Export…", w.export_file, "Ctrl+E", file, "export")

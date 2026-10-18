@@ -246,6 +246,9 @@ ICONS = {
     '<circle cx="6" cy="4.5" r="1.5"/><circle cx="10.5" cy="8" r="1.5"/>'
     '<circle cx="5" cy="11.5" r="1.5"/>',
     "messages": '<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.2h5M5.5 8.2h3"/>',
+    "pin": '<path d="M6 2.5h4l-.6 4 2.1 2.2v.8h-7v-.8l2.1-2.2z"/><path d="M8 9.5V14"/>',
+    "branch": '<circle cx="5" cy="3.8" r="1.4"/><circle cx="5" cy="12.2" r="1.4"/>'
+    '<circle cx="11" cy="5.8" r="1.4"/><path d="M5 5.2v5.6M11 7.2c0 2.3-6 1.6-6 3.6"/>',
     "history": '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.6V8l2.4 1.7"/>',
     "modified": '<circle cx="8" cy="8" r="3.2" fill="{orange}" stroke="none"/>',
     "properties": '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>'

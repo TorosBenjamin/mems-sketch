@@ -66,7 +66,15 @@ from mems_sketch.gui.search import (
     menu_actions,
 )
 from mems_sketch.gui.settings import PreferencesDialog, Settings, open_folder
-from mems_sketch.gui.statusbar import ToolStatus
+from mems_sketch.gui.statusbar import (
+    GRID_SAMPLE,
+    POSITION_SAMPLE,
+    TARGET_MAX_WIDTH,
+    ZOOM_SAMPLE,
+    StatusBar,
+    ToolStatus,
+    fixed_label,
+)
 from mems_sketch.gui.title_bar import TitleBar
 from mems_sketch.gui.toast import Toast, Toasts
 from mems_sketch.gui.toolbar import build_toolbar
@@ -887,8 +895,8 @@ class MainWindow(QMainWindow):
         self.tool_status.show_for(self.tool)
 
     def _build_status_bar(self) -> None:
-        status = self.statusBar()
-        status.setSizeGripEnabled(False)
+        status = StatusBar()
+        self.setStatusBar(status)
         tool_status = self.tool_status = ToolStatus()
         # The names the tools and tests use.
         self.tool_icon, self.tool_name = tool_status.tool_icon, tool_status.tool_name
@@ -915,20 +923,18 @@ class MainWindow(QMainWindow):
         self.problems_button.setToolTip("Errors and rule violations (click to show)")
         self.problems_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.problems_button.clicked.connect(self._show_messages_panel)
-        self.grid_label = QLabel()
-        self.grid_label.setToolTip("Grid step at this zoom")
-        self.zoom_label = QLabel()
-        self.zoom_label.setToolTip("Zoom (screen pixels per µm)")
-        self.coordinates = QLabel()
-        self.coordinates.setMinimumWidth(230)
-        for widget in (
+        self.grid_label = fixed_label(GRID_SAMPLE, "Grid step at this zoom")
+        self.zoom_label = fixed_label(ZOOM_SAMPLE, "Zoom (screen pixels per µm)")
+        self.snap_target = QLabel()  # the point the cursor would snap to
+        self.snap_target.setObjectName("status-target")
+        self.snap_target.setMaximumWidth(TARGET_MAX_WIDTH)
+        self.coordinates = fixed_label(POSITION_SAMPLE, "The cursor's position, in µm")
+        status.arrange(
             tool_status,
+            self.snap_target,
             self.problems_button,
-            self.grid_label,
-            self.zoom_label,
-            self.coordinates,
-        ):
-            status.addPermanentWidget(widget)
+            [tool_status.snapping, self.grid_label, self.zoom_label, self.coordinates],
+        )
 
     def _show_zoom(self) -> None:
         canvas = self.canvas
@@ -1317,11 +1323,8 @@ class MainWindow(QMainWindow):
             self._quiet_selection = False
 
     def _cursor_moved(self, x: float, y: float) -> None:
-        text = f"x {x:.3f}  y {y:.3f} µm"
-        label = self.tool.hover_label(x, y)
-        if label is not None:
-            text = f"{label}   {text}"
-        self.coordinates.setText(text)
+        self.coordinates.setText(f"x {x:.3f}  y {y:.3f}")
+        self.snap_target.setText(self.tool.hover_label(x, y) or "")
         self._hover(x, y)
 
     def _hover(self, x: float, y: float) -> None:

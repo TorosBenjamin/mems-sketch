@@ -111,10 +111,12 @@ on one side and watch the resonator that uses it on the other.
 
 ## Status bar
 
-The current hint, the active tool and its options (the drawing layer and path
-width while drawing, the angle step for Rotate), the snapping toggles (shape
-points, grid) and the gizmo toggle, then problems (click to open Messages),
-grid step, zoom and cursor position.
+On the left the active tool and its options (the drawing layer and path width
+while drawing, the angle step for Rotate), then, dimmed, what to do now (left
+out when the window is too narrow for it). Then the point the cursor would snap
+to and the problems (click to open Messages). On the right, each in a field
+that keeps its width: the snapping toggles (shape points, grid) and the gizmo
+toggle, the grid step, the zoom and the cursor position in µm.
 
 ## Notes and motion
 

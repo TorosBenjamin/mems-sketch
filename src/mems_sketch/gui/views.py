@@ -13,7 +13,9 @@ from concurrent.futures import Executor, Future, ProcessPoolExecutor, ThreadPool
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtWidgets import (
+    QFrame,
     QProxyStyle,
+    QSplitter,
     QStyle,
     QTabBar,
     QTabWidget,
@@ -27,7 +29,6 @@ from mems_sketch.core.shapes import NodePath, node_at
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import LayoutCanvas
-from mems_sketch.gui.widgets import HairlineSplitter
 from mems_sketch.process import rules
 
 MAX_PANES = 2
@@ -239,7 +240,23 @@ class ComponentView(QWidget):
             return False
 
 
-class EditorArea(HairlineSplitter):
+PANE_GAP = 5  # px of frame between the two panes of a split view (as between islands)
+
+
+def _pane_island(pane: QWidget) -> QFrame:
+    """A pane as its own rounded island, so a split view has round corners in the
+    middle too (the canvas rounds itself off to the island it is in)."""
+    frame = QFrame()
+    frame.setObjectName("island")
+    frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+    layout.addWidget(pane)
+    return frame
+
+
+class EditorArea(QSplitter):
     """Tabs of component views in one or two panes.
 
     ``current`` is the view the user works in: the current tab of the pane
@@ -251,7 +268,10 @@ class EditorArea(HairlineSplitter):
     tab_menu_requested = Signal(object, QPoint)  # ComponentView, global position
 
     def __init__(self, document: EditSession) -> None:
-        super().__init__(Qt.Orientation.Horizontal)  # split: a hairline between the panes
+        super().__init__(Qt.Orientation.Horizontal)  # split: two islands, the frame between
+        self.setObjectName("islands")
+        self.setHandleWidth(PANE_GAP)
+        self.setChildrenCollapsible(False)
         self.document = document
         self.panes: list[QTabWidget] = []
         self.current: ComponentView | None = None
@@ -273,7 +293,7 @@ class EditorArea(HairlineSplitter):
         bar.setStyle(self._tab_style)
         bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         bar.customContextMenuRequested.connect(lambda pos, p=pane: self._tab_menu(p, pos))
-        self.addWidget(pane)
+        self.addWidget(_pane_island(pane))
         self.panes.append(pane)
         return pane
 
@@ -302,8 +322,9 @@ class EditorArea(HairlineSplitter):
 
     def _remove_pane(self, pane: QTabWidget) -> None:
         self.panes.remove(pane)
-        pane.setParent(None)
-        pane.deleteLater()
+        holder = pane.parentWidget()  # its island
+        holder.setParent(None)
+        holder.deleteLater()
 
     def pane_of(self, view: ComponentView) -> QTabWidget | None:
         return next((p for p in self.panes if p.indexOf(view) >= 0), None)

@@ -15,7 +15,14 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QMenu, QProxyStyle, QStyle, QStyleOptionMenuItem
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QMenu,
+    QProxyStyle,
+    QStyle,
+    QStyleOptionMenuItem,
+    QWidget,
+)
 
 from mems_sketch.gui import theme
 from mems_sketch.gui.widgets import draw_qualified
@@ -240,6 +247,9 @@ class MenuPolisher(QObject):
     or below a button so its panel, not its shadow, starts there."""
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        kind = event.type()
+        if kind in (QEvent.Type.Polish, QEvent.Type.Paint) and _is_combo_popup(watched):
+            return _combo_popup(watched, event)
         if not isinstance(watched, QMenu):
             return False
         if event.type() == QEvent.Type.Polish and not watched.property("mems_menu"):
@@ -253,6 +263,42 @@ class MenuPolisher(QObject):
         elif event.type() == QEvent.Type.Show and _shadowed(watched) and not _is_submenu(watched):
             watched.move(watched.pos() - QPoint(SHADOW, SHADOW - 2))
         return False
+
+
+COMBO_PAD = 4  # px between a list's rounded panel and its entries
+
+
+def _is_combo_popup(widget: QObject) -> bool:
+    """The window a combo box's list opens in (Qt's private container)."""
+    return isinstance(widget, QWidget) and widget.metaObject().className() == (
+        "QComboBoxPrivateContainer"
+    )
+
+
+def _combo_popup(container: QWidget, event: QEvent) -> bool:
+    """A combo box's list as a rounded panel like a menu's, with nothing square
+    behind its corners: a translucent window, its list drawn on the panel."""
+    if event.type() == QEvent.Type.Polish:
+        if not container.property("mems_combo"):
+            container.setProperty("mems_combo", True)
+            if not container.testAttribute(Qt.WidgetAttribute.WA_WState_Created):
+                container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+                container.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint)
+                container.setProperty("mems_translucent", True)
+            container.setContentsMargins(COMBO_PAD, COMBO_PAD, COMBO_PAD, COMBO_PAD)
+            for view in container.findChildren(QAbstractItemView):
+                view.viewport().setAutoFillBackground(False)
+        return False
+    painter = QPainter(container)
+    rect = QRectF(container.rect())
+    if container.property("mems_translucent"):
+        draw_panel(painter, rect, False)
+    else:  # no translucency (a window made before): a plain panel to the edges
+        painter.fillRect(rect, _ui("editor"))
+        painter.setPen(QPen(_ui("border_strong"), 1))
+        painter.drawRect(rect.adjusted(0.5, 0.5, -0.5, -0.5))
+    painter.end()
+    return True
 
 
 def _is_submenu(menu: QMenu) -> bool:

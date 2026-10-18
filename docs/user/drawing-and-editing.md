@@ -103,9 +103,18 @@ radius, where a fillet would round all of them:
 1. Click a shape; its corners are marked (the small steps of curves are not
    corners).
 2. Click a corner to round it with the last radius used; click it again to
-   make it sharp. Drag away from a corner to set its radius, drawn as you drag.
-3. In **Properties**, the shape's **Corners** card lists each corner's radius
+   make it sharp. Drag away from a corner to set its radius: the rounding is
+   drawn as you drag (the shape is rebuilt when you let go) and the radius
+   stops at the largest that fits.
+3. Each rounded corner has a handle on the line halfway between its edges, as
+   far from the corner as its radius, with the radius beside it. Drag the
+   handle to change the radius; a click on it changes nothing.
+4. In **Properties**, the shape's **Corners** card lists each corner's radius
    and style (round or chamfer).
+
+A corner whose radius no longer fits (the shape got smaller with build checks
+switched off) is boxed on the canvas like a rule violation, and in the Corners
+tool its label says it is too large.
 
 A corner is recorded so that it follows the design: as the shape's own point
 (`top_right`), a neighbour's point, or the expressions the shape is written

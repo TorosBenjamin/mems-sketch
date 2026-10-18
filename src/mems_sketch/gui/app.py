@@ -6,6 +6,7 @@ an :class:`~mems_sketch.editing.EditSession`, the backend's way to edit a projec
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import multiprocessing
@@ -29,7 +30,7 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
-from mems_sketch.core.shapes import NodePath, paths
+from mems_sketch.core.shapes import CornersModifier, NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
 from mems_sketch.export.base import available_exporters, options_of, title_of
@@ -161,6 +162,7 @@ BACKGROUND_BUILD_S = 0.15
 UPDATING_SHOWN_MS = 200
 
 
+CORNER_ERROR_MARK_PX = 8  # half the box marking a corner whose radius does not fit
 RESTORED_TOOLS = ("select", "hand", "move")  # the tools a new window starts in again
 
 
@@ -171,6 +173,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.document = document or EditSession()
         self._problems: list[str] = []
+        self._corner_errors: list[tuple[float, float]] = []  # corners whose radius does not fit
         # The longest each component has taken to build since the project was opened:
         # one that can take long is built in the background, even when a change
         # happens to be quick to build (that one is soon there).
@@ -1043,6 +1046,7 @@ class MainWindow(QMainWindow):
         self.area.update_titles()
         self.draw_rulers()
         self._problems = self.document.results.problems()
+        self._corner_errors = self._failing_corners()
         self._took(self.document.results.build_seconds)
         self._refresh_panels()
 
@@ -1139,9 +1143,24 @@ class MainWindow(QMainWindow):
         errors = [*extra, *view.errors, *(p for p in self._problems if p not in view.errors)]
         self.messages.show_messages(errors, view.violations, checking=view.checking)
 
+    def _failing_corners(self) -> list[tuple[float, float]]:
+        """Rounded corners of the open component whose radius does not fit (when the
+        build says a corner is wrong): marked on the canvas like rule violations."""
+        texts = [*self._problems, *self.view.errors]
+        if not any("corner" in text for text in texts):
+            return []
+        found = []
+        for path, shape in paths(self.document.shapes):
+            if any(isinstance(m, CornersModifier) for m in shape.modifiers):
+                with contextlib.suppress(Exception):  # it does not build at all: no mark
+                    found += self.document.corners.failing(path)
+        return found
+
     def update_overlay(self) -> None:
         view = self.view
         markers = [v.bbox_um for v in view.violations if v.bbox_um and not v.waived]
+        reach = CORNER_ERROR_MARK_PX / self.canvas.pixels_per_um()
+        markers += [(x - reach, y - reach, x + reach, y + reach) for x, y in self._corner_errors]
         results = self.document.results
         single = view.selection[0] if len(view.selection) == 1 else None
         shown = self.points_shown()

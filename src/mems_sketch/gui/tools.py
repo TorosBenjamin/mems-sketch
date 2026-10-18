@@ -33,7 +33,6 @@ the grid snap, and the rotation step come from the settings.
 
 from __future__ import annotations
 
-import contextlib
 import math
 from typing import TYPE_CHECKING, ClassVar
 
@@ -818,9 +817,14 @@ class CornersTool(Tool):
     """Round corners: pick a shape, then click its corners.
 
     A click rounds a corner (with the last radius used) or, on a rounded one,
-    makes it sharp again; dragging away from a corner sets its radius, drawn
-    as you drag. The corners go into the shape's corners modifier, recorded
-    so that they follow the design (see :mod:`mems_sketch.editing.corners`).
+    makes it sharp again; dragging away from a corner sets its radius. Each
+    rounded corner has a handle on the bisector at its radius from the corner,
+    with the radius by it: drag it to change the radius. While dragging only the
+    rounding is drawn (nothing is rebuilt) and the radius stops at the largest
+    that fits; the shape is rebuilt on release. A corner whose radius does not
+    fit (the shape changed under it) is ringed in the error colour. The corners
+    go into the shape's corners modifier, recorded so that they follow the
+    design (see :mod:`mems_sketch.editing.corners`).
     """
 
     name, label, shortcut = "corners", "Corners", "O"
@@ -836,9 +840,16 @@ class CornersTool(Tool):
         self.path: NodePath | None = None
         self.candidates: list[tuple[float, float]] = []
         self.rounded: list[tuple[int, tuple[float, float]]] = []
+        self.shown: list = []  # RoundedCorner: the handles
         self._press: tuple[float, float] | None = None  # the corner a press is on
+        self._on_handle = False  # the press was on a rounded corner's handle
+        self._shape = None  # the pressed corner's CornerShape, for the preview
+        self._style = "round"
         self._dragged: float | None = None  # the radius being dragged
         self._limit: float | None = None  # the largest radius that corner takes
+        if hasattr(self, "window"):
+            self.canvas.show_corner_handles([])
+            self.canvas.show_corner_preview([])
 
     @property
     def busy(self) -> bool:
@@ -849,9 +860,15 @@ class CornersTool(Tool):
         if len(self.window.selection) == 1:
             self.begin(self.window.selection[0])
 
+    def deactivate(self) -> None:
+        super().deactivate()
+        self.canvas.show_corner_handles([])
+        self.canvas.show_corner_preview([])
+
     def design_changed(self) -> None:
         """Stay on the shape (its corners may have moved or gone), unless it is gone."""
         self._press = self._dragged = None
+        self.canvas.show_corner_preview([])
         if self.path is not None and not self._refresh():
             self.reset()
 
@@ -861,7 +878,7 @@ class CornersTool(Tool):
         name = self.document.node(self.path).name or self.document.node(self.path).kind
         return (
             f"Corners of {name}: click a corner to round it (again: sharp), drag from it "
-            "to set the radius; Esc when done"
+            "or its handle to set the radius; Esc when done"
         )
 
     def begin(self, path: NodePath) -> None:
@@ -880,33 +897,58 @@ class CornersTool(Tool):
             return False
         try:
             self.candidates = self.document.corners.candidates(self.path)
+            self.shown = self.document.corners.shown(self.path)
             self.rounded = self.document.corners.rounded(self.path)
         except (ValueError, KeyError, IndexError):  # e.g. undone away
             return False
+        self._show_handles()
         return True
 
-    def _corner_at(self, x: float, y: float) -> tuple[float, float] | None:
-        points = self.candidates + [p for _, p in self.rounded]
-        best, found = self.reach, None
-        for px, py in points:
+    def _show_handles(self, dragged: tuple[tuple[float, float], float] | None = None) -> None:
+        """A handle per rounded corner (the dragged one where the drag has it)."""
+        handles = []
+        for corner in self.shown:
+            radius = corner.radius
+            if dragged is not None and _close(corner.shape.point, dragged[0]):
+                radius = dragged[1]
+            handles.append(_handle(corner.shape, radius, corner.style, corner.fits))
+        new = dragged is not None and not any(_close(c.shape.point, dragged[0]) for c in self.shown)
+        if new and self._shape is not None:  # a corner being rounded for the first time
+            handles.append(_handle(self._shape, dragged[1], self._style, True))
+        self.canvas.show_corner_handles(handles)
+
+    def _corner_at(self, x: float, y: float) -> tuple[tuple[float, float] | None, bool]:
+        """The corner a press at ``(x, y)`` is on, and whether it was on its handle."""
+        best, found, handle = self.reach, None, False
+        for corner in self.shown:
+            hx, hy = corner.shape.handle(corner.radius)
+            distance = math.hypot(hx - x, hy - y)
+            if distance < best:
+                best, found, handle = distance, corner.shape.point, True
+        for px, py in self.candidates + [p for _, p in self.rounded]:
             distance = math.hypot(px - x, py - y)
             if distance < best:
-                best, found = distance, (px, py)
-        return found
+                best, found, handle = distance, (px, py), False
+        return found, handle
 
     def press(self, x, y, modifiers) -> None:
-        corner = self._corner_at(x, y) if self.path is not None else None
+        corner, on_handle = self._corner_at(x, y) if self.path is not None else (None, False)
         if corner is None:
             hit = self.window.hit(x, y)
             self.window.select_click(hit, False)
             if hit is not None:
                 self.begin(hit)
             return
-        self._press, self._dragged = corner, None
+        self._press, self._on_handle, self._dragged = corner, on_handle, None
+        existing = next((c for c in self.shown if _close(c.shape.point, corner)), None)
+        self._style = existing.style if existing is not None else "round"
         try:  # worked out once: the drag stops at the largest radius that fits
             self._limit = self.document.corners.max_radius(self.path, *corner)
+            self._shape = (
+                existing.shape if existing else self.document.corners.shape(self.path, *corner)
+            )
         except (ValueError, KeyError, IndexError):
-            self._limit = None
+            self._limit, self._shape = None, None
 
     def move(self, x, y, modifiers, left) -> None:
         if self._press is None or not left:
@@ -919,24 +961,31 @@ class CornersTool(Tool):
         if largest is not None and radius >= largest:
             radius = largest
         if radius == self._dragged:
-            return  # nothing new to show: no rebuild
+            return  # nothing new to show
         self._dragged = radius
         note = "the largest that fits" if radius == largest else "Ctrl: exact"
         self.window.live(f"Radius {radius:g} µm   (release to set; {note})", f"r {radius:g} µm")
-        with contextlib.suppress(ValueError, KeyError):
-            node, _ = self.document.corners.with_corner(self.path, *self._press, _um(radius))
-            self.window._preview_node(node, self.path)
+        # Only the rounding is drawn while dragging; the shape is built on release.
+        if self._shape is not None:
+            self.canvas.show_corner_preview(self._shape.arc(radius, self._style))
+        self._show_handles((self._press, radius))
 
     def release(self, x, y, modifiers) -> None:
-        corner, radius = self._press, self._dragged
+        corner, radius, on_handle = self._press, self._dragged, self._on_handle
         self._press = self._dragged = None
+        self._on_handle = False
+        self.canvas.show_corner_preview([])
         if corner is None:
             return
         path = self.path
         existing = self.document.corners.at(path, *corner)
         if radius is not None:
             self.radius = _um(radius)
-            self.window.run(lambda: self.document.corners.add(path, *corner, self.radius))
+            self.window.run(
+                lambda: self.document.corners.add(path, *corner, self.radius, self._style)
+            )
+        elif on_handle:
+            self._show_handles()  # a click on a handle changes nothing
         elif existing is not None:
             self.window.run(lambda: self.document.corners.remove(path, existing))
         else:
@@ -949,6 +998,25 @@ class CornersTool(Tool):
         rounded = {p for _, p in self.rounded}
         sharp = [("corner", x, y) for x, y in self.candidates if (x, y) not in rounded]
         return {"pick": sharp, "anchor": [("rounded", x, y) for x, y in rounded]}
+
+    def cancel(self) -> bool:
+        busy = super().cancel()
+        self.canvas.show_corner_handles([])
+        self.canvas.show_corner_preview([])
+        return busy
+
+
+def _close(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    return abs(a[0] - b[0]) <= 1e-6 and abs(a[1] - b[1]) <= 1e-6
+
+
+def _handle(shape, radius: float, style: str, fits: bool):
+    """A rounded corner's handle for the canvas: on the bisector, at its radius."""
+    from mems_sketch.gui.canvas import CornerHandle
+
+    letter = "c" if style == "chamfer" else "r"
+    label = f"{letter} {radius:g} µm" + ("" if fits else " — too large")
+    return CornerHandle(shape.point, shape.handle(radius), label, fits)
 
 
 class MeasureTool(Tool):

@@ -163,7 +163,8 @@ def test_parts_of_a_panel_are_divided_by_a_hairline_not_a_bar(window):
             assert image.pixelColor(x, y - 1).name() != line  # 1 px thick
         else:  # side by side
             assert image.pixelColor(x - 1, y).name() != line
-    assert sum(s.objectName() == "islands" for s in splitters) == 3  # the gaps between islands
+    # The gaps between islands: the window's three, and the editor's (between its panes).
+    assert sum(s.objectName() == "islands" for s in splitters) == 4
 
 
 def test_the_process_page_is_cards_at_a_readable_width(window):

@@ -61,9 +61,12 @@ def render_png(
     from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt
     from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF
 
-    from mems_sketch.gui.canvas import layer_color
+    from mems_sketch.gui import theme
 
     application()
+    canvas = theme.get("light").canvas  # a picture is on white, whatever the editor's theme
+    palette = canvas["layers"]
+    ink = QColor(canvas["overlay"])
     if not pictures:
         raise ValueError("nothing to draw")
     width, height = (max(64, min(int(v), MAX_SIDE)) for v in (width, height))
@@ -77,11 +80,11 @@ def render_png(
     x0, y0, x1, y1 = view
     span_x, span_y = max(x1 - x0, 1e-3), max(y1 - y0, 1e-3)
     scale = min((width - 2 * MARGIN) / span_x, (height - 2 * MARGIN) / span_y)
-    colours = {name: layer_color(i) for i, name in enumerate(layers)}
+    colours = {name: QColor(palette[i % len(palette)]) for i, name in enumerate(layers)}
     order = [n for n in stack if n in colours] + [n for n in layers if n not in stack]
 
     image = QImage(width * columns, (height + caption) * rows, QImage.Format.Format_ARGB32)
-    image.fill(Qt.GlobalColor.white)
+    image.fill(QColor(canvas["background"]))
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     font = QFont()
@@ -101,7 +104,7 @@ def render_png(
         geometry = picture.geometry
         drawn = geometry.layer_names()
         for layer in [n for n in order if n in drawn] + [n for n in drawn if n not in order]:
-            colour = colours.get(layer, QColor("#888888"))
+            colour = colours.get(layer, QColor(canvas["unknown_layer"]))
             fill = QColor(colour)
             fill.setAlpha(110)
             painter.setPen(QPen(colour, 1))
@@ -114,23 +117,23 @@ def render_png(
                     outline.closeSubpath()
             painter.drawPath(outline)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor("#d0302a"), 2))
+        painter.setPen(QPen(QColor(canvas["violation"]), 2))
         for (bx0, by0, bx1, by1), label in picture.marks:
             corner, far = at(bx0, by1), at(bx1, by0)
             rect = QRectF(corner, far).adjusted(-3, -3, 3, 3)
             painter.drawRect(rect)
             if label:
                 painter.drawText(rect.bottomLeft() + QPointF(0, 12), label)
-        painter.setPen(QPen(QColor("#202020"), 1))
+        painter.setPen(QPen(ink, 1))
         for name, (px, py) in picture.points.items():
             p = at(px, py)
             painter.drawLine(p + QPointF(-4, 0), p + QPointF(4, 0))
             painter.drawLine(p + QPointF(0, -4), p + QPointF(0, 4))
             painter.drawText(p + QPointF(5, -4), name)
-        _scale_bar(painter, left, top, height, scale)
+        _scale_bar(painter, left, top, height, scale, ink)
         painter.restore()
         if picture.caption:
-            painter.setPen(QPen(QColor("#202020"), 1))
+            painter.setPen(QPen(ink, 1))
             painter.drawText(
                 QRectF(left, top + height, width, caption),
                 Qt.AlignmentFlag.AlignCenter,
@@ -145,16 +148,16 @@ def render_png(
     return bytes(data.data())
 
 
-def _scale_bar(painter, left: float, top: float, height: float, scale: float) -> None:
+def _scale_bar(painter, left: float, top: float, height: float, scale: float, ink) -> None:
     """A bar of a round length, about 80 px, at the bottom left."""
     from PySide6.QtCore import QPointF
-    from PySide6.QtGui import QColor, QPen
+    from PySide6.QtGui import QPen
 
     target = 80 / scale  # µm
     step = 10 ** math.floor(math.log10(target))
     length = next(m * step for m in (5, 2, 1) if m * step <= target)
     x, y = left + 10, top + height - 10
-    painter.setPen(QPen(QColor("#202020"), 2))
+    painter.setPen(QPen(ink, 2))
     painter.drawLine(QPointF(x, y), QPointF(x + length * scale, y))
     painter.drawText(QPointF(x, y - 5), f"{length:g} µm")
 

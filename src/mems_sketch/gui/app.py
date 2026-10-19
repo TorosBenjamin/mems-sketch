@@ -120,11 +120,14 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "project and commits those files, nothing else; *Amend* replaces the last "
     "commit. Right-click a row to roll it back to the last commit (an ordinary edit, "
     "which Undo takes back), or to add or ignore a file git does not track.",
-    "git": "The project's commits. Choose one to see what it changed (on the canvas "
-    "too), double-click it to compare in a tab; right-click it to compare it with "
-    "the design now, or to restore the project (or the component you are editing) as "
-    "it was: an ordinary edit, which Undo takes back. Branches, merging and remotes "
-    "stay with your git tools for now.",
+    "git": "The project's commits as a graph, with their branches and tags: those on "
+    "the branch checked out, another branch, or all of them. Search the messages, or "
+    "narrow the list to one author or one component. Choose a commit to see its "
+    "message and what it changed (on the canvas too); double-click it to compare in "
+    "a tab. *Compare with now* shows everything since; *Restore* brings back the "
+    "project (or the component you are editing) as it was: an ordinary edit, which "
+    "Undo takes back. Checking out, merging and remotes stay with your git tools for "
+    "now.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "

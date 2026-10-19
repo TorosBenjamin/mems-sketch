@@ -229,6 +229,20 @@ def test_restoring_one_component_leaves_the_others(session, commit):
         session.history.restore(first, "spring")
 
 
+def test_the_commits_of_one_component(session, commit):
+    commit(session, "First sketch")
+    session.components.new("frame")
+    commit(session, "Frame")
+    session.set_active("top")
+    session.parameters.update("length", default=120)
+    commit(session, "Longer beam")
+    history = session.history
+    assert [c.subject for c in history.commits()] == ["Longer beam", "Frame", "First sketch"]
+    assert [c.subject for c in history.commits(component="top")] == ["Longer beam", "First sketch"]
+    assert [c.subject for c in history.commits(component="frame")] == ["Frame"]
+    assert history.branches() == [git.Ref(history.branch, git.HEAD)]
+
+
 def test_a_saved_project_outside_git_can_start_a_repository(tmp_path):
     session = EditSession()
     assert not session.history.can_init()  # not saved yet

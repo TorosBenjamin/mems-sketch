@@ -622,7 +622,7 @@ Ansys) can mesh the STEP export themselves (OUT-6).
 - **HIS-4** (Must, exists) **Restore** a project or one component as it was in
   a commit, as an ordinary edit that can be undone.
 - **HIS-5** (Should, exists) Initialize a repository for a saved project.
-  Branches, merging, push and pull stay with the user's git tools.
+  Checking out, merging, push and pull stay with the user's git tools.
 - **HIS-6** (Should, exists; [#131](https://github.com/TorosBenjamin/mems-sketch/issues/131)) Commit **some of the changes**: the
   local changes are listed by component (the unit, being a file of its own),
   each chosen or not, with the other files in the folder; amend the last
@@ -631,6 +631,10 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   component in a tab of its own: overlaid or side by side, a mark on each
   edited shape and a ring on each shape another change moved, stepping
   through them all; roll one shape back.
+- **HIS-8** (Should, exists; [#131](https://github.com/TorosBenjamin/mems-sketch/issues/131)) The commits as a **graph** with their
+  branch and tag labels: on the branch checked out, another branch or all of
+  them; searched, and narrowed to one author or one component; the chosen
+  commit's message and changes beside it.
 
 ### Command line and scripting
 

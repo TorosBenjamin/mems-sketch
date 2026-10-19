@@ -101,9 +101,25 @@ class History:
         """Whether the project is saved in a git repository."""
         return self.session.path is not None and git.repository(self.session.path) is not None
 
-    def commits(self, limit: int = COMMIT_LIMIT) -> list[git.Commit]:
-        """The commits that changed the project, newest first."""
-        return git.commits(self.session.path, limit) if self.available else []
+    def commits(
+        self,
+        limit: int = COMMIT_LIMIT,
+        rev: str | None = None,
+        component: str | None = None,
+    ) -> list[git.Commit]:
+        """The commits that changed the project (or ``component`` and its private
+        ones), newest first: on the branch checked out, on ``rev`` (a branch), or on
+        every branch (``git.ALL``)."""
+        if not self.available:
+            return []
+        path = None
+        if component is not None:
+            path = component_folder(self.session.project.components, component)
+        return git.commits(self.session.path, limit, rev, path)
+
+    def branches(self) -> list[git.Ref]:
+        """The local branches (the one checked out has ``role`` HEAD), then the remote ones."""
+        return git.branches(self.session.path) if self.available else []
 
     def version(self, rev: str | None) -> Project | None:
         """The project at ``rev`` (None: as it is now); None if it did not exist then."""

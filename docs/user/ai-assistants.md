@@ -45,10 +45,10 @@ give its full path (in the virtual environment it was installed in:
 | Tools | What for |
 |---|---|
 | `open_project`, `new_project`, `save`, `undo`, `redo`, `project_info` | The project |
-| `list_components`, `get_component`, `describe_kinds` | Reading: the project's and the libraries' components, a component as YAML (the file format), every shape kind and modifier with its fields |
-| `add_shape`, `update_shape`, `rename_shape`, `delete_shape`, `add_modifier`, `set_parameter`, `set_point`, `place_component`, `set_component_yaml` | Editing, by name, in the file format |
+| `list_components`, `get_component`, `describe_kinds`, `describe_kind`, `reference` | Reading: the project's and the libraries' components, a component as YAML (the file format), the shape kinds and modifiers (one with its fields and an example), and reference topics: the expression language, the component format, points, layers |
+| `new_component`, `add_shape`, `update_shape`, `rename_shape`, `delete_shape`, `add_modifier`, `set_parameter`, `set_point`, `place_component`, `set_component_yaml` | Editing, by name, in the file format |
 | `build` | Sizes: the bounding box, each layer's area and polygon count, the points and ports, for trial parameter values |
-| `render`, `render_variants` | Pictures: a component in the canvas's colours (points marked, zoomed in), or a parameter sweep side by side at one scale |
+| `render`, `render_variants` | Pictures: a component in the canvas's colours (points marked, ports as arrows, zoomed in), or a parameter sweep side by side at one scale (zoomed in on a detail too) |
 | `check` | The process's design rules, with an optional picture marking the violations |
 | `export` | GDS, OASIS, DXF (or JSON, XML, MAT) |
 

@@ -13,6 +13,9 @@ from mems_sketch.core.shapes.base import Primitive, Value
 
 
 class RectShape(Primitive):
+    """Rectangle from corner (``x0``, ``y0``) to the opposite one (``x1``, ``y1``),
+    on ``layer``; ``corner_radius`` rounds all four corners."""
+
     icon: ClassVar[str] = "rect"
 
     kind: Literal["rect"] = "rect"

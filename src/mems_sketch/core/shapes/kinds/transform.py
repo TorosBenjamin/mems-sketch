@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 
 
 class TransformShape(Operation):
-    """Mirror ``children`` about x, scale, rotate and move them as one piece.
+    """Mirror ``children`` about x (``mirror_x``), ``scale``, rotate (``rotation``,
+    degrees) and move them (``x``, ``y``) as one piece, in that order.
 
     For something reusable, make a component instead; a transform is for
     moving a few shapes together once. Files written before the rename used

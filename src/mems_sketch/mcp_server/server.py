@@ -28,12 +28,15 @@ named shapes (rect, polygon, circle, arc, path, route, placed components, boolea
 ...) whose numbers can be expressions over its parameters and other shapes' points.
 Libraries (mems, std) provide components to place, read-only.
 
-A good loop: open_project (or new_project), list_components and describe_kinds to
-learn what exists, get_component to read one (YAML, the file format), then edit
-(add_shape, update_shape, place_component, set_parameter, or set_component_yaml
-for a whole definition), build to see sizes and points, render to look at it,
-check for the process's rules, and save. An edit that would break a project that
-built is refused with the reason; undo goes back one edit.
+Before writing, read reference('components') (the format) and
+reference('expressions') (sin/cos take radians, sind/cosd degrees). Then: open_project
+(or new_project, new_component), list_components and describe_kinds to learn what
+exists, describe_kind for one kind's fields, get_component to read a component (YAML,
+the file format), then edit (add_shape, update_shape, place_component, set_parameter,
+set_point, or set_component_yaml for a whole definition), build to see sizes, points
+and ports, render to look at it (points=true shows ports as arrows), check for the
+process's rules, and save. An edit that would break a project that built is refused
+with the reason; undo goes back one edit.
 """
 
 
@@ -108,8 +111,23 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
 
     @tool
     def describe_kinds() -> str:
-        """Every shape kind and modifier, what it does and its fields with defaults."""
+        """Every shape kind and modifier, one line each. Read one with describe_kind."""
         return tools.describe_kinds()
+
+    @tool
+    def describe_kind(kind: str) -> str:
+        """One shape kind or modifier (``rect``, ``connection``, ``array``...): what it
+        does, each field with its type and default, and an example in the file format."""
+        return tools.describe_kind(kind)
+
+    @tool
+    def reference(topic: str) -> str:
+        """Reference for writing components. Topics: ``expressions`` (operators,
+        functions — sind/cosd take degrees, sin/cos radians — and the names you can
+        use), ``components`` (the format: parameters, points, ports, shapes,
+        placements), ``points`` (points, sizes and ports of shapes), ``layers``
+        (layer names and this project's layer stack). Read these before writing."""
+        return tools.reference(topic)
 
     # -- editing ---------------------------------------------------------------
 
@@ -189,6 +207,11 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
         return tools.place_component(component, name, place, params, x, y, rotation)
 
     @tool
+    def new_component(name: str, description: str = "") -> str:
+        """Create a new, empty component in the project, to add shapes to."""
+        return tools.new_component(name, description)
+
+    @tool
     def set_component_yaml(component: str, yaml: str) -> str:
         """Replace a component's whole definition with YAML in the file format (as
         get_component returns it), or create a new component, as one edit."""
@@ -213,11 +236,13 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
         height: int = 600,
     ) -> Image:
         """A picture (PNG) of a component, layers in their canvas colours, with a scale
-        bar; ``points`` marks and labels its points and ports; ``box`` [x0, y0, x1, y1]
-        in µm zooms in."""
+        bar; ``points`` marks and labels its points, and its ports as arrows (the way
+        a wire leaves, a bar as wide as the wire); ``box`` [x0, y0, x1, y1] in µm
+        zooms in."""
         _, built = tools.built(component, params)
-        marked = _marks(built) if points else {}
-        picture = Picture(built.geometry, points=marked)
+        picture = Picture(built.geometry)
+        if points:
+            picture.points, picture.ports = dict(built.points()), _ports(built)
         return Image(data=_png([picture], tools, width, height, box), format="png")
 
     @tool
@@ -225,12 +250,16 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
         sweep: dict[str, list[Any]] | list[dict[str, Any]],
         component: str | None = None,
         columns: int | None = None,
+        box: list[float] | None = None,
         width: int = 360,
         height: int = 280,
     ) -> Image:
         """Pictures of a component for several parameter values side by side, at one
         scale: a sweep {param: [values], ...} (every combination) or a list of
-        parameter sets. A variant that does not build says why in its caption."""
+        parameter sets. ``box`` [x0, y0, x1, y1] in µm zooms every picture in on the
+        same place (to compare a detail); it is widened to the pictures' shape, and
+        geometry beyond a picture's frame is cut off there. A variant that does not build says why in
+        its caption."""
         name = tools._component(component)
         pictures = []
         for values in tools.variants(sweep):
@@ -244,7 +273,7 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
                 pictures.append(Picture(Geometry(), caption=f"{caption}: {_message(error)}"))
         if all(p.geometry.bbox() is None for p in pictures):
             raise ValueError(pictures[0].caption)
-        return Image(data=_png(pictures, tools, width, height, None, columns), format="png")
+        return Image(data=_png(pictures, tools, width, height, box, columns), format="png")
 
     @tool
     def check(
@@ -303,10 +332,8 @@ def _png(pictures, tools: DesignTools, width, height, box, columns=None) -> byte
     )
 
 
-def _marks(built) -> dict[str, tuple[float, float]]:
-    marks = dict(built.points())
-    marks.update({f"port.{n}": (p.x, p.y) for n, p in built.ports().items()})
-    return marks
+def _ports(built) -> dict[str, tuple[float, float, float, float]]:
+    return {f"port.{n}": (p.x, p.y, p.angle, p.width) for n, p in built.ports().items()}
 
 
 def _has_image(result: Any) -> bool:

@@ -179,7 +179,7 @@ The same symbols as on numbers, chosen by type:
 ## Functions
 
 What exists stays (`abs`, `min`, `max`, `round`, `sqrt`, `sin`, `cos`, `tan`,
-`ceil`, `floor`). Added, in [steps](#steps):
+`sind`, `cosd`, `tand`, `ceil`, `floor`). Added, in [steps](#steps):
 
 - **Numbers and lists:** `clamp(x, lo, hi)`, `len`, `sum`, `all`, `any`,
   `range(n)`, `range(a, b, step)`; `min` and `max` of a list.

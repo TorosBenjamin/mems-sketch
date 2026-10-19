@@ -11,20 +11,19 @@ turns them into tool errors.
 
 from __future__ import annotations
 
-import inspect
 import itertools
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
-from mems_sketch.core.shapes import KINDS, NodePath, Shape, paths
-from mems_sketch.core.shapes.modifiers import MODIFIER_KINDS
+from mems_sketch.core.shapes import NodePath, Shape, paths
 from mems_sketch.core.shapes.registry import kind_class
 from mems_sketch.core.user_component import ComponentDef, PointDef
 from mems_sketch.editing import EditSession
 from mems_sketch.engine import Build
 from mems_sketch.export.base import export_with_report
+from mems_sketch.mcp_server import kinds, reference
 from mems_sketch.process import rules
 from mems_sketch.storage import yaml_format
 from mems_sketch.storage.component_format import (
@@ -88,7 +87,10 @@ class DesignTools:
         project = self.session.project
         result: dict[str, Any] = {}
         if library is None:
-            result["project"] = [_entry(n, d) for n, d in sorted(project.components.items())]
+            result["project"] = {
+                "description": "this project's own components (editable)",
+                "components": [_entry(n, d) for n, d in sorted(project.components.items())],
+            }
         for name, found in sorted(project.libraries.items()):
             if library not in (None, name):
                 continue
@@ -113,20 +115,17 @@ class DesignTools:
         note = "" if name in self.session.project.components else "# read-only: a library's\n"
         return f"# {name}\n{note}{text}"
 
-    def describe_kinds(self) -> dict[str, Any]:
-        """Every shape kind and modifier: what it is and its fields."""
-        return {
-            "shapes": {k.kind_name(): _describe(k) for k in KINDS},
-            "modifiers": {m.kind_name(): _describe(m) for m in MODIFIER_KINDS},
-            "placing": (
-                "A placed component is {ref: <component>, <parameter>: <value>, ..., x, y, "
-                "rotation, mirror_x, align}; see list_components for what can be placed."
-            ),
-            "values": (
-                "Numbers can be expressions over parameters, process.* constants and other "
-                "shapes' points and sizes (beam.right.x, beam.width, pad.port.signal.y)."
-            ),
-        }
+    def describe_kinds(self) -> str:
+        """Every shape kind and modifier, one line each."""
+        return kinds.index()
+
+    def describe_kind(self, kind: str) -> str:
+        """What a shape kind or modifier is, its fields and an example."""
+        return kinds.describe(kind)
+
+    def reference(self, topic: str) -> str:
+        """A reference topic: expressions, components, points, layers."""
+        return reference.reference(topic, self.session.project)
 
     # -- editing -------------------------------------------------------------
 
@@ -230,6 +229,13 @@ class DesignTools:
         shape = {"ref": place, **(params or {}), "x": x, "y": y, "rotation": rotation}
         self.add_shape(component, name, shape)
         return f"placed {place} as {name}"
+
+    def new_component(self, name: str, description: str = "") -> str:
+        """A new, empty component, made the one edited."""
+        made = self.session.components.new(name)
+        if description:
+            self.session.components.set_description(made, description)
+        return f"created {made}"
 
     def set_component_yaml(self, component: str, text: str) -> str:
         """Replace a component's whole definition (a new one is created), as one edit."""
@@ -410,34 +416,6 @@ def _entry(name: str, definition: ComponentDef, category: str = "") -> dict[str,
     if definition.ports:
         entry["ports"] = [p.name for p in definition.ports]
     return entry
-
-
-def _describe(model) -> dict[str, Any]:
-    module = inspect.getmodule(model)
-    about = inspect.getdoc(model) or ""
-    if module is not None and module.__doc__ and len(module.__doc__) > len(about):
-        about = inspect.cleandoc(module.__doc__)
-    fields = {}
-    for name, info in model.model_fields.items():
-        if name in ("kind",):
-            continue
-        field: dict[str, Any] = {"type": _type_name(info.annotation)}
-        if not info.is_required():
-            default = info.get_default(call_default_factory=True)
-            field["default"] = yaml_format.to_data(default) if default is not None else None
-        else:
-            field["required"] = True
-        if info.description:
-            field["description"] = info.description
-        fields[name] = field
-    return {"about": about, "category": getattr(model, "category", "modifier"), "fields": fields}
-
-
-def _type_name(annotation) -> str:
-    text = str(annotation).replace("typing.", "")
-    for noise in ("mems_sketch.core.shapes.base.", "mems_sketch.core.shapes.", "<class '", "'>"):
-        text = text.replace(noise, "")
-    return text
 
 
 def _violation(v) -> dict[str, Any]:

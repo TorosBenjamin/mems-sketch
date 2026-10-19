@@ -72,6 +72,11 @@ min, max, a trial value and the resolved value.
 - Values passed to a placed component are evaluated where it is placed;
   parameters left out take their defaults.
 
+**Expressions** take `+ - * / // % **`, parentheses, `pi`, and the functions
+`abs`, `min`, `max`, `round`, `sqrt`, `ceil`, `floor`, `sin`, `cos`, `tan`
+(radians) and `sind`, `cosd`, `tand` (degrees, exact at multiples of 90°): a
+beam along angle `a` ends at `[L * cosd(a), L * sind(a)]`.
+
 **Make a parameter from a value:** in Properties, the parameter button beside
 any number field (on hover) makes a new parameter with that value as default
 and uses it.

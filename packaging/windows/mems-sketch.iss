@@ -1,5 +1,5 @@
 ; The Windows installer (Inno Setup 6), from the PyInstaller folder:
-;   iscc /DAppVersion=0.3.0 /DSourceDir=dist\mems-sketch /DOutputDir=out packaging\windows\mems-sketch.iss
+;   iscc /DAppVersion=0.4.0 /DSourceDir=dist\mems-sketch /DOutputDir=out packaging\windows\mems-sketch.iss
 ; Installs for the current user (no administrator rights needed), with a
 ; Start menu entry and an uninstaller.
 

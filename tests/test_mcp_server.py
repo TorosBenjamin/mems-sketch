@@ -58,9 +58,11 @@ def test_a_session_over_the_protocol_makes_builds_renders_and_checks(tools, tmp_
                 calls[tool] = result
                 return result
 
-            kinds = json.loads((await call("describe_kinds")).content[0].text)
-            assert "route" in kinds["shapes"] and "array" in kinds["modifiers"]
-            assert kinds["shapes"]["rect"]["fields"]["x1"]["required"]
+            index = (await call("describe_kinds")).content[0].text
+            assert "`route`" in index and "`array`" in index
+            about = (await call("describe_kind", kind="rect")).content[0].text
+            assert "`x1`: number or expression, required" in about
+            assert "sind" in (await call("reference", topic="expressions")).content[0].text
             await call("set_parameter", name="w", default=40, min=1)
             await call("add_shape", name="plate", shape=rect())
             await call(
@@ -150,6 +152,7 @@ def test_deleting_and_listing(tools):
     assert tools.session.shapes == []
     listed = tools.list_components()
     assert {"project", "mems", "std"} <= listed.keys()
+    assert all("components" in entry for entry in listed.values())  # one shape for all
     anchor = next(c for c in listed["mems"]["components"] if c["name"] == "mems.anchor")
     assert anchor["category"] and anchor["description"]
     with pytest.raises(ValueError, match="no library 'nope'"):
@@ -191,3 +194,80 @@ def test_the_command_serves_over_stdio():
     info, picture = anyio.run(session)
     assert "suspension" in info["components"]
     assert not picture.is_error and picture.content[0].type == "image"
+
+
+def test_every_kind_is_described_readably(tools):
+    from mems_sketch.core.shapes import KINDS
+    from mems_sketch.core.shapes.modifiers import MODIFIER_KINDS
+
+    index = tools.describe_kinds()
+    assert len(index) < 3000  # an index, not a dump
+    for model in (*KINDS, *MODIFIER_KINDS):
+        kind = model.kind_name()
+        assert f"`{kind}`" in index
+        text = tools.describe_kind(kind)
+        assert "Fields:" in text and "(no description)" not in text, kind
+        assert "typing." not in text and "mems_sketch." not in text.split("Fields:")[1], kind
+    assert "- `style`: one of round, chamfer, default round" in tools.describe_kind("corners")
+    with pytest.raises(ValueError, match="there is no kind 'blob'"):
+        tools.describe_kind("blob")
+
+
+def test_reference_topics(tools):
+    expressions = tools.reference("expressions")
+    assert "`sind`" in expressions and "radians" in expressions
+    assert "min_exclusive" in tools.reference("components")
+    assert "`top_right`" in tools.reference("points")
+    assert "`device`" in tools.reference("layers")  # this project's stack
+    with pytest.raises(ValueError, match="the topics are expressions"):
+        tools.reference("everything")
+
+
+def test_degree_functions_draw_beams_at_angles(tools):
+    tools.new_component("beam", "A beam along an angle")
+    tools.set_parameter("beam", "a", 30)
+    shape = {
+        "kind": "path",
+        "layer": "device",
+        "width": 2,
+        "points": [[0, 0], ["50 * cosd(a)", "50 * sind(a)"]],
+    }
+    tools.add_shape("beam", "b", shape)
+    port = tools.build("beam")
+    assert tools.session.active == "beam"
+    assert port["layers"]["device"]["area_um2"] == pytest.approx(100, abs=0.01)  # 50 × 2, slanted
+    tools.set_parameter("beam", "a", 90)
+    assert tools.build("beam")["bbox_um"][2] == pytest.approx(1)  # exactly vertical: cosd(90) is 0
+
+
+def test_a_connection_error_says_where_its_ends_are(tools):
+    yaml = """
+shapes:
+  b1: {kind: path, layer: device, width: 4, points: [[0, 10], [0, 60]]}
+  b2: {kind: path, layer: device, width: 4, points: [[10, 0], [60, 0]]}
+  hub: {kind: connection, ends: [b1.port.start, b2.port.start], inner_radius: 50}
+"""
+    with pytest.raises(ValueError, match=r"the ends: b1\.port\.start at \(0, 10\) facing 270°"):
+        tools.set_component_yaml("j", yaml)
+
+
+def test_variants_zoom_in_and_ports_are_arrows(tools):
+    application()
+    tools.set_parameter(None, "w", 40)
+    tools.add_shape(
+        None, "b", {"kind": "path", "layer": "device", "width": 2, "points": [[0, 0], ["w", 0]]}
+    )
+
+    async def session():
+        async with Client(create_server(tools)) as client:
+            whole = await client.call_tool("render_variants", {"sweep": {"w": [20, 40]}})
+            zoomed = await client.call_tool(
+                "render_variants", {"sweep": {"w": [20, 40]}, "box": [-2, -2, 2, 2]}
+            )
+            ports = await client.call_tool("render", {"points": True})
+            return whole, zoomed, ports
+
+    whole, zoomed, ports = anyio.run(session)
+    assert not (whole.is_error or zoomed.is_error or ports.is_error)
+    assert whole.content[0].data != zoomed.content[0].data
+    assert ports.content[0].type == "image"

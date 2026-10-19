@@ -9,6 +9,10 @@ from mems_sketch.core.shapes.base import Primitive, Value
 
 
 class CircleShape(Primitive):
+    """Circle on ``layer`` centred at (``x``, ``y``) with ``radius``. ``segments``
+    sets how many straight edges approximate it in exports (default: enough to
+    stay within the curve tolerance)."""
+
     icon: ClassVar[str] = "circle"
 
     kind: Literal["circle"] = "circle"

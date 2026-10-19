@@ -118,6 +118,14 @@ EDGE_CASES = [
     "sqrt(a)",
     "sin(e * 10)",
     "sin(1) + cos(2) + tan(3)",
+    "sind(30) + cosd(60) + tand(45)",
+    "cosd(90)",
+    "sind(-270) + cosd(540) + sind(-0.0)",
+    "tand(90)",
+    "tand(-270)",
+    "sind(e)",
+    "cosd(1e400)",
+    "sind(a) * cosd(d)",
     "min(3)",
     "min()",
     "max(1, 2, 3, 2.5)",
@@ -235,7 +243,8 @@ NUMBERS = [
     "12",
 ]
 NAMES = [*VARIABLES, "pi", "unknown"]
-FUNCTIONS = ["abs", "min", "max", "round", "sqrt", "sin", "cos", "tan", "ceil", "floor"]
+FUNCTIONS = ["abs", "min", "max", "round", "sqrt", "sin", "cos", "tan", "sind", "cosd", "tand"]
+FUNCTIONS += ["ceil", "floor"]
 OPERATORS = ["+", "-", "*", "/", "//", "%", "**"]
 EXPONENTS = [
     "0",

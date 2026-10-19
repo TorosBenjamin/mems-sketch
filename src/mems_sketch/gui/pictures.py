@@ -26,6 +26,9 @@ class Picture:
 
     geometry: object  # mems_sketch.core.component.Geometry
     points: dict[str, tuple[float, float]] = field(default_factory=dict)
+    ports: dict[str, tuple[float, float, float, float]] = field(
+        default_factory=dict
+    )  # x, y, angle, width
     marks: list[tuple[Box, str]] = field(default_factory=list)  # (box, label)
     caption: str = ""
 
@@ -100,7 +103,11 @@ def render_png(
             return QPointF(ox + x * scale, oy - y * scale)
 
         painter.save()
-        painter.setClipRect(QRectF(left, top, width, height))
+        cell = QRectF(left, top, width, height)
+        if count > 1:  # a frame, so a cut-off edge does not read as a notch
+            painter.setPen(QPen(QColor(canvas["overlay_muted"]), 1))
+            painter.drawRect(cell.adjusted(2, 2, -2, -2))
+        painter.setClipRect(cell.adjusted(2, 2, -2, -2) if count > 1 else cell)
         geometry = picture.geometry
         drawn = geometry.layer_names()
         for layer in [n for n in order if n in drawn] + [n for n in drawn if n not in order]:
@@ -130,6 +137,11 @@ def render_png(
             painter.drawLine(p + QPointF(-4, 0), p + QPointF(4, 0))
             painter.drawLine(p + QPointF(0, -4), p + QPointF(0, 4))
             painter.drawText(p + QPointF(5, -4), name)
+        port_pen = QPen(QColor(canvas["selected"]), 2)
+        for name, (px, py, angle, port_width) in picture.ports.items():
+            _arrow(painter, at(px, py), angle, port_width * scale, port_pen)
+            painter.setPen(QPen(ink, 1))
+            painter.drawText(at(px, py) + QPointF(6, 14), f"{name} {angle:g}°")
         _scale_bar(painter, left, top, height, scale, ink)
         painter.restore()
         if picture.caption:
@@ -146,6 +158,22 @@ def render_png(
     image.save(buffer, "PNG")
     buffer.close()
     return bytes(data.data())
+
+
+def _arrow(painter, at, angle_deg: float, width_px: float, pen) -> None:
+    """A port: a bar across it as wide as its wire, and an arrow the way a wire leaves."""
+    from PySide6.QtCore import QPointF
+
+    a = math.radians(angle_deg)
+    out = QPointF(math.cos(a), -math.sin(a))  # the picture's y points down
+    side = QPointF(-out.y(), out.x())
+    half = max(width_px, 8) / 2
+    tip = at + out * 24
+    painter.setPen(pen)
+    painter.drawLine(at - side * half, at + side * half)
+    painter.drawLine(at, tip)
+    painter.drawLine(tip, tip - out * 7 + side * 4)
+    painter.drawLine(tip, tip - out * 7 - side * 4)
 
 
 def _scale_bar(painter, left: float, top: float, height: float, scale: float, ink) -> None:

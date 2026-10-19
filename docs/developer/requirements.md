@@ -203,7 +203,8 @@ but should not have to program. Scripting is there for those who want it.
   parameter default or placement can be a number or an expression.
 - **EXP-2** (Must, exists) Expressions are **safe arithmetic**: `+ - * / //
   % **`, unary `+ -`, parentheses, numbers, `pi`, and the functions `abs`,
-  `min`, `max`, `round`, `sqrt`, `sin`, `cos`, `tan`, `ceil`, `floor`.
+  `min`, `max`, `round`, `sqrt`, `sin`, `cos`, `tan` (radians), `sind`,
+  `cosd`, `tand` (degrees, exact at multiples of 90°), `ceil`, `floor`.
   Anything else is an error, never executed.
 - **EXP-3** (Must, exists) Names in scope: the component's parameters,
   `process.<constant>`, point coordinates (`<shape>.<point>.x`, `.y`), inside

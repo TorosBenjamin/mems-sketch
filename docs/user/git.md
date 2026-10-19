@@ -56,6 +56,31 @@ Undo takes it back. A component added since the last commit is removed. A
 changed file outside the design is put back after you confirm, and that
 cannot be undone.
 
+## The comparison tab
+
+Double-click a change in the Commit panel (or press the split button in its
+header) to open the comparison: a tab in the editor with two versions of the
+component on the canvas. Double-click a commit in the Git panel for what it
+changed.
+
+![The comparison tab: the edited comb is marked 1, the added pad 2, and the two suspensions a parameter stretched have rings](../images/comparison.png)
+
+- **Overlay** shows the new version with the material added tinted and the
+  material removed hatched; **Side by side** shows the earlier version on the
+  left, the two zooming and panning together. Choose another changed
+  component from the list on the left of the tab's bar.
+- **Each edited shape has a numbered mark**; a shape that only moved or
+  changed size because of another change (a parameter it follows, a shape it
+  is aligned to) has a ring. Hover a mark for what changed (`fingers 16 →
+  20`, `moved y +4 µm`).
+- **The arrows step through every mark**, zooming to each: the changes too
+  small to see at a glance are found as well.
+- For the uncommitted changes, **Roll back this shape** on a mark's card brings
+  that one shape back as in the last commit (an added one is removed): an
+  ordinary edit, which Undo takes back. **Show old** goes side by side, at that
+  shape.
+- While it compares with the design now, the tab follows your edits.
+
 ## The Git panel
 
 The commits that changed the project, newest first. Choose one to see what it

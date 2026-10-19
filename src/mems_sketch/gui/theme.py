@@ -428,7 +428,7 @@ QTableView::item {{ padding: 0 4px; }}  /* widgets.CELL_PADDING */
 QTableCornerButton::section {{ background: {island}; border: none; }}
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
-    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_control}px;
+    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_card}px;
     padding: 3px 6px; selection-background-color: {selected}; selection-color: {text};
 }}
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QSpinBox:focus,
@@ -480,6 +480,10 @@ QListWidget#welcome-list {{ background: transparent; border: none; outline: none
 QListWidget#welcome-list::item {{ background: transparent; }}
 QFrame#search-divider {{ background: {border}; border: none; }}
 QFrame#commit-rule {{ background: {border}; border: none; }}
+QWidget#comparison-bar {{ border-bottom: 1px solid {border}; }}
+QFrame#change-card {{
+    background: {island}; border: 1px solid {border_strong}; border-radius: {radius_card}px;
+}}
 QLabel#preview-picture {{ background: {window}; border-radius: {radius_card}px; }}
 QScrollArea#preview-scroll, QWidget#preview-body {{ background: transparent; }}
 QLabel#keycap {{

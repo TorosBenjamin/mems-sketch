@@ -125,6 +125,7 @@ class CommitPanel(_Panel):
     comparison_changed = Signal()  # the changes shown changed: redraw the canvas
     navigate = Signal(object)  # a Change was clicked: show it
     committed = Signal()  # a commit was made: the list of commits changed
+    compare_requested = Signal(object, object, object)  # key, component, Change: a tab
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -140,6 +141,11 @@ class CommitPanel(_Panel):
 
         self.header_context = widgets.header_context()  # the branch, ahead and behind
         self.actions = widgets.header_actions(
+            (
+                "split",
+                "Show the comparison on the canvas (double-click a row)",
+                self.compare_current,
+            ),
             ("undo", "Roll back the chosen row to the last commit", self.rollback_current),
             ("collapse", "Fold or unfold all", self.toggle_folded),
         )
@@ -156,6 +162,7 @@ class CommitPanel(_Panel):
         self.tree.setObjectName("commit-tree")
         self.tree.itemChanged.connect(self._checked)
         self.tree.itemClicked.connect(self._clicked)
+        self.tree.itemDoubleClicked.connect(lambda item, _column: self._compare(item))
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
         self.no_changes = widgets.EmptyState(NO_CHANGES)
@@ -479,6 +486,23 @@ class CommitPanel(_Panel):
         if self._guard(self.document.history.init):
             self.reload()
 
+    def compare_current(self) -> None:
+        item = self.tree.currentItem()
+        if item is not None:
+            self._compare(item)
+        else:
+            self.compare_requested.emit(("uncommitted",), None, None)
+
+    def _compare(self, item: QTreeWidgetItem) -> None:
+        """The comparison tab, at a change (or the component of a group)."""
+        change = item.data(0, CHANGE_ROLE)
+        role = item.data(0, ROW_ROLE)
+        if isinstance(change, Change):
+            self.compare_requested.emit(("uncommitted",), change.component, change)
+        elif role is not None and role[0] == "group":
+            component = role[1] if role[1] not in _GROUP_NAMES else None
+            self.compare_requested.emit(("uncommitted",), component, None)
+
     def rollback_current(self) -> None:
         item = self.tree.currentItem()
         if item is not None:
@@ -507,7 +531,7 @@ class CommitPanel(_Panel):
                 self.reload()
 
     def _menu(self, pos) -> None:
-        item = self.tree.itemAt(pos)
+        item = clicked = self.tree.itemAt(pos)
         if item is None:
             return
         while item.data(0, ROW_ROLE) is None and item.parent() is not None:
@@ -517,6 +541,9 @@ class CommitPanel(_Panel):
         menu = QMenu(self)
         if kind == "group":
             title = name if name not in _GROUP_NAMES else _GROUP_NAMES[name].lower()
+            menu.addAction(
+                icons.icon("split"), "Show the comparison", lambda: self._compare(clicked)
+            )
             menu.addAction(icons.icon("undo"), f"Roll back {title}", lambda: self._rollback(item))
         elif kind == "file":
             status = next((f for f in self.local.files if f.path == name), None)

@@ -277,6 +277,8 @@ class EditorArea(QSplitter):
         self.current: ComponentView | None = None
         self.process_view: QWidget | None = None  # the Process tab, when open
         self.process_factory = None  # makes it: set by the window
+        self.comparison_view: QWidget | None = None  # the comparison tab, when open
+        self.comparison_factory = None
         self._tab_style = _NoSlideStyle("Fusion")  # kept: widgets do not own their style
         self._add_pane()
 
@@ -357,6 +359,20 @@ class EditorArea(QSplitter):
         pane.setCurrentWidget(self.process_view)
         return self.process_view
 
+    def open_comparison(self) -> QWidget:
+        """Show the comparison tab (at most one), next to the current tab."""
+        if self.comparison_view is None:
+            view = self.comparison_view = self.comparison_factory()
+            pane = self._current_pane()
+            pane.insertTab(
+                pane.currentIndex() + 1, view, icons.icon(view.icon_name()), view.title()
+            )
+            self._close_button(pane, view)
+            self.tabs_changed.emit()
+        pane = self.pane_of(self.comparison_view)
+        pane.setCurrentWidget(self.comparison_view)
+        return self.comparison_view
+
     def find(self, component: str, pane: QTabWidget | None = None) -> ComponentView | None:
         panes = [pane] if pane is not None else self.panes
         for p in panes:
@@ -400,6 +416,8 @@ class EditorArea(QSplitter):
         pane.removeTab(index)
         if view is self.process_view:
             self.process_view = None
+        if view is self.comparison_view:
+            self.comparison_view = None
         view.deleteLater()
         if pane.count() == 0 and self.split:
             self._remove_pane(pane)
@@ -427,6 +445,7 @@ class EditorArea(QSplitter):
             view.deleteLater()
         self.current = None
         self.process_view = None
+        self.comparison_view = None
 
     def other_pane(self) -> QTabWidget:
         """The pane that is not the current one, creating it (a split) if needed."""
@@ -457,7 +476,10 @@ class EditorArea(QSplitter):
                 view = pane.widget(0)
                 title = pane.tabText(0)
                 pane.removeTab(0)
-                if self.find(view.component, self.panes[0]) is None:
+                if (
+                    not isinstance(view, ComponentView)
+                    or self.find(view.component, self.panes[0]) is None
+                ):
                     self.panes[0].addTab(view, icons.icon(view.icon_name()), title)
                     self._close_button(self.panes[0], view)
                 else:
@@ -496,6 +518,7 @@ class EditorArea(QSplitter):
                 [
                     w.component if isinstance(w := pane.widget(i), ComponentView) else "process"
                     for i in range(pane.count())
+                    if pane.widget(i) is not self.comparison_view  # not kept: it is a look
                 ]
                 for pane in self.panes
             ],

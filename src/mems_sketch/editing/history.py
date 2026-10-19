@@ -26,16 +26,19 @@ from pathlib import Path
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.diff import (
+    ADDED,
     CHANGED,
     IMPORTS,
     PROCESS,
     PROJECT,
+    REMOVED,
     Change,
     diff_projects,
     geometry_changes,
 )
 from mems_sketch.core.project import Project
-from mems_sketch.engine import Engine
+from mems_sketch.core.shapes import container_of, paths
+from mems_sketch.engine import Build, Engine
 from mems_sketch.storage import git
 from mems_sketch.storage.project_files import (
     IMPORTS_DIR,
@@ -133,9 +136,9 @@ class History:
             raise ValueError("the project is not in that commit")
         return Comparison(old, new, diff_projects(before, after))
 
-    def geometry(self, comparison: Comparison, component: str) -> tuple[Geometry, Geometry]:
-        """The material added to and removed from ``component`` between the two
-        versions (default parameters). Raises ValueError if a version does not build."""
+    def builds(self, comparison: Comparison, component: str) -> tuple[Build | None, Build | None]:
+        """``component`` built in the two versions (default parameters), None where it
+        does not exist. Raises ValueError if a version does not build."""
         sides = []
         for rev, label, exists in (
             (comparison.old, "earlier", comparison.old is not None),
@@ -146,12 +149,47 @@ class History:
                 sides.append(None)
                 continue
             try:
-                sides.append(self._engine(rev).trial(project).build(component).geometry)
+                build = self._engine(rev).trial(project).build(component)
+                build.geometry  # noqa: B018 - built now, so that a failure is reported here
             except Exception as exc:
                 raise ValueError(
                     f"the {label} version of '{component}' does not build: {exc}"
                 ) from exc
-        return geometry_changes(*sides)
+            sides.append(build)
+        return sides[0], sides[1]
+
+    def geometry(self, comparison: Comparison, component: str) -> tuple[Geometry, Geometry]:
+        """The material added to and removed from ``component`` between the two
+        versions (default parameters). Raises ValueError if a version does not build."""
+        old, new = self.builds(comparison, component)
+        return geometry_changes(
+            old.geometry if old is not None else None, new.geometry if new is not None else None
+        )
+
+    def rollback_shape(self, comparison: Comparison, change: Change) -> None:
+        """Bring one shape back as in the last commit (one undoable edit): a changed
+        one as it was, an added one removed. Only for the uncommitted changes."""
+        if comparison.new is not None or change.what != "shape" or change.path is None:
+            raise ValueError("only an uncommitted change to a shape can be rolled back")
+        component, name = change.component, change.subject.rsplit(" › ", 1)[-1]
+        old = self.version(comparison.old) if comparison.old is not None else None
+        before = None
+        if change.action != ADDED:
+            definition = old.components.get(component) if old is not None else None
+            found = [s for _, s in paths(definition.shapes) if s.name == name] if definition else []
+            if not found or change.action == REMOVED:
+                raise ValueError(f"'{name}' cannot be brought back from here")
+            before = found[0].model_copy(deep=True)
+
+        def change_(project: Project) -> None:
+            container, index = container_of(project.components[component].shapes, change.path)
+            if before is None:
+                del container[index]
+            else:
+                container[index] = before
+
+        verb = "Remove" if before is None else "Roll back"
+        self.session.edit(f"{verb} {name}", change_)
 
     # -- writing -------------------------------------------------------------------
 

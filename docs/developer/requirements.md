@@ -610,6 +610,10 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   local changes are listed by component (the unit, being a file of its own),
   each chosen or not, with the other files in the folder; amend the last
   commit; roll a component back to the last commit as an undoable edit.
+- **HIS-7** (Should, exists; [#131](https://github.com/TorosBenjamin/mems-sketch/issues/131)) **Compare** two versions of a
+  component in a tab of its own: overlaid or side by side, a mark on each
+  edited shape and a ring on each shape another change moved, stepping
+  through them all; roll one shape back.
 
 ### Command line and scripting
 

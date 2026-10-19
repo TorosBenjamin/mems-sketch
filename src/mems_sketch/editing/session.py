@@ -43,6 +43,7 @@ from mems_sketch.editing.clipboard import ClipboardEdits
 from mems_sketch.editing.components import ComponentEdits, library_name
 from mems_sketch.editing.corners import CornerEdits
 from mems_sketch.editing.events import Event
+from mems_sketch.editing.handles import HandleEdits
 from mems_sketch.editing.history import History
 from mems_sketch.editing.imports import ImportEdits
 from mems_sketch.editing.modifiers import ModifierEdits
@@ -93,6 +94,7 @@ class EditSession:
         self.corners = CornerEdits(self)
         self.imports = ImportEdits(self)
         self.moves = MoveEdits(self)
+        self.handles = HandleEdits(self)  # dragging a shape's sides and vertices
         self.points = PointEdits(self)
         self.ports = PortEdits(self)
         self.parameters = ParameterEdits(self)

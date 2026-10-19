@@ -64,6 +64,7 @@ SNAP_PX = 10  # default: a point snaps to another within this many pixels
 DRAG_THRESHOLD_PX = 4  # a press moving less than this is a click, not a drag
 GRID_POINTS = 64  # a move snaps the nearest of at most this many moving points to the grid
 ANGLE_STEP = 15.0  # default: degrees the Rotate tool snaps to
+EDIT_HANDLE_REACH_PX = 7  # a press this close to a shape's handle drags it
 CTRL = Qt.KeyboardModifier.ControlModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
 ALT = Qt.KeyboardModifier.AltModifier
@@ -297,11 +298,19 @@ class Tool:
 
 
 class SelectTool(Tool):
+    """Also drags the selected shape's handles (its sides, vertices, radii; see
+    :mod:`mems_sketch.editing.handles`): they snap as moving does, Shift keeps a
+    vertex or corner on a straight line from where it was, Ctrl turns snapping off."""
+
     name, label, shortcut = "select", "Select", "V"
     edits = False
     hovers, icon = True, "select"
+    shows_handles = True  # the window shows the selected shape's handles
 
     def reset(self) -> None:
+        self._handle = None  # a HandleDrag in progress
+        self._handle_to: tuple[float, float] | None = None
+        self._handle_targets: list[Candidate] | None = None
         self._press: tuple[float, float] | None = None
         self._press_hit: NodePath | None = None
         self._pending: NodePath | None = None
@@ -316,6 +325,8 @@ class SelectTool(Tool):
         self.reset()
         if self.gizmo_press(x, y):
             return
+        if self._press_handle(x, y):
+            return
         additive = bool(modifiers & (CTRL | SHIFT))
         hit = self.window.hit(x, y)
         self._press, self._press_hit = (x, y), hit
@@ -329,6 +340,12 @@ class SelectTool(Tool):
             if left:
                 self.gizmo_move(x, y, modifiers)
             return
+        if self._handle is not None:
+            if left:
+                self._drag_handle(x, y, modifiers)
+            return
+        if not left:
+            self._hover_handle(x, y)
         if not left or self._press is None:
             return
         x0, y0 = self._press
@@ -387,6 +404,9 @@ class SelectTool(Tool):
         if self.gizmo_dragging:
             self.gizmo_release(x, y, modifiers)
             return
+        if self._handle is not None:
+            self._release_handle(x, y, modifiers)
+            return
         mode, press, pending, plan = self._mode, self._press, self._pending, self._plan
         self.cancel()
         self.canvas.show_points("snap", [])
@@ -413,15 +433,107 @@ class SelectTool(Tool):
         detach = bool(modifiers & ALT)
         window.run(lambda: self.document.moves.move(plan.roots, dx, dy, detach=detach))
 
+    # -- the selected shape's handles ---------------------------------------
+
+    def handle_at(self, x: float, y: float):
+        """The handle shown under ``(x, y)`` µm (the nearest in reach), or None."""
+        reach = (EDIT_HANDLE_REACH_PX) / self.canvas.pixels_per_um()
+        best, found = reach, None
+        for handle, hx, hy in self.window.edit_handles:
+            distance = math.hypot(hx - x, hy - y)
+            if distance <= best:
+                best, found = distance, handle
+        return found
+
+    def _press_handle(self, x, y) -> bool:
+        handle = self.handle_at(x, y)
+        if handle is None or len(self.window.selection) != 1:
+            return False
+        if not self.editable():
+            return True
+        self._handle = self.document.handles.start(self.window.selection[0], handle.key)
+        if self._handle is None:
+            return False
+        node = self._handle.node
+        own = f"{node.name}." if node.name else None
+        self._handle_targets = [
+            c for c in self.document.results.all_points() if own is None or not c[0].startswith(own)
+        ]
+        self.window.update_overlay()
+        return True
+
+    def _handle_target(self, x, y, modifiers) -> tuple[float, float]:
+        """Where the dragged handle goes for the cursor at ``(x, y)``: snapped, and with
+        Shift kept level, upright or at 45° from where it started."""
+        hx, hy = self._handle.at
+        if modifiers & SHIFT:
+            dx, dy = x - hx, y - hy
+            angle = round(math.atan2(dy, dx) / (math.pi / 4)) * (math.pi / 4)
+            ux, uy = round(math.cos(angle), 12), round(math.sin(angle), 12)
+            length = dx * ux + dy * uy
+            return _um(hx + length * ux), _um(hy + length * uy)
+        px, py, label = self.snap(x, y, self._handle_targets or [], modifiers)
+        self._snap = (label, px, py) if label else None
+        return _um(px), _um(py)
+
+    def _drag_handle(self, x, y, modifiers) -> None:
+        self._snap = None
+        to = self._handle_target(x, y, modifiers)
+        self._handle_to = to
+        edits = self.document.handles
+        try:
+            node = edits.dragged(self._handle, *to)
+        except (ValueError, KeyError):  # e.g. a radius dragged through the centre
+            return
+        preview = edits.preview(self._handle, node)
+        if preview is None:
+            self.canvas.clear_drag_preview()
+        else:
+            self.canvas.show_drag_preview(preview, self.window.layers.colors)
+        snap = self._snap
+        self.canvas.show_points("snap", [snap] if snap else [])
+        shown = self.canvas.edit_handles
+        index = next(
+            (i for i, (h, _, _) in enumerate(self.window.edit_handles) if h == self._handle.handle),
+            None,
+        )
+        if index is not None:
+            shown[index] = (*to, shown[index][2])
+            self.canvas.show_edit_handles(shown, index)
+        text = edits.describe(self._handle, node) or "no change"
+        status = f"{text}   (Shift: straight, Ctrl: no snapping, Esc cancels)"
+        if snap:
+            status += f"   on {snap[0]}"
+        self.window.live(status, text)
+
+    def _release_handle(self, x, y, modifiers) -> None:
+        drag, to = self._handle, self._handle_to
+        self.cancel()
+        if to is not None:
+            self.window.run(lambda: self.document.handles.drag(drag.path, drag.handle.key, *to))
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+
+    def _hover_handle(self, x, y) -> None:
+        """The cursor over a handle shows which way it drags."""
+        handle = self.handle_at(x, y) if self.window.edit_handles else None
+        if handle is None:
+            self.canvas.viewport().unsetCursor()
+        else:
+            self.canvas.viewport().setCursor(_handle_cursor(handle))
+
     @property
     def busy(self) -> bool:
-        return self._mode in ("move", "box") or self.gizmo_dragging
+        return self._mode in ("move", "box") or self.gizmo_dragging or self._handle is not None
 
     def cancel(self) -> bool:
         busy = self.busy
+        dragging_handle = self._handle is not None
         self.gizmo_cancel()
         super().cancel()
         self.canvas.show_points("snap", [])
+        if dragging_handle:
+            self.window.update_overlay()  # the handles back where they are
         return busy
 
 
@@ -1756,6 +1868,18 @@ class RouteTool(DrawTool):
         if dragging:
             self.window.update_overlay()
         return busy
+
+
+def _handle_cursor(handle) -> Qt.CursorShape:
+    """The cursor over a handle: a rectangle's side drags across it, a corner
+    diagonally, the others any way."""
+    keys = handle.key.split()
+    if handle.role == "edge":
+        return Qt.CursorShape.SizeHorCursor if keys[0][0] == "x" else Qt.CursorShape.SizeVerCursor
+    if handle.role == "corner":
+        rising = (keys[0] == "x1") == (keys[1] == "y1")  # bottom left or top right
+        return Qt.CursorShape.SizeBDiagCursor if rising else Qt.CursorShape.SizeFDiagCursor
+    return Qt.CursorShape.SizeAllCursor
 
 
 def _value(value, scope: dict[str, float]) -> float:

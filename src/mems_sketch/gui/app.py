@@ -232,6 +232,7 @@ class MainWindow(QMainWindow):
         self.points.hovered.connect(self._point_hovered)
         self.points.focused.connect(self._point_focused)
         self._hovered_point = None
+        self.edit_handles: list = []  # the selected shape's handles: (Handle, x, y) in µm
         self.messages = MessagesPanel()
         self.commit_panel = CommitPanel(self.document)
         self.git = GitPanel(self.document)
@@ -1271,6 +1272,7 @@ class MainWindow(QMainWindow):
         for style in ("pick", "anchor"):
             self.canvas.show_points(style, tool_markers.get(style, []))
         self._place_gizmo()
+        self._place_handles()
         self._show_zoom()
 
     def _ports_of(self, ports) -> list[tuple[str, float, float, float]]:
@@ -1333,6 +1335,30 @@ class MainWindow(QMainWindow):
         center = self.document.results.selection_center(view.selection) if shown else None
         for other in self.area.views():
             other.canvas.set_gizmo(kind if other is view and center else None, center)
+
+    def _place_handles(self) -> None:
+        """The selected shape's handles, while the tool drags them (Select), in the
+        current tab; none on a read-only one or for several shapes."""
+        view = self.view
+        tool = self.tool
+        shown = (
+            getattr(tool, "shows_handles", False)
+            and len(view.selection) == 1
+            and not self.document.read_only
+            and not (tool.busy and getattr(tool, "_handle", None) is None)
+        )
+        if not shown:
+            self.edit_handles = []
+        elif getattr(tool, "_handle", None) is None:  # (kept as they were while dragging)
+            self.edit_handles = self.document.handles.handles(view.selection[0])
+        active = None
+        dragged = getattr(tool, "_handle", None)
+        for index, (handle, _, _) in enumerate(self.edit_handles):
+            if dragged is not None and handle == dragged.handle:
+                active = index
+        markers = [(x, y, h.role) for h, x, y in self.edit_handles]
+        for other in self.area.views():
+            other.canvas.show_edit_handles(markers if other is view else [], active)
 
     _update_overlay = update_overlay
 

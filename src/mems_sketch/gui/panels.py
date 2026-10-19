@@ -784,9 +784,14 @@ class ShapeTree(QTreeWidget):
         self.collapse_changed.emit()
 
     def rebuild(self, keep: list[NodePath] | None = None) -> None:
+        """Fill the tree again, keeping ``keep`` selected. The selection is said once,
+        at the end: clearing the rows does not empty it on the way (the canvas would
+        drop the highlight and greet the shapes again, e.g. on every arrow-key nudge)."""
         keep = self.selected_paths() if keep is None else keep
         self._rebuilding = True
+        self.blockSignals(True)
         self.clear()
+        self.blockSignals(False)
         if self.hide_implementation:
             self._interface_note()
             self._rebuilding = False

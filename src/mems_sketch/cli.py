@@ -7,6 +7,7 @@
     mems-sketch-cli export  my_project out.gds [--set pitch=15] [--option grid_um=0.005]
     mems-sketch-cli formats                                         (export formats, their options)
     mems-sketch-cli convert my_project design.json                  (and back; .xml .mat .yaml)
+    mems-sketch-cli mcp     [my_project]                            (an MCP server, on stdio)
 
 ``check`` exits with status 1 when a rule is violated with severity error (or
 any rule, with ``--strict``), so it can gate CI. Errors exit with status 2. Nothing here depends on the GUI.
@@ -71,6 +72,12 @@ def _parser() -> argparse.ArgumentParser:
         help="the process it starts as a copy of (default mems.surface; 'empty' for none)",
     )
     new_process.set_defaults(handler=_new_process)
+
+    mcp = commands.add_parser(
+        "mcp", help="serve the design tools to AI assistants (MCP, on stdio; the mcp extra)"
+    )
+    mcp.add_argument("project", type=Path, nargs="?", help="a project to open first")
+    mcp.set_defaults(handler=_mcp)
 
     info = commands.add_parser("info", help="list components, parameters and layers")
     info.add_argument("project", type=Path)
@@ -191,6 +198,17 @@ def _new_process(args: argparse.Namespace) -> int:
     )
     save(project, args.folder)
     print(f"created {args.folder}: edit processes/{name}/process.yaml, then add it as a library")
+    return 0
+
+
+def _mcp(args: argparse.Namespace) -> int:
+    try:
+        from mems_sketch.mcp_server.server import run
+    except ImportError as error:
+        raise ValueError(
+            f"the MCP server needs the mcp extra: pip install 'mems-sketch[mcp]' ({error})"
+        ) from error
+    run(str(args.project) if args.project else None)
     return 0
 
 

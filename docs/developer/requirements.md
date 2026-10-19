@@ -642,6 +642,12 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   way the editor does: the same commands, checks and undo.
 - **CLI-4** (Should, exists) Usable **from MATLAB**: through the command line,
   MATLAB's Python interface, and geometry documents in `.mat`.
+- **CLI-6** (Should, exists; [#193](https://github.com/TorosBenjamin/mems-sketch/issues/193)) An **MCP server**
+  (`mems-sketch-cli mcp`, the `mcp` extra) for AI assistants: one more
+  frontend over the edit session (validation, rollback, undo, read-only
+  libraries), with tools to open, read (in the file format), edit by name,
+  build, render pictures and parameter sweeps offscreen, check and export.
+  Every failure is a tool error with the editor's message.
 - **CLI-5** (Could, new; [#85](https://github.com/TorosBenjamin/mems-sketch/issues/85)) The geometry library usable **on its own** from
   Python and C++, without projects
   ([core architecture](core-architecture.md#overview)).

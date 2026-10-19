@@ -109,6 +109,7 @@ mems-sketch-cli export  my_project out.gds [--set pitch=15]  # also .oas .dxf .j
 mems-sketch-cli formats                                      # the formats and their settings
 mems-sketch-cli convert my_project design.json               # and back; .xml .mat .yaml
 mems-sketch-cli convert old_design.mems my_project           # the earlier format
+mems-sketch-cli mcp     [my_project]                         # for AI assistants (MCP)
 ```
 
 - `check` exits with status 1 when a rule with severity *error* is violated
@@ -117,6 +118,8 @@ mems-sketch-cli convert old_design.mems my_project           # the earlier forma
 - `--set` takes numbers or expressions and can be repeated: convenient for
   parameter sweeps.
 - `convert` does not overwrite a folder that already holds a project.
+- `mcp` serves the design tools to an AI assistant over stdin/stdout; the
+  assistant's app starts it (see [AI assistants](ai-assistants.md)).
 - `-O NAME=VALUE` (or `--option`) sets one of the format's settings and can
   be repeated; `formats` lists them. GDSII, OASIS and DXF take `grid_um`, the
   file's grid (a whole multiple of 1 nm), `chord_um`, the curve tolerance

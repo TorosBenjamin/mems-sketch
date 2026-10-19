@@ -182,3 +182,32 @@ def test_no_colours_are_written_into_the_interface_code():
         if pattern.search(line.split("  #")[0])
     ]
     assert found == []
+
+
+def test_a_component_opened_in_a_dark_theme_is_never_drawn_light(window, tmp_path, monkeypatch):
+    """Opening a component draws its canvas at once (to show it before the rule
+    checks); it must already have the theme's colours then, or it flashes white."""
+    import shutil
+
+    from mems_sketch.gui.canvas import LayoutCanvas
+
+    examples = Path(__file__).parent.parent / "examples"
+    shutil.copytree(
+        examples / "resonator",
+        tmp_path / "resonator",
+        ignore=shutil.ignore_patterns(".mems-sketch"),
+    )
+    window.settings.set("appearance/canvas_theme", "dark")
+    window.open_project(str(tmp_path / "resonator" / "project.yaml"))
+    drawn = []
+    draw = LayoutCanvas.drawBackground
+
+    def recording(self, painter, rect):
+        drawn.append(self.backgroundBrush().color().name())
+        draw(self, painter, rect)
+
+    monkeypatch.setattr(LayoutCanvas, "drawBackground", recording)
+    window.open_component("suspension")
+    QApplication.processEvents()
+    dark = theme.get("dark").canvas["background"]
+    assert drawn and set(drawn) == {dark}

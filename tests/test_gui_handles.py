@@ -5,10 +5,23 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, Qt
+from PySide6.QtWidgets import QMessageBox
+from tests.test_gui_tools import drag, hover, mouse, two_rects
 
-from tests.test_gui_tools import drag, hover, mouse, rect, two_rects, window  # noqa: F401
+from mems_sketch.gui.app import MainWindow
 
 BASE = ((0, 0),)
+
+
+@pytest.fixture
+def window(qtbot, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Discard)
+    w = MainWindow()
+    qtbot.addWidget(w)
+    w.resize(1200, 800)
+    w.show()
+    qtbot.waitExposed(w)
+    return w
 
 
 def select_base(window):

@@ -31,7 +31,7 @@ several.
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Select** | V | Click to select (Ctrl/Shift adds), drag the selection to move it, drag on empty space for a box: it selects what it touches (dashed), or what is entirely inside it (solid), as *Preferences → Editor → Box selection* says (also: by the direction you drag). A drag snaps a point of the moved shapes to another shape's point, else to the grid (Ctrl: no snapping); release with **Shift** on a snapped point to *align* there. |
+| **Select** | V | Click to select (Ctrl/Shift adds), drag the selection to move it, drag on empty space for a box: it selects what it touches (dashed), or what is entirely inside it (solid), as *Preferences → Editor → Box selection* says (also: by the direction you drag). A drag snaps a point of the moved shapes to another shape's point, else to the grid (Ctrl: no snapping); release with **Shift** on a snapped point to *align* there. The selected shape has **handles** to drag (below). |
 | **Hand** | H | The left button pans (for trackpads). |
 | **Move** | M | A gizmo: drag the red arrow along x, the green along y, the centre freely. Or click a base point, then where it goes. **Edit → Move by…** takes a typed dx, dy; arrow keys nudge by a grid step (Shift: a tenth). |
 | **Rotate** | R | Drag anywhere to turn the selection about its centre; the angle follows the mouse (Ctrl: 15° steps). **Shift+click** sets another pivot (snaps to points), Esc goes back to the centre; a click without dragging selects. **Rotate 90°** is Ctrl+R / Ctrl+Shift+R; **Mirror** is in the right-click menu. |
@@ -53,6 +53,25 @@ relative to its parent: `plate/2 + 39` moved by 11 becomes `plate/2 + 50`.
 An aligned shape keeps its alignment and changes its offset, shown by the
 cursor while you drag (Alt-drag removes the alignment instead). Primitives have no rotation of their own, so rotating
 one wraps it in a transform.
+
+**Drag a shape's handles to change it.** With the Select tool, one selected
+shape shows its handles:
+
+- a **rectangle** a square on each side and corner: a side moves one edge, a
+  corner two;
+- a **polygon** or **path** a dot on each vertex, and a path a square for its
+  width on the first segment's side;
+- a **circle** its radius on the rim; an **arc** its outer and inner radius,
+  and a dot on each end for its angles.
+
+The cursor shows which way a handle drags. Handles snap as moving does, to
+other shapes' points, else to the grid (Ctrl: no snapping); Shift keeps a
+vertex or corner level, upright or at 45° from where it was. The shape is
+previewed and the cursor shows the change (`x1  length → length + 3  (43 µm)`);
+Esc drops the drag, and one Undo takes it back. Like moving, a drag **keeps
+expressions**: it adds an offset. An **aligned** shape stays aligned: dragging
+the side its alignment holds (its left, for one aligned by `left`) changes the
+alignment's offset instead, so the other sides stay where they are.
 
 **Cut, copy and paste** (Ctrl+X, Ctrl+C, Ctrl+V; in the Edit menu and the
 right-click menus of the canvas and the Shapes tree) work on the selected

@@ -96,7 +96,7 @@ BEAM, PAD = ((0, 0),), ((0, 1),)
 
 
 def box(session, path):
-    names = dict((n, (x, y)) for n, x, y in session.results.node_points(path))
+    names = {n: (x, y) for n, x, y in session.results.node_points(path)}
     return (*names["bottom_left"], *names["top_right"])
 
 

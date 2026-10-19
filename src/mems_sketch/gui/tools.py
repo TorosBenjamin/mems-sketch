@@ -5,7 +5,8 @@ is held) work in every tool; the canvas handles those itself. Everything else
 goes to the active tool:
 
 * **Select** (V): click to select, drag the selection to move it, drag on
-  empty space to select with a box
+  empty space to select with a box; drag a selected shape's handles (its
+  sides, vertices, radii) to change it
 * **Hand** (H): the left button pans
 * **Move** (M): click a base point, then where it should go (both snap)
 * **Rotate** (R): click a pivot, then the angle (snaps to 15°)

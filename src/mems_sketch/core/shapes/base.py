@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from mems_sketch.core.shapes.modifiers import AnyModifier, ArrayModifier
 
 if TYPE_CHECKING:
+    from mems_sketch.core.shapes.handles import Handle
     from mems_sketch.core.shapes.registry import Shape
     from mems_sketch.core.transform import Transform
 
@@ -150,6 +151,18 @@ class Node(BaseModel):
     def with_handle(self, index: int, point: tuple[Value, Value]) -> Shape:
         """A copy with handle ``index`` (of :meth:`handles`) at ``point``."""
         raise TypeError(f"'{self.kind}' has no handles")
+
+    def edit_handles(self, v: Callable[[Value], float]) -> list[Handle]:
+        """What can be dragged on the canvas to change it (see
+        :mod:`~mems_sketch.core.shapes.handles`), in its own frame; ``v`` gives a
+        value as a number."""
+        return []
+
+    def handle_moved(
+        self, key: str, to: tuple[float, float], v: Callable[[Value], float]
+    ) -> dict[str, Any]:
+        """The fields that change when handle ``key`` is dragged to ``to`` (its own frame)."""
+        raise KeyError(f"'{self.kind}' has no handle '{key}'")
 
     def summary(self) -> str:
         """Short description of the node, e.g. for a tooltip or a listing."""

@@ -443,6 +443,12 @@ behaviours every frontend must keep.
   the component and alignable like guides, never fabricated. They can
   optionally be exported as GDS text labels (zero-area text records) on a
   chosen layer, which other tools read as names.
+- **EDT-11** (Should, changes; [#222](https://github.com/TorosBenjamin/mems-sketch/issues/222)) **Direct editing:** the selected shape
+  has handles on the canvas (a rectangle's sides and corners, vertices, radii,
+  angles, a path's width) that change it when dragged, snapping as moves do.
+  A drag keeps expressions (it adds an offset) and alignments (the aligned
+  side changes the offset). Exists for rectangles, circles, arcs, polygons and
+  paths; adding and removing vertices and typed values follow.
 
 ### Rule checks
 

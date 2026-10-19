@@ -75,6 +75,8 @@ from mems_sketch.gui import theme as themes
 
 CORNER_HANDLE_PX = 4.5  # a rounded corner's handle (radius)
 CORNER_ERROR_PX = 9  # the ring round a corner whose radius does not fit
+EDIT_HANDLE_PX = 4  # half the size of a shape's handle (a side, a vertex)
+ROUND_HANDLES = ("vertex", "angle")  # drawn as dots; the others as squares
 
 
 @dataclass(frozen=True)
@@ -581,6 +583,8 @@ class LayoutCanvas(QGraphicsView):
         # each (name, x, y) in µm (see show_alignment).
         self._alignment: tuple[tuple[str, float, float], tuple[str, float, float]] | None = None
         self._corner_handles: list[CornerHandle] = []  # the Corners tool's handles
+        self._edit_handles: list[tuple[float, float, str]] = []  # the selected shape's
+        self._active_handle: int | None = None  # the one being dragged
         self._corner_preview: list[tuple[float, float]] = []  # a rounding being dragged
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
@@ -1664,6 +1668,33 @@ class LayoutCanvas(QGraphicsView):
         self._corner_preview = list(points)
         self.viewport().update()
 
+    def show_edit_handles(
+        self, handles: list[tuple[float, float, str]], active: int | None = None
+    ) -> None:
+        """The selected shape's handles (x, y in µm, and the handle's role: see
+        :mod:`mems_sketch.core.shapes.handles`); ``active`` is the one being dragged."""
+        handles = list(handles)
+        if handles != self._edit_handles or active != self._active_handle:
+            self._edit_handles, self._active_handle = handles, active
+            self.viewport().update()
+
+    @property
+    def edit_handles(self) -> list[tuple[float, float, str]]:
+        return list(self._edit_handles)
+
+    def _draw_edit_handles(self, painter: QPainter) -> None:
+        edge = QColor(self.theme["highlight"])
+        plain = QColor(self.theme["background"])
+        size = EDIT_HANDLE_PX
+        for index, (x, y, role) in enumerate(self._edit_handles):
+            at = self.mapFromScene(QPointF(x, y)).toPointF()
+            painter.setPen(QPen(edge, 1.5))
+            painter.setBrush(edge if index == self._active_handle else plain)
+            if role in ROUND_HANDLES:
+                painter.drawEllipse(at, size + 0.5, size + 0.5)
+            else:
+                painter.drawRect(QRectF(at.x() - size, at.y() - size, 2 * size, 2 * size))
+
     def _draw_corners(self, painter: QPainter) -> None:
         def px(point):
             return self.mapFromScene(QPointF(*point)).toPointF()
@@ -1829,6 +1860,8 @@ class LayoutCanvas(QGraphicsView):
             self._draw_gizmo(painter)
         if self._corner_handles or self._corner_preview:
             self._draw_corners(painter)
+        if self._edit_handles:
+            self._draw_edit_handles(painter)
         if self._marks:
             self._draw_marks(painter)
         label = self.cursor_label or self.hover_label

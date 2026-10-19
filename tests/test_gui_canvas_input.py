@@ -115,6 +115,32 @@ def test_a_pinch_zooms_about_the_fingers(window):
 # -- box selection --------------------------------------------------------------
 
 
+def test_a_pinch_placed_in_the_window_still_zooms_about_the_fingers(window):
+    """Wayland (Qt 6.11 on KDE) gives a pinch's position in the window, not in the
+    canvas; its position on the screen is right."""
+    canvas = window.canvas
+    where = QPointF(200, 150)
+    under = canvas.mapToScene(where.toPoint())
+    scale = view_of(canvas)[0]
+    in_window = QPointF(canvas.viewport().mapTo(window, where.toPoint()))
+    assert in_window != where
+    event = QNativeGestureEvent(
+        Qt.NativeGestureType.ZoomNativeGesture,
+        QPointingDevice.primaryPointingDevice(),
+        2,
+        in_window,
+        in_window,
+        canvas.viewport().mapToGlobal(where),
+        0.5,
+        QPointF(),
+        0,
+    )
+    QApplication.sendEvent(canvas.viewport(), event)
+    assert view_of(canvas)[0] == pytest.approx(scale * 1.5)
+    still = canvas.mapToScene(where.toPoint())
+    assert abs(still.x() - under.x()) < 2 / scale and abs(still.y() - under.y()) < 2 / scale
+
+
 @pytest.fixture
 def shapes(window):
     nodes = window.document.nodes

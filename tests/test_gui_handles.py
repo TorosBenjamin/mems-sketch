@@ -6,7 +6,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QMessageBox
-from tests.test_gui_tools import drag, hover, mouse, two_rects
+from test_gui_tools import drag, hover, mouse, two_rects
 
 from mems_sketch.gui.app import MainWindow
 

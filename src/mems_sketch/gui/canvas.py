@@ -17,7 +17,9 @@ from __future__ import annotations
 import math
 import time
 import weakref
+from collections import OrderedDict
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 import shiboken6
@@ -27,6 +29,7 @@ from PySide6.QtCore import (
     QLineF,
     QPoint,
     QPointF,
+    QRect,
     QRectF,
     QSize,
     QSizeF,
@@ -45,7 +48,7 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
-    QPixmapCache,
+    QPixmap,
     QPolygonF,
     QTransform,
 )
@@ -110,12 +113,10 @@ DEFAULT_OPTIONS = {
 GIZMO_GRAB_PX = 7  # how close to a gizmo handle counts as on it
 RIGHT_CLICK_SLOP_PX = 4  # a right press that moves further is a pan, not a click
 MENU_CARET = "▾"  # after the text of a button that opens a menu
-# Rendered items are kept as pictures (Qt's item cache, held in the pixmap cache):
-# room for several full-view pictures on a large, high-resolution screen.
-PIXMAP_CACHE_KB = 256 * 1024
+TILE_PX = 256  # pictures of the shapes are kept in tiles this many device pixels square
+TILE_STORE_KB = 256 * 1024  # room for those tiles: several full views on a large screen
 DRAFT_SETTLE_MS = 200  # full quality again this long after the last zoom or resize step
 DRAFT_ABOVE_MS = 25.0  # draft quality only when a full-quality frame takes longer than this
-CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
 OUTLINE_PX = 1.0
@@ -151,9 +152,6 @@ def geometry_path(geometry: Geometry, layer: str) -> QPainterPath:
 # engine built once is the same geometry wherever and however often it is
 # placed, so it is turned into a path once.
 _PATHS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
-# Placed copies past this many are drawn without a cached picture each (the
-# pictures would take more memory than they save time).
-MAX_CACHED_ITEMS = 2000
 GHOST_FILL = 0.35  # a component being placed: its fill, against its layer's colour
 GHOST_OPACITY = 0.75
 
@@ -179,14 +177,256 @@ def own_path(geometry: Geometry, layer: str) -> QPainterPath:
     return paths[layer]
 
 
-class ShapeItem(QGraphicsPathItem):
+class _Tiles:
+    """Pictures in device pixels, in tiles on a grid fixed to the scene, for what a
+    view shows: drawn once, then reused while the view pans.
+
+    Not Qt's own item cache: that keeps its pictures in logical pixels, so at a
+    fractional scale (130 % on a laptop screen) they land between device pixels,
+    and the strips it adds while panning a big item no longer meet the rest: the
+    shapes tear. Panning moves these tiles by whole device pixels (the scroll,
+    rounded, the same for every tile), so they always meet."""
+
+    _serial = 0
+    # Every tile shown lately, least recently used first: its key, then the picture
+    # it is part of (tiles drawn together share one) and where in it it is.
+    _store: ClassVar[OrderedDict[str, tuple[QPixmap, QRect]]] = OrderedDict()
+    _store_bytes = 0
+
+    @classmethod
+    def _keep(cls, key: str, picture: QPixmap, rect: QRect) -> None:
+        cls._store[key] = (picture, rect)
+        cls._store_bytes += rect.width() * rect.height() * 4
+        while cls._store_bytes > TILE_STORE_KB * 1024 and len(cls._store) > 1:
+            _, (_, old) = cls._store.popitem(last=False)
+            cls._store_bytes -= old.width() * old.height() * 4
+
+    @classmethod
+    def _find(cls, key: str) -> tuple[QPixmap, QRect] | None:
+        found = cls._store.get(key)
+        if found is not None:
+            cls._store.move_to_end(key)
+        return found
+
+    def __init__(self) -> None:
+        _Tiles._serial += 1
+        self.name = f"mems-tiles:{_Tiles._serial}"
+        self.version = 0  # raised when what they show changes
+
+    def paint(
+        self, owner: QGraphicsItem, painter: QPainter, widget, bounds: QRectF, draw, snapped=False
+    ) -> bool:
+        """Draw ``bounds`` (in ``owner``'s coordinates) from the tiles, calling
+        ``draw(painter, grid_rect)`` (the painter in ``owner``'s coordinates) for those
+        missing. ``snapped``: ``owner`` itself is put on whole device pixels, so moving
+        it reuses the tiles. False if they cannot be used (not in a view)."""
+        view = widget.parent() if widget is not None else None
+        if not isinstance(view, QGraphicsView):
+            return False
+        dpr = widget.devicePixelRatioF()
+        to_device = QTransform.fromScale(dpr, dpr)
+        exact = painter.worldTransform() * to_device  # owner to device pixels
+        placed = owner.sceneTransform() * view.transform() * to_device  # the same, unscrolled
+        linear = (exact.m11(), exact.m12(), exact.m21(), exact.m22())
+        size = abs(linear[0]) + abs(linear[1]) + abs(linear[2]) + abs(linear[3])
+        if (
+            not exact.isAffine()
+            or size == 0
+            or abs(linear[0] - placed.m11())
+            + abs(linear[1] - placed.m12())
+            + abs(linear[2] - placed.m21())
+            + abs(linear[3] - placed.m22())
+            > 1e-9 * size
+        ):
+            return False
+        anchor = (0.0, 0.0) if snapped else (placed.dx(), placed.dy())
+        fx, fy = anchor[0] - math.floor(anchor[0]), anchor[1] - math.floor(anchor[1])
+        # The grid's origin on the device: whole pixels, the scroll rounded.
+        ox = math.floor(anchor[0]) + round(exact.dx() - anchor[0])
+        oy = math.floor(anchor[1]) + round(exact.dy() - anchor[1])
+        to_grid = QTransform(*linear, fx, fy)
+        area = to_grid.mapRect(bounds).toAlignedRect()
+        shown = QRectF(-ox, -oy, widget.width() * dpr, widget.height() * dpr).toAlignedRect() & area
+        if shown.isEmpty():
+            return True
+        antialiased = painter.testRenderHint(QPainter.RenderHint.Antialiasing)
+        key = (
+            f"{self.name}:{self.version}:{linear[0]:.12g},{linear[1]:.12g},{linear[2]:.12g},"
+            f"{linear[3]:.12g}:{fx:.6f},{fy:.6f}:{dpr:g}:{int(antialiased)}"
+        )
+        tiles = [
+            (QRect(tx * TILE_PX, ty * TILE_PX, TILE_PX, TILE_PX) & area, f"{key}:{tx},{ty}")
+            for ty in range(shown.top() // TILE_PX, shown.bottom() // TILE_PX + 1)
+            for tx in range(shown.left() // TILE_PX, shown.right() // TILE_PX + 1)
+        ]
+        pictures = {tile_key: self._find(tile_key) for _, tile_key in tiles}
+        missing = [(tile, tile_key) for tile, tile_key in tiles if pictures[tile_key] is None]
+        # Missing tiles are drawn together (a big shape costs nearly as much to draw
+        # into one tile as into all of them): all at once when they fill their
+        # bounds (after a zoom), else a row at a time (a pan's new edge).
+        span = QRect()
+        for tile, _ in missing:
+            span |= tile
+        whole = sum(tile.width() * tile.height() for tile, _ in missing)
+        if missing and span.width() * span.height() <= 1.5 * whole:
+            groups = [missing]
+        else:
+            rows: dict[int, list] = {}
+            for tile, tile_key in missing:
+                rows.setdefault(tile.y(), []).append((tile, tile_key))
+            groups = list(rows.values())
+        from_grid = to_grid.inverted()[0]
+        to_logical = to_device.inverted()[0]
+        for group in groups:
+            span = QRect()
+            for tile, _ in group:
+                span |= tile
+            picture = QPixmap(span.size())
+            picture.setDevicePixelRatio(dpr)
+            picture.fill(Qt.GlobalColor.transparent)
+            p = QPainter(picture)
+            p.setRenderHints(painter.renderHints())
+            p.setTransform(to_grid * QTransform.fromTranslate(-span.x(), -span.y()) * to_logical)
+            draw(p, from_grid.mapRect(QRectF(span)))
+            p.end()
+            for tile, tile_key in group:
+                pictures[tile_key] = (picture, tile.translated(-span.topLeft()))
+                self._keep(tile_key, *pictures[tile_key])
+        painter.save()
+        painter.resetTransform()  # the view's own pixels
+        for tile, tile_key in tiles:
+            picture, source = pictures[tile_key]
+            at = QRectF(
+                (ox + tile.x()) / dpr,
+                (oy + tile.y()) / dpr,
+                tile.width() / dpr,
+                tile.height() / dpr,
+            )
+            painter.drawPixmap(at, picture, QRectF(source))
+        painter.restore()
+        return True
+
+
+class CachedPathItem(QGraphicsPathItem):
+    """A path item that, when ``cached``, is drawn from pictures in device pixels
+    (see _Tiles), reused while the view pans; ``snapped`` (a drag preview), also
+    while the item itself moves: it is put on whole device pixels.
+
+    In a TileBand (``band``) it draws nothing itself: the band draws it."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self._tiles: _Tiles | None = None
+        self.snapped = False
+        self.band: TileBand | None = None
+
+    @property
+    def cached(self) -> bool:
+        return self._tiles is not None
+
+    @cached.setter
+    def cached(self, on: bool) -> None:
+        self._tiles = (self._tiles or _Tiles()) if on else None
+
+    def setPath(self, path) -> None:
+        super().setPath(path)
+        self._changed()
+
+    def setPen(self, pen) -> None:
+        super().setPen(pen)
+        self._changed()
+
+    def setBrush(self, brush) -> None:
+        super().setBrush(brush)
+        self._changed()
+
+    def _changed(self) -> None:
+        for tiles in (self._tiles, self.band and self.band.tiles):
+            if tiles is not None:
+                tiles.version += 1
+
+    def draw(self, painter, option, widget=None) -> None:
+        super().paint(painter, option, widget)
+
+    def paint(self, painter, option, widget=None) -> None:
+        if self._tiles is None:
+            self.draw(painter, option, widget)
+            return
+        pad = 2 + self.pen().widthF() * 2  # pixels: a cosmetic outline beyond the path
+        scale = math.sqrt(abs(painter.worldTransform().determinant())) or 1.0
+        bounds = self.boundingRect().adjusted(-pad / scale, -pad / scale, pad / scale, pad / scale)
+
+        def draw(p, _rect):
+            self.draw(p, option, None)
+
+        if not self._tiles.paint(self, painter, widget, bounds, draw, self.snapped):
+            self.draw(painter, option, widget)
+
+
+class TileBand(QGraphicsItem):
+    """Draws many path items at once, from shared tiles (see _Tiles): the items stay
+    in the scene (their visibility, bounds and order count) but draw nothing
+    themselves, so a frame does not visit thousands of them. Everything in a band
+    is drawn at the band's z value, in the items' own order within it."""
+
+    def __init__(self, z: float) -> None:
+        super().__init__()
+        self.tiles = _Tiles()
+        self._bounds = QRectF()  # of the items shown, in the scene
+        self.setZValue(z)
+
+    def add(self, item: CachedPathItem) -> None:
+        """Draw ``item`` (call :meth:`changed` once the items are all added)."""
+        item.band = self
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
+
+    def changed(self, items) -> None:
+        """What the band shows changed (``items``: all of its items now): draw again."""
+        bounds = QRectF()
+        for item in items:
+            if item.isVisible():
+                bounds = bounds.united(item.sceneBoundingRect())
+        self.prepareGeometryChange()
+        self._bounds = bounds
+        self.tiles.version += 1
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        return self._bounds
+
+    def paint(self, painter, option, widget=None) -> None:
+        scale = math.sqrt(abs(painter.worldTransform().determinant())) or 1.0
+        pad = 4 / scale  # a cosmetic outline beyond an item's bounds
+
+        def draw(p: QPainter, rect: QRectF) -> None:
+            scene = self.scene()
+            found = scene.items(
+                rect.adjusted(-pad, -pad, pad, pad),
+                Qt.ItemSelectionMode.IntersectsItemBoundingRect,
+                Qt.SortOrder.AscendingOrder,
+            )
+            base = p.transform()
+            for item in found:
+                if getattr(item, "band", None) is self and item.isVisible():
+                    p.setTransform(item.sceneTransform() * base)
+                    p.setOpacity(item.effectiveOpacity())
+                    item.draw(p, option, None)
+
+        if self._bounds.isEmpty():
+            return
+        area = self._bounds.adjusted(-pad, -pad, pad, pad)
+        if not self.tiles.paint(self, painter, widget, area, draw):
+            draw(painter, area)
+
+
+class ShapeItem(CachedPathItem):
     """A filled shape: its fill drawn without antialiasing, its outline over it with.
 
     Antialiasing a fill costs some fifty times as much on a path with thousands
     of holes (10,000 round holes: 3.6 s against 0.08 s a picture), and it is not
     seen: the outline covers the fill's edge."""
 
-    def paint(self, painter, option, widget=None) -> None:
+    def draw(self, painter, option, widget=None) -> None:
         if self.brush().style() != Qt.BrushStyle.NoBrush:
             antialiased = painter.testRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
@@ -359,8 +599,6 @@ class LayoutCanvas(QGraphicsView):
         self.setAcceptDrops(True)
         self._has_content = False
         self._wheel_anchor: QPointF | None = None  # scene point held under the cursor
-        if QPixmapCache.cacheLimit() < PIXMAP_CACHE_KB:
-            QPixmapCache.setCacheLimit(PIXMAP_CACHE_KB)
         self._drafting = False
         self._full_frame_ms = 0.0  # how long the last full-quality frame took
         self._draft_timer = QTimer(self)
@@ -376,6 +614,12 @@ class LayoutCanvas(QGraphicsView):
         self.corner_color: QColor | None = None  # what lies around the editor island
         # A large scene rect lets the user pan freely beyond the geometry.
         self.scene().setSceneRect(WORLD)
+        # The shapes, under everything else, and the selection's highlight: each
+        # drawn at once from shared pictures (see TileBand).
+        self._shape_band = TileBand(-1)
+        self._highlight_band = TileBand(1000)
+        self.scene().addItem(self._shape_band)
+        self.scene().addItem(self._highlight_band)
 
     # -- content -----------------------------------------------------------
 
@@ -499,10 +743,7 @@ class LayoutCanvas(QGraphicsView):
     def _end_draft(self) -> None:
         self._drafting = False
         self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        for item in self.scene().items():
-            if item.cacheMode() != QGraphicsItem.CacheMode.NoCache:
-                item.update()  # its picture was drawn in draft quality
-        self.viewport().update()
+        self.viewport().update()  # pictures are kept by quality: full quality ones are drawn
 
     def _place_overlays(self) -> None:
         width, height = self.viewport().width(), self.viewport().height()
@@ -641,7 +882,6 @@ class LayoutCanvas(QGraphicsView):
         width = self.options["outline_width"]
         order = stack_order(geometry, colors)
         leaves = geometry.leaves()
-        cache = CACHED if len(leaves) <= MAX_CACHED_ITEMS else QGraphicsItem.CacheMode.NoCache
         old, new = self._items_by_key, {}
         self._layer_items = {}
         for leaf, at in leaves:
@@ -662,7 +902,7 @@ class LayoutCanvas(QGraphicsView):
                     pen.setCosmetic(True)  # the same width in pixels at any zoom
                     item.setPen(pen)
                     item.setBrush(QBrush(fill))
-                    item.setCacheMode(cache)  # drawn once; pans, hovers and drags reuse it
+                    self._shape_band.add(item)
                     self.scene().addItem(item)
                 item.setZValue(order[layer])
                 item.setVisible(visible.get(layer, True))
@@ -678,12 +918,12 @@ class LayoutCanvas(QGraphicsView):
                 if kept:
                     item = kept.pop()
                 else:
-                    item = QGraphicsPathItem(own_path(shape, layer))
+                    item = CachedPathItem(own_path(shape, layer))
                     pen = QPen(color, width)
                     pen.setCosmetic(True)
                     item.setPen(pen)
                     item.setBrush(Qt.BrushStyle.NoBrush)
-                    item.setCacheMode(cache)
+                    self._shape_band.add(item)
                     self.scene().addItem(item)
                 item.setZValue(order[layer] + 0.5)  # over its layer's fill, under the next
                 item.setVisible(visible.get(layer, True))
@@ -693,6 +933,7 @@ class LayoutCanvas(QGraphicsView):
             for item in items:
                 self.scene().removeItem(item)
         self._items_by_key = new
+        self._shape_band.changed(item for items in new.values() for item in items)
         if not self._has_content and not geometry.is_empty():
             self._has_content = True
             self.fit()
@@ -700,6 +941,7 @@ class LayoutCanvas(QGraphicsView):
     def set_layer_visible(self, layer: str, visible: bool) -> None:
         for item in self._layer_items.get(layer, []):
             item.setVisible(visible)
+        self._shape_band.changed(item for items in self._items_by_key.values() for item in items)
 
     def show_overlay(
         self,
@@ -734,9 +976,12 @@ class LayoutCanvas(QGraphicsView):
                     tint.setAlpha(60)  # a stronger tint makes up for the thin outline
                     item.setBrush(QBrush(tint))
                     item.setZValue(1000)
-                    item.setCacheMode(CACHED)
+                    self._highlight_band.add(item)
                     self.scene().addItem(item)
                     self._overlay.append(item)
+        self._highlight_band.changed(
+            item for item in self._overlay if getattr(item, "band", None) is self._highlight_band
+        )
         if box is not None:
             item = QGraphicsPolygonItem(QPolygonF([QPointF(x, y) for x, y in box]))
             pen = QPen(QColor(self.theme["highlight"]), 1, Qt.PenStyle.DashLine)
@@ -873,7 +1118,7 @@ class LayoutCanvas(QGraphicsView):
                 item.setPen(pen)
                 item.setBrush(QBrush(fill))
                 item.setZValue(1050 + order[layer] / 1000)  # over everything, in stack order
-                item.setCacheMode(CACHED)  # moving it reuses the picture
+                item.cached = item.snapped = True  # moving it reuses the picture
                 self.scene().addItem(item)
                 self._drag_items.append(item)
 
@@ -991,10 +1236,10 @@ class LayoutCanvas(QGraphicsView):
         outline = QPainterPath()
         for leaf, at in geometry.leaves():
             outline.addPath(qtransform(at).map(own_path(leaf, "")))
-        self._hover_item = QGraphicsPathItem(outline)
+        self._hover_item = CachedPathItem(outline)
         self._hover_item.setPen(pen)
         self._hover_item.setZValue(990)
-        self._hover_item.setCacheMode(CACHED)
+        self._hover_item.cached = True
         self.scene().addItem(self._hover_item)
 
     # -- gizmos --------------------------------------------------------------
@@ -1231,7 +1476,10 @@ class LayoutCanvas(QGraphicsView):
         if event.type() == QEvent.Type.NativeGesture:
             if event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
                 self.stop_gliding()
-                self._zoom_by_at(1.0 + event.value(), event.position())
+                # Wayland (Qt 6.11, KDE) gives a pinch's position in the window, not
+                # in the view; the position on the screen is right everywhere.
+                at = self.viewport().mapFromGlobal(event.globalPosition())
+                self._zoom_by_at(1.0 + event.value(), at)
                 return True
             if event.gestureType() == Qt.NativeGestureType.SmartZoomNativeGesture:
                 self.fit(animated=True)  # a two-finger double tap

@@ -1,0 +1,36 @@
+description: >-
+  Etch and release test: cantilevers of growing width from an anchored pad,
+  the first `start` wide and each next one `step` wider. Those narrow enough
+  for the undercut come free; the rest stay stuck, which is what the release
+  rule warns about. The pad's anchor is on the level's anchor layer
+  (`level.anchor`), so the level needs one. Point: root, the middle of the
+  pad's right edge, where the cantilevers start.
+tags: [test structure, release, undercut, etch, cantilever]
+parameters:
+  count: {default: 6, min: 2, integer: true, description: Number of cantilevers}
+  start: {default: 2, min: 0, min_exclusive: true, description: Width of the first cantilever (µm)}
+  step: {default: 1, min: 0, description: Width added from one cantilever to the next (µm)}
+  length: {default: 60, min: 0, min_exclusive: true, description: Cantilever length (µm)}
+  pitch: {default: 20, min: start + (count - 1) * step, min_exclusive: true, description: From one cantilever to the next (µm)}
+  pad: {default: 30, min: 2 * enclosure, min_exclusive: true, description: Pad width (µm)}
+  enclosure: {default: 3, min: 0, description: Pad overlap around the anchor (µm)}
+  span: {default: (count - 1) * pitch + start + (count - 1) * step, internal: true, description: Height of the cantilevers' row (µm)}
+points:
+  root: {y: span / 2}
+shapes:
+  pad_body: {kind: rect, x0: -pad, y0: -enclosure, x1: 0, y1: span + enclosure}
+  anchor_opening:
+    kind: rect
+    layer: level.anchor
+    x0: -pad + enclosure
+    y0: 0
+    x1: -enclosure
+    y1: span
+  cantilevers:
+    kind: rect
+    x0: 0
+    y0: j * pitch
+    x1: length
+    y1: j * pitch + start + j * step
+    modifiers:
+    - {kind: array, rows: count}

@@ -134,16 +134,26 @@ but should not have to program. Scripting is there for those who want it.
   project's top component, so any project can be placed in another. A
   component has parameters, points and a shape tree. It never stores
   geometry: it is evaluated from its parameters.
-- **CMP-2** (Must, exists) **Built-in components** are an ordinary
-  component library that ships with the tool: `anchor`, `comb_drive`,
-  `serpentine_spring`, with their parameters and points
-  (`serpentine_spring`: `start`, `end`; `comb_drive`: `moving`, `fixed`).
-  They use relative layers ([CMP-10](#components-and-parameters)), not a
-  layer parameter. `rectangle` is retired: `rect` does the same.
+- **CMP-2** (Must, exists) **Bundled libraries** ship with the tool, one
+  per domain, and every project has them without a path (listed as
+  `mems: bundled@2`, with the version saved with). `mems` has anchors,
+  springs (with their stiffness as a derived parameter), electrodes, masses
+  and two devices, each with the points things attach at, and the example
+  processes `surface`, `polysilicon`
+  (two-poly surface micromachining) and `soi`, with rules on the checks. They use relative
+  layers ([CMP-10](#components-and-parameters)), not a layer parameter. The
+  earlier built-ins are these components: old files are changed when opened.
+  A library's components are in **categories** (the folders they are in, not
+  part of their names) and may have **tags**. `rectangle` is retired: `rect`
+  does the same. `std` has the generic parts: alignment marks, Verniers,
+  test structures, bond pads and a die frame. Every bundled component builds
+  at its defaults and limits, and the springs, anchors and devices pass every
+  check of `mems.surface` at their defaults; a gallery page per library is
+  generated from the components.
 - **CMP-3** (Must, exists) Components are **shared** or **private** to
   another (`comb/finger`), and are resolved by name from the inside out: the
   component's own private components, its owner's, the shared ones, then
-  built-ins. `lib.name` names a library's.
+  imported cells. `lib.name` names a library's.
 - **CMP-4** (Must, exists) **Renaming** a component, parameter, shape or point
   updates everything that refers to it.
 - **CMP-5** (Must, exists) A **parameter** has a default (a number or an
@@ -159,12 +169,12 @@ but should not have to program. Scripting is there for those who want it.
   Values outside min/max or not whole when integer are errors.
 - **CMP-7** (Must, exists) A **trial value** shows a component with another
   parameter value without changing the design. It is not saved or undone,
-  affects only that component's own tab, and also works on library and
-  built-in components.
+  affects only that component's own tab, and also works on library
+  components.
 - **CMP-8** (Must, exists) **Make component** turns a selection into a new
   component whose parameters are the ones the selection uses, so nothing
   moves. **Unpack component** does the opposite.
-- **CMP-9** (Must, exists) Library, built-in and imported components open
+- **CMP-9** (Must, exists) Library and imported components open
   **read-only** and show their interface (geometry, description, public
   parameters, points), not how they are built, unless the user asks to see
   it.
@@ -271,12 +281,32 @@ measurements and checks: see its design, [The Sketch language](language.md).
     imported layouts, so the same project gives the same text on every
     machine (QP-5). System fonts are not used unless copied into the
     project.
-- **SHP-14** (Should, new; [#83](https://github.com/TorosBenjamin/mems-sketch/issues/83)) **Perforation:** fill a region with holes (any
-  shape) on a square or hexagonal grid, keeping a margin from the region's
-  edges and from keep-out shapes (anchors, other layers mapped in). The holes
-  follow when the region changes. For release holes.
+- **SHP-14** (Should, exists; [#83](https://github.com/TorosBenjamin/mems-sketch/issues/83)) **Perforation:** fill a region with holes on a
+  square or hexagonal grid, keeping a margin from the region's edges and from
+  keep-out shapes (anchors, other layers mapped in). The holes follow when the
+  region changes. For release holes. It is the `perforate` modifier: any
+  closed shape, only whole holes, the grid centred on the shape (or through a
+  chosen hole centre); holes round, square, rounded squares or slots
+  (rectangles with a corner radius, a fully rounded one built as a circle or
+  stadium). A polar pattern for round membranes is not there yet.
 - **SHP-15** (Could, new; [#98](https://github.com/TorosBenjamin/mems-sketch/issues/98)) More factory shapes: **regular polygon** (n sides),
   **ellipse** (exact), **spiral** (Archimedean, with a width).
+- **SHP-16** (Should, exists; [#192](https://github.com/TorosBenjamin/mems-sketch/issues/192)) **Connections:** the area joining beam
+  ends, made from their ports (PNT-6), with the corners between the beams
+  rounded (`inner_radius`) and the outer ones (`radius`); the beams are not
+  changed. Paths have ports at their ends. Every way an end can be wrong is an
+  error naming it, never a silently wrong shape: a port off its shape or
+  facing into it, on a rounded corner or curve, wider than its beam, facing
+  away from the others, ends that overlap, a radius that does not fit (with
+  the largest that does), ends on different layers. **Operations → Connect**
+  joins the selected beams by their facing ports.
+- **SHP-17** (Should, exists; [#182](https://github.com/TorosBenjamin/mems-sketch/issues/182)) **Routes:** a wire from port to
+  port that follows them when parts move: Manhattan (along x and y, fewest
+  bends, then shortest), L (one bend) or straight, through via points, with
+  sharp, exactly round or chamfered bends that are checked to fit. Width and
+  layer from the ports unless given. No obstacle avoidance (the connectivity
+  check reports shorts). The Route tool draws one by clicking ports and via
+  points; a selected route's via points can be dragged.
 
 ### Modifiers
 
@@ -324,6 +354,17 @@ measurements and checks: see its design, [The Sketch language](language.md).
   intersection of two edges, the point where a line is tangent to a curve.
   They can be aligned to and used in expressions, and they follow the design
   like other points.
+- **PNT-6** (Must, exists; [#181](https://github.com/TorosBenjamin/mems-sketch/issues/181)) **A component declares ports**, where wires
+  attach: a point (measured like a declared point), the direction a wire
+  leaves it in (`right`, `up`, `left`, `down` or an angle), the wire width it
+  expects and the layer it runs on (level-relative, like a shape's), all
+  expressions. Placed, a port moves, turns and mirrors with the component and
+  is a point of the placement (`comb1.port.drive`: aligned to, measured with
+  `.x`, `.y`, `.angle`, `.width`, and a placement aligned by it); an array's
+  copies have theirs by index (`comb1.port.drive[2]`). A port at a placed
+  component's port takes its direction, width and layer unless it gives its
+  own, so ports are re-exported like points. The editor declares them in the
+  Points panel and draws a selected placement's ports as arrows.
 
 ### Measurements
 
@@ -396,7 +437,7 @@ behaviours every frontend must keep.
   (QS-7), so it is shown without building anything.
 - **EDT-9** (Could, new; [#88](https://github.com/TorosBenjamin/mems-sketch/issues/88)) **The change a value makes:** while a value is
   dragged or tried, the canvas can show the geometric difference from where
-  it started (material added and removed, as in the History panel, HIS-2).
+  it started (material added and removed, as in the Commit panel, HIS-2).
 - **EDT-10** (Could, new; [#87](https://github.com/TorosBenjamin/mems-sketch/issues/87)) **Annotations:** notes on the canvas, saved with
   the component and alignable like guides, never fabricated. They can
   optionally be exported as GDS text labels (zero-area text records) on a
@@ -581,6 +622,14 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   a commit, as an ordinary edit that can be undone.
 - **HIS-5** (Should, exists) Initialize a repository for a saved project.
   Branches, merging, push and pull stay with the user's git tools.
+- **HIS-6** (Should, exists; [#131](https://github.com/TorosBenjamin/mems-sketch/issues/131)) Commit **some of the changes**: the
+  local changes are listed by component (the unit, being a file of its own),
+  each chosen or not, with the other files in the folder; amend the last
+  commit; roll a component back to the last commit as an undoable edit.
+- **HIS-7** (Should, exists; [#131](https://github.com/TorosBenjamin/mems-sketch/issues/131)) **Compare** two versions of a
+  component in a tab of its own: overlaid or side by side, a mark on each
+  edited shape and a ring on each shape another change moved, stepping
+  through them all; roll one shape back.
 
 ### Command line and scripting
 

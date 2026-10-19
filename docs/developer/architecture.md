@@ -27,7 +27,8 @@ page describes the code as it is now.
   is plain data; building geometry is the engine's job.
 - **Components are resolved by name** from the inside out: a component's own
   private components (`comb/finger`), its owner's, the shared ones, then the
-  built-ins; `lib.name` names a library's. See the docstring of
+  imported cells; `lib.name` names a library's, and the bundled libraries
+  (`mems.comb_drive`) are in every project. See the docstring of
   `core/project.py`.
 - **Shapes** (`core/shapes/`) are pydantic models, one module per kind in
   `kinds/`. Kind-specific behaviour lives there only:
@@ -130,7 +131,7 @@ wires the parts; each part only talks to the session:
   items; overlays (selection, violations, points, history changes).
 - `tools.py`: canvas tools (Select, Move, Align, Corners, drawing tools…),
   each a small state machine fed with presses and moves in µm.
-- `panels.py`, `points_panel.py`, `history_panel.py`, `properties.py`: tool
+- `panels.py`, `points_panel.py`, `commit_panel.py`, `git_panel.py`, `properties.py`: tool
   windows; `toolwindows.py` places them around the editor.
 - `actions.py`: every command with its shortcut, menus and toolbar.
 - `settings.py`, `theme.py`, `icons.py`: preferences, the themes (JSON files
@@ -147,14 +148,14 @@ wires the parts; each part only talks to the session:
 | `core/transform.py` | `Transform`: placements as plain values |
 | `core/shapes/` | The shape tree: one module per kind in `kinds/`, their registry, points, node records, modifiers, rewriting |
 | `core/user_component.py` | `ComponentDef`, `ParamDef`, `PointDef` and their adapter to `Component` |
-| `core/component.py` | `Component` base class, `Geometry`, the built-in components by name |
+| `core/component.py` | `Component` base class, `Geometry` |
 | `core/process.py` | `Process`, `Layer`, `Level` (the layer stack), process constants |
 | `core/levels.py` | Components on levels: layers relative to a component's level (`level-1`, `level.anchor`) |
 | `core/expressions.py` | Safe arithmetic expressions with dependency resolution |
 | `core/imports.py` | Imported layouts (GDS cells) as components |
 | `layout/` | Layout files without a layout library: GDSII read and written, OASIS and DXF written |
 | `core/diff.py` | What changed between two versions of a project, in words and in geometry |
-| `components/builtin/` | The built-in components as a library folder: `anchor`, `comb_drive`, `serpentine_spring` |
+| `libraries/` | The bundled libraries, one folder each (`mems/`: components in category folders, example processes); every project has them |
 | `process/rules.py` | Design-rule checks: the project's rules checked by rule kinds, which are plugins (`mems_sketch.rules` entry points) |
 | `process/rule_kinds.py` | The built-in rule kinds: widths, spacing, areas, pieces, enclosure, separation, anchored, release |
 | `storage/` | Project folders (`project_files.py`: the manifest, processes, component folders), component files (`component_format.py`), one-file documents (`document.py`) in every format (`formats/`), git (`git.py`), the legacy SQLite importer |

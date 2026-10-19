@@ -21,8 +21,8 @@ are called is in the files)::
     format: mems-sketch/2
     name: resonator
     top: top
-    libraries: {std: ../mems-std-lib}
-    process: std.polymumps            # or one of its own: main
+    libraries: {mems: bundled@1, std: ../mems-std-lib}   # bundled ones, and folders
+    process: mems.surface             # or one of its own: main
     overrides:                        # changes to a library's process (PRJ-8)
       constants: {undercut: 3}
       rules:
@@ -34,8 +34,20 @@ are called is in the files)::
       padframe: {file: padframe.gds, cell: FRAME, layers: {1/0: device, 5/0: metal}}
 
 A library is a project folder too, usually without a top component: its
-components and processes are placed and used as ``std.name``. Components are
-written as in :mod:`mems_sketch.storage.component_format`.
+components and processes are placed and used as ``std.name``. Its manifest
+may have a ``description`` and a ``version`` (a whole number, raised when a
+change could change designs using it). Components are written as in
+:mod:`mems_sketch.storage.component_format`.
+
+A library that ships with mems-sketch (:mod:`mems_sketch.libraries`) is listed
+as ``bundled`` (``m: bundled:mems`` under another name), with the version the
+project was saved with: ``mems: bundled@1``. Opening the project with another
+version notes it.
+
+**Categories:** a component may sit in folders below ``components/``
+(``components/springs/serpentine/``): that is its category, where it is
+shown; its name stays its key in the manifest. A category folder may hold a
+``category.yaml`` with a ``title``, ``description`` and ``order``.
 """
 
 from __future__ import annotations
@@ -56,12 +68,14 @@ from mems_sketch.core.process import (
     check_levels,
     with_changes,
 )
-from mems_sketch.core.project import MAIN_PROCESS, Library, Project
+from mems_sketch.core.project import FORMER_BUILTINS, MAIN_PROCESS, Library, Project
 from mems_sketch.core.user_component import ComponentDef
 from mems_sketch.storage import yaml_format
 from mems_sketch.storage.component_format import component_data, component_from_data
 
 FORMAT = "mems-sketch/2"
+BUNDLED = "bundled"
+CATEGORY_FILE = "category.yaml"
 PROJECT_FILE = "project.yaml"
 PROCESS_FILE = "process.yaml"
 COMPONENT_FILE = "component.yaml"
@@ -82,11 +96,16 @@ def save_project(project: Project, folder: str | Path) -> Path:
     of components and processes the project no longer has are removed."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    libraries = {name: _relative(lib.path, folder) for name, lib in project.libraries.items()}
+    libraries = {
+        name: library_entry(lib) if lib.bundled else _relative(lib.path, folder)
+        for name, lib in project.libraries.items()
+    }
     manifest = manifest_data(project, libraries)
     manifest["processes"] = {name: f"{PROCESSES_DIR}/{name}" for name in project.processes}
     manifest["components"] = {
-        name: f"{COMPONENTS_DIR}/{name}" for name in project.components if "/" not in name
+        name: component_folder(project.components, name)
+        for name in project.components
+        if "/" not in name
     }
     if project.imports:
         manifest["imports"] = imports_data(project)
@@ -99,7 +118,7 @@ def save_project(project: Project, folder: str | Path) -> Path:
         _write(path, yaml_format.dump(process_data(process)))
         written.add(path)
     for name, definition in project.components.items():
-        path = folder / COMPONENTS_DIR / name / COMPONENT_FILE
+        path = folder / component_folder(project.components, name) / COMPONENT_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
         private = {child: child for child in private_names(project.components, name)}
         _write(path, yaml_format.dump(component_data(definition, private)))
@@ -112,6 +131,98 @@ def save_project(project: Project, folder: str | Path) -> Path:
             if empty.is_dir() and not any(empty.iterdir()):
                 empty.rmdir()
     return folder
+
+
+def component_folder(components: dict[str, ComponentDef], name: str) -> str:
+    """Where a component's file goes: its category's folder, then its name (a
+    private one inside its owner's folder)."""
+    root = name.split("/")[0]
+    category = components[root].category if root in components else ""
+    return "/".join(p for p in (COMPONENTS_DIR, category, name) if p)
+
+
+def written_by_project(path: str) -> bool:
+    """Whether a file (its path in the project folder, with ``/``) is one a project
+    writes: the manifest, a component's or a process's file, or an imported file."""
+    parts = path.split("/")
+    if parts == [PROJECT_FILE]:
+        return True
+    if parts[0] == COMPONENTS_DIR:
+        return parts[-1] == COMPONENT_FILE
+    if parts[0] == PROCESSES_DIR:
+        return parts[-1] == PROCESS_FILE
+    return parts[0] == IMPORTS_DIR and len(parts) == 2
+
+
+def library_entry(library: Library) -> str:
+    """How a manifest lists a bundled library: ``bundled@1``, ``bundled:mems@1``."""
+    text = BUNDLED if library.bundled == library.name else f"{BUNDLED}:{library.bundled}"
+    return text if library.version is None else f"{text}@{library.version}"
+
+
+def open_library(name: str, entry: Any, base: Path, notes: list[str]) -> Library:
+    """The library a manifest lists as ``name``: a bundled one, or a folder
+    relative to ``base``; a bundled one whose version is not the one the project
+    was saved with is noted."""
+    text = str(entry)
+    if text == BUNDLED or text.startswith((BUNDLED + ":", BUNDLED + "@")):
+        from mems_sketch.libraries import bundled_library
+
+        spec, _, saved = text.partition("@")
+        bundled = spec.partition(":")[2] or name
+        try:
+            library = bundled_library(bundled, name)
+        except KeyError as error:
+            raise ProjectFormatError(f"library '{name}': {error.args[0]}") from None
+        if saved and library.version is not None and saved != str(library.version):
+            notes.append(
+                f"library '{name}' is version {library.version}; the project was saved "
+                f"with version {saved}, so its components may have changed"
+            )
+        return library
+    path = Path(text)
+    return load_library(name, path if path.is_absolute() else Path(os.path.normpath(base / path)))
+
+
+# What the built-in components are called now (they are components of the
+# bundled ``mems`` library).
+BUILTIN_COMPONENTS = {name: f"mems.{name}" for name in FORMER_BUILTINS}
+
+
+def migrate_builtin_references(project: Project) -> None:
+    """References to the former built-in components (``comb_drive``) placed by
+    their bare names, made references to the ``mems`` library's (where nothing
+    of the project's has that name); noted once."""
+    from mems_sketch.libraries import bundled_library
+
+    moved = _migrated(project.components)
+    for library in project.libraries.values():
+        moved |= _migrated(library.components)
+    if moved:
+        if "mems" not in project.libraries:
+            project.libraries["mems"] = bundled_library("mems")
+        names = ", ".join(sorted(moved))
+        project.load_notes.append(
+            f"the built-in components are in the bundled library 'mems' now: "
+            f"placements were changed to {names}"
+        )
+
+
+def _migrated(components: dict[str, ComponentDef]) -> set[str]:
+    from mems_sketch.core.shapes import RefShape, walk
+
+    moved = set()
+    for definition in components.values():
+        context = definition.name.split("/")
+        for shape in walk(definition.shapes):
+            if not isinstance(shape, RefShape) or shape.component not in BUILTIN_COMPONENTS:
+                continue
+            owners = ["/".join([*context[:k], shape.component]) for k in range(len(context) + 1)]
+            if any(candidate in components for candidate in owners):
+                continue  # a component of its own
+            shape.component = BUILTIN_COMPONENTS[shape.component]
+            moved.add(shape.component)
+    return moved
 
 
 def manifest_data(project: Project, libraries: dict[str, str]) -> dict[str, Any]:
@@ -355,11 +466,11 @@ def load_project(path: str | Path, libraries_from: str | Path | None = None) -> 
     folder = project_folder(path)
     base = Path(libraries_from) if libraries_from is not None else folder
     manifest = _manifest(folder)
-    libraries = {
-        str(name): load_library(str(name), Path(os.path.normpath(base / str(rel))))
-        for name, rel in (manifest.get("libraries") or {}).items()
-    }
     processes, components, notes = _contents(folder, manifest)
+    libraries = {
+        str(name): open_library(str(name), entry, base, notes)
+        for name, entry in (manifest.get("libraries") or {}).items()
+    }
     top = manifest.get("top")  # null: a library, with no top component
     if top is not None and top not in components:
         raise ProjectFormatError(f"the top component '{top}' is not listed in {PROJECT_FILE}")
@@ -376,6 +487,7 @@ def load_project(path: str | Path, libraries_from: str | Path | None = None) -> 
         process_name=process_name,
         load_notes=notes,
     )
+    migrate_builtin_references(project)
     try:
         apply_overrides(project, manifest.get("overrides") or {})
     except ValueError as error:
@@ -390,8 +502,40 @@ def load_library(name: str, folder: str | Path) -> Library:
         raise ProjectFormatError(
             f"library '{name}': {folder} is not a project or library folder (no {PROJECT_FILE})"
         )
-    processes, components, _ = _contents(folder, _manifest(folder))
-    return Library(name=name, components=components, path=folder, processes=processes)
+    manifest = _manifest(folder)
+    processes, components, _ = _contents(folder, manifest)
+    version = manifest.get("version")
+    if version is not None and (isinstance(version, bool) or not isinstance(version, int)):
+        raise ProjectFormatError(
+            f"library '{name}': its version is a whole number, not {version!r}"
+        )
+    return Library(
+        name=name,
+        components=components,
+        path=folder,
+        processes=processes,
+        description=str(manifest.get("description", "")),
+        version=version,
+        categories=_categories(folder / COMPONENTS_DIR),
+    )
+
+
+def _categories(components_dir: Path) -> dict[str, dict[str, Any]]:
+    """The ``category.yaml`` files below a components folder, by category."""
+    found = {}
+    for path in sorted(components_dir.rglob(CATEGORY_FILE)) if components_dir.is_dir() else []:
+        data = _read(path)
+        if not isinstance(data, dict):
+            raise ProjectFormatError(
+                f"{path}: a category is a map of its title, description, order"
+            )
+        category = path.parent.relative_to(components_dir).as_posix()
+        found[category] = {
+            "title": str(data.get("title", "")),
+            "description": str(data.get("description", "")),
+            "order": data.get("order"),
+        }
+    return found
 
 
 def _manifest(folder: Path) -> dict[str, Any]:
@@ -418,7 +562,12 @@ def _contents(
         path = where / str(rel) / COMPONENT_FILE
         return _read(path), path.parent
 
-    components, files = read_components(manifest.get("components") or {}, open_component, folder)
+    entries = manifest.get("components") or {}
+    components, files = read_components(entries, open_component, folder)
+    for name, rel in entries.items():  # its category: the folders it is in
+        parts = Path(str(rel)).parts
+        if len(parts) > 2 and parts[0] == COMPONENTS_DIR and parts[-1] == str(name):
+            components[str(name)].category = "/".join(parts[1:-1])
     files |= {
         folder / str(rel) / PROCESS_FILE for rel in (manifest.get("processes") or {}).values()
     }

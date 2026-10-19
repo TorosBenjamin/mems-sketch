@@ -22,7 +22,11 @@
     "scroll": "#c9ccd6",
     "expression": "#f1ecfd",
     "error": "#db3b4b",
-    "warning": "#e0a000"
+    "warning": "#e0a000",
+    "vcs_added": "#208a3c",
+    "vcs_changed": "#3574f0",
+    "vcs_removed": "#8c8f96",
+    "vcs_untracked": "#c2410c"
   },
   "canvas": {
     "background": "#ffffff",
@@ -59,8 +63,7 @@
     "yellow": "#e5a50a",
     "purple": "#834df0",
     "x": "#e0443e",
-    "on_accent": "#ffffff",
-    "on_yellow": "#222222",
+    "amber": "#b97a00",
     "y": "#3f9b3f"
   },
   "metrics": {

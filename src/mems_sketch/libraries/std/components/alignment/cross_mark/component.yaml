@@ -1,0 +1,22 @@
+description: >-
+  Cross alignment mark: a cross on the component's level and, on the level
+  above, its counterpart, four squares in the cross's corners that leave
+  `gap` around it. Aligned, the gap is the same on every side. Its
+  center is where the arms cross.
+tags: [alignment, mark, cross, overlay]
+parameters:
+  arm: {default: 50, min: width / 2 + gap, min_exclusive: true, description: "Arm length from the centre (µm)"}
+  width: {default: 8, min: 0, min_exclusive: true, description: Arm width (µm)}
+  gap: {default: 3, min: 0, min_exclusive: true, description: "Clearance between the cross and its counterpart: the alignment tolerance (µm)"}
+shapes:
+  horizontal: {kind: rect, x0: -arm, y0: -width/2, x1: arm, y1: width/2}
+  vertical: {kind: rect, x0: -width/2, y0: -arm, x1: width/2, y1: arm}
+  counterpart:
+    kind: rect
+    layer: level+1
+    x0: width/2 + gap
+    y0: width/2 + gap
+    x1: arm
+    y1: arm
+    modifiers:
+    - {kind: mirror, axis: both}

@@ -91,7 +91,8 @@ ComponentDef component_from(const Json& j) {
     Json canonical = j;
     canonical.erase("waivers");  // they accept violations; the geometry does not depend on them
     def.canonical = canonical.dump();
-    def.shapes = std::make_shared<const ShapeTree>(ShapeTree{j.value("shapes", Json::array()), j.value("points", Json::array())});
+    def.shapes = std::make_shared<const ShapeTree>(ShapeTree{j.value("shapes", Json::array()), j.value("points", Json::array()),
+                                                         j.value("ports", Json::array())});
     return def;
 }
 
@@ -180,11 +181,6 @@ Project Project::from_json(std::string_view text) {
         }
         p.imports_[name] = std::move(imported);
     }
-    const Json builtins = j.value("builtins", Json::object());
-    for (const auto& [name, def] : builtins.items()) {
-        p.builtins_.order.push_back(name);
-        p.builtins_.components[name] = component_from(def);
-    }
     return p;
 }
 
@@ -240,7 +236,10 @@ std::string Project::qualify(std::string_view name, const std::optional<std::str
         if (scope.empty()) break;
         scope = owner_of(scope);
     }
-    if (imports_.count(name) || builtins_.components.count(name)) return std::string(name);
+    if (imports_.count(name)) return std::string(name);
+    // The built-in components of earlier versions are the bundled mems library's now.
+    if (name == "anchor" || name == "comb_drive" || name == "serpentine_spring")
+        throw UnknownComponent("unknown component " + in_quotes(name) + ": it is 'mems." + std::string(name) + "' now");
     throw UnknownComponent("unknown component " + in_quotes(name));
 }
 
@@ -255,9 +254,7 @@ const ComponentDef* Project::definition(std::string_view qualified) const {
     const auto [library, path] = split(qualified);
     const Library& here = pool(library);
     if (const auto found = here.components.find(path); found != here.components.end()) return &found->second;
-    if (library || imports_.count(path)) return nullptr;
-    const auto builtin = builtins_.components.find(path);  // a component like any other
-    return builtin == builtins_.components.end() ? nullptr : &builtin->second;
+    return nullptr;
 }
 
 void Project::check_references() const {

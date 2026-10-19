@@ -6,6 +6,7 @@ import pytest
 from helpers import read_gds
 
 from mems_sketch.cli import main
+from mems_sketch.storage import load
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -15,11 +16,6 @@ def resonator(tmp_path) -> Path:
     shutil.copytree(
         EXAMPLES / "resonator",
         tmp_path / "resonator",
-        ignore=shutil.ignore_patterns(".mems-sketch"),
-    )
-    shutil.copytree(
-        EXAMPLES / "libraries",
-        tmp_path / "libraries",
         ignore=shutil.ignore_patterns(".mems-sketch"),
     )
     return tmp_path / "resonator"
@@ -42,7 +38,7 @@ def test_check_passes_and_fails_with_overrides(resonator, capsys):
 
 
 def test_check_a_single_component(resonator):
-    assert main(["check", str(resonator), "--component", "std.perforated_plate"]) == 0
+    assert main(["check", str(resonator), "--component", "mems.perforated_plate"]) == 0
 
 
 def test_export_writes_the_drawn_geometry(resonator, tmp_path):
@@ -67,3 +63,16 @@ def test_examples_are_up_to_date(tmp_path):
     for generated in tmp_path.rglob("*.yaml"):
         committed = EXAMPLES / generated.relative_to(tmp_path)
         assert committed.read_text() == generated.read_text(), committed
+
+
+def test_new_process_starts_a_process_library(tmp_path, capsys):
+    folder = tmp_path / "fab"
+    assert main(["new-process", str(folder), "--from", "mems.polysilicon"]) == 0
+    library = load(folder)
+    assert library.top is None and list(library.processes) == ["fab"]
+    assert "poly1_min_width" in library.processes["fab"].rules
+    assert "mems.polysilicon" in library.processes["fab"].description
+    assert main(["new-process", str(tmp_path / "blank"), "--from", "empty"]) == 0
+    assert load(tmp_path / "blank").processes["blank"].rules == {}
+    assert main(["new-process", str(tmp_path / "x"), "--from", "mems.nope"]) != 0
+    assert "no process 'mems.nope'" in capsys.readouterr().err

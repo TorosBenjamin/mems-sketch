@@ -27,6 +27,8 @@ class Outline {
 public:
     Outline(Layers layers, Instances instances) : layers_(std::move(layers)), instances_(std::move(instances)) {}
     const std::vector<mgeom::Point>& hull() const;
+    const Layers& layers() const { return layers_; }
+    const Instances& instances() const { return instances_; }
 
 private:
     Layers layers_;
@@ -38,15 +40,19 @@ private:
 // The alignment points of one evaluated node, in the frame of the list holding
 // it (mems_sketch.core.shapes.points.NodePoints): declared ones (a reference's)
 // and those of its bounding box, mapped by ``transform`` into another frame
-// (inside a transform node); ``min.<point>`` those of its minimal box.
+// (inside a transform node); ``min.<point>`` those of its minimal box. A
+// reference's ports too.
 struct Points {
     std::string name;
     mgeom::Box box;     // of its geometry, all layers
     PointMap declared;
     mgeom::Transform transform;
     std::shared_ptr<const Outline> outline;  // for the minimal box (none: its declared points)
+    PortMap ports;
 
     mgeom::Point point(const std::string& point) const;
+    // Its port ``name``, mapped like its points.
+    Port port(const std::string& name) const;
     // What a name after the node's measures: ``left.x``, ``width``, ``min.angle``,
     // ``min.top_right.y`` (see measure_name).
     double measure(const std::string& path) const;
@@ -66,11 +72,12 @@ std::optional<MeasureName> measure_name(const std::string& name);
 using Scope = std::map<std::string, Points, std::less<>>;
 
 // What one copy of a node makes: its own geometry, the components it places
-// whole, and the points it declares.
+// whole, and the points and ports it declares.
 struct Result {
     Layers layers;
     PointMap points;
     Instances instances;
+    PortMap ports;
 
     // Everything flattened, for operations that work on the geometry.
     Layers flat() const { return instances.empty() ? layers : flatten(layers, instances); }

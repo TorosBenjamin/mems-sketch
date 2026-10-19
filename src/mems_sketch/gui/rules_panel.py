@@ -25,7 +25,6 @@ import dataclasses
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -135,7 +134,7 @@ class RulesPanel(_Panel):
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
-        self.process = QComboBox()
+        self.process = widgets.QualifiedCombo()  # library.process: the library muted
         self.process.setToolTip(
             "The process the project uses: one of its own, or a library's (library.process), "
             "whose layers then stay as they are there"

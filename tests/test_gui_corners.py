@@ -125,7 +125,7 @@ def test_the_properties_card_edits_and_removes_corners(window):
 
 
 def test_a_placed_part_can_be_rounded_where_it_is_placed(window):
-    path = window.document.nodes.add_component("anchor", 100, 0)
+    path = window.document.nodes.add_component("mems.anchor", 100, 0)
     window.tree.select_paths([path])
     window.set_tool("corners")
     tool = window.tool
@@ -133,3 +133,76 @@ def test_a_placed_part_can_be_rounded_where_it_is_placed(window):
     click(tool, x, y)
     node = window.document.node(path)
     assert isinstance(node.modifiers[0], CornersModifier)  # on the placement: the part is as it was
+
+
+# -- handles, a preview while dragging, corners that do not fit (#116) ---------------
+
+
+def handles(window):
+    return window.canvas._corner_handles
+
+
+def test_a_rounded_corner_has_a_handle_on_its_bisector_with_its_radius(window):
+    window.document.corners.add(((0, 0),), 40, 20, radius=2)
+    window.set_tool("corners")
+    [handle] = handles(window)
+    assert handle.corner == pytest.approx((40, 20))
+    d = 2 / 2**0.5  # into the plate, at 45°, 2 µm from the corner
+    assert handle.handle == pytest.approx((40 - d, 20 - d))
+    assert handle.label == "r 2 µm" and handle.fits
+    window.set_tool("select")
+    assert handles(window) == []  # only while rounding corners
+
+
+def test_dragging_draws_the_rounding_and_builds_only_on_release(window, monkeypatch):
+    window.set_tool("corners")
+    tool = window.tool
+    built = []
+    monkeypatch.setattr(window, "_preview_node", lambda *a, **k: built.append(a))
+    tool.press(40, 20, NONE)
+    for d in (1.0, 2.0, 4.0):
+        tool.move(40, 20 + d, NONE, True)
+    preview = window.canvas._corner_preview
+    assert preview and built == []  # drawn, not built
+    # the rounding meets the edges 4 µm from the corner (a right angle)
+    ends = sorted([tuple(round(v, 6) for v in preview[0]), tuple(round(v, 6) for v in preview[-1])])
+    assert ends == [(36, 20), (40, 16)]
+    assert handles(window)[0].label == "r 4 µm"
+    tool.release(40, 24, NONE)
+    assert window.canvas._corner_preview == []
+    assert [c.radius for c in corners(window)] == [4.0]
+
+
+def test_dragging_a_handle_changes_the_radius(window):
+    window.document.corners.add(((0, 0),), 40, 20, radius=2)
+    window.set_tool("corners")
+    tool = window.tool
+    hx, hy = handles(window)[0].handle
+    click(tool, hx, hy)  # a click on a handle changes nothing
+    assert [c.radius for c in corners(window)] == [2.0]
+    tool.press(hx, hy, NONE)
+    d = 5 / 2**0.5
+    tool.move(40 - d, 20 - d, NONE, True)  # along the bisector, 5 µm from the corner
+    tool.release(40 - d, 20 - d, NONE)
+    assert [c.radius for c in corners(window)] == [5.0]
+
+
+def test_rounding_another_corner_keeps_the_first(window):
+    doc, path = window.document, ((0, 0),)
+    doc.corners.add(path, 40, 20, radius=3)
+    doc.corners.add(path, 0, 0, radius=1)
+    assert sorted(c.radius for c in corners(window)) == [1.0, 3.0]
+
+
+def test_a_corner_whose_radius_no_longer_fits_is_marked(window):
+    doc, path = window.document, ((0, 0),)
+    doc.corners.add(path, 40, 20, radius=8)
+    doc.check_builds = False  # keep an edit that does not build, to see it marked
+    doc.nodes.replace(path, doc.node(path).model_copy(update={"y1": 6}))  # now 6 high
+    assert any("corner" in p for p in doc.problems())
+    assert doc.corners.failing(path) == [pytest.approx((40, 6))]
+    window.refresh()
+    assert window._corner_errors == [pytest.approx((40, 6))]  # boxed like a violation
+    window.set_tool("corners")
+    [handle] = handles(window)
+    assert not handle.fits and "too large" in handle.label

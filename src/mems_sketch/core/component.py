@@ -360,19 +360,3 @@ def resolve_params(
         is_text = key in fields and fields[key].annotation is str
         values[key] = value if is_text or not isinstance(value, str) else evaluate(value, variables)
     return component.Params(**values)
-
-
-def builtin_definitions() -> dict:
-    """The built-in components' definitions by name (mems_sketch.components)."""
-    from mems_sketch.components import builtin_components
-
-    return builtin_components()
-
-
-def is_builtin(name: str) -> bool:
-    return "/" not in name and name in builtin_definitions()
-
-
-def component_types() -> list[str]:
-    """The built-in components' names."""
-    return sorted(n for n in builtin_definitions() if "/" not in n)

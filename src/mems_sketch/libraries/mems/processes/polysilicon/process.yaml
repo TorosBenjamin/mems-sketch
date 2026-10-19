@@ -1,0 +1,58 @@
+description: >-
+  An example two-poly surface-micromachining process: a poly0 ground layer, two
+  released structural layers (poly1 over oxide1, poly2 over oxide2) and a metal
+  layer on poly2. Typical, round values, not any foundry's rules.
+constants:
+  undercut: 3          # how far the release etch reaches under a layer (µm)
+  min_gap: 2
+  t_poly0: 0.5         # layer thicknesses (µm)
+  t_oxide1: 2
+  t_poly1: 2
+  t_oxide2: 0.75
+  t_poly2: 1.5
+  t_metal: 0.5
+layers:
+  poly0: {gds: [1, 0]}
+  anchor1: {gds: [2, 0]}
+  dimple: {gds: [3, 0]}
+  poly1: {gds: [4, 0]}
+  via12: {gds: [5, 0]}
+  anchor2: {gds: [6, 0]}
+  poly2: {gds: [7, 0]}
+  metal: {gds: [8, 0]}
+levels:
+- {layer: poly0}
+- layer: poly1
+  roles: {anchor: anchor1, dimple: dimple}
+- layer: poly2
+  roles: {anchor: anchor2, via: via12}
+- {layer: metal}
+default_level: poly1
+rules:
+  poly0_min_width: {kind: min_width, layers: [poly0], value: 3}
+  poly0_min_space: {kind: min_space, layers: [poly0], value: 2}
+  poly1_min_width: {kind: min_width, layers: [poly1], value: 2}
+  poly1_min_space: {kind: min_space, layers: [poly1], value: 2}
+  poly2_min_width: {kind: min_width, layers: [poly2], value: 2}
+  poly2_min_space: {kind: min_space, layers: [poly2], value: 2}
+  metal_min_width: {kind: min_width, layers: [metal], value: 3}
+  metal_min_space: {kind: min_space, layers: [metal], value: 3}
+  anchor1_min_width: {kind: min_width, layers: [anchor1], value: 3}
+  anchor1_in_poly1: {kind: enclosure, layers: [poly1, anchor1], value: 2}
+  dimple_in_poly1: {kind: enclosure, layers: [poly1, dimple], value: 2}
+  via12_in_poly1: {kind: enclosure, layers: [poly1, via12], value: 2}
+  via12_in_poly2: {kind: enclosure, layers: [poly2, via12], value: 2}
+  anchor2_in_poly2: {kind: enclosure, layers: [poly2, anchor2], value: 2}
+  metal_on_poly2:
+    kind: enclosure
+    layers: [poly2, metal]
+    value: 2
+    message: metal sits on poly2, 2 µm inside its edge
+  anchor_hole_area: {kind: min_area, layers: [anchor1], value: 9}
+  poly1_anchored: {kind: anchored, layers: [poly1, anchor1], severity: warning}
+  poly1_release:
+    kind: release
+    layers: [poly1, anchor1]
+    undercut: process.undercut
+    severity: warning
+  poly2_anchored: {kind: anchored, layers: [poly2, anchor2], severity: warning}

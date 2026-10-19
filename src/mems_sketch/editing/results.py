@@ -16,6 +16,7 @@ from mems_sketch.core.shapes import (
     NodePath,
     NodePoints,
     NodeRecord,
+    Port,
     Shape,
     container_of,
     frame_of,
@@ -362,6 +363,33 @@ class Results:
         """Positions of a component's declared points (trial values included)."""
         component = component or self.session.active
         return self._build(component).points()
+
+    def declared_ports(self, component: str | None = None) -> dict[str, Port]:
+        """A component's ports as built (trial values included)."""
+        component = component or self.session.active
+        return self._build(component).ports()
+
+    def node_ports(self, path: NodePath, component: str | None = None) -> dict[str, Port]:
+        """The ports of a placed component at ``path`` (an array's copies' by index
+        too), in its component's frame."""
+        record = self.inspection(component)
+        if path not in record:
+            return {}
+        frame = frame_of(record, path)
+        return {name: port.transformed(frame) for name, port in record[path].ports.items()}
+
+    def all_ports(self, component: str | None = None) -> dict[str, Port]:
+        """Every port a route or a connection beside the shapes can name
+        (``shape.port.name``, the top-level named shapes'), in the component's frame."""
+        component = component or self.session.active
+        shapes = self.session.definition_of(component).shapes
+        result = {}
+        for path in sorted(self.inspection(component)):
+            name = node_at(shapes, path).name if len(path) == 1 else None
+            if name:
+                ports = self.node_ports(path, component)
+                result.update({f"{name}.port.{p}": port for p, port in ports.items()})
+        return result
 
     def selection_center(self, paths: list[NodePath]) -> tuple[float, float] | None:
         """Centre of the bounding box of the given shapes, in the component's frame."""

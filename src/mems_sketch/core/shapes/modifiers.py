@@ -7,6 +7,8 @@ the node (with the modifiers before it) produces and returns new geometry.
 * ``polar_array``: ``count`` copies around a centre ``x``, ``y``, ``step``
   degrees apart (a full circle by default), rotated with it or not
 * ``corners``: chosen corners rounded or chamfered, each with its own radius
+* ``perforate``: holes on a square or hexagonal grid, each wholly inside the
+  node's outline shrunk by ``margin`` and clear of the ``keep_out`` shapes
 * ``mirror``: the node plus its mirror image across the vertical line at
   ``x`` (``axis: x``), the horizontal line at ``y`` (``axis: y``) or both; or,
   with ``about``, across a guide line (``about: centerline``) or through a
@@ -371,6 +373,53 @@ class CornersModifier(Modifier):
         raise ValueError("rounded corners cannot be applied into shapes; keep the modifier")
 
 
+class PerforateModifier(Modifier):
+    """Holes on a grid, filling whatever the node is (a rectangle, a polygon, a
+    boolean's result): release holes.
+
+    A hole goes only where it fits wholly inside the outline shrunk by
+    ``margin`` and stays ``keep_out_margin`` (default ``margin``) clear of the
+    ``keep_out`` shapes (their names): no half holes at the edges. The holes
+    refill when the node changes. Holes are ``hole_size`` wide and
+    ``hole_height`` high (default: square), their corners rounded by
+    ``corner_radius`` (default half the shorter side: circles, or stadiums; 0
+    for sharp corners). ``grid: hex`` staggers every other row by half a pitch,
+    rows ``pitch`` × √3/2 apart unless ``row_pitch`` says. The grid is centred
+    on the node; ``x``, ``y`` put a hole's centre there instead.
+    """
+
+    kind: Literal["perforate"] = "perforate"
+    icon: ClassVar[str] = "perforate"
+    grid: Literal["square", "hex"] = "square"
+    pitch: Value = 10.0
+    row_pitch: Value | None = None
+    hole_size: Value = 4.0
+    hole_height: Value | None = None
+    corner_radius: Value | None = None
+    margin: Value = 2.0
+    keep_out: list[str] = []
+    keep_out_margin: Value | None = None
+    x: Value | None = None
+    y: Value | None = None
+
+    @field_validator("keep_out")
+    @classmethod
+    def _keep_out(cls, names: list[str]) -> list[str]:
+        for name in names:
+            if not name.isidentifier() or name == "self":
+                raise ValueError(f"'{name}' is not a shape's name")
+        return names
+
+    def point_references(self) -> list[str]:
+        return [f"{name}.center.{axis}" for name in self.keep_out for axis in "xy"]
+
+    def summary(self):
+        return f"perforate {self.grid} {_format(self.pitch)}"
+
+    def baked(self, node, variables, measure):
+        raise ValueError("a perforation cannot be applied into shapes; keep the modifier")
+
+
 def _um(value: float) -> float:
     return round(value, 6) + 0.0
 
@@ -398,9 +447,10 @@ MODIFIER_KINDS: tuple[type[Modifier], ...] = (
     PolarArrayModifier,
     MirrorModifier,
     CornersModifier,
+    PerforateModifier,
 )
 AnyModifier = Annotated[
-    ArrayModifier | PolarArrayModifier | MirrorModifier | CornersModifier,
+    ArrayModifier | PolarArrayModifier | MirrorModifier | CornersModifier | PerforateModifier,
     Field(discriminator="kind"),
 ]
 MODIFIER_ADAPTER: TypeAdapter = TypeAdapter(AnyModifier)

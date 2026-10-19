@@ -68,7 +68,10 @@ def names_in(expression: str) -> set[str]:
 def evaluate(expression: str | float, variables: Mapping[str, float]) -> float:
     if isinstance(expression, (int, float)):
         return float(expression)
-    return float(_eval(_parse(expression).body, variables))
+    try:
+        return float(_eval(_parse(expression).body, variables))
+    except ZeroDivisionError as error:  # an expression's error, as in the engine
+        raise ExpressionError(f"{expression}: {error}") from None
 
 
 def resolve_variables(

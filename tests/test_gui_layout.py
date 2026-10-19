@@ -184,7 +184,7 @@ def test_right_click_opens_the_menu_and_right_drag_pans(window, menus):
     canvas = window.canvas
     centre = QPointF(canvas.viewport().rect().center())
     right_click(canvas, centre)
-    assert len(menus) == 1 and {"Add", "Place component", "Rectangle"} <= set(menus[0])
+    assert len(menus) == 1 and {"Add", "Place component…", "Rectangle"} <= set(menus[0])
     before = canvas.mapToScene(centre.toPoint())
     right_click(canvas, centre, QPointF(40, 0))
     assert len(menus) == 1  # a drag pans instead
@@ -229,12 +229,11 @@ def test_the_mode_palette_switches_tools(window):
         "Rotate",
         "Align",
         "Corners",
-        "Measure",
-        "Measure angle",
+        "Measure",  # distances and angles: its modes are in the status bar
     ]
     assert all(b.isVisible() for b in buttons.values())
     palette = window.canvas.mode_palette
-    assert palette.height() >= 8 * 24  # sized to hold its buttons
+    assert palette.height() >= 7 * 24  # sized to hold its buttons
     buttons["Measure"].click()
     assert window.tool.name == "measure" and buttons["Measure"].isChecked()
 
@@ -257,7 +256,7 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture
 def project(tmp_path):
-    for name in ("resonator", "libraries"):
+    for name in ("resonator",):
         shutil.copytree(
             EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
         )
@@ -367,6 +366,7 @@ def test_frame_and_islands_have_their_own_colours(window, name, qtbot):
     from mems_sketch.gui.theme import tokens
 
     window.settings.set("appearance/ui_theme", name)
+    window.components.tree.collapseAll()  # so the island shows below the rows
     qtbot.wait(20)
     image = window.grab().toImage()
     stripe = window.tool_windows.findChild(QWidget, "tool-window-stripe-left")
@@ -463,8 +463,8 @@ def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path)
     panel = window.area.process_view.rules
     panel.refresh()
     items = [panel.process.itemText(k) for k in range(panel.process.count())]
-    assert items == ["main", "fab.surface"]
-    panel.process.activated.emit(1)
+    assert items == ["main", "mems.surface", "mems.polysilicon", "mems.soi", "fab.surface"]
+    panel.process.activated.emit(4)
     assert window.document.project.process_name == "fab.surface"
     table = panel.rules
     row = [table.item(r, 0).text() for r in range(table.rowCount())].index("device_min_width")

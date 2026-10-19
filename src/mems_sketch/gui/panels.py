@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, QMimeData, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.core.component import component_types
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
@@ -158,14 +157,14 @@ class _Panel(QWidget):
 
 
 class ComponentsPanel(_Panel):
-    """An explorer of the components: the project's, each library's and the built-ins.
+    """An explorer of the components: the project's and each library's (in categories).
 
     These are definitions, each listed once. A component expands to its
     *private* components (``comb/finger``: made for comb, placed only inside
     it); shared ones sit at the top of their group. What places what is in
     the tooltips, and the placements themselves (each with its own name) are
-    in the Shapes list. Double-click opens a component in a tab (library and
-    built-in ones read-only); drag one onto the canvas, or use Place, to put it
+    in the Shapes list. Double-click opens a component in a tab (library ones
+    read-only); drag one onto the canvas, or use Place, to put it
     into the component being edited. Right-click for everything else.
     """
 
@@ -175,8 +174,9 @@ class ComponentsPanel(_Panel):
     process_requested = Signal()
     collapse_changed = Signal()
     NAME_ROLE = Qt.ItemDataRole.UserRole
-    GROUP_ROLE = Qt.ItemDataRole.UserRole + 1  # "project", "library:<name>", "builtin"
+    GROUP_ROLE = Qt.ItemDataRole.UserRole + 1  # "project", "library:<name>", "imported"
     PROCESS_ROLE = Qt.ItemDataRole.UserRole + 2  # the Process item
+    CATEGORY_ROLE = Qt.ItemDataRole.UserRole + 3  # a library's category: "<library>/<category>"
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -187,7 +187,7 @@ class ComponentsPanel(_Panel):
         self.tree.itemDoubleClicked.connect(self._activated)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
-        self.collapsed: set[str] = set()  # collapsed groups, e.g. "Built-in"
+        self.collapsed: set[str] = set()  # collapsed groups and categories, e.g. "Library: mems"
         self.expanded: set[str] = set()  # expanded components, by their path in the tree
         self.tree.itemCollapsed.connect(lambda item: self._set_expanded(item, False))
         self.tree.itemExpanded.connect(lambda item: self._set_expanded(item, True))
@@ -226,23 +226,55 @@ class ComponentsPanel(_Panel):
         for name in sorted(shared, key=lambda n: n != project.top):  # top first
             self._component(local, name)
         for library in project.libraries.values():
-            where = f" — {library.path}" if library.path else ""
-            group = self._group(
-                library.name, f"library:{library.name}", "library", f"Library{where}"
-            )
-            for name in library.components:
-                if "/" not in name:
-                    self._component(group, f"{library.name}.{name}")
+            if library.bundled:
+                tip = f"Bundled library: every project has it{_described(library.description)}"
+            else:
+                where = f" — {library.path}" if library.path else ""
+                tip = f"Library{where}{_described(library.description)}"
+            group = self._group(library.name, f"library:{library.name}", "library", tip)
+            self._library_components(group, library)
         if project.imports:
             imported = self._group(
                 "Imported", "imported", "import", "Cells imported from GDS files (read-only)"
             )
             for name in sorted(project.imports):
                 self._component(imported, name)
-        builtins = self._group("Built-in", "builtin", "builtin", "Built-in components")
-        for name in component_types():
-            self._component(builtins, name)
         self.tree.verticalScrollBar().setValue(scroll)
+
+    def _library_components(self, group: QTreeWidgetItem, library) -> None:
+        """A library's shared components, in its categories (in their order, then
+        by title) and below them the ones in none."""
+        shared = [n for n in library.components if "/" not in n]
+        categories = sorted(
+            {library.components[n].category for n in shared} - {""},
+            key=lambda c: (
+                library.categories.get(c, {}).get("order") is None,
+                library.categories.get(c, {}).get("order") or 0,
+                library.category_title(c),
+            ),
+        )
+        items: dict[str, QTreeWidgetItem] = {}
+
+        def category_item(category: str) -> QTreeWidgetItem:
+            if category not in items:
+                parent, _, _ = category.rpartition("/")
+                above = category_item(parent) if parent else group
+                item = QTreeWidgetItem(above, [library.category_title(category)])
+                item.setIcon(0, icons.icon("folder"))
+                item.setData(0, self.CATEGORY_ROLE, f"{library.name}/{category}")
+                description = library.categories.get(category, {}).get("description")
+                item.setToolTip(0, description or f"{library.category_title(category)} components")
+                item.setExpanded(self._state_key(item) not in self.collapsed)
+                items[category] = item
+            return items[category]
+
+        for category in categories:
+            for name in shared:
+                if library.components[name].category == category:
+                    self._component(category_item(category), f"{library.name}.{name}")
+        for name in shared:
+            if not library.components[name].category:
+                self._component(group, f"{library.name}.{name}")
 
     def _group(self, title: str, key: str, icon: str, tip: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem(self.tree, [title])
@@ -302,13 +334,14 @@ class ComponentsPanel(_Panel):
         elif name in project.imports:
             imported = project.imports[name]
             kind = f"imported, read-only: cell {imported.cell} of {imported.file}"
-        elif name in project.components:
-            kind = "top component" if name == project.top else "project component"
         else:
-            kind = "built-in component, read-only"
+            kind = "top component" if name == project.top else "project component"
         if owner:
             kind += f"\nprivate to {owner}: placed only inside it"
         lines = [f"{name} — {kind}"]
+        found = project.definition(name) if name not in project.imports else None
+        if found is not None and found[0].tags:
+            lines.append(f"tags: {', '.join(found[0].tags)}")
         places = [target for target, _count in self.document.components.placed(name)]
         if places:
             lines.append(f"places {', '.join(places)}")
@@ -321,17 +354,19 @@ class ComponentsPanel(_Panel):
 
     def _state_key(self, item: QTreeWidgetItem) -> str:
         """Groups keep the keys the editor state has always used."""
+        category = item.data(0, self.CATEGORY_ROLE)
+        if category is not None:
+            return f"Category: {category}"
         key = item.data(0, self.GROUP_ROLE)
         if key == "project":
             return "project"
-        if key == "builtin":
-            return "Built-in"
         return f"Library: {key.partition(':')[2]}"
 
     def _path_key(self, item: QTreeWidgetItem) -> str:
         names = []
         while item is not None and item.data(0, self.GROUP_ROLE) is None:
-            names.append(item.data(0, self.NAME_ROLE))
+            if item.data(0, self.CATEGORY_ROLE) is None:
+                names.append(item.data(0, self.NAME_ROLE))
             item = item.parent()
         group = item.data(0, self.GROUP_ROLE) if item is not None else ""
         return "/".join([group, *reversed(names)])
@@ -339,7 +374,7 @@ class ComponentsPanel(_Panel):
     def _set_expanded(self, item: QTreeWidgetItem, expanded: bool) -> None:
         if self._refreshing or item.data(0, self.PROCESS_ROLE):
             return
-        if item.data(0, self.GROUP_ROLE) is not None:
+        if item.data(0, self.GROUP_ROLE) is not None or item.data(0, self.CATEGORY_ROLE):
             key = self._state_key(item)
             (self.collapsed.discard if expanded else self.collapsed.add)(key)
         else:
@@ -400,7 +435,7 @@ class ComponentsPanel(_Panel):
                 self._project_actions(menu)
             elif group == "imported":
                 _menu_action(menu, "Import…", self.import_gds, "import")
-            elif group.startswith("library:"):
+            elif group.startswith("library:") and not self._bundled(group.partition(":")[2]):
                 library = group.partition(":")[2]
                 _menu_action(
                     menu,
@@ -408,10 +443,14 @@ class ComponentsPanel(_Panel):
                     lambda: self._guard(lambda: self.document.components.remove_library(library)),
                     "remove",
                 )
-        else:
+        elif item.data(0, self.NAME_ROLE) is not None:
             self.tree.setCurrentItem(item)
             self._component_actions(menu, item.data(0, self.NAME_ROLE))
         return menu
+
+    def _bundled(self, library: str) -> bool:
+        found = self.document.project.libraries.get(library)
+        return found is not None and found.bundled is not None
 
     def _project_actions(self, menu) -> None:
         _menu_action(menu, "New component…", self._new, "add")
@@ -612,22 +651,22 @@ class _ComponentTree(QTreeWidget):
         return data
 
 
+def _described(description: str) -> str:
+    return f"\n{description}" if description else ""
+
+
 def component_icon(project, name: str) -> str:
-    """Project, library, imported and built-in components have their own icons."""
+    """Project, library and imported components have their own icons."""
     if "." in name:
         return "component_library"
-    if name in project.components:
-        return "top" if name == project.top else "component"
     if name in project.imports:
         return "component_imported"
-    return "component_builtin"
+    return "top" if name == project.top else "component"
 
 
 def read_only_kind(project, name: str) -> str:
-    """What a component that cannot be edited is: ``library``, ``imported`` or ``built-in``."""
-    if "." in name:
-        return "library"
-    return "imported" if name in project.imports else "built-in"
+    """What a component that cannot be edited is: ``library`` or ``imported``."""
+    return "imported" if name in project.imports else "library"
 
 
 def _menu_action(menu, text: str, slot, icon: str | None = None):
@@ -643,6 +682,9 @@ def _menu_action(menu, text: str, slot, icon: str | None = None):
 DETAIL_ROLE = Qt.ItemDataRole.UserRole + 5  # muted text drawn after an item's name
 PLACES_ROLE = Qt.ItemDataRole.UserRole + 6  # a shape row placing a component: its name
 INSIDE_ROLE = Qt.ItemDataRole.UserRole + 7  # a row inside a placed component: (owner, path)
+
+
+DETAIL_LEAST_CHARS = 6  # a detail shortened to fewer letters is left out
 
 
 class DetailDelegate(QStyledItemDelegate):
@@ -662,11 +704,13 @@ class DetailDelegate(QStyledItemDelegate):
         metrics = style_option.fontMetrics
         used = metrics.horizontalAdvance(style_option.text) + 8
         rect = text_rect.adjusted(used, 0, 0, 0)
-        if rect.width() <= 10:
-            return
-        painter.save()
         font = QFont(style_option.font)
         font.setBold(False)
+        # A few letters and "…" say nothing ("s…"): then no detail (the tooltip has it).
+        least = QFontMetrics(font).horizontalAdvance(detail[:DETAIL_LEAST_CHARS] + "…")
+        if rect.width() < least and len(detail) > DETAIL_LEAST_CHARS:
+            return
+        painter.save()
         painter.setFont(font)
         painter.setPen(option.palette.placeholderText().color())
         text = QFontMetrics(font).elidedText(detail, Qt.TextElideMode.ElideRight, rect.width())
@@ -724,6 +768,7 @@ class ShapeTree(QTreeWidget):
 
     def _expanded(self, item: QTreeWidgetItem) -> None:
         self._fill_placed(item)
+        self._fit_icon_columns()
         self._set_collapsed(item, False)
 
     def _set_collapsed(self, item: QTreeWidgetItem, collapsed: bool) -> None:
@@ -762,7 +807,20 @@ class ShapeTree(QTreeWidget):
             if item.data(0, INSIDE_ROLE) is None:
                 pending.extend(item.child(i) for i in range(item.childCount()))
         self._rebuilding = False
+        self._fit_icon_columns()
         self.select_paths(keep)
+
+    def _fit_icon_columns(self) -> None:
+        """Show the alignment and modifier columns only when a row uses them, so the
+        names have that room otherwise."""
+        for column in (self.STATUS, self.MODIFIERS):
+            used = False
+            pending = [self.topLevelItem(i) for i in range(self.topLevelItemCount())]
+            while pending and not used:
+                item = pending.pop()
+                used = not item.icon(column).isNull()
+                pending.extend(item.child(i) for i in range(item.childCount()))
+            self.setColumnHidden(column, not used)
 
     def _show_pieces(self, item: QTreeWidgetItem, shape: Shape, path: NodePath) -> None:
         """Say when a cut splits a shape, e.g. "2 pieces · subtract" (copies made by
@@ -840,7 +898,7 @@ class ShapeTree(QTreeWidget):
             return
         found = project.definition(target)
         if found is None or not found[0].shapes:
-            return  # a built-in (or empty) component has nothing to show
+            return  # an empty component has nothing to show
         if target not in project.components and not self.show_implementation:
             return  # a library component: how it is built is not shown
         item.setData(0, PLACES_ROLE, target)
@@ -932,7 +990,7 @@ class ParametersPanel(_Panel):
     """Parameters of the component in the current tab: default, limits, trial and value.
 
     A trial value overrides the default for viewing only; it is not saved.
-    Library and built-in components are read-only, but trial values work.
+    Library components are read-only, but trial values work.
     A lock marks an internal parameter: one only the component itself uses,
     not offered where it is placed.
 
@@ -1247,6 +1305,8 @@ class LayerDefinitionsPanel(_Panel):
         super().__init__()
         self.document = document
         self.layers = _table(self.LAYER_COLUMNS)
+        # A level's layer (device.anchor): the level muted.
+        self.layers.setItemDelegateForColumn(3, widgets.QualifiedDelegate(self.layers))
         self.layers.itemChanged.connect(self._layer_changed)
         card = widgets.Card(
             "Layers",
@@ -1457,6 +1517,8 @@ class MessagesPanel(QListWidget):
         self.itemClicked.connect(self._activated)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._context_menu)
+        size = theme.metric("icon_size")
+        self.setIconSize(QSize(size, size))
 
     counts_changed = Signal(int, int)  # errors, violations not waived
 

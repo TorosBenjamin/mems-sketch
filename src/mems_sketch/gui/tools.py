@@ -16,6 +16,8 @@ goes to the active tool:
   corner, centre and radius)
 * **Polygon** (P) and **Path** (W): click the points; double-click, Enter or
   a click on the first point finishes, Backspace takes back the last point
+* **Route** (E): click a port, any via points, then another port; drag a
+  selected route's via points to move them
 
 Drawing tools draw on the layer chosen in the toolbar, at the top level of
 the component being edited. Their points snap to shape points, else to the
@@ -33,12 +35,13 @@ the grid snap, and the rotation step come from the settings.
 
 from __future__ import annotations
 
-import contextlib
 import math
 from typing import TYPE_CHECKING, ClassVar
 
+import numpy as np
 from PySide6.QtCore import Qt
 
+from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes import (
     Align,
     CircleShape,
@@ -47,6 +50,7 @@ from mems_sketch.core.shapes import (
     PathShape,
     PolygonShape,
     RectShape,
+    RouteShape,
     Shape,
 )
 from mems_sketch.engine import build_shapes
@@ -98,6 +102,7 @@ class Tool:
     shortcut: ClassVar[str]
     edits: ClassVar[bool] = True  # changes the design, so refused on read-only tabs
     draws: ClassVar[bool] = False  # a drawing tool (started from Add, not a canvas mode)
+    listed: ClassVar[bool] = True  # in the Tools menu (not a tool only started from elsewhere)
     gizmo: ClassVar[str | None] = None  # the gizmo shown on the selection, if any
     hovers: ClassVar[bool] = False  # outline the shape under the cursor
     icon: ClassVar[str] = "select"
@@ -817,9 +822,14 @@ class CornersTool(Tool):
     """Round corners: pick a shape, then click its corners.
 
     A click rounds a corner (with the last radius used) or, on a rounded one,
-    makes it sharp again; dragging away from a corner sets its radius, drawn
-    as you drag. The corners go into the shape's corners modifier, recorded
-    so that they follow the design (see :mod:`mems_sketch.editing.corners`).
+    makes it sharp again; dragging away from a corner sets its radius. Each
+    rounded corner has a handle on the bisector at its radius from the corner,
+    with the radius by it: drag it to change the radius. While dragging only the
+    rounding is drawn (nothing is rebuilt) and the radius stops at the largest
+    that fits; the shape is rebuilt on release. A corner whose radius does not
+    fit (the shape changed under it) is ringed in the error colour. The corners
+    go into the shape's corners modifier, recorded so that they follow the
+    design (see :mod:`mems_sketch.editing.corners`).
     """
 
     name, label, shortcut = "corners", "Corners", "O"
@@ -835,9 +845,16 @@ class CornersTool(Tool):
         self.path: NodePath | None = None
         self.candidates: list[tuple[float, float]] = []
         self.rounded: list[tuple[int, tuple[float, float]]] = []
+        self.shown: list = []  # RoundedCorner: the handles
         self._press: tuple[float, float] | None = None  # the corner a press is on
+        self._on_handle = False  # the press was on a rounded corner's handle
+        self._shape = None  # the pressed corner's CornerShape, for the preview
+        self._style = "round"
         self._dragged: float | None = None  # the radius being dragged
         self._limit: float | None = None  # the largest radius that corner takes
+        if hasattr(self, "window"):
+            self.canvas.show_corner_handles([])
+            self.canvas.show_corner_preview([])
 
     @property
     def busy(self) -> bool:
@@ -848,9 +865,15 @@ class CornersTool(Tool):
         if len(self.window.selection) == 1:
             self.begin(self.window.selection[0])
 
+    def deactivate(self) -> None:
+        super().deactivate()
+        self.canvas.show_corner_handles([])
+        self.canvas.show_corner_preview([])
+
     def design_changed(self) -> None:
         """Stay on the shape (its corners may have moved or gone), unless it is gone."""
         self._press = self._dragged = None
+        self.canvas.show_corner_preview([])
         if self.path is not None and not self._refresh():
             self.reset()
 
@@ -860,7 +883,7 @@ class CornersTool(Tool):
         name = self.document.node(self.path).name or self.document.node(self.path).kind
         return (
             f"Corners of {name}: click a corner to round it (again: sharp), drag from it "
-            "to set the radius; Esc when done"
+            "or its handle to set the radius; Esc when done"
         )
 
     def begin(self, path: NodePath) -> None:
@@ -879,33 +902,58 @@ class CornersTool(Tool):
             return False
         try:
             self.candidates = self.document.corners.candidates(self.path)
+            self.shown = self.document.corners.shown(self.path)
             self.rounded = self.document.corners.rounded(self.path)
         except (ValueError, KeyError, IndexError):  # e.g. undone away
             return False
+        self._show_handles()
         return True
 
-    def _corner_at(self, x: float, y: float) -> tuple[float, float] | None:
-        points = self.candidates + [p for _, p in self.rounded]
-        best, found = self.reach, None
-        for px, py in points:
+    def _show_handles(self, dragged: tuple[tuple[float, float], float] | None = None) -> None:
+        """A handle per rounded corner (the dragged one where the drag has it)."""
+        handles = []
+        for corner in self.shown:
+            radius = corner.radius
+            if dragged is not None and _close(corner.shape.point, dragged[0]):
+                radius = dragged[1]
+            handles.append(_handle(corner.shape, radius, corner.style, corner.fits))
+        new = dragged is not None and not any(_close(c.shape.point, dragged[0]) for c in self.shown)
+        if new and self._shape is not None:  # a corner being rounded for the first time
+            handles.append(_handle(self._shape, dragged[1], self._style, True))
+        self.canvas.show_corner_handles(handles)
+
+    def _corner_at(self, x: float, y: float) -> tuple[tuple[float, float] | None, bool]:
+        """The corner a press at ``(x, y)`` is on, and whether it was on its handle."""
+        best, found, handle = self.reach, None, False
+        for corner in self.shown:
+            hx, hy = corner.shape.handle(corner.radius)
+            distance = math.hypot(hx - x, hy - y)
+            if distance < best:
+                best, found, handle = distance, corner.shape.point, True
+        for px, py in self.candidates + [p for _, p in self.rounded]:
             distance = math.hypot(px - x, py - y)
             if distance < best:
-                best, found = distance, (px, py)
-        return found
+                best, found, handle = distance, (px, py), False
+        return found, handle
 
     def press(self, x, y, modifiers) -> None:
-        corner = self._corner_at(x, y) if self.path is not None else None
+        corner, on_handle = self._corner_at(x, y) if self.path is not None else (None, False)
         if corner is None:
             hit = self.window.hit(x, y)
             self.window.select_click(hit, False)
             if hit is not None:
                 self.begin(hit)
             return
-        self._press, self._dragged = corner, None
+        self._press, self._on_handle, self._dragged = corner, on_handle, None
+        existing = next((c for c in self.shown if _close(c.shape.point, corner)), None)
+        self._style = existing.style if existing is not None else "round"
         try:  # worked out once: the drag stops at the largest radius that fits
             self._limit = self.document.corners.max_radius(self.path, *corner)
+            self._shape = (
+                existing.shape if existing else self.document.corners.shape(self.path, *corner)
+            )
         except (ValueError, KeyError, IndexError):
-            self._limit = None
+            self._limit, self._shape = None, None
 
     def move(self, x, y, modifiers, left) -> None:
         if self._press is None or not left:
@@ -918,24 +966,31 @@ class CornersTool(Tool):
         if largest is not None and radius >= largest:
             radius = largest
         if radius == self._dragged:
-            return  # nothing new to show: no rebuild
+            return  # nothing new to show
         self._dragged = radius
         note = "the largest that fits" if radius == largest else "Ctrl: exact"
         self.window.live(f"Radius {radius:g} µm   (release to set; {note})", f"r {radius:g} µm")
-        with contextlib.suppress(ValueError, KeyError):
-            node, _ = self.document.corners.with_corner(self.path, *self._press, _um(radius))
-            self.window._preview_node(node, self.path)
+        # Only the rounding is drawn while dragging; the shape is built on release.
+        if self._shape is not None:
+            self.canvas.show_corner_preview(self._shape.arc(radius, self._style))
+        self._show_handles((self._press, radius))
 
     def release(self, x, y, modifiers) -> None:
-        corner, radius = self._press, self._dragged
+        corner, radius, on_handle = self._press, self._dragged, self._on_handle
         self._press = self._dragged = None
+        self._on_handle = False
+        self.canvas.show_corner_preview([])
         if corner is None:
             return
         path = self.path
         existing = self.document.corners.at(path, *corner)
         if radius is not None:
             self.radius = _um(radius)
-            self.window.run(lambda: self.document.corners.add(path, *corner, self.radius))
+            self.window.run(
+                lambda: self.document.corners.add(path, *corner, self.radius, self._style)
+            )
+        elif on_handle:
+            self._show_handles()  # a click on a handle changes nothing
         elif existing is not None:
             self.window.run(lambda: self.document.corners.remove(path, existing))
         else:
@@ -949,101 +1004,170 @@ class CornersTool(Tool):
         sharp = [("corner", x, y) for x, y in self.candidates if (x, y) not in rounded]
         return {"pick": sharp, "anchor": [("rounded", x, y) for x, y in rounded]}
 
+    def cancel(self) -> bool:
+        busy = super().cancel()
+        self.canvas.show_corner_handles([])
+        self.canvas.show_corner_preview([])
+        return busy
+
+
+def _close(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    return abs(a[0] - b[0]) <= 1e-6 and abs(a[1] - b[1]) <= 1e-6
+
+
+def _handle(shape, radius: float, style: str, fits: bool):
+    """A rounded corner's handle for the canvas: on the bisector, at its radius."""
+    from mems_sketch.gui.canvas import CornerHandle
+
+    letter = "c" if style == "chamfer" else "r"
+    label = f"{letter} {radius:g} µm" + ("" if fits else " — too large")
+    return CornerHandle(shape.point, shape.handle(radius), label, fits)
+
+
+DISTANCE, ANGLE = "distance", "angle"  # the Measure tool's modes
+MEASURE_MODE_KEY = "measure/mode"  # app setting: the mode it was last used in
+
+
+class SnapTargets:
+    """What a measurement snaps to, best first: a shape's named point, a corner of
+    anything drawn, else the nearest point of an edge. Placed components count
+    too, as they are placed (the geometry is flattened into the component's frame).
+    """
+
+    def __init__(self, points: list[Candidate], geometry=None) -> None:
+        self.points = points
+        corners, starts, ends = [], [], []
+        if geometry is not None:
+            for layer in geometry.layer_names():
+                for polygon in geometry.polygons(layer):
+                    for ring in (polygon.hull, *polygon.holes):
+                        loop = np.asarray(ring, dtype=float).reshape(-1, 2)
+                        if len(loop) < 2:
+                            continue
+                        corners.append(loop)
+                        starts.append(loop)
+                        ends.append(np.roll(loop, -1, axis=0))
+        empty = np.empty((0, 2))
+        self.corners = np.concatenate(corners) if corners else empty
+        self.starts = np.concatenate(starts) if starts else empty
+        self.ends = np.concatenate(ends) if ends else empty
+
+    def nearest(self, x: float, y: float, reach: float) -> tuple[float, float, str] | None:
+        """The point to snap ``(x, y)`` to within ``reach`` µm, with what it is: the
+        point's name, ``corner`` or ``edge``; None when nothing is that close."""
+        best = None
+        for label, px, py in self.points:
+            distance = math.hypot(px - x, py - y)
+            if distance < reach and (best is None or distance < best[0]):
+                best = (distance, px, py, label)
+        if best is not None:
+            return best[1], best[2], best[3]
+        if len(self.corners):
+            distances = np.hypot(self.corners[:, 0] - x, self.corners[:, 1] - y)
+            index = int(np.argmin(distances))
+            if distances[index] < reach:
+                cx, cy = self.corners[index]
+                return float(cx), float(cy), "corner"
+        if len(self.starts):
+            along = self.ends - self.starts
+            lengths = np.einsum("ij,ij->i", along, along)
+            lengths[lengths == 0] = 1.0
+            where = np.array([x, y])
+            t = np.clip(np.einsum("ij,ij->i", where - self.starts, along) / lengths, 0, 1)
+            feet = self.starts + along * t[:, None]
+            distances = np.hypot(feet[:, 0] - x, feet[:, 1] - y)
+            index = int(np.argmin(distances))
+            if distances[index] < reach:
+                fx, fy = feet[index]
+                return float(fx), float(fy), "edge"
+        return None
+
 
 class MeasureTool(Tool):
-    """Click two points to measure; the rulers stay (per component) until cleared."""
+    """Measure a distance (two clicks) or an angle (the vertex, then a point on
+    each arm); the rulers stay, per component, until cleared.
+
+    Points snap to the shapes' points, to the corners and edges of everything
+    drawn (placed components too) and else to the grid; a dot shows where. The
+    mode is switched in the status bar, or with D (distance) and N (angle).
+    """
 
     name, label, shortcut = "measure", "Measure", "D"
     edits = False
     cursor = Qt.CursorShape.CrossCursor
     icon = "measure"
 
-    def reset(self) -> None:
-        self._start: tuple[float, float] | None = None
-        self._end: tuple[float, float] | None = None
-        self._snap: Candidate | None = None
-        self._candidates: list[Candidate] | None = None
-
-    @property
-    def busy(self) -> bool:
-        return self._start is not None
-
-    def hint(self) -> str:
-        if self._start is None:
-            return "Measure: click the first point (snaps to shape points; Ctrl: no snapping)"
-        return "Measure: click the second point (Esc cancels)"
-
-    def _points(self) -> list[Candidate]:
-        if self._candidates is None:
-            self._candidates = self.document.results.all_points()
-        return self._candidates
-
-    def press(self, x, y, modifiers) -> None:
-        px, py, _ = self.snap(x, y, self._points(), modifiers)
-        if self._start is None:
-            self._start = (px, py)
-            self.window.prompt(self.hint())
-            return
-        ruler = (*self._start, px, py)
-        self.reset()
-        self.window.add_ruler(ruler)
-        self.window.prompt(self.hint())
-
-    def move(self, x, y, modifiers, left) -> None:
-        px, py, label = self.snap(x, y, self._points(), modifiers)
-        self._snap = (label, px, py) if label else None
-        self.canvas.show_points("snap", [self._snap] if self._snap else [])
-        if self._start is not None:
-            self._end = (px, py)
-            self.window.draw_rulers(extra=(*self._start, px, py))
-            dx, dy = px - self._start[0], py - self._start[1]
-            self.window.prompt(f"Distance {math.hypot(dx, dy):.3f} µm  (dx {dx:.3f}, dy {dy:.3f})")
-
-    def hover_label(self, x, y) -> str | None:
-        return self.snap(x, y, self._points(), NONE, grid=False)[2]
-
-    def markers(self) -> dict[str, list[Candidate]]:
-        return {"anchor": [("start", *self._start)]} if self._start else {}
-
-    def cancel(self) -> bool:
-        busy = super().cancel()
-        self.canvas.show_points("snap", [])
-        self.window.draw_rulers()
-        return busy
-
-
-class AngleTool(Tool):
-    """Click the vertex, then a point on each arm; the angle stays like a ruler."""
-
-    name, label, shortcut = "angle", "Measure angle", "N"
-    edits = False
-    cursor = Qt.CursorShape.CrossCursor
-    icon = "angle"
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__(window)
+        settings = getattr(window, "settings", None)
+        mode = settings.value(MEASURE_MODE_KEY, DISTANCE) if settings is not None else DISTANCE
+        self.mode = mode if mode in (DISTANCE, ANGLE) else DISTANCE
 
     def reset(self) -> None:
-        self._placed: list[tuple[float, float]] = []  # the vertex, then the first arm
-        self._candidates: list[Candidate] | None = None
+        self._placed: list[tuple[float, float]] = []  # the points clicked so far
+        self._targets: SnapTargets | None = None
 
     @property
     def busy(self) -> bool:
         return bool(self._placed)
 
+    @property
+    def needed(self) -> int:
+        return 2 if self.mode == DISTANCE else 3
+
+    def set_mode(self, mode: str) -> None:
+        """Measure distances or angles (what was being measured is dropped)."""
+        if mode not in (DISTANCE, ANGLE):
+            raise ValueError(f"unknown measure mode '{mode}'")
+        if mode != self.mode:
+            self.cancel()
+        self.mode = mode
+        settings = getattr(self.window, "settings", None)
+        if settings is not None:
+            settings.set_value(MEASURE_MODE_KEY, mode)
+        if self.window.tool is self:
+            self.window.prompt(self.hint())
+            self.window.tool_status.show_for(self)
+
     def hint(self) -> str:
+        snapping = "snaps to points, corners and edges; Ctrl: no snapping"
+        if self.mode == DISTANCE:
+            if not self._placed:
+                return f"Measure: click the first point ({snapping}; N: angles)"
+            return "Measure: click the second point (Esc cancels)"
         if not self._placed:
-            return "Angle: click the vertex (snaps to shape points; Ctrl: no snapping)"
+            return f"Angle: click the vertex ({snapping}; D: distances)"
         if len(self._placed) == 1:
             return "Angle: click a point on the first arm (Esc cancels)"
         return "Angle: click a point on the second arm (Shift: 15° steps, Esc cancels)"
 
-    def _points(self) -> list[Candidate]:
-        if self._candidates is None:
-            self._candidates = self.document.results.all_points()
-        return self._candidates
+    def targets(self) -> SnapTargets:
+        if self._targets is None:
+            results = self.document.results
+            try:
+                geometry = results.geometry()
+            except Exception:  # noqa: BLE001 - it does not build: the named points only
+                geometry = None
+            self._targets = SnapTargets(results.all_points(), geometry)
+        return self._targets
 
-    def _locate(self, x, y, modifiers) -> tuple[float, float, str | None]:
-        px, py, label = self.snap(x, y, self._points(), modifiers)
-        if len(self._placed) == 2 and modifiers & SHIFT:  # the second arm in 15° steps
-            (vx, vy), (ax, ay) = self._placed
+    def locate(self, x, y, modifiers) -> tuple[float, float, str | None]:
+        """Where a click at ``(x, y)`` puts a point, and what it snapped to."""
+        if modifiers & CTRL:
+            return x, y, None
+        if self.setting("snapping/points", True):
+            found = self.targets().nearest(x, y, self.reach)
+            if found is not None:
+                return found
+        if self.setting("snapping/grid", True):
+            step = self.canvas.grid_step()
+            return _um(round(x / step) * step), _um(round(y / step) * step), None
+        return x, y, None
+
+    def _point(self, x, y, modifiers) -> tuple[float, float, str | None]:
+        px, py, label = self.locate(x, y, modifiers)
+        if self.mode == ANGLE and len(self._placed) == 2 and modifiers & SHIFT:
+            (vx, vy), (ax, ay) = self._placed  # the second arm in 15° steps
             first = math.atan2(ay - vy, ax - vx)
             turn = math.atan2(py - vy, px - vx) - first
             turn = math.radians(round(math.degrees(turn) / 15) * 15)
@@ -1053,41 +1177,47 @@ class AngleTool(Tool):
         return px, py, label
 
     def press(self, x, y, modifiers) -> None:
-        px, py, _ = self._locate(x, y, modifiers)
-        if len(self._placed) < 2:
-            if self._placed and (px, py) == self._placed[0]:
-                return  # an arm needs a point other than the vertex
-            self._placed.append((px, py))
+        px, py, _ = self._point(x, y, modifiers)
+        if self.mode == ANGLE and self._placed and (px, py) == self._placed[0]:
+            return  # an arm needs a point other than the vertex
+        self._placed.append((px, py))
+        if len(self._placed) < self.needed:
             self.window.prompt(self.hint())
             return
-        if (px, py) == self._placed[0]:
-            return
-        ruler = (*self._placed[0], *self._placed[1], px, py)
+        ruler = tuple(v for point in self._placed for v in point)
         self.reset()
+        self.canvas.show_snap_marker(None)
         self.window.add_ruler(ruler)
         self.window.prompt(self.hint())
 
     def move(self, x, y, modifiers, left) -> None:
-        px, py, label = self._locate(x, y, modifiers)
-        self.canvas.show_points("snap", [(label, px, py)] if label else [])
-        if len(self._placed) == 1:
-            self.window.draw_rulers(extra=(*self._placed[0], px, py))
+        px, py, label = self._point(x, y, modifiers)
+        kind = None if label is None else "edge" if label == "edge" else "point"
+        self.canvas.show_snap_marker((px, py) if kind else None, kind)
+        if not self._placed:
+            return
+        self.window.draw_rulers(extra=(*(v for point in self._placed for v in point), px, py))
+        if self.mode == DISTANCE:
+            dx, dy = px - self._placed[0][0], py - self._placed[0][1]
+            self.window.prompt(f"Distance {math.hypot(dx, dy):.3f} µm  (dx {dx:.3f}, dy {dy:.3f})")
         elif len(self._placed) == 2:
-            vertex, first = self._placed
-            self.window.draw_rulers(extra=(*vertex, *first, px, py))
-            sweep = angle_between(vertex, first, (px, py))[1]
+            sweep = angle_between(self._placed[0], self._placed[1], (px, py))[1]
             self.window.prompt(f"Angle {sweep:.2f}°")
 
     def hover_label(self, x, y) -> str | None:
-        return self.snap(x, y, self._points(), NONE, grid=False)[2]
+        return self.locate(x, y, NONE)[2]
 
     def markers(self) -> dict[str, list[Candidate]]:
-        names = ("vertex", "arm")
+        names = ("start",) if self.mode == DISTANCE else ("vertex", "arm")
         return {"anchor": [(n, *p) for n, p in zip(names, self._placed, strict=False)]}
+
+    def design_changed(self) -> None:
+        super().design_changed()
+        self._targets = None  # the geometry changed
 
     def cancel(self) -> bool:
         busy = super().cancel()
-        self.canvas.show_points("snap", [])
+        self.canvas.show_snap_marker(None)
         self.window.draw_rulers()
         return busy
 
@@ -1405,6 +1535,233 @@ class PathTool(_PointsTool):
         )
 
 
+class RouteTool(DrawTool):
+    """A wire from port to port: click a port, any via points, then another port.
+
+    The ports are marked; a click near one picks it (snapping or not), a click
+    elsewhere places a via point (snapped as drawing does). The route is
+    Manhattan between ports along x and y, else straight; it is as wide as the
+    ports, or the path width when they have none or differ. With a route
+    selected and none being drawn, its via points have handles: drag one to
+    move it.
+    """
+
+    name, label, shortcut, noun = "route", "Route", "E", "route"
+    icon = "route"
+    uses_layer = False  # on its ports' layer
+
+    def reset(self) -> None:
+        super().reset()
+        self.start_port: str | None = None
+        self._ports = None  # reference -> Port, worked out once per design
+        self._cursor: tuple[float, float] | None = None
+        self._drag: tuple[NodePath, int] | None = None  # a selected route's via point
+        self._dragged_to: tuple[float, float] | None = None
+
+    @property
+    def busy(self) -> bool:
+        return self.start_port is not None or self._drag is not None
+
+    def design_changed(self) -> None:
+        self._ports = self._candidates = None
+
+    def hint(self) -> str:
+        if self.start_port is None:
+            return "Route: click the port to start at (or drag a selected route's via point)"
+        return (
+            f"Route from {self.start_port}: click via points, then the port to end at; "
+            "Backspace takes back a point, Esc cancels"
+        )
+
+    def ports(self) -> dict:
+        if self._ports is None:
+            try:
+                self._ports = self.document.results.all_ports()
+            except Exception:  # noqa: BLE001 - the design does not build: nothing to pick
+                self._ports = {}
+        return self._ports
+
+    def _port_at(self, x: float, y: float) -> str | None:
+        """The port a click at ``(x, y)`` picks: the nearest in reach, but not the start."""
+        best, found = self.reach, None
+        for name, port in self.ports().items():
+            distance = math.hypot(port.x - x, port.y - y)
+            if distance < best and name != self.start_port:
+                best, found = distance, name
+        return found
+
+    def _route(self) -> tuple[NodePath, Shape] | None:
+        """The selected shape whose via points can be dragged (a route)."""
+        if len(self.window.selection) != 1:
+            return None
+        path = self.window.selection[0]
+        node = self.document.node(path)
+        return (path, node) if node.handles() and len(path) == 1 else None
+
+    def _via_at(self, x: float, y: float) -> int | None:
+        selected = self._route()
+        if selected is None:
+            return None
+        best, found = self.reach, None
+        for k, (vx, vy) in enumerate(self._vias(*selected)):
+            distance = math.hypot(vx - x, vy - y)
+            if distance < best:
+                best, found = distance, k
+        return found
+
+    def _vias(self, path: NodePath, route: Shape) -> list[tuple[float, float]]:
+        """Where its via points are (they may be expressions)."""
+        scope = self.document.results.scope(path)
+        try:
+            return [(_value(px, scope), _value(py, scope)) for px, py in route.handles()]
+        except (ValueError, KeyError):  # an expression it cannot work out here
+            return []
+
+    def press(self, x, y, modifiers) -> None:
+        if self.start_port is None:
+            via = self._via_at(x, y)
+            if via is not None and self.editable():
+                self._drag, self._dragged_to = (self._route()[0], via), None
+                return
+            port = self._port_at(x, y)
+            if port is None:
+                self.window.select_click(self.window.hit(x, y), False)  # a route to edit
+                self.window.update_overlay()
+                return
+            if not self.start():
+                return
+            self.start_port = port
+        else:
+            port = self._port_at(x, y)
+            if port is not None:
+                self.finish(port)
+                return
+            point = self.locate(x, y, modifiers)
+            if not self.placed or point != self.placed[-1]:
+                self.placed.append(point)
+        self._show()
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+
+    def locate(self, x, y, modifiers) -> tuple[float, float]:
+        start = self.ports().get(self.start_port) if self.start_port else None
+        if modifiers & SHIFT and start is not None and not self.placed:  # 45° from the start
+            return self.constrain((start.x, start.y), self.locate(x, y, modifiers & ~SHIFT))
+        return super().locate(x, y, modifiers)
+
+    def move(self, x, y, modifiers, left) -> None:
+        if self._drag is not None:
+            if left:
+                self._dragged_to = self.locate(x, y, modifiers)
+                path, k = self._drag
+                route = self.document.node(path)
+                vias = self._vias(path, route)
+                vias[k] = self._dragged_to
+                ends = self.document.results.node_ports(path)
+                outline = [(p.x, p.y) for p in (ends.get("start"),) if p]
+                outline += vias + [(p.x, p.y) for p in (ends.get("end"),) if p]
+                self.canvas.show_sketch(outline, False)
+                self.canvas.set_cursor_label(
+                    f"via {k + 1}: {self._dragged_to[0]:g}, {self._dragged_to[1]:g}"
+                )
+            return
+        port = self._port_at(x, y)
+        self.canvas.set_cursor_label(port)
+        if self.start_port is None:
+            return
+        if port is not None:
+            self._cursor = (self.ports()[port].x, self.ports()[port].y)
+            self._snap = None
+        else:
+            self._cursor = self.locate(x, y, modifiers)
+        self._show()
+
+    def _show(self) -> None:
+        start = self.ports().get(self.start_port)
+        if start is None:  # gone since it was picked (undone, renamed)
+            self.cancel()
+            self.window.prompt(self.hint())
+            return
+        points = [(start.x, start.y), *self.placed]
+        if self._cursor is not None and self._cursor != points[-1]:
+            points.append(self._cursor)
+        self.canvas.show_points("snap", [self._snap] if self._snap else [])
+        self.canvas.show_sketch(points, False)
+
+    def release(self, x, y, modifiers) -> None:
+        drag, to = self._drag, self._dragged_to
+        self._drag = self._dragged_to = None
+        if drag is None:
+            return
+        self.canvas.show_sketch([], False)
+        self.canvas.set_cursor_label(None)
+        if to is None:
+            return  # a click on a handle changes nothing
+        path, k = drag
+        route = self.document.node(path)
+        moved = route.with_handle(k, to)
+        ok, _ = self.window.run(lambda: self.document.nodes.replace(path, moved))
+        if ok:
+            self.window.notify(f"Moved via point {k + 1} of {route.name}", "success")
+
+    def double_click(self, x, y) -> bool:
+        return self.start_port is not None  # never open a component while routing
+
+    def key(self, key) -> bool:
+        if self.start_port is None or key != Qt.Key.Key_Backspace:
+            return False
+        if self.placed:
+            self.placed.pop()
+            self._show()
+            self.window.update_overlay()
+        else:
+            self.cancel()
+        self.window.prompt(self.hint())
+        return True
+
+    def finish(self, end: str) -> None:
+        start, ports = self.start_port, self.ports()
+        if start not in ports:
+            self.add(None, f"the port {start} is gone: pick the start again")
+            return
+        axis = all(round(ports[p].angle, 6) % 90 == 0 for p in (start, end))
+        widths = {ports[p].width for p in (start, end) if ports[p].width > 0}
+        shape = RouteShape(
+            start=start,
+            end=end,
+            style="manhattan" if axis else "straight",
+            via=list(self.placed),
+            width=0.0 if len(widths) == 1 else self.window.path_width,
+        )
+        self.add(shape, "")
+
+    def markers(self) -> dict[str, list[Candidate]]:
+        ports = [(n, p.x, p.y) for n, p in self.ports().items() if n != self.start_port]
+        if self.start_port is None:
+            selected = self._route()
+            vias = self._vias(*selected) if selected else []
+            return {
+                "pick": ports,
+                "anchor": [(f"via {k + 1}", x, y) for k, (x, y) in enumerate(vias)],
+            }
+        start = self.ports().get(self.start_port)
+        anchors = [(self.start_port, start.x, start.y)] if start else []
+        anchors += [(f"via {k + 1}", x, y) for k, (x, y) in enumerate(self.placed)]
+        return {"pick": ports, "anchor": anchors}
+
+    def cancel(self) -> bool:
+        dragging = self._drag is not None
+        busy = super().cancel()
+        self.canvas.set_cursor_label(None)
+        if dragging:
+            self.window.update_overlay()
+        return busy
+
+
+def _value(value, scope: dict[str, float]) -> float:
+    return float(value) if isinstance(value, int | float) else float(evaluate(value, scope))
+
+
 class GuideTool(_TwoPointTool):
     """A construction line: drag, or click its two ends (Shift: 45° steps)."""
 
@@ -1435,6 +1792,82 @@ class GuideTool(_TwoPointTool):
         self.add(shape, "a guide needs two different end points")
 
 
+class PlaceTool(Tool):
+    """Put down a component chosen in the Place popup or Search Everywhere: it
+    follows the cursor, its origin snapping to points and the grid (Ctrl: not),
+    until a click places it. Esc lets it go; either way Select comes back."""
+
+    name, label, shortcut = "place", "Place component", ""
+    listed = False
+    cursor = Qt.CursorShape.CrossCursor
+    icon = "place"
+
+    def reset(self) -> None:
+        self.component: str | None = None
+        self.at: tuple[float, float] | None = None
+        self.candidates: list[Candidate] = []
+
+    @property
+    def busy(self) -> bool:
+        return self.component is not None
+
+    def hint(self) -> str:
+        if self.component is None:
+            return "Choose a component to place (Shift+A)"
+        return f"Click to place {self.component} (Esc cancels, Ctrl: no snapping)"
+
+    def begin(self, component: str) -> bool:
+        """Start placing ``component``; False (and a message) when it cannot be."""
+        if not self.editable():
+            return False
+        try:
+            geometry = self.document.results.geometry(component)
+        except Exception as exc:  # noqa: BLE001 - it does not build: say why
+            self.window.report_error(f"{component} cannot be placed: {exc}")
+            return False
+        self.reset()
+        self.component = component
+        try:
+            self.candidates = list(self.document.results.all_points())
+        except Exception:  # noqa: BLE001 - nothing to snap to but the grid
+            self.candidates = []
+        self.canvas.show_ghost(geometry, self.window.layers.colors)
+        self.canvas.move_ghost(*self.canvas.cursor_um())
+        self.canvas.set_cursor_label(component.rsplit(".", 1)[-1])
+        self.window.prompt(self.hint())
+        return True
+
+    def move(self, x, y, modifiers, left) -> None:
+        if self.component is None:
+            return
+        x, y, onto = self.snap(x, y, self.candidates, modifiers)
+        self.at = (x, y)
+        self.canvas.move_ghost(x, y)
+        short = self.component.rsplit(".", 1)[-1]
+        self.canvas.set_cursor_label(f"{short} → {onto}" if onto else short)
+
+    def press(self, x, y, modifiers) -> None:
+        if self.component is None:
+            return
+        x, y, _ = self.snap(x, y, self.candidates, modifiers)
+        component = self.component
+        self.reset()
+        self.canvas.show_ghost(None)
+        self.canvas.set_cursor_label(None)
+        self.window.place_component_at(component, x, y)
+        self.window.set_tool("select")
+
+    def cancel(self) -> bool:
+        busy = super().cancel()
+        self.canvas.show_ghost(None)
+        if busy and self.window.tool is self:
+            self.window.set_tool("select")
+        return busy
+
+    def design_changed(self) -> None:
+        """An edit elsewhere (e.g. an undo) keeps the component in hand."""
+
+
 TOOLS: tuple[type[Tool], ...] = (
     SelectTool,
     HandTool,
@@ -1443,12 +1876,13 @@ TOOLS: tuple[type[Tool], ...] = (
     AlignTool,
     CornersTool,
     MeasureTool,
-    AngleTool,
     RectTool,
     CircleTool,
     PolygonTool,
     PathTool,
+    RouteTool,
     GuideTool,
+    PlaceTool,
 )
 
 

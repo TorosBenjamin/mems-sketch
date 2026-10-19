@@ -9,14 +9,15 @@
   Scrolling* says what scrolling does if your device is taken for the other
   kind (a mouse wheel zooms, a touchpad pans).
 - The **canvas modes** float in the top-right corner: Select, Hand, Move,
-  Rotate, Align, Corners, Measure, Angle.
+  Rotate, Align, Corners, Measure.
 - The selection is outlined in orange; the shape under the cursor is outlined
   dashed (what a click would select); rule violations are boxed in red.
 - The x axis is red and the y axis green; a scale bar sits in the corner, and
   the top left says what is shown. **View → Overlays** switches each of these
   on or off.
 - **Right-click** (a click; a right drag pans) for **Add** (a primitive
-  starting where you clicked), **Place component**, and for the selection:
+  starting where you clicked), **Place component…** (placed where you clicked),
+  and for the selection:
   combine, offset, fillet, transform, layer map, make or unpack component,
   rotate 90°, mirror, duplicate and delete.
 
@@ -36,10 +37,10 @@ several.
 | **Rotate** | R | Drag anywhere to turn the selection about its centre; the angle follows the mouse (Ctrl: 15° steps). **Shift+click** sets another pivot (snaps to points), Esc goes back to the centre; a click without dragging selects. **Rotate 90°** is Ctrl+R / Ctrl+Shift+R; **Mirror** is in the right-click menu. |
 | **Align** | A | Click a shape, one of its points, then the point to put it on (below). |
 | **Corners** | O | Round or chamfer single corners (below). |
-| **Measure** | D | Click two points (they snap) for the distance, dx and dy. Rulers stay until **Tools → Clear rulers**. |
-| **Measure angle** | N | Click the vertex, then a point on each arm; the angle stays like a ruler. |
+| **Measure** | D, N | Two modes, switched in the status bar (**Distance** / **Angle**): D measures a distance (two clicks: the length, dx and dy), N an angle (the vertex, then a point on each arm: two arms and an arc with the angle; Shift: 15° steps). Points snap to the shapes' points, then to the corners and edges of everything drawn, placed components included, then to the grid (Ctrl: no snapping); a dot shows where, ringed on a point and following the cursor along an edge. Rulers stay until **Tools → Clear rulers**. |
 | **Rectangle**, **Circle** | B, C | Drag, or click corner and opposite corner (centre and radius). Shift: a square. |
 | **Polygon**, **Path** | P, W | Click the points; double-click, Enter or (polygon) the first point finishes; Backspace takes back a point. Shift: 0°, 45°, 90° segments. |
+| **Route** | E | A wire from port to port (the ports are marked): click a port, any via points, then another port. It runs along x and y between ports along x and y, else straight; as wide as its ports, or the path **Width** when they differ. With a route selected, drag its via points. See [Routes](shapes-and-operations.md#routes). |
 | **Guide** | G | A construction line: draws nothing, but has points and can be mirrored about. |
 
 The drawing tools draw on the layer chosen in the status bar (or by clicking a
@@ -102,9 +103,18 @@ radius, where a fillet would round all of them:
 1. Click a shape; its corners are marked (the small steps of curves are not
    corners).
 2. Click a corner to round it with the last radius used; click it again to
-   make it sharp. Drag away from a corner to set its radius, drawn as you drag.
-3. In **Properties**, the shape's **Corners** card lists each corner's radius
+   make it sharp. Drag away from a corner to set its radius: the rounding is
+   drawn as you drag (the shape is rebuilt when you let go) and the radius
+   stops at the largest that fits.
+3. Each rounded corner has a handle on the line halfway between its edges, as
+   far from the corner as its radius, with the radius beside it. Drag the
+   handle to change the radius; a click on it changes nothing.
+4. In **Properties**, the shape's **Corners** card lists each corner's radius
    and style (round or chamfer).
+
+A corner whose radius no longer fits (the shape got smaller with build checks
+switched off) is boxed on the canvas like a rule violation, and in the Corners
+tool its label says it is too large.
 
 A corner is recorded so that it follows the design: as the shape's own point
 (`top_right`), a neighbour's point, or the expressions the shape is written
@@ -114,14 +124,16 @@ too: the rounding belongs to the placement, not to the library.
 ## Properties
 
 The selected shape's fields. The name is the title (click to rename), with an
-eye beside it that hides or shows the shape. Under it, what the shape is in
-words (*Rectangle*, *Placed component*, *Subtract*); a placed component has
-**Open …** to open it in its own tab.
+eye beside it that hides or shows the shape; the panel's header says what the
+shape is in words (*Rectangle*, *Placed component*, *Subtract*). A placed
+component's **Component** row names it once, with a pencil button that opens
+it in its own tab; the button's arrow replaces it with another component.
 
-The fields come in cards: *Geometry* (or *Placement* for a placed component),
-*Parameters of …*, *Align to another shape's point* and *Modifiers*. The
-chevron in a card's corner folds it away; it stays folded for that kind of
-shape, also next time. Units in labels are lighter (*Finger width µm*). A hidden shape is not drawn,
+The fields come in parts, each a heading over a line: *Geometry* (or
+*Placement* for a placed component), *Parameters of …*, *Align to another
+shape's point* and *Modifiers*. The chevron by a heading folds that part away;
+it stays folded for that kind of shape, also next time. The fields of all the
+parts line up, and a **?** sits by the name of the field it explains. Units in labels are lighter (*Finger width µm*). A hidden shape is not drawn,
 exported or checked, but it keeps its points: shapes aligned to it, or using
 its points, stay where they are.
 

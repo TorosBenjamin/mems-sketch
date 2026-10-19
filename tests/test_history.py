@@ -117,7 +117,9 @@ def test_a_changed_shape_says_what_changed():
 
 def test_changed_parameters_of_a_placement_are_named_one_by_one():
     def placed(fingers):
-        return RefShape(name="comb", component="comb_drive", params={"fingers": fingers, "gap": 2})
+        return RefShape(
+            name="comb", component="mems.comb_drive", params={"fingers": fingers, "gap": 2}
+        )
 
     [change] = diff_projects(project(placed(16)), project(placed(10)))
     assert change.details == ("params.fingers 16 → 10",)
@@ -235,3 +237,80 @@ def test_a_saved_project_outside_git_can_start_a_repository(tmp_path):
     session.history.init()
     assert session.history.available and not session.history.can_init()
     assert session.history.branch  # e.g. "main" or "master", before any commit
+
+
+# -- local changes, committing some of them (the Commit panel) ---------------------
+
+
+def test_local_changes_are_grouped_by_component_with_the_other_files(session, commit, git_repo):
+    session.components.new("frame")
+    session.set_active("top")
+    commit(session, "First sketch")
+    session.parameters.update("length", default=120)
+    session.components.new("spring")
+    session.set_active("top")
+    (git_repo / "notes.md").write_text("ideas")
+    local = session.history.local()
+    groups = {g.key: g for g in local.groups}
+    assert set(groups) == {"top", "spring"}
+    assert groups["top"].action == CHANGED and groups["spring"].action == ADDED
+    assert groups["top"].paths == ["components/top"]
+    assert groups["spring"].paths == ["components/spring", "project.yaml"]  # listed there
+    assert [(f.path, f.state) for f in local.files] == [("notes.md", git.UNTRACKED)]
+
+
+def test_committing_some_groups_leaves_the_others(session, commit, git_repo):
+    session.components.new("frame")
+    session.set_active("top")
+    commit(session, "First sketch")
+    session.parameters.update("length", default=120)
+    session.set_active("frame")
+    session.nodes.add(RectShape(name="pad", layer="device", x0=0, y0=20, x1=10, y1=30))
+    (git_repo / "notes.md").write_text("ideas")
+    session.history.commit_local("Longer beam", ["top"], [])
+    assert session.history.commits()[0].subject == "Longer beam"
+    local = session.history.local()
+    assert [g.key for g in local.groups] == ["frame"]  # still to commit
+    assert [f.path for f in local.files] == ["notes.md"]
+    session.history.commit_local("Pad and notes", ["frame"], ["notes.md"])
+    assert not session.history.local()
+
+
+def test_amending_replaces_the_last_commit(session, commit):
+    commit(session, "First sketch")
+    session.parameters.update("length", default=120)
+    session.history.commit_local("Longer", ["top"], [])
+    assert session.history.last_message() == "Longer"
+    session.history.commit_local("Longer beam", [], [], amend=True)
+    assert [c.subject for c in session.history.commits()] == ["Longer beam", "First sketch"]
+
+
+def test_rolling_back_a_group_is_one_undoable_edit(session, commit):
+    commit(session, "First sketch")
+    session.parameters.update("length", default=120)
+    session.components.new("spring")
+    session.set_active("top")
+    session.history.rollback("top")
+    assert session.project.components["top"].parameters[0].default == 100
+    session.history.rollback("spring")  # added since: removed
+    assert "spring" not in session.project.components
+    assert not session.history.local()
+    session.undo()
+    assert "spring" in session.project.components
+
+
+def test_other_files_can_be_tracked_ignored_and_discarded(session, commit, git_repo):
+    (git_repo / "notes.md").write_text("ideas")
+    (git_repo / "scratch.txt").write_text("tmp")
+    commit(session, "First sketch")  # commits the notes too (the fixture adds all)
+    (git_repo / "notes.md").write_text("more ideas")
+    (git_repo / "draft.md").write_text("new")
+    history = session.history
+    states = {f.path: f.state for f in history.local().files}
+    assert states == {"notes.md": git.MODIFIED, "draft.md": git.UNTRACKED}
+    history.track(["draft.md"])
+    history.ignore("scratch.txt")
+    history.discard(["notes.md"])
+    states = {f.path: f.state for f in history.local().files}
+    assert states == {"draft.md": git.ADDED, ".gitignore": git.UNTRACKED}
+    assert (git_repo / "notes.md").read_text() == "ideas"

@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import time
 import weakref
+from dataclasses import dataclass
 
 import numpy as np
 import shiboken6
@@ -37,6 +38,7 @@ from PySide6.QtGui import (
     QAction,
     QBrush,
     QColor,
+    QCursor,
     QFont,
     QFontMetricsF,
     QInputDevice,
@@ -67,6 +69,21 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.transform import Transform
 from mems_sketch.gui import icons, motion
 from mems_sketch.gui import theme as themes
+
+CORNER_HANDLE_PX = 4.5  # a rounded corner's handle (radius)
+CORNER_ERROR_PX = 9  # the ring round a corner whose radius does not fit
+
+
+@dataclass(frozen=True)
+class CornerHandle:
+    """A rounded corner's handle (µm): the corner, the handle, its label, and
+    whether the corner's radius fits."""
+
+    corner: tuple[float, float]
+    handle: tuple[float, float]
+    label: str = ""
+    fits: bool = True
+
 
 POINT_SIZES = {  # marker size in pixels
     "declared": 9,  # the edited component's own points
@@ -137,6 +154,8 @@ _PATHS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 # Placed copies past this many are drawn without a cached picture each (the
 # pictures would take more memory than they save time).
 MAX_CACHED_ITEMS = 2000
+GHOST_FILL = 0.35  # a component being placed: its fill, against its layer's colour
+GHOST_OPACITY = 0.75
 
 
 def own_path(geometry: Geometry, layer: str) -> QPainterPath:
@@ -241,6 +260,23 @@ class _PlacedPathItem(ShapeItem):
         self.setTransform(placement)
 
 
+MARK_RADIUS_PX = 9
+
+
+@dataclass(frozen=True)
+class ChangeMark:
+    """A mark on a changed shape, at ``x, y`` (µm): filled for a shape that was
+    edited, a ring for one that only moved because of another change; ``label``
+    numbers it, ``current`` rings it once more (the one stepped to)."""
+
+    x: float
+    y: float
+    label: str
+    filled: bool
+    color: str
+    current: bool = False
+
+
 class LayoutCanvas(QGraphicsView):
     # Left button, in µm, with the keyboard modifiers (for the active tool).
     pressed = Signal(float, float, object)
@@ -277,13 +313,17 @@ class LayoutCanvas(QGraphicsView):
         self._items_by_key: dict[tuple, list[QGraphicsPathItem]] = {}
         self._overlay: list = []
         self._change_items: list = []
+        self._marks: list[ChangeMark] = []
         self._points: dict[str, list] = {}
+        self._ports: dict[str, list] = {}
         self._pan_from: QPointF | None = None
         self._right_from: QPointF | None = None  # right press: a click, until it drags
         self.left_pans = False  # hand mode: the left button pans
         self._space = False  # Space held: the left button pans
         self._left_down = False
         self._drag_items: list = []
+        self._ghost: QGraphicsItem | None = None  # a component being placed
+        self._snap_marker: _SnapMarker | None = None  # where a click would snap
         self._ruler_items: list = []
         self._rulers: list[tuple[float, float, float, float]] = []  # distances, for ticks
         self._box_item: QGraphicsRectItem | None = None
@@ -300,6 +340,8 @@ class LayoutCanvas(QGraphicsView):
         # The selected shape's alignment: its point and the point it is aligned to,
         # each (name, x, y) in µm (see show_alignment).
         self._alignment: tuple[tuple[str, float, float], tuple[str, float, float]] | None = None
+        self._corner_handles: list[CornerHandle] = []  # the Corners tool's handles
+        self._corner_preview: list[tuple[float, float]] = []  # a rounding being dragged
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
         self._caption: tuple[str, str] = ("", "")
@@ -531,10 +573,7 @@ class LayoutCanvas(QGraphicsView):
         shown = [g for g in geometries if g is not None and not g.is_empty()]
         if not shown or not motion.enabled():
             return
-        outline = QPainterPath()
-        for geometry in shown:
-            for leaf, at in geometry.leaves():
-                outline.addPath(qtransform(at).map(own_path(leaf, "")))
+        outline = _outline(shown)
         self.reveal(outline.boundingRect())
         item = QGraphicsPathItem(outline)
         item.setZValue(1002)
@@ -557,6 +596,15 @@ class LayoutCanvas(QGraphicsView):
         motion.run(
             self, step, motion.PULSE, done=done, easing=QEasingCurve.Type.InQuad, key="pulse"
         )
+
+    def frame(self, *geometries: Geometry) -> None:
+        """Glide to show ``geometries`` as large as they fit, with a margin."""
+        shown = [g for g in geometries if g is not None and not g.is_empty()]
+        if not shown:
+            return
+        rect = _outline(shown).boundingRect()
+        margin = max(rect.width(), rect.height()) * 0.1 + 1
+        self.zoom_to(rect.adjusted(-margin, -margin, margin, margin), animated=True)
 
     def reveal(self, rect: QRectF) -> None:
         """Glide so ``rect`` (µm) is in view: a pan when it fits at this zoom, else
@@ -710,7 +758,7 @@ class LayoutCanvas(QGraphicsView):
             self._overlay.append(item)
 
     def show_changes(self, added: Geometry | None, removed: Geometry | None) -> None:
-        """What changed between two versions (see the History panel): material added
+        """What changed between two versions (see the Commit and Git panels): material added
         tinted, material removed hatched; None for nothing."""
         for item in self._change_items:
             self.scene().removeItem(item)
@@ -759,6 +807,54 @@ class LayoutCanvas(QGraphicsView):
             self.scene().addItem(item)
         self._points[style] = items
 
+    def show_ports(
+        self, style: str, ports: list[tuple[str, float, float, float]], labels: bool = False
+    ) -> None:
+        """Mark ports (name, x, y, angle in degrees) with arrows pointing the way a
+        wire leaves, in a point style's colour; replaces that style's port markers."""
+        for item in self._ports.pop(style, []):
+            self.scene().removeItem(item)
+        color = QColor(self.theme[style])
+        items = []
+        for name, x, y, angle in ports:
+            marker = _PortMarker(color)
+            marker.setPos(x, y)
+            marker.setRotation(-angle)  # it ignores the view's flip: y points down for it
+            marker.setToolTip(name)
+            items.append(marker)
+            if labels:
+                text = QGraphicsSimpleTextItem(name)
+                text.setBrush(color)
+                text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+                text.setPos(x, y)
+                text.setZValue(1100)
+                items.append(text)
+        for item in items:
+            self.scene().addItem(item)
+        self._ports[style] = items
+
+    def show_snap_marker(self, at: tuple[float, float] | None, kind: str = "point") -> None:
+        """Mark where a click would snap (``kind``: "point" or "edge"); None hides it."""
+        if at is None:
+            if self._snap_marker is not None:
+                self._snap_marker.hide()
+            return
+        if self._snap_marker is None:
+            self._snap_marker = _SnapMarker(QColor(self.theme["snap"]))
+            self.scene().addItem(self._snap_marker)
+        self._snap_marker.ringed = kind != "edge"
+        self._snap_marker.setPos(*at)
+        self._snap_marker.show()
+        self._snap_marker.update()
+
+    @property
+    def snap_marker(self) -> tuple[str, float, float] | None:
+        """The shown snap marker: its kind and where, or None."""
+        marker = self._snap_marker
+        if marker is None or not marker.isVisible():
+            return None
+        return "point" if marker.ringed else "edge", marker.pos().x(), marker.pos().y()
+
     def show_drag_preview(self, geometry: Geometry, colors: dict[str, QColor]) -> None:
         """Draw what is being dragged on top; move it with :meth:`move_drag_preview`."""
         self.clear_drag_preview()
@@ -796,6 +892,56 @@ class LayoutCanvas(QGraphicsView):
         for item in self._drag_items:
             item.setPos(0, 0)
             item.setTransform(item.placement * transform)  # placed first, then turned
+
+    def show_ghost(
+        self, geometry: Geometry | None, colors: dict[str, QColor] | None = None
+    ) -> None:
+        """A component being placed, drawn faintly in its layers' colours; it follows
+        :meth:`move_ghost` until it is put down. None takes it away."""
+        if self._ghost is not None:
+            self.scene().removeItem(self._ghost)
+            self._ghost = None
+        if geometry is None:
+            return
+        colors = colors or {}
+        ghost = QGraphicsRectItem()  # holds the layers; draws nothing itself
+        ghost.setPen(QPen(Qt.PenStyle.NoPen))
+        names = geometry.layer_names()
+        for leaf, at in geometry.leaves():
+            for layer, region in leaf.own.items():
+                if region.is_empty():
+                    continue
+                color = QColor(
+                    colors.get(layer) or layer_color(names.index(layer) if layer in names else 0)
+                )
+                item = QGraphicsPathItem(own_path(leaf, layer), ghost)
+                item.setTransform(qtransform(at))
+                pen = QPen(color, 1)
+                pen.setCosmetic(True)
+                item.setPen(pen)
+                fill = QColor(color)
+                fill.setAlphaF(GHOST_FILL)
+                item.setBrush(QBrush(fill))
+        ghost.setOpacity(GHOST_OPACITY)
+        ghost.setZValue(1100)
+        self.scene().addItem(ghost)
+        self._ghost = ghost
+
+    def cursor_um(self) -> tuple[float, float]:
+        """Where the mouse is, in µm; the middle of the view when it is elsewhere."""
+        at = self.viewport().mapFromGlobal(QCursor.pos())
+        if not self.viewport().rect().contains(at):
+            at = self.viewport().rect().center()
+        point = self.mapToScene(at)
+        return point.x(), point.y()
+
+    def move_ghost(self, x: float, y: float) -> None:
+        if self._ghost is not None:
+            self._ghost.setPos(x, y)
+
+    @property
+    def ghost(self) -> QGraphicsItem | None:
+        return self._ghost
 
     def clear_drag_preview(self) -> None:
         for item in self._drag_items:
@@ -1258,6 +1404,43 @@ class LayoutCanvas(QGraphicsView):
             return
         super().keyReleaseEvent(event)
 
+    def show_corner_handles(self, handles: list[CornerHandle]) -> None:
+        """The Corners tool's handles: one per rounded corner, on the bisector at its
+        radius from the corner, with the radius by it; a corner whose radius does
+        not fit is ringed in the error colour."""
+        self._corner_handles = list(handles)
+        self.viewport().update()
+
+    def show_corner_preview(self, points: list[tuple[float, float]]) -> None:
+        """The outline a rounding being dragged makes (µm); empty: none."""
+        self._corner_preview = list(points)
+        self.viewport().update()
+
+    def _draw_corners(self, painter: QPainter) -> None:
+        def px(point):
+            return self.mapFromScene(QPointF(*point)).toPointF()
+
+        rail = QColor(self.theme["pick"])
+        if len(self._corner_preview) > 1:
+            pen = QPen(QColor(self.theme["highlight"]), 2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPolyline(QPolygonF([px(p) for p in self._corner_preview]))
+        for handle in self._corner_handles:
+            corner, at = px(handle.corner), px(handle.handle)
+            if not handle.fits:
+                painter.setPen(QPen(QColor(self.theme["violation"]), 2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(corner, CORNER_ERROR_PX, CORNER_ERROR_PX)
+            painter.setPen(QPen(rail, 1, Qt.PenStyle.DashLine))
+            painter.drawLine(corner, at)
+            painter.setPen(QPen(rail, 1.5))
+            painter.setBrush(QColor(self.theme["background"]))
+            painter.drawEllipse(at, CORNER_HANDLE_PX, CORNER_HANDLE_PX)
+            if handle.label:
+                color = None if handle.fits else QColor(self.theme["violation"])
+                self._draw_chip(painter, at + QPointF(8, -6), handle.label, color)
+
     def show_alignment(
         self,
         point: tuple[str, float, float] | None,
@@ -1396,11 +1579,57 @@ class LayoutCanvas(QGraphicsView):
             self._draw_alignment(painter)
         if self._gizmo is not None:
             self._draw_gizmo(painter)
+        if self._corner_handles or self._corner_preview:
+            self._draw_corners(painter)
+        if self._marks:
+            self._draw_marks(painter)
         label = self.cursor_label or self.hover_label
         if label:
             self._draw_cursor_label(painter, label)
         self._round_corners(painter)
         painter.restore()
+
+    def show_marks(self, marks: list[ChangeMark]) -> None:
+        """Marks on changed shapes (see :class:`ChangeMark`), drawn over everything."""
+        self._marks = list(marks)
+        self.viewport().update()
+
+    @property
+    def marks(self) -> list[ChangeMark]:
+        return list(self._marks)
+
+    def mark_at(self, pos: QPoint) -> ChangeMark | None:
+        """The mark under a point of the viewport, if any."""
+        for mark in reversed(self._marks):
+            at = self.mapFromScene(QPointF(mark.x, mark.y))
+            if (at.x() - pos.x()) ** 2 + (at.y() - pos.y()) ** 2 <= (MARK_RADIUS_PX + 3) ** 2:
+                return mark
+        return None
+
+    def _draw_marks(self, painter: QPainter) -> None:
+        font = QFont(self.font())
+        font.setBold(True)
+        font.setPixelSize(MARK_RADIUS_PX + 2)
+        painter.setFont(font)
+        for mark in self._marks:
+            at = QPointF(self.mapFromScene(QPointF(mark.x, mark.y)))
+            radius = MARK_RADIUS_PX + (2 if mark.current else 0)
+            color = QColor(mark.color)
+            if mark.filled:
+                painter.setPen(QPen(QColor("white"), 2))
+                painter.setBrush(color)
+            else:  # moved by another change: a ring
+                painter.setPen(QPen(color, 2.2))
+                painter.setBrush(QColor(self.theme["background"]))
+            painter.drawEllipse(at, radius, radius)
+            if mark.current:
+                painter.setPen(QPen(color, 1.5))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(at, radius + 4, radius + 4)
+            if mark.label:
+                painter.setPen(QColor("white") if mark.filled else color)
+                box = QRectF(at.x() - radius, at.y() - radius, 2 * radius, 2 * radius)
+                painter.drawText(box, Qt.AlignmentFlag.AlignCenter, mark.label)
 
     def _round_corners(self, painter: QPainter) -> None:
         """Paint over the parts of the view outside its island's rounded outline, in
@@ -1609,7 +1838,9 @@ class LayoutCanvas(QGraphicsView):
             x = self._cursor_at.x() - CURSOR_LABEL_OFFSET - width
         self._draw_chip(painter, QPointF(max(x, 4), y), text)
 
-    def _draw_chip(self, painter: QPainter, at: QPointF, text: str) -> None:
+    def _draw_chip(
+        self, painter: QPainter, at: QPointF, text: str, color: QColor | None = None
+    ) -> None:
         """A small label on a rounded background, readable on any drawing."""
         font = QFont(self.font())
         font.setBold(True)
@@ -1626,7 +1857,7 @@ class LayoutCanvas(QGraphicsView):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(background)
         painter.drawRoundedRect(box, 4, 4)
-        painter.setPen(QColor(self.theme["overlay"]))
+        painter.setPen(color or QColor(self.theme["overlay"]))
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def grid_step(self) -> float:
@@ -1659,6 +1890,33 @@ def _length_text(um: float) -> str:
     return f"{um:g} µm"
 
 
+SNAP_DOT_PX = 5  # a snap marker's dot
+SNAP_RING_PX = 13  # ... and the ring around it on a point (not on an edge)
+
+
+class _SnapMarker(QGraphicsEllipseItem):
+    """Where a click would snap: a dot, ringed on a point (a shape's point or a
+    corner), alone on an edge, where it follows the cursor. Same size at any zoom."""
+
+    def __init__(self, color: QColor) -> None:
+        super().__init__(-SNAP_RING_PX / 2, -SNAP_RING_PX / 2, SNAP_RING_PX, SNAP_RING_PX)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.setZValue(1160)
+        self.color = color
+        self.ringed = True  # on a point; a plain dot on an edge
+
+    def paint(self, painter, option, widget=None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self.ringed:
+            painter.setPen(QPen(self.color, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(self.rect())
+        painter.setPen(QPen(QColor("white"), 1))
+        painter.setBrush(self.color)
+        half = SNAP_DOT_PX / 2
+        painter.drawEllipse(QRectF(-half, -half, SNAP_DOT_PX, SNAP_DOT_PX))
+
+
 class _PointMarker(QGraphicsEllipseItem):
     """A circle with a cross, the same size in pixels at any zoom."""
 
@@ -1677,6 +1935,26 @@ class _PointMarker(QGraphicsEllipseItem):
         painter.drawLine(QPointF(0, -half), QPointF(0, half))
 
 
+class _PortMarker(QGraphicsPathItem):
+    """A port: a small circle where it is and an arrow the way a wire leaves it,
+    the same size in pixels at any zoom (turned with setRotation)."""
+
+    LENGTH_PX = 16
+
+    def __init__(self, color: QColor) -> None:
+        path = QPainterPath()
+        path.addEllipse(QPointF(0, 0), 3, 3)
+        path.moveTo(3, 0)
+        path.lineTo(self.LENGTH_PX, 0)
+        path.moveTo(self.LENGTH_PX - 5, -4)
+        path.lineTo(self.LENGTH_PX, 0)
+        path.lineTo(self.LENGTH_PX - 5, 4)
+        super().__init__(path)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.setPen(QPen(color, 1.8))
+        self.setZValue(1100)
+
+
 def angle_between(
     vertex: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
 ) -> tuple[float, float]:
@@ -1688,3 +1966,12 @@ def angle_between(
     if sweep > 180:
         return second, 360 - sweep
     return first, sweep
+
+
+def _outline(geometries) -> QPainterPath:
+    """The outlines of ``geometries`` together, in scene coordinates."""
+    outline = QPainterPath()
+    for geometry in geometries:
+        for leaf, at in geometry.leaves():
+            outline.addPath(qtransform(at).map(own_path(leaf, "")))
+    return outline

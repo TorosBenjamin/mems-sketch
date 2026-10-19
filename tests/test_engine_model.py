@@ -64,7 +64,8 @@ def component(name, parameters=(), shapes=()):
 
 def nested_project() -> Project:
     """Private components at several depths, a library with a private component,
-    an import, built-ins and process constants that use each other."""
+    an import, the bundled library's components and process constants that use
+    each other."""
     project = new_project("nested")
     project.process.constants = {"gap": 2.0, "pitch": "2 * gap + 1", "big": "pitch ** 2"}
     library = Library(
@@ -72,7 +73,7 @@ def nested_project() -> Project:
         components={
             "pad": component("pad", [ParamDef(name="size", default=40, min=1)], [ref("pad/via")]),
             "pad/via": component("pad/via", [ParamDef(name="d", default="2 * process.gap")]),
-            "frame": component("frame", shapes=[ref("pad"), ref("anchor")]),
+            "frame": component("frame", shapes=[ref("pad"), ref("mems.anchor")]),
         },
     )
     project.libraries["std"] = library
@@ -109,7 +110,7 @@ def nested_project() -> Project:
     project.components["top"] = component(
         "top",
         [ParamDef(name="w", default=5)],
-        [ref("comb"), ref("spring"), ref("std.frame"), ref("logo"), ref("comb_drive")],
+        [ref("comb"), ref("spring"), ref("std.frame"), ref("logo"), ref("mems.comb_drive")],
     )
     return project
 
@@ -117,7 +118,7 @@ def nested_project() -> Project:
 def projects() -> list[Project]:
     return [
         load(EXAMPLES / "resonator"),
-        load(EXAMPLES / "libraries" / "mems_std"),
+        load(Path(__file__).parent / "data" / "mems_std"),
         nested_project(),
     ]
 
@@ -166,7 +167,7 @@ def names_and_contexts(project: Project):
     names = {*project.components, *(n.rpartition("/")[2] for n in project.components)}
     for library, members in project.libraries.items():
         names |= {f"{library}.{n}" for n in members.components}
-    names |= {*project.imports, "comb_drive", "anchor", "nothing", "std.nothing", "nope.pad"}
+    names |= {*project.imports, "comb_drive", "mems.anchor", "nothing", "std.nothing", "nope.pad"}
     contexts = [None, "", *project.components]
     contexts += [
         f"{library}.{n}" for library, lib in project.libraries.items() for n in lib.components
@@ -288,11 +289,11 @@ def test_fingerprints_change_on_the_same_edits(project):
             assert (after[name] != before[name]) == expected, (description, name)
 
 
-def test_built_in_components_are_components_like_any_other():
+def test_the_bundled_components_are_components_like_any_other():
     project = nested_project()
     core, session = engine(project), Engine().load(project)
-    assert core.qualify("comb_drive", "") == "comb_drive"
-    for name in ("anchor", "comb_drive", "serpentine_spring"):
+    assert core.qualify("mems.comb_drive", "") == "mems.comb_drive"
+    for name in ("mems.anchor", "mems.comb_drive", "mems.serpentine_spring"):
         for params in ({}, {"size": 10, "enclosure": 5}, {"fingers": 0}, {"pitch": 3}):
             known = {k: v for k, v in params.items() if k in core.variables(name)}
             python = outcome(lambda n=name, p=known: session.variables(n, p))

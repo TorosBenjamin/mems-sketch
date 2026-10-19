@@ -1,0 +1,44 @@
+description: >-
+  Die frame centred on the origin: the die's share of the scribe lane as a
+  ring at its edge, L-shaped marks in its four inner corners, and a label
+  area on the level above near the bottom left corner (for the die's name;
+  text will come as a shape of its own). Point: label, the middle of the
+  label area.
+tags: [frame, die, scribe lane, dicing, chip, label]
+parameters:
+  width: {default: 5000, min: 2 * lane + 2 * mark, min_exclusive: true, description: "Die width, x (µm)"}
+  height: {default: 5000, min: 2 * lane + 2 * mark, min_exclusive: true, description: "Die height, y (µm)"}
+  lane: {default: 50, min: 0, min_exclusive: true, description: "The die's share of the scribe lane: half the lane (µm)"}
+  mark: {default: 200, min: mark_width, min_exclusive: true, description: Length of each arm of a corner mark (µm)}
+  mark_width: {default: 20, min: 0, min_exclusive: true, description: Width of the corner marks (µm)}
+  inset: {default: 50, min: 0, description: From the lane to the corner marks and the label area (µm)}
+  label_width: {default: 1000, min: 0, min_exclusive: true, description: Label area width (µm)}
+  label_height: {default: 300, min: 0, min_exclusive: true, description: Label area height (µm)}
+  inside_x: {default: width/2 - lane - inset, internal: true, description: "Inner corner, x (µm)"}
+  inside_y: {default: height/2 - lane - inset, internal: true, description: "Inner corner, y (µm)"}
+points:
+  label:
+    x: -inside_x + mark + inset + label_width / 2
+    y: -inside_y + label_height / 2
+shapes:
+  scribe_lane:
+    kind: boolean
+    op: subtract
+    a:
+      die: {kind: rect, x0: -width/2, y0: -height/2, x1: width/2, y1: height/2}
+    b:
+      inside: {kind: rect, x0: -(width/2 - lane), y0: -(height/2 - lane), x1: width/2 - lane, y1: height/2 - lane}
+  corner_marks:
+    kind: transform
+    children:
+      along_x: {kind: rect, x0: inside_x - mark, y0: inside_y - mark_width, x1: inside_x, y1: inside_y}
+      along_y: {kind: rect, x0: inside_x - mark_width, y0: inside_y - mark, x1: inside_x, y1: inside_y}
+    modifiers:
+    - {kind: mirror, axis: both}
+  label_area:
+    kind: rect
+    layer: level+1
+    x0: -inside_x + mark + inset
+    y0: -inside_y
+    x1: -inside_x + mark + inset + label_width
+    y1: -inside_y + label_height

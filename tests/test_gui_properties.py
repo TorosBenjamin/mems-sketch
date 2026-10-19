@@ -293,7 +293,7 @@ def drag(widget, xs):
 
 def test_dragging_a_count_previews_live_and_applies_once(window):
     doc = window.document
-    path = doc.nodes.add_component("comb_drive")
+    path = doc.nodes.add_component("mems.comb_drive")
     window.tree.select_paths([path])
     fingers = next(e for e in window.properties.findChildren(ValueEdit) if e.integer)
     shown = []

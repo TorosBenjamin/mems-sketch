@@ -1,8 +1,6 @@
 // Copies around a centre, step degrees apart, turning with the circle or
 // keeping their orientation (mems_sketch.core.shapes.modifiers.PolarArrayModifier).
-// The copy's index is i.
-#include <optional>
-
+// The copy's index is i; its ports are there by it too: drive[2].
 #include "modifiers.hpp"
 
 namespace mems {
@@ -18,8 +16,7 @@ Result apply_polar_array(const Json& modifier, const Produce& produce, const Var
     const double cx = ctx.number(modifier, "x", 0.0), cy = ctx.number(modifier, "y", 0.0);
     const bool rotate = modifier.value("rotate", true);
     LayerSet layers;
-    Instances instances;
-    std::optional<PointMap> declared;
+    Result result;
     for (int k = 0; k < count; ++k) {
         Variables copy = variables;
         copy["i"] = k;
@@ -36,10 +33,15 @@ Result apply_polar_array(const Json& modifier, const Produce& produce, const Var
             t = mgeom::Transform::translation(cx + turned.x - px, cy + turned.y - py);
         }
         layers.add(placed(made.layers, t));
-        for (auto& instance : placed(made.instances, t)) instances.push_back(std::move(instance));
-        if (!declared) declared = made.points;
+        for (auto& instance : placed(made.instances, t)) result.instances.push_back(std::move(instance));
+        if (k == 0) {
+            result.points.insert(made.points.begin(), made.points.end());
+            result.ports.insert(made.ports.begin(), made.ports.end());
+        }
+        add_copy_ports(result, made, t, k);
     }
-    return {layers.merged(), declared.value_or(PointMap{}), std::move(instances)};
+    result.layers = layers.merged();
+    return result;
 }
 
 }  // namespace mems

@@ -153,3 +153,25 @@ def test_the_shape_list_shows_the_modifier_stack(window):
     assert not bar.icon(window.tree.MODIFIERS).isNull()
     assert bar.toolTip(window.tree.MODIFIERS) == "Modifiers: array 1×2 → mirror about axis"
     assert window.tree.topLevelItem(0).icon(window.tree.MODIFIERS).isNull()
+
+
+def test_a_perforation_card_with_shapes_to_keep_clear_of(window, qtbot):
+    scene(window)
+    path = ((0, 0),)
+    window.tree.select_paths([path])
+    menu = window.properties.add_modifier_menu
+    next(a for a in menu.actions() if a.text() == "Perforate").trigger()
+    [perforate] = window.document.node(path).modifiers
+    assert perforate.kind == "perforate"
+    card = cards(window)[0]
+    labels = {label.text() for label in card.findChildren(QLabel)}
+    assert {"Pitch", "Hole size", "Margin", "Keep clear of"} <= labels
+    window.document.nodes.add(RectShape(name="pad", layer="anchor", x0=-2, y0=-2, x1=2, y1=2))
+    window.tree.select_paths([path])
+    card = cards(window)[0]
+    names = next(
+        e for e in card.findChildren(QLineEdit) if e.placeholderText().startswith("shape names")
+    )
+    names.setText("pad")
+    qtbot.keyClick(names, Qt.Key.Key_Return)
+    assert window.document.node(path).modifiers[0].keep_out == ["pad"]

@@ -1,0 +1,47 @@
+description: >-
+  Comb drive (as `comb_drive`, anchored) with motion limiters: tabs at both
+  ends of the moving spine stop on anchored posts after `travel` towards the
+  fixed comb, before the fingers can reach the fixed spine or snap sideways.
+  Points: moving and fixed, and the port drive, as on the comb drive.
+tags: [electrode, comb drive, actuator, stop, motion limiter, capacitive]
+parameters:
+  fingers: {default: 10, min: 1, integer: true, description: Moving fingers}
+  finger_width: {default: 2, min: 0, min_exclusive: true, description: Finger width (µm)}
+  finger_length: {default: 40, min: 0, min_exclusive: true, description: Finger length (µm)}
+  gap: {default: 2, min: 0, min_exclusive: true, description: Lateral finger gap (µm)}
+  overlap: {default: 20, min: 0, max: finger_length, max_exclusive: true, description: Initial finger overlap (µm)}
+  travel: {default: 10, min: 0, min_exclusive: true, max: finger_length - overlap, max_exclusive: true, description: How far the moving comb can move towards the fixed one (µm)}
+  stop_size: {default: 10, min: 4, min_exclusive: true, description: Stop posts' anchor pads (µm)}
+  side_gap: {default: 4, min: 2, description: Between the comb and the stops (µm)}
+  moving_spine_width: {default: 4, min: 0, min_exclusive: true, internal: true}
+  total: {default: (2 * fingers + 1) * finger_width + 2 * fingers * gap, internal: true, description: Width of the spines (µm)}
+  spine_bottom: {default: -overlap / 2 + finger_length, internal: true, description: Lower edge of the moving spine (µm)}
+ports:
+  drive: {at: comb.port.drive, description: "The fixed comb's connection"}
+points:
+  moving: {y: spine_bottom + moving_spine_width}
+  fixed: {y: overlap / 2 - finger_length - 10}
+shapes:
+  comb:
+    ref: comb_drive
+    fingers: fingers
+    finger_width: finger_width
+    finger_length: finger_length
+    gap: gap
+    overlap: overlap
+    moving_spine_width: moving_spine_width
+  tabs:
+    kind: rect
+    x0: total / 2
+    y0: spine_bottom
+    x1: total / 2 + side_gap + stop_size
+    y1: spine_bottom + moving_spine_width
+    modifiers:
+    - {kind: mirror, axis: x}
+  stops:
+    ref: anchor
+    size: stop_size
+    x: total / 2 + side_gap + stop_size / 2
+    y: spine_bottom - travel - stop_size / 2
+    modifiers:
+    - {kind: mirror, axis: x}

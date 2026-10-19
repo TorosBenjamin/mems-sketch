@@ -8,6 +8,7 @@ its children and describes itself for the GUI. The kinds are listed in
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -24,12 +25,21 @@ Point = tuple[float, float]
 INDEX_NAMES = ("i", "j")
 
 
+_PORT_POINT = re.compile(r"port\.[^\W\d]\w*(\[\d+\])?")
+
+
+def is_point_name(name: str) -> bool:
+    """Whether ``name`` names a point of a node: an identifier (``top``), or a
+    placed component's port (``port.drive``; an array copy's ``port.drive[2]``)."""
+    return name.isidentifier() or _PORT_POINT.fullmatch(name) is not None
+
+
 def check_point_reference(reference: str) -> str:
     """``reference`` must look like ``node.point`` (or ``node.min.point``: a corner
-    of its minimal box)."""
+    of its minimal box; ``node.port.drive``: a placed component's port)."""
     node, sep, point = reference.partition(".")
     point = point.removeprefix("min.")
-    if not sep or not node.isidentifier() or not point.isidentifier():
+    if not sep or not node.isidentifier() or not is_point_name(point):
         raise ValueError(f"'{reference}' is not a point reference like 'mass.top'")
     return reference
 
@@ -56,7 +66,7 @@ class Align(BaseModel):
     @field_validator("point")
     @classmethod
     def _point_name(cls, point: str) -> str:
-        if not point.isidentifier():
+        if not is_point_name(point):
             raise ValueError(f"'{point}' is not a point name")
         return point
 
@@ -132,6 +142,14 @@ class Node(BaseModel):
     def placement(self, variables: dict[str, float]) -> Transform | None:
         """The transform a ``placed`` kind applies to its content, in µm."""
         return None
+
+    def handles(self) -> list[tuple[Value, Value]]:
+        """Points of its own that can be dragged on the canvas (a route's via points)."""
+        return []
+
+    def with_handle(self, index: int, point: tuple[Value, Value]) -> Shape:
+        """A copy with handle ``index`` (of :meth:`handles`) at ``point``."""
+        raise TypeError(f"'{self.kind}' has no handles")
 
     def summary(self) -> str:
         """Short description of the node, e.g. for a tooltip or a listing."""

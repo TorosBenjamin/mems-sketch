@@ -40,6 +40,9 @@ add_library(mgeom
     src/region.cpp
     src/cell.cpp
     src/measure.cpp
+    src/fit.cpp
+    src/connection.cpp
+    src/route.cpp
     src/modify.cpp
     src/wire.cpp
     src/construct.cpp
@@ -91,6 +94,9 @@ if(MGEOM_BUILD_TESTS)
         tests/test_region.cpp
         tests/test_cell.cpp
         tests/test_measure.cpp
+        tests/test_fit.cpp
+        tests/test_connection.cpp
+        tests/test_route.cpp
         tests/test_modify.cpp
         tests/test_wire.cpp
         tests/test_snap.cpp

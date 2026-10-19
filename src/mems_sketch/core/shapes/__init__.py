@@ -22,8 +22,9 @@ Semantics:
   the top level.
 * Any node can carry ``modifiers``, applied in order like Blender's modifier
   stack: ``array`` (copies on a grid, indices ``i`` and ``j``),
-  ``polar_array`` (copies around a centre) and ``mirror`` (the node plus its
-  mirror image). See :mod:`mems_sketch.core.shapes.modifiers`. The earlier
+  ``polar_array`` (copies around a centre), ``mirror`` (the node plus its
+  mirror image), ``corners`` (chosen corners rounded) and ``perforate``
+  (holes on a grid, wholly inside the node). See :mod:`mems_sketch.core.shapes.modifiers`. The earlier
   ``repeat`` field is still read: it is an array modifier.
 * ``enabled=False`` skips a node, e.g. to try a variant in the GUI.
 * A ``guide`` is a construction line: it draws nothing, but has points and
@@ -60,6 +61,7 @@ from mems_sketch.core.shapes.kinds import (
     ArcShape,
     BooleanShape,
     CircleShape,
+    ConnectionShape,
     FilletShape,
     GuideShape,
     LayerMapShape,
@@ -68,6 +70,7 @@ from mems_sketch.core.shapes.kinds import (
     PolygonShape,
     RectShape,
     RefShape,
+    RouteShape,
     TransformShape,
 )
 from mems_sketch.core.shapes.modifiers import (
@@ -77,6 +80,7 @@ from mems_sketch.core.shapes.modifiers import (
     CornersModifier,
     MirrorModifier,
     Modifier,
+    PerforateModifier,
     PolarArrayModifier,
     new_modifier,
 )
@@ -89,7 +93,7 @@ from mems_sketch.core.shapes.points import (
     point_names,
     point_values,
 )
-from mems_sketch.core.shapes.records import NodeRecord, frame_of, transform_of
+from mems_sketch.core.shapes.records import NodeRecord, Port, frame_of, transform_of
 from mems_sketch.core.shapes.registry import (
     BY_KIND,
     PRIMITIVE_KINDS,
@@ -138,6 +142,7 @@ __all__ = [
     "ArrayModifier",
     "BooleanShape",
     "CircleShape",
+    "ConnectionShape",
     "Corner",
     "CornersModifier",
     "FilletShape",
@@ -153,13 +158,16 @@ __all__ = [
     "OffsetShape",
     "Operation",
     "PathShape",
+    "PerforateModifier",
     "Point",
     "PolarArrayModifier",
     "PolygonShape",
+    "Port",
     "Primitive",
     "RectShape",
     "RefShape",
     "Repeat",
+    "RouteShape",
     "Shape",
     "TransformShape",
     "Value",

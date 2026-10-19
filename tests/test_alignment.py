@@ -106,13 +106,15 @@ def test_points_can_be_measured_from_a_shape_and_passed_up():
                 PointDef(name="tip", at="spring.end"),
                 PointDef(name="foot", at="spring.start"),
             ],
-            shapes=[Instance("spring", "serpentine_spring", {"turns": 2})],
+            shapes=[Instance("spring", "mems.serpentine_spring", {"turns": 2})],
         )
     )
     project.add(Instance("s", "suspension"))
-    project.add(Instance("pad", "anchor", {"size": 40}, align=Align(point="bottom", to="s.tip")))
+    project.add(
+        Instance("pad", "mems.anchor", {"size": 40}, align=Align(point="bottom", to="s.tip"))
+    )
     spring_top = 2 * 2 * 15 + 3
-    assert bbox(project, layer="anchor")[1] == pytest.approx(spring_top + 3)
+    assert bbox(project, layer="anchor")[1] == pytest.approx(spring_top + 2)  # the enclosure
 
 
 def test_align_a_reference_with_rotation():
@@ -121,7 +123,7 @@ def test_align_a_reference_with_rotation():
     project.add(
         Instance(
             "comb",
-            "comb_drive",
+            "mems.comb_drive",
             rotation=180,
             align=Align(point="moving", to="mass.top", dy=-1),
         )

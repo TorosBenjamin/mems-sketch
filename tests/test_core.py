@@ -18,8 +18,8 @@ def make_design() -> Project:
     design.add_layer(Layer("anchor", 2, 0))
     design.set_variable("w", 2.0)
     design.set_variable("gap", "w * 1.5")
-    design.add(Instance("pad", "anchor", {"size": 50}, x=-200))
-    design.add(Instance("comb", "comb_drive", {"finger_width": "w", "gap": "gap"}))
+    design.add(Instance("pad", "mems.anchor", {"size": 50}, x=-200))
+    design.add(Instance("comb", "mems.comb_drive", {"finger_width": "w", "gap": "gap"}))
     return design
 
 
@@ -39,8 +39,8 @@ def test_params_resolve_expressions_and_validate():
         design.component(comb.component), comb.params, design.resolved_variables()
     )
     assert params.finger_width == 2.0 and params.gap == 3.0
-    with pytest.raises(ValueError, match="'enclosure' of 'anchor' must be less than 2"):
-        design.add(Instance("bad", "anchor", {"size": 4, "enclosure": 3}))
+    with pytest.raises(ValueError, match="'enclosure' of 'mems.anchor' must be less than 2"):
+        design.add(Instance("bad", "mems.anchor", {"size": 4, "enclosure": 3}))
 
 
 def test_render_and_variable_change_updates_geometry():

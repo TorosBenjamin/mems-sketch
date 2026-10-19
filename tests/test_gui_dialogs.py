@@ -112,7 +112,7 @@ def test_new_project_libraries_say_when_there_are_none(window, qtbot, tmp_path):
     dialog.show()
     assert dialog.side.isVisible() and dialog.kinds.parentWidget() is dialog.side
     note = dialog.libraries.viewport().findChild(widgets._Placeholder)
-    assert note.isVisible() and "built-in" in note.text()
+    assert note.isVisible() and "bundled" in note.text()
     dialog.add_library(str(tmp_path))
     assert not note.isVisible()
     assert not dialog.remove.isEnabled()  # nothing selected yet

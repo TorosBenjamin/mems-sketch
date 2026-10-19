@@ -99,6 +99,10 @@ ICONS = {
         '<path d="M2.6 13.4V8.6h5.2V4.2h5.8" stroke="{blue}" stroke-opacity=".35" '
         'stroke-width="3.2"/><path d="M2.6 13.4V8.6h5.2V4.2h5.8" stroke="{blue}"/>'
     ),
+    "route": (
+        '<path d="M1.6 10.8h3.2v3.2H1.6zM11.2 2h3.2v3.2h-3.2z" fill="{blue}" fill-opacity=".25" '
+        'stroke="{blue}"/><path d="M4.8 12.4h3.6V3.6h2.8" stroke="{blue}"/>'
+    ),
     "arc": '<path d="M1.8 11.5a6.2 6.2 0 0 1 12.4 0h-3a3.2 3.2 0 0 0-6.4 0z" fill="{blue}" '
     'fill-opacity=".25" stroke="{blue}"/>',
     # -- files and history ------------------------------------------------
@@ -142,8 +146,6 @@ ICONS = {
     + '<path d="M6.5 6.5h3v3h-3z" fill="{blue}" fill-opacity=".35" stroke="none"/>',
     "component_imported": _CHIP.replace("{purple}", "{green}")  # an imported cell: green
     + '<path d="M6.5 6.5h3v3h-3z" fill="{green}" fill-opacity=".35" stroke="none"/>',
-    "component_builtin": _CHIP.replace("{purple}", "{orange}")  # a built-in: orange
-    + '<path d="M6.5 6.5h3v3h-3z" fill="{orange}" fill-opacity=".35" stroke="none"/>',
     "guide": '<path d="M3 13 13 3" stroke="{blue}" stroke-dasharray="2 1.6"/>'
     '<circle cx="3" cy="13" r="1.4" fill="{blue}" stroke="none"/>'
     '<circle cx="13" cy="3" r="1.4" fill="{blue}" stroke="none"/>',
@@ -153,6 +155,13 @@ ICONS = {
     'fill-opacity=".35" stroke="{blue}"/><rect x="6.5" y="11.5" width="3" height="3" rx=".5" '
     'fill="{blue}" fill-opacity=".35" stroke="{blue}"/><rect x="1.5" y="6.5" width="3" '
     'height="3" rx=".5" fill="{blue}" fill-opacity=".35" stroke="{blue}"/>',
+    "connection": '<path d="M1.6 13.4c3.2 0 4.8-1.8 6.4-4.4M14.4 13.4c-3.2 0-4.8-1.8-6.4-4.4M8 1.6V9"/>',
+    "perforate": '<rect x="2" y="2" width="12" height="12" rx="1"/>'
+    + "".join(
+        f'<circle cx="{x}" cy="{y}" r="1.1" fill="{{blue}}" stroke="none"/>'
+        for x in (5, 8, 11)
+        for y in (5, 8, 11)
+    ),
     "parameter": '<path d="M8 2.2 13.8 8 8 13.8 2.2 8z" stroke="{purple}"/>'
     '<path d="M8 5.6 10.4 8 8 10.4 5.6 8z" fill="{purple}" stroke="none"/>',
     "up": '<path d="M4 10l4-4 4 4"/>',
@@ -175,8 +184,6 @@ ICONS = {
     + '<path d="M8 5.8v4.2M6.3 8.4 8 10.1l1.7-1.7" stroke="{purple}"/>',
     "library": '<path d="M2.5 2.5h4v11h-4zM6.5 2.5h3.2v11H6.5z"/>'
     '<path d="M10 3.2l3-.8 2.2 10.8-3 .8z" stroke="{blue}"/>',
-    "builtin": '<path d="M8 1.8 13.6 5v6L8 14.2 2.4 11V5z"/><path d="M2.4 5 8 8.2 13.6 5M8 8.2v6" '
-    'stroke="{orange}"/>',
     "top": '<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" '
     'fill="{yellow}" fill-opacity=".35" stroke="{yellow}"/>',
     "lock": '<rect x="3.2" y="7" width="9.6" height="7" rx="1"/><path d="M5.2 7V5a2.8 2.8 0 0 1 '
@@ -184,6 +191,7 @@ ICONS = {
     "edit": '<path d="M2.4 13.6l.6-3.2 7.9-7.9 2.6 2.6-7.9 7.9z"/><path d="M9.6 3.8l2.6 2.6" '
     'stroke="{blue}"/>',
     "folder": '<path d="M1.8 3.2h4.4l1.5 1.5h6.5v8.6H1.8z"/>',
+    "file": '<path d="M3.5 1.8h6l3 3v9.4h-9z"/><path d="M9.5 1.8v3h3"/>',
     # -- editing ----------------------------------------------------------
     "add": '<path d="M8 3v10M3 8h10" stroke="{green}"/>',  # something added (history)
     "remove": '<path d="M3 8h10" stroke="{red}"/>',  # and removed
@@ -228,6 +236,7 @@ ICONS = {
     '<path d="M1.6 4.6 3 3.2l1.4 1.4" stroke="{y}"/><path d="M11.4 11.6l1.4 1.4-1.4 1.4" '
     'stroke="{x}"/>',
     "point": '<circle cx="8" cy="8" r="4.2"/><path d="M8 2v12M2 8h12"/>',
+    "port": '<circle cx="4.6" cy="8" r="2.6"/><path d="M7.2 8h6.8M11.2 5.2 14 8l-2.8 2.8"/>',
     "ruler": '<path d="M1.9 10.6 10.6 1.9l3.5 3.5-8.7 8.7z"/>',
     # -- tool windows -----------------------------------------------------
     "minimize": '<path d="M4 8.5h8"/>',
@@ -244,19 +253,23 @@ ICONS = {
     '<circle cx="6" cy="4.5" r="1.5"/><circle cx="10.5" cy="8" r="1.5"/>'
     '<circle cx="5" cy="11.5" r="1.5"/>',
     "messages": '<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.2h5M5.5 8.2h3"/>',
+    "pin": '<path d="M6 2.5h4l-.6 4 2.1 2.2v.8h-7v-.8l2.1-2.2z"/><path d="M8 9.5V14"/>',
+    "branch": '<circle cx="5" cy="3.8" r="1.4"/><circle cx="5" cy="12.2" r="1.4"/>'
+    '<circle cx="11" cy="5.8" r="1.4"/><path d="M5 5.2v5.6M11 7.2c0 2.3-6 1.6-6 3.6"/>',
     "history": '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.6V8l2.4 1.7"/>',
+    "commit": '<circle cx="8" cy="8" r="2.6"/><path d="M1.5 8h3.9M10.6 8h3.9"/>',
     "modified": '<circle cx="8" cy="8" r="3.2" fill="{orange}" stroke="none"/>',
     "properties": '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>'
     '<path d="M5 6h2M5 10h2M9 6h2M9 10h2"/>',
     # -- messages ---------------------------------------------------------
-    "error": '<circle cx="8" cy="8" r="6.2" fill="{red}" stroke="none"/>'
-    '<path d="M8 4.6v4.2M8 11.1v.3" stroke="{on_accent}" stroke-width="1.6"/>',
-    "warning": '<path d="M8 1.8 14.6 13.8H1.4z" fill="{yellow}" stroke="none"/>'
-    '<path d="M8 6v4M8 11.7v.3" stroke="{on_yellow}" stroke-width="1.5"/>',
-    "info": '<circle cx="8" cy="8" r="6.2" fill="{blue}" stroke="none"/>'
-    '<path d="M8 7.2v4.4M8 4.7v.3" stroke="{on_accent}" stroke-width="1.6"/>',
-    "ok": '<circle cx="8" cy="8" r="6.2" fill="{green}" stroke="none"/>'
-    '<path d="M5 8.2l2 2 4-4.2" stroke="{on_accent}" stroke-width="1.6"/>',
+    "error": '<circle cx="8" cy="8" r="5.8" stroke="{red}" stroke-width="1.3"/>'
+    '<path d="M8 5v3.5M8 10.9v.01" stroke="{red}" stroke-width="1.4"/>',
+    "warning": '<path d="M8 2.4 14.2 13.2H1.8z" stroke="{amber}" stroke-width="1.3"/>'
+    '<path d="M8 6.4v3.1M8 11.2v.01" stroke="{amber}" stroke-width="1.4"/>',
+    "info": '<circle cx="8" cy="8" r="5.8" stroke="{blue}" stroke-width="1.3"/>'
+    '<path d="M8 7.4v3.6M8 5.1v.01" stroke="{blue}" stroke-width="1.4"/>',
+    "ok": '<circle cx="8" cy="8" r="5.8" stroke="{green}" stroke-width="1.3"/>'
+    '<path d="M5.6 8.1l1.7 1.7 3.2-3.4" stroke="{green}" stroke-width="1.4"/>',
 }
 
 _theme = "light"
@@ -315,7 +328,9 @@ def _theme_colors() -> dict[str, str]:
     if _colors is None:
         from mems_sketch.gui import theme  # it imports this module
 
-        _colors = theme.get(_theme).icons
+        colors = dict(theme.get(_theme).icons)
+        colors.setdefault("amber", colors["yellow"])
+        _colors = colors
     return _colors
 
 

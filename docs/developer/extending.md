@@ -1,13 +1,16 @@
 # Extending
 
-## A built-in component
+## A component of a bundled library
 
-Built-in components are ordinary components in a library that ships with the
-tool, `components/builtin/` (a project folder without a top component, see
-[File formats](file-formats.md)). Add a component folder there and list it in
-its `project.yaml`; draw on `level` and `level.anchor` rather than named
-layers, so it works on any level of any project's layer stack. Both backends
-build it like any other component, and its parameters' limits are its checks.
+The bundled libraries are ordinary library folders in
+`src/mems_sketch/libraries/` (`mems/`, a project folder without a top
+component, see [File formats](file-formats.md)). Add a component folder in
+the category folder it belongs to (`components/springs/<name>/`) and list it in
+the library's `project.yaml`; draw on `level` and `level.anchor` rather than
+named layers, so it works on any level of any project's layer stack. The
+engine builds it like any other component, and its parameters' limits are its
+checks. Raise the library's `version` when a change could change designs that
+use it. A new bundled library is a new folder there: every project gets it.
 There is no Python API for components that compute their own geometry: a
 component is always data, so the C++ engine can build it.
 
@@ -67,6 +70,15 @@ others:
 - **Dialogs:** `widgets.form()` for labelled fields, `widgets.with_help(field,
   text)` for a field and its **?**, `widgets.dialog_margins(layout)`, and
   `widgets.SideList` for a column of pages (as in Settings).
+- **Qualified names** (`std.perforated_plate`, `base.top`): show them with
+  `widgets.QualifiedCombo` (`add_grouped` puts each qualifier's names under a
+  heading), `widgets.QualifiedDelegate` for a list or table column, or
+  `widgets.qualified_html(name)` in a label: the qualifier muted. A menu of
+  names gets `menu.setProperty(style.QUALIFIED, True)`. Fields you type in stay
+  plain.
+- **Menus** are drawn by `gui/style.py` (muted shortcuts, check boxes, rounded
+  panels with a shadow); don't add `QMenu` rules to the style sheet, or Qt
+  draws menus itself again.
 - **Sizes** come from the theme: `theme.metric("space_m")` and the like.
 - **Saying what happened:** `window.notify(text, kind, action=(label, slot))`
   shows a note over the editor (`kind`: info, success, warning, or error,
@@ -74,6 +86,11 @@ others:
 - **Motion:** `motion.run(owner, step, duration)` calls `step(t)` from 0 to 1
   and jumps to the end when the user turned on *Reduce motion* (and in tests).
   Keep it short: `motion.SHORT` for panels, `motion.VIEW` for the canvas.
+- **Scroll bars** float over every scroll area by themselves (`scrollbars.py`,
+  installed with the theme). Turn one off with the usual
+  `setVerticalScrollBarPolicy(ScrollBarAlwaysOff)`; nothing else is needed.
+- **Status signs:** `icons.icon("error" | "warning" | "info" | "ok")`, at the
+  theme's `icon_size` like any other icon.
 
 ## An export format
 

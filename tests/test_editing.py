@@ -184,7 +184,7 @@ def test_rules_are_edited_with_undo(doc):
 
 
 def test_save_open_export(doc, tmp_path):
-    doc.nodes.add_component("comb_drive")
+    doc.nodes.add_component("mems.comb_drive")
     doc.save(tmp_path / "proj")
     assert not doc.dirty and (tmp_path / "proj" / "project.yaml").exists()
     other = EditSession()
@@ -299,7 +299,7 @@ def test_unpack_restores_the_shapes_with_values_filled_in(doc):
     assert inner.name == "rect2"  # renamed: rect1 is taken
     assert inner.x1 == "10 * width" and inner.y1 == "width"
     assert area(doc) == pytest.approx(before)
-    pad = doc.components.unpack(doc.nodes.add_component("anchor"))  # a built-in too
+    pad = doc.components.unpack(doc.nodes.add_component("mems.anchor"))  # the bundled library's too
     assert [s.name for s in doc.node(pad).children] == ["pad", "opening"]
 
 
@@ -402,7 +402,7 @@ def test_moving_a_shape_and_its_aligned_partner_moves_both_once(doc):
 
 
 def test_rotating_a_reference_about_a_pivot(doc):
-    ref = doc.nodes.add(RefShape(name="a", component="anchor", x=10, y=0))
+    ref = doc.nodes.add(RefShape(name="a", component="mems.anchor", x=10, y=0))
     doc.moves.rotate([ref], 90, (0, 0))
     node = doc.node(ref)
     assert (node.rotation, node.x, node.y) == pytest.approx((90, 0, 10))
@@ -435,7 +435,7 @@ def test_rotating_a_primitive_wraps_it_and_keeps_its_name(doc):
 
 def test_mirroring_and_expressions(doc):
     doc.parameters.set("d", 30)
-    ref = doc.nodes.add(RefShape(name="a", component="anchor", x="d", y=0))
+    ref = doc.nodes.add(RefShape(name="a", component="mems.anchor", x="d", y=0))
     doc.moves.mirror([ref], left_right=True, center=(0, 0))
     node = doc.node(ref)
     assert node.x == "d - 60" and node.mirror_x and node.rotation == 180
@@ -467,7 +467,7 @@ def test_events_call_slots_in_order_and_survive_a_failing_one(monkeypatch):
 
 
 def test_a_script_can_edit_and_save_a_project(tmp_path):
-    for name in ("resonator", "libraries"):
+    for name in ("resonator",):
         shutil.copytree(
             EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
         )
@@ -492,7 +492,7 @@ def test_a_script_can_edit_and_save_a_project(tmp_path):
 
 @pytest.fixture
 def resonator(tmp_path) -> EditSession:
-    for name in ("resonator", "libraries"):
+    for name in ("resonator",):
         shutil.copytree(
             EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
         )
@@ -501,19 +501,23 @@ def resonator(tmp_path) -> EditSession:
 
 def test_placed_components_form_a_hierarchy(resonator):
     placed = resonator.components.placed
-    assert placed("top") == [("std.perforated_plate", 1), ("comb_drive", 2), ("suspension", 2)]
-    assert placed("suspension") == [("serpentine_spring", 1), ("anchor", 1)]
-    assert placed("comb_drive") == []  # a built-in places nothing
+    assert placed("top") == [
+        ("mems.perforated_plate", 1),
+        ("mems.comb_drive", 2),
+        ("suspension", 2),
+    ]
+    assert placed("suspension") == [("mems.serpentine_spring", 1), ("mems.anchor", 1)]
+    assert placed("mems.comb_drive") == []  # it places nothing
     assert resonator.components.users("suspension") == ["top"]
 
 
 def test_a_library_component_can_be_copied_into_the_project(resonator):
-    name = resonator.components.copy("std.perforated_plate")
+    name = resonator.components.copy("mems.perforated_plate")
     assert name == "perforated_plate" and resonator.active == name
     assert not resonator.read_only
-    assert resonator.components.copy("std.perforated_plate") == "perforated_plate_copy1"
-    assert resonator.components.copy("anchor") == "anchor_copy1"  # a built-in too
-    assert resonator.project.components["anchor_copy1"].shapes
+    assert resonator.components.copy("mems.perforated_plate") == "perforated_plate_copy1"
+    assert resonator.components.copy("mems.anchor") == "anchor"  # the bundled library's too
+    assert resonator.project.components["anchor"].shapes
     resonator.undo()
     resonator.undo()
     resonator.undo()
@@ -521,9 +525,9 @@ def test_a_library_component_can_be_copied_into_the_project(resonator):
 
 
 def test_libraries_can_be_added_and_removed_with_undo(resonator, tmp_path):
-    with pytest.raises(ValueError, match="still used by: top"):
-        resonator.components.remove_library("std")
-    name = resonator.components.add_library(tmp_path / "libraries" / "mems_std", "extra")
+    with pytest.raises(ValueError, match="'mems' is a bundled library"):
+        resonator.components.remove_library("mems")
+    name = resonator.components.add_library(Path(__file__).parent / "data" / "mems_std", "extra")
     assert name == "extra" and "extra.perforated_plate" in resonator.project.component_names()
     resonator.components.remove_library("extra")
     assert "extra" not in resonator.project.libraries
@@ -557,12 +561,12 @@ def test_create_saves_a_named_project_with_libraries_and_a_process(tmp_path):
     folder = doc.create(
         tmp_path / "chip",
         "chip",
-        libraries=[EXAMPLES / "libraries" / "mems_std"],
+        libraries=[Path(__file__).parent / "data" / "mems_std"],
         process_from=EXAMPLES / "resonator",
     )
     assert folder == tmp_path / "chip" and doc.path == folder and not doc.dirty
     assert doc.project.name == "chip" and doc.project.top == "top"
-    assert list(doc.project.libraries) == ["mems_std"]
+    assert list(doc.project.libraries) == ["mems", "std", "mems_std"]
     resonator = EditSession.open_project(EXAMPLES / "resonator")
     assert doc.project.process == resonator.project.process
     again = EditSession.open_project(folder)

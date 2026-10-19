@@ -1,0 +1,39 @@
+description: >-
+  Differential comb pair: two anchored combs facing each other across one
+  moving spine (the shuttle). Moving along +y engages the upper comb and
+  disengages the lower one by the same amount, so their capacitance
+  difference follows the motion linearly; as an actuator, each comb pulls one
+  way. Point: shuttle, the middle of the shared moving spine. Ports: lower
+  and upper, each comb's connection.
+tags: [electrode, comb drive, differential, sense, capacitive]
+parameters:
+  fingers: {default: 10, min: 1, integer: true, description: Moving fingers of each comb}
+  finger_width: {default: 2, min: 0, min_exclusive: true, description: Finger width (µm)}
+  finger_length: {default: 40, min: 0, min_exclusive: true, description: Finger length (µm)}
+  gap: {default: 2, min: 0, min_exclusive: true, description: Lateral finger gap (µm)}
+  overlap: {default: 20, min: 0, max: finger_length, max_exclusive: true, description: Initial finger overlap of each comb (µm)}
+  moving_spine_width: {default: 4, min: 0, min_exclusive: true, description: Shuttle width (µm)}
+ports:
+  lower: {at: lower.port.drive, description: The lower comb's connection}
+  upper: {at: upper.port.drive, description: The upper comb's connection}
+points:
+  shuttle: {y: -overlap / 2 + finger_length + moving_spine_width / 2}
+shapes:
+  lower:
+    ref: comb_drive
+    fingers: fingers
+    finger_width: finger_width
+    finger_length: finger_length
+    gap: gap
+    overlap: overlap
+    moving_spine_width: moving_spine_width
+  upper:
+    ref: comb_drive
+    fingers: fingers
+    finger_width: finger_width
+    finger_length: finger_length
+    gap: gap
+    overlap: overlap
+    moving_spine_width: moving_spine_width
+    rotation: 180
+    align: {point: moving, to: lower.moving, dy: -moving_spine_width}

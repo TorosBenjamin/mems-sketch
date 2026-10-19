@@ -35,7 +35,7 @@ from PySide6.QtCore import QStandardPaths, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
-from mems_sketch.gui import icons
+from mems_sketch.gui import icons, scrollbars
 
 SYSTEM = "system"  # follow the desktop: the built-in light or dark theme
 BUILT_IN = Path(__file__).with_name("themes")
@@ -86,6 +86,11 @@ class UiColors(_Colors):
     expression: str  # a field holding an expression (a parameter's purple, light)
     error: str
     warning: str
+    # Names in the Commit and Git panels, by what happened to them (as in JetBrains IDEs).
+    vcs_added: str
+    vcs_changed: str
+    vcs_removed: str
+    vcs_untracked: str  # a file git does not track yet
 
 
 class CanvasColors(_Colors):
@@ -136,8 +141,9 @@ class IconColors(_Colors):
     purple: str
     x: str  # the x axis
     y: str  # the y axis
-    on_accent: str  # marks drawn on the coloured badges (error, info, ok)
-    on_yellow: str  # and on the yellow one (warning)
+    amber: str | None = None  # the warning sign, readable on the background; else yellow
+    on_accent: str | None = None  # no longer used: kept so older themes still load
+    on_yellow: str | None = None  # no longer used: kept so older themes still load
 
 
 class Metrics(BaseModel):
@@ -275,7 +281,7 @@ def _resolve_all(files: dict[str, tuple[_File, str]]) -> dict[str, Theme]:
         colors = {}
         for group, model in GROUPS.items():
             try:
-                colors[group] = model.model_validate(merged[group]).model_dump()
+                colors[group] = model.model_validate(merged[group]).model_dump(exclude_none=True)
             except ValidationError as e:
                 raise ThemeError(f"{group}: {_explain(e)}") from e
         done[tid] = Theme(tid, file.name, bool(dark), **colors, source=where)
@@ -386,15 +392,7 @@ QToolBar#tools-toolbar QToolButton {{ padding: 5px; margin: 1px 2px; }}
 QMenuBar {{ background: {window}; }}
 QMenuBar::item {{ padding: 4px 8px; border-radius: {radius_control}px; }}
 QMenuBar::item:selected {{ background: {hover}; }}
-QMenu {{
-    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_popup}px;
-    padding: 5px;
-}}
-QMenu::item {{ padding: 5px 24px 5px 8px; border-radius: {radius_control}px; }}
-QMenu::item:selected {{ background: {selected}; }}
-QMenu::item:disabled {{ color: {muted}; }}
-QMenu::separator {{ height: 1px; background: {border_strong}; margin: 4px 6px; }}
-QMenu::icon {{ padding-left: 6px; }}
+/* Menus are drawn by gui/style.py: a QMenu rule here would make Qt draw them instead. */
 
 QDockWidget {{ titlebar-close-icon: none; titlebar-normal-icon: none; }}
 QDockWidget::title {{ background: {window}; padding: 0 10px; text-align: left; }}
@@ -430,7 +428,7 @@ QTableView::item {{ padding: 0 4px; }}  /* widgets.CELL_PADDING */
 QTableCornerButton::section {{ background: {island}; border: none; }}
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
-    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_control}px;
+    background: {editor}; border: 1px solid {border_strong}; border-radius: {radius_card}px;
     padding: 3px 6px; selection-background-color: {selected}; selection-color: {text};
 }}
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QSpinBox:focus,
@@ -446,9 +444,16 @@ QComboBox::drop-down {{ border: none; width: 20px; }}
 QComboBox::down-arrow {{ image: url({arrow}); width: 10px; height: 10px; }}
 QComboBox::down-arrow:disabled {{ image: url({arrow_disabled}); }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: none; }}
-QComboBox QAbstractItemView {{
-    background: {editor}; border: 1px solid {border_strong}; selection-background-color: {selected};
+QComboBox {{ combobox-popup: 0; }}  /* every list drops down below its box, alike */
+QComboBox QAbstractItemView {{  /* drawn on the popup's rounded panel (see style.py) */
+    background: transparent; border: none; outline: none;
+    selection-background-color: {selected}; selection-color: {text};
 }}
+QComboBox QAbstractItemView::item {{
+    min-height: 22px; padding: 0 8px; border-radius: {radius_control}px;
+}}
+QComboBox QAbstractItemView::item:hover {{ background: {hover}; }}
+QComboBox QAbstractItemView::item:selected {{ background: {selected}; color: {text}; }}
 
 QPushButton {{
     background: {editor}; border: 1px solid {input_border}; border-radius: {radius_control}px;
@@ -462,12 +467,35 @@ QPushButton:disabled {{ color: {muted}; }}
 QCheckBox, QRadioButton {{ spacing: 6px; }}
 QScrollArea {{ background: {island}; border: none; }}
 QWidget#properties-body {{ background: {island}; }}
-QGroupBox#section {{  /* a card of the Properties form: heading inside, folds away */
-    background: {window}; border: 1px solid {border}; border-radius: {radius_card}px;
-    margin-top: 4px; padding: 28px 10px 6px 10px; font-weight: 600;
+QListWidget#picker-list {{ background: transparent; border: none; outline: none; }}
+QListWidget#picker-list::item {{ background: transparent; }}
+QLineEdit#picker-search {{ padding: 6px 8px; border-radius: {radius_control}px; }}
+QFrame#picker-line {{ background: {border}; border: none; margin: 0 2px; }}
+QToolButton#picker-browse {{ color: {accent}; padding: 4px 6px; }}
+QWidget#welcome, QWidget#welcome-main {{ background: {editor}; }}
+QFrame#welcome-side {{ background: {window}; border-right: 1px solid {border}; }}
+QLabel#welcome-title {{ font-size: 18px; font-weight: 600; color: {text}; }}
+QLineEdit#welcome-search {{ padding: 6px 8px; }}
+QListWidget#welcome-list {{ background: transparent; border: none; outline: none; }}
+QListWidget#welcome-list::item {{ background: transparent; }}
+QFrame#search-divider {{ background: {border}; border: none; }}
+QFrame#commit-rule {{ background: {border}; border: none; }}
+QWidget#comparison-bar {{ border-bottom: 1px solid {border}; }}
+QFrame#change-card {{
+    background: {island}; border: 1px solid {border_strong}; border-radius: {radius_card}px;
+}}
+QLabel#preview-picture {{ background: {window}; border-radius: {radius_card}px; }}
+QScrollArea#preview-scroll, QWidget#preview-body {{ background: transparent; }}
+QLabel#keycap {{
+    color: {muted}; background: {window}; border: 1px solid {border_strong};
+    border-radius: {radius_small}px; padding: 0 5px; font-size: 11px;
+}}
+QGroupBox#section {{  /* a part of the Properties form: a heading over a line, folds away */
+    background: transparent; border: none; border-top: 1px solid {border}; border-radius: 0;
+    margin-top: 0; padding: 26px 0 2px 0; font-weight: 600;
 }}
 QGroupBox#section::title {{
-    subcontrol-origin: padding; subcontrol-position: top left; left: 10px; top: 8px; padding: 0;
+    subcontrol-origin: padding; subcontrol-position: top left; left: 0; top: 6px; padding: 0;
 }}
 QToolButton#section-toggle {{ padding: 2px; border-radius: {radius_small}px; }}
 QLabel#unit {{ color: {muted}; }}
@@ -498,18 +526,29 @@ QTableView[visibility="true"]::indicator:checked {{
 QStatusBar {{ background: {frame}; border: none; color: {muted}; min-height: 26px; }}
 QStatusBar::item {{ border: none; }}
 QStatusBar QLabel {{ color: {muted}; padding: 0 6px; }}
+QStatusBar QLabel#status-tool {{ color: {text}; padding: 0 2px; }}
+QStatusBar QLabel#status-hint {{ color: {muted}; }}
+QFrame#status-separator {{ background: {border_strong}; border: none; }}
 QStatusBar QToolButton {{ padding: 2px 5px; }}
 QStatusBar QComboBox, QStatusBar QDoubleSpinBox {{ padding: 0 6px; }}
 QGraphicsView {{ border: none; }}
 
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
-QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
-QScrollBar::handle {{ background: {scroll}; border-radius: {radius_control}px; min-height: 24px; min-width: 24px;
-    margin: 2px; }}
+/* A scroll area's own bars take no room: thin bars float over the content instead
+   (scrollbars.py), drawn thinner until pointed at. */
+QAbstractScrollArea QScrollBar:vertical {{ width: 0; }}
+QAbstractScrollArea QScrollBar:horizontal {{ height: 0; }}
+QScrollBar:vertical, QScrollBar#overlay-scroll:vertical {{ background: transparent; width: 10px; margin: 0; }}
+QScrollBar:horizontal, QScrollBar#overlay-scroll:horizontal {{
+    background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle {{ background: {scroll}; border-radius: 3px; min-height: 24px; min-width: 24px; }}
+QScrollBar::handle:vertical {{ margin: 2px 2px 2px 3px; }}
+QScrollBar::handle:horizontal {{ margin: 3px 2px 2px 2px; }}
+QScrollBar[wide="true"]::handle {{ margin: 1px; border-radius: 4px; background: {muted}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
 QSplitter#islands::handle {{ background: {frame}; }}  /* the gaps between islands */
+QFrame#editor-host {{ background: transparent; border: none; }}  /* holds the panes' islands */
 QToolTip {{
     background: {tooltip}; color: {text}; border: 1px solid {border_strong}; padding: 4px 6px;
     border-radius: {radius_control}px;
@@ -623,8 +662,14 @@ def apply(app: QApplication, name: str) -> str:
     if app.property("mems_sketch_theme") == theme and _applied.get(id(app)) is _current:
         return theme  # re-polishing every widget is slow; nothing would change
     app.setProperty("mems_sketch_theme", theme)
+    scrollbars.install(app)
     _applied[id(app)] = _current
+    from mems_sketch.gui.style import MenuPolisher  # it imports this module
+
     app.setStyle("Fusion")
+    if not hasattr(app, "_menu_polisher"):  # once: every menu, in every window
+        app._menu_polisher = MenuPolisher(app)
+        app.installEventFilter(app._menu_polisher)
     app.setPalette(palette(theme))
     t = _current.ui
     app.setStyleSheet(

@@ -1,0 +1,26 @@
+description: >-
+  Rectangular frame mass centred on the origin: a perforated ring, its outer
+  edge and its width whole numbers of hole pitches (plus a web), with an
+  opening in the middle for an inner mass, anchors or electrodes. All webs
+  and rims are `web` wide, so it releases. Points: the corners and edge
+  middles of the box around it, as for any shape.
+tags: [mass, frame, perforated, release holes, gyroscope, decoupling]
+parameters:
+  columns: {default: 24, min: 3, integer: true, description: Hole pitches across the outside (x)}
+  rows: {default: 20, min: 3, integer: true, description: Hole pitches up the outside (y)}
+  frame: {default: 3, min: 1, integer: true, max: "min(columns, rows) / 2", max_exclusive: true, description: Holes across the frame's width}
+  pitch: {default: 10, min: web, min_exclusive: true, description: Hole pitch (µm)}
+  web: {default: 2.5, min: 0, min_exclusive: true, description: "Between holes, and the rims (µm)"}
+  width: {default: columns * pitch + web, internal: true, description: Outside width (µm)}
+  height: {default: rows * pitch + web, internal: true, description: Outside height (µm)}
+  band: {default: frame * pitch + web, internal: true, description: Frame width (µm)}
+shapes:
+  ring:
+    kind: boolean
+    op: subtract
+    a:
+      outside: {kind: rect, x0: -width/2, y0: -height/2, x1: width/2, y1: height/2}
+    b:
+      opening: {kind: rect, x0: -width/2 + band, y0: -height/2 + band, x1: width/2 - band, y1: height/2 - band}
+    modifiers:
+    - {kind: perforate, pitch: pitch, hole_size: pitch - web, corner_radius: 0, margin: web}

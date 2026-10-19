@@ -1,0 +1,28 @@
+format: mems-sketch/2
+name: mems
+description: MEMS components and example processes
+version: 2
+top: null
+process: surface
+processes:
+  surface: processes/surface
+  polysilicon: processes/polysilicon
+  soi: processes/soi
+components:
+  anchor: components/anchors/anchor
+  comb_drive: components/electrodes/comb_drive
+  comb_drive_with_stops: components/electrodes/comb_drive_with_stops
+  differential_comb: components/electrodes/differential_comb
+  parallel_plate: components/electrodes/parallel_plate
+  serpentine_spring: components/springs/serpentine_spring
+  clamped_beam: components/springs/clamped_beam
+  guided_beam: components/springs/guided_beam
+  u_spring: components/springs/u_spring
+  folded_flexure: components/springs/folded_flexure
+  crab_leg: components/springs/crab_leg
+  perforated_plate: components/masses/perforated_plate
+  proof_mass: components/masses/proof_mass
+  frame_mass: components/masses/frame_mass
+  dimple_array: components/masses/dimple_array
+  lateral_resonator: components/devices/lateral_resonator
+  accelerometer: components/devices/accelerometer

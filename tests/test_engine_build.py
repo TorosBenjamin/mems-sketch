@@ -70,15 +70,80 @@ RECORDING = Path(__file__).parent / "data" / "python_backend.json.gz"
 _recorded: dict[str, object] | None = None
 
 
+# Fields added after the recording, left out of a case's key while they hold
+# their defaults (what the recorded result was built without); a component's
+# own fields are under None.
+_LATER_FIELDS = {
+    ("rect", "corner_radius"): 0.0,
+    (None, "category"): "",
+    (None, "tags"): [],
+    (None, "ports"): [],
+}
+# What components were called when the recording was made: the built-ins and
+# the example library's plate are the bundled mems library's now.
+OLD_NAMES = {
+    "mems.anchor": "anchor",
+    "mems.comb_drive": "comb_drive",
+    "mems.serpentine_spring": "serpentine_spring",
+    "mems.perforated_plate": "std.perforated_plate",
+}
+
+
+# The bundled components' defaults when the recording was made, since changed
+# (#180: an enclosure the example processes' release rules accept, a moving
+# spine and a plate the etch frees, an anchor under the fixed spine): the
+# engine is compared with the recording with them set back.
+RECORDED_DEFAULTS = {
+    "anchor": {"enclosure": 3.0},
+    "comb_drive": {"moving_spine_width": "spine_width", "anchored": 0.0},
+    "perforated_plate": {
+        "size": 160.0,
+        "pitch": 20.0,
+        "hole": "pitch / 3",
+        "corner_radius": "hole / 2",
+        "margin": "(pitch - hole) / 2",
+    },
+}
+# The example's own values then: it uses the plate the etch frees now.
+RECORDED_EXAMPLE = {"top": {"plate": 160.0, "pitch": 20.0}}
+
+
+def set_back(components, defaults) -> None:
+    """Give ``components`` the parameter defaults they were recorded with."""
+    for name, values in defaults.items():
+        for parameter in components[name].parameters:
+            if parameter.name in values:
+                parameter.default = values[parameter.name]
+
+
+def _as_recorded(value):
+    if isinstance(value, dict):
+        kind = value.get("kind")
+        if kind == "ref" and value.get("component") in OLD_NAMES:
+            value = {**value, "component": OLD_NAMES[value["component"]]}
+        return {
+            k: _as_recorded(v)
+            for k, v in value.items()
+            if (kind, k) not in _LATER_FIELDS or v != _LATER_FIELDS[(kind, k)]
+        }
+    if isinstance(value, list):
+        return [_as_recorded(v) for v in value]
+    return value
+
+
 def case_key(project: Project, component: str, params=None, what: str = "geometry") -> str:
     """Everything a case's result depends on, hashed."""
 
     def dump(components):
-        return {n: d.model_dump(mode="json") for n, d in sorted(components.items())}
+        return {n: _as_recorded(d.model_dump(mode="json")) for n, d in sorted(components.items())}
 
     data = {
         "components": dump(project.components),
-        "libraries": {n: dump(lib.components) for n, lib in sorted(project.libraries.items())},
+        "libraries": {  # the bundled ones were built-ins, not in the key
+            n: dump(lib.components)
+            for n, lib in sorted(project.libraries.items())
+            if not lib.bundled
+        },
         "constants": project.process.constants,
         "levels": [(lv.layer, lv.roles) for lv in project.process.levels],
         "default_level": project.process.default_level,
@@ -120,10 +185,19 @@ def python_points(project: Project, component: str) -> dict[str, tuple[float, fl
     return {n: tuple(p) for n, p in recorded(case_key(project, component, {}, "points")).items()}
 
 
-def assert_same(project: Project, component: str, params=None, tolerance=CURVED_NM):
-    """Both backends give the same geometry, or both refuse it."""
+def assert_same(
+    project: Project,
+    component: str,
+    params=None,
+    tolerance=CURVED_NM,
+    recorded_as=None,
+    recorded_component=None,
+):
+    """Both backends give the same geometry, or both refuse it. ``recorded_as``: the
+    project as the recording had it (a component since rewritten to the same
+    geometry); ``recorded_component``: what the component was called then."""
     try:
-        python = python_regions(project, component, params)
+        python = python_regions(recorded_as or project, recorded_component or component, params)
     except Exception as python_error:  # noqa: BLE001
         with pytest.raises(ValueError):
             engine_regions(project, component, params)
@@ -140,20 +214,79 @@ def assert_same(project: Project, component: str, params=None, tolerance=CURVED_
     return "same"
 
 
-def all_components(project: Project) -> list[str]:
-    names = [*project.components]
-    names += [
-        f"{lib}.{n}" for lib, library in project.libraries.items() for n in library.components
-    ]
-    return names
+# mems.perforated_plate as recorded: a rectangle less an array of circles. It is
+# a perforate modifier now (#83), with the holes where they were.
+RECORDED_PLATE = """
+description: Square plate with a grid of round release holes
+parameters:
+  size: {default: 160, min: 10, description: Edge length (µm)}
+  pitch: {default: 20, min: 2, description: Hole pitch (µm)}
+  hole_r:
+    default: pitch / 6
+    min: 0.5
+    internal: true
+    description: Hole radius (µm), follows the pitch
+shapes:
+  plate:
+    kind: boolean
+    op: subtract
+    a:
+      outline: {kind: rect, layer: device, x0: -size/2, y0: -size/2, x1: size/2, y1: size/2}
+    b:
+      holes:
+        kind: circle
+        layer: device
+        x: -size/2 + pitch/2
+        y: -size/2 + pitch/2
+        radius: hole_r
+        modifiers:
+        - {kind: array, columns: floor(size/pitch), rows: floor(size/pitch), dx: pitch, dy: pitch}
+"""
 
 
-@pytest.mark.parametrize("folder", ["resonator", "libraries/mems_std"])
-def test_the_examples(folder):
-    """Every example component the engine builds matches; the others say why not."""
-    project = load(EXAMPLES / folder)
-    for name in all_components(project):
-        assert assert_same(project, name) == "same", name
+def recorded_plate() -> ComponentDef:
+    import yaml
+
+    from mems_sketch.storage.component_format import component_from_data
+
+    return component_from_data("perforated_plate", yaml.safe_load(RECORDED_PLATE))[0]
+
+
+def test_the_example_project():
+    """Every component of the example project the engine builds matches; the
+    plate it places too, as it was recorded."""
+    from mems_sketch.core.project import Library
+
+    project = load(EXAMPLES / "resonator")
+    set_back(project.components, RECORDED_EXAMPLE)
+    set_back(project.libraries["mems"].components, RECORDED_DEFAULTS)
+    recorded_as = load(EXAMPLES / "resonator")
+    set_back(recorded_as.components, RECORDED_EXAMPLE)
+    recorded_as.libraries.pop("std")  # bundled now, the example library then
+    recorded_as.libraries["std"] = Library("std", {"perforated_plate": recorded_plate()})
+    for name in project.components:
+        assert assert_same(project, name, recorded_as=recorded_as) == "same", name
+    assert (
+        assert_same(
+            project,
+            "mems.perforated_plate",
+            recorded_as=recorded_as,
+            recorded_component="std.perforated_plate",
+        )
+        == "same"
+    )
+
+
+def test_the_bundled_plate():
+    """The bundled library's plate (as a project of its own), as recorded when it was
+    the example library's."""
+    from mems_sketch.libraries import BUNDLED_FOLDER
+
+    project = load(BUNDLED_FOLDER / "mems")
+    set_back(project.components, RECORDED_DEFAULTS)
+    recorded_as = load(Path(__file__).parent / "data" / "mems_std")
+    recorded_as.components["perforated_plate"] = recorded_plate()
+    assert assert_same(project, "perforated_plate", recorded_as=recorded_as) == "same"
 
 
 BUILT_IN_CASES = [  # (component, parameters, built: else both refuse)
@@ -174,8 +307,16 @@ BUILT_IN_CASES = [  # (component, parameters, built: else both refuse)
 
 
 @pytest.mark.parametrize("name, params, built", BUILT_IN_CASES)
-def test_built_in_components(name, params, built):
-    result = assert_same(new_project("built-ins"), name, params, tolerance=STRAIGHT_NM)
+def test_the_former_built_in_components(name, params, built):
+    project = new_project("built-ins")
+    set_back(project.libraries["mems"].components, RECORDED_DEFAULTS)
+    result = assert_same(
+        project,
+        f"mems.{name}",
+        params,
+        tolerance=STRAIGHT_NM,
+        recorded_component=name,
+    )
     assert (result == "same") == built, result
 
 

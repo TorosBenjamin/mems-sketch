@@ -6,6 +6,7 @@ an :class:`~mems_sketch.editing.EditSession`, the backend's way to edit a projec
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import multiprocessing
@@ -15,30 +16,34 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QColor, QKeySequence
+from PySide6.QtGui import QCloseEvent, QColor, QCursor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
     QToolButton,
+    QWidget,
 )
 
-from mems_sketch.core.component import component_types
-from mems_sketch.core.shapes import NodePath, paths
+from mems_sketch.core.shapes import CornersModifier, NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
 from mems_sketch.export.base import available_exporters, options_of, title_of
-from mems_sketch.gui import icons, motion, theme
+from mems_sketch.gui import component_picker, icons, motion, recent_projects, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
+from mems_sketch.gui.commit_panel import CommitPanel
+from mems_sketch.gui.comparison_view import UNCOMMITTED, ComparisonView
+from mems_sketch.gui.component_picker import PlacePopup
 from mems_sketch.gui.editor_state import load_state, save_state
 from mems_sketch.gui.export_dialog import ExportOptionsDialog, remember, remembered
-from mems_sketch.gui.history_panel import HistoryPanel
+from mems_sketch.gui.git_panel import GitPanel
 from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
     INSIDE_ROLE,
@@ -64,20 +69,30 @@ from mems_sketch.gui.search import (
     menu_actions,
 )
 from mems_sketch.gui.settings import PreferencesDialog, Settings, open_folder
-from mems_sketch.gui.statusbar import ToolStatus
+from mems_sketch.gui.statusbar import (
+    GRID_SAMPLE,
+    POSITION_SAMPLE,
+    TARGET_MAX_WIDTH,
+    ZOOM_SAMPLE,
+    StatusBar,
+    ToolStatus,
+    fixed_label,
+)
 from mems_sketch.gui.title_bar import TitleBar
 from mems_sketch.gui.toast import Toast, Toasts
 from mems_sketch.gui.toolbar import build_toolbar
 from mems_sketch.gui.tools import TOOLS, AlignTool, Tool
 from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import ComponentView, EditorArea, builds
+from mems_sketch.gui.welcome import WelcomeWindow
 from mems_sketch.gui.widgets import MenuTidier
 
 PANEL_HELP = {  # the "?" in each tool window's header
-    "components": "Every component, each listed once: the project's, each library's and "
-    "the built-in ones. A component can be *shared* (at the top of its group) or "
-    "*private* to another one, listed under it and placed only inside it.\n\n"
-    "Double-click to open one in a tab (library and built-in ones read-only); drag it "
+    "components": "Every component, each listed once: the project's and each library's, "
+    "the bundled ones (mems) included, in their categories. A component can be *shared* "
+    "(at the top of its group) or *private* to another one, listed under it and placed "
+    "only inside it.\n\n"
+    "Double-click to open one in a tab (library ones read-only); drag it "
     "onto the canvas, or use Place, to put it in the component you are editing. "
     "Right-click for everything else.",
     "shapes": "The shape tree of the component you are editing, evaluated again "
@@ -97,15 +112,19 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "parameters": "The component's parameters: the values whoever places it can set. "
     "*Internal* ones (the lock) are only for inside it.\n\n*Trial* tries a value "
     "without changing the design, on library components too.",
-    "history": "What changed, from the project's commits in git. *Uncommitted "
-    "changes* are those since the last commit, saved or not; choose a commit to see "
-    "what it changed. The canvas shows the material added (tinted) and removed "
-    "(hatched) in the component you are editing, with default parameters. Click a "
-    "change to go to it.\n\n"
-    "*Commit* saves the project and commits its folder, nothing else. Right-click a "
-    "commit to compare it with the design now, or to restore the project (or the "
-    "component you are editing) as it was: an ordinary edit, which Undo takes back. "
-    "Branches, merging and remotes stay with your git tools.",
+    "commit": "The changes since the last commit, saved or not, by component; the "
+    "canvas shows the material added (tinted) and removed (hatched) in the "
+    "component you are editing. Click a change to go to it; double-click it to "
+    "compare the two versions in a tab of their own.\n\n"
+    "Check what goes into the commit: a component is the unit. *Commit* saves the "
+    "project and commits those files, nothing else; *Amend* replaces the last "
+    "commit. Right-click a row to roll it back to the last commit (an ordinary edit, "
+    "which Undo takes back), or to add or ignore a file git does not track.",
+    "git": "The project's commits. Choose one to see what it changed (on the canvas "
+    "too), double-click it to compare in a tab; right-click it to compare it with "
+    "the design now, or to restore the project (or the component you are editing) as "
+    "it was: an ordinary edit, which Undo takes back. Branches, merging and remotes "
+    "stay with your git tools for now.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "
@@ -132,7 +151,6 @@ CANVAS_MODES = (  # on the canvas
     "align",
     "corners",
     "measure",
-    "angle",
 )
 # Canvas options and the settings they come from (see gui/settings.py).
 CANVAS_OPTIONS = {
@@ -159,6 +177,10 @@ BACKGROUND_BUILD_S = 0.15
 UPDATING_SHOWN_MS = 200
 
 
+CORNER_ERROR_MARK_PX = 8  # half the box marking a corner whose radius does not fit
+RESTORED_TOOLS = ("select", "hand", "move")  # the tools a new window starts in again
+
+
 class MainWindow(QMainWindow):
     _build_done = Signal(object)  # a background build's Future (from the worker thread)
 
@@ -166,6 +188,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.document = document or EditSession()
         self._problems: list[str] = []
+        self._corner_errors: list[tuple[float, float]] = []  # corners whose radius does not fit
         # The longest each component has taken to build since the project was opened:
         # one that can take long is built in the background, even when a change
         # happens to be quick to build (that one is soon there).
@@ -207,9 +230,14 @@ class MainWindow(QMainWindow):
         self.points.focused.connect(self._point_focused)
         self._hovered_point = None
         self.messages = MessagesPanel()
-        self.history = HistoryPanel(self.document)
-        self.history.comparison_changed.connect(self.update_overlay)
-        self.history.navigate.connect(self._go_to_change)
+        self.commit_panel = CommitPanel(self.document)
+        self.git = GitPanel(self.document)
+        self._compared = [self.commit_panel, self.git]  # the last one shown first
+        for panel in self._compared:
+            panel.comparison_changed.connect(lambda p=panel: self._comparison_shown(p))
+            panel.navigate.connect(self._go_to_change)
+            panel.compare_requested.connect(self.open_comparison)
+        self.commit_panel.committed.connect(self._committed)
         self._build_tool_windows()
 
         self._build_actions()
@@ -238,6 +266,7 @@ class MainWindow(QMainWindow):
         self.components.open_requested.connect(self.open_component)
         self.components.process_requested.connect(self.open_process)
         self.area.process_factory = self._make_process_view
+        self.area.comparison_factory = self._make_comparison_view
         self.components.open_aside_requested.connect(self.open_aside)
         self.layers.visibility_changed.connect(self._set_layer_visible)
         self.tree.collapse_changed.connect(self.state_changed)
@@ -254,7 +283,8 @@ class MainWindow(QMainWindow):
             self.layers,
             self.points,
             self.components,
-            self.history,
+            self.commit_panel,
+            self.git,
         ):
             panel.error.connect(self.report_error)
         self.properties.previewed.connect(self._preview_node)
@@ -274,8 +304,10 @@ class MainWindow(QMainWindow):
         self.resize(1500, 950)
         self.refresh()
         self._update_title()
+        # Only a way of working comes back: a tool for one job (align, measure, a
+        # drawing tool) would greet you with a prompt you did not ask for.
         saved_tool = self.settings.value("tool", "select")
-        self.set_tool(saved_tool if saved_tool in self.tools else "select")
+        self.set_tool(saved_tool if saved_tool in RESTORED_TOOLS else "select")
 
     # -- construction ------------------------------------------------------
 
@@ -310,6 +342,37 @@ class MainWindow(QMainWindow):
         """The Process tab: the process's constants and layer definitions."""
         self.area.open_process()
         self.state_changed()
+
+    def open_comparison(self, key=UNCOMMITTED, component=None, change=None) -> ComparisonView:
+        """The comparison tab: two versions of a component on the canvas (``key`` as
+        for :meth:`ComparisonView.compare`), at ``change`` if given."""
+        view = self.area.open_comparison()
+        view.set_palette(self.layers.colors, self.layers.visible)
+        view.compare(tuple(key), component, change)
+        self.area.update_titles()
+        return view
+
+    def _committed(self) -> None:
+        """A commit from the Commit panel: the commits and the comparison move on."""
+        self.git.reload()
+        if self.area.comparison_view is not None:
+            self.area.comparison_view.follow()
+
+    def _make_comparison_view(self) -> ComparisonView:
+        view = ComparisonView(self.document)
+        view.error.connect(self.report_error)
+        for canvas in view.canvases():
+            canvas.set_theme(self.canvas_theme)
+            canvas.corner_color = self._frame_color()
+            canvas.configure(**self._canvas_options())
+        return view
+
+    def _canvases(self) -> list[LayoutCanvas]:
+        """Every canvas: the tabs', and the comparison's."""
+        found = [view.canvas for view in self.area.views()]
+        if self.area.comparison_view is not None:
+            found += self.area.comparison_view.canvases()
+        return found
 
     def _make_process_view(self) -> ProcessView:
         view = ProcessView(self.document)
@@ -419,15 +482,15 @@ class MainWindow(QMainWindow):
             self.ui_theme = self._apply_ui_theme()
             self.refresh()  # panels and tabs pick up the new icon colours
         if key in ("appearance/ui_theme", "appearance/canvas_theme"):
-            for view in self.area.views():
-                view.canvas.set_theme(self.canvas_theme)
-                view.canvas.corner_color = self._frame_color()
+            for canvas in self._canvases():
+                canvas.set_theme(self.canvas_theme)
+                canvas.corner_color = self._frame_color()
             self.dark_action.setChecked(theme.get(self.canvas_theme).dark)
             self.update_overlay()
         if key in CANVAS_OPTIONS.values():
             options = self._canvas_options()
-            for view in self.area.views():
-                view.canvas.configure(**options)
+            for canvas in self._canvases():
+                canvas.configure(**options)
             self._show_zoom()
         if key == "editor/show_implementation":
             ComponentView.show_implementation = self.settings.get(key)
@@ -468,7 +531,14 @@ class MainWindow(QMainWindow):
 
     def search(self, scope: str = ALL) -> None:
         """Search Everywhere (Shift twice): components, shapes, parameters, commands."""
-        dialog = SearchDialog(self.search_results(), scope, self)
+        dialog = SearchDialog(
+            self.search_results(),
+            scope,
+            self,
+            describe=lambda entry: component_picker.component_info(
+                self.document, entry, self.layers.colors
+            ),
+        )
         center = self.geometry().center()
         dialog.move(center.x() - dialog.width() // 2, self.geometry().top() + 90)
         self._find_dialog = dialog
@@ -482,28 +552,32 @@ class MainWindow(QMainWindow):
     def search_results(self) -> list[Result]:
         """Everything Search Everywhere can find, in the order it lists them."""
         project = self.document.project
-        results = [
-            Result(
-                name,
-                "Components",
-                lambda n=name: self.open_component(n),
-                detail="library"
-                if "." in name
-                else "project"
-                if name in project.components
-                else "built-in",
-                icon=icons.icon(component_icon(project, name)),
+        placeable = {e.name: e for e in component_picker.entries(self.document)}
+        editable = not self.document.read_only
+        results = []
+        for name in [
+            *project.components,
+            *(
+                f"{lib}.{c}"
+                for lib, library in project.libraries.items()
+                for c in library.components
+            ),
+        ]:
+            entry = placeable.get(name) or component_picker.Entry(  # e.g. the one edited
+                name, component_picker.source_of(project, name), icon=component_icon(project, name)
             )
-            for name in [
-                *project.components,
-                *(
-                    f"{lib}.{c}"
-                    for lib, library in project.libraries.items()
-                    for c in library.components
-                ),
-                *component_types(),
-            ]
-        ]
+            can_place = editable and name in placeable
+            results.append(
+                Result(
+                    name,
+                    "Components",
+                    lambda n=name: self.open_component(n),
+                    detail=_component_detail(project, name),
+                    icon=icons.icon(component_icon(project, name)),
+                    entry=entry,
+                    place=(lambda n=name: self.start_placing(n)) if can_place else None,
+                )
+            )
         results += [
             Result(
                 shape.name or f"({shape.kind})",
@@ -542,10 +616,7 @@ class MainWindow(QMainWindow):
         """A component dragged from the explorer onto a canvas: place it there."""
         if view is not self.area.current:
             self.area.set_current(view)
-        if name == view.component:
-            self.report_error("a component cannot be placed inside itself")
-            return
-        self._select_result(lambda: self.document.nodes.add_component(name, x, y))
+        self.place_component_at(name, x, y)
 
     def split_view(self) -> None:
         view = self.area.split_view()
@@ -704,6 +775,11 @@ class MainWindow(QMainWindow):
         self._show_tool_options()
         self.update_overlay()
 
+    def measure(self, mode: str) -> None:
+        """The Measure tool, measuring distances or angles (D, N)."""
+        self.set_tool("measure")
+        self.tools["measure"].set_mode(mode)
+
     def set_left_pans(self, pans: bool) -> None:
         for view in self.area.views():
             view.canvas.left_pans = pans
@@ -799,13 +875,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tool_windows)
         for name, title, icon, widget, anchor in (
             ("components", "Components", "component", self.components, "left-top"),
+            ("commit", "Commit", "commit", self.commit_panel, "left-top"),
             ("shapes", "Shapes", "shapes", self.tree, "left-bottom"),
             ("layers", "Layers", "layers", self.layers, "left-bottom"),
             ("messages", "Messages", "messages", self.messages, "bottom"),
+            ("git", "Git", "branch", self.git, "bottom"),
             ("properties", "Properties", "properties", self.properties, "right"),
             ("parameters", "Parameters", "parameters", self.parameters, "right"),
             ("points", "Points", "point", self.points, "right"),
-            ("history", "History", "history", self.history, "right"),
         ):
             self.tool_windows.add(name, title, icon, widget, anchor, PANEL_HELP[name])
         self._restore_tool_windows()
@@ -854,7 +931,7 @@ class MainWindow(QMainWindow):
         self.find_action_action, self.dark_action = actions.find, actions.dark
         self.tool_actions, self.operation_actions = actions.tools, actions.operations
         self.setting_actions = actions.settings_toggles
-        self.primitive_menu, self.component_menu = actions.add, actions.place
+        self.primitive_menu = actions.add
         bar = build_toolbar(self)
         self.addToolBar(bar)
         self.title_bar = TitleBar(self, bar)
@@ -864,14 +941,16 @@ class MainWindow(QMainWindow):
         self.tool_status.show_for(self.tool)
 
     def _build_status_bar(self) -> None:
-        status = self.statusBar()
-        status.setSizeGripEnabled(False)
+        status = StatusBar()
+        self.setStatusBar(status)
         tool_status = self.tool_status = ToolStatus()
         # The names the tools and tests use.
         self.tool_icon, self.tool_name = tool_status.tool_icon, tool_status.tool_name
         self.layer_box, self.width_box = tool_status.layer_box, tool_status.width_box
         self.angle_box, self.tool_widgets = tool_status.angle_box, tool_status.tool_widgets
         self.layer_box.currentIndexChanged.connect(self._draw_layer_chosen)
+        for mode, button in tool_status.mode_buttons.items():
+            button.clicked.connect(lambda _=False, m=mode: self.measure(m))
         self.width_box.setValue(self.path_width)
         self.width_box.valueChanged.connect(self._path_width_chosen)
         self.angle_box.setValue(self.settings.get("snapping/angle_step"))
@@ -892,20 +971,18 @@ class MainWindow(QMainWindow):
         self.problems_button.setToolTip("Errors and rule violations (click to show)")
         self.problems_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.problems_button.clicked.connect(self._show_messages_panel)
-        self.grid_label = QLabel()
-        self.grid_label.setToolTip("Grid step at this zoom")
-        self.zoom_label = QLabel()
-        self.zoom_label.setToolTip("Zoom (screen pixels per µm)")
-        self.coordinates = QLabel()
-        self.coordinates.setMinimumWidth(230)
-        for widget in (
+        self.grid_label = fixed_label(GRID_SAMPLE, "Grid step at this zoom")
+        self.zoom_label = fixed_label(ZOOM_SAMPLE, "Zoom (screen pixels per µm)")
+        self.snap_target = QLabel()  # the point the cursor would snap to
+        self.snap_target.setObjectName("status-target")
+        self.snap_target.setMaximumWidth(TARGET_MAX_WIDTH)
+        self.coordinates = fixed_label(POSITION_SAMPLE, "The cursor's position, in µm")
+        status.arrange(
             tool_status,
+            self.snap_target,
             self.problems_button,
-            self.grid_label,
-            self.zoom_label,
-            self.coordinates,
-        ):
-            status.addPermanentWidget(widget)
+            [tool_status.snapping, self.grid_label, self.zoom_label, self.coordinates],
+        )
 
     def _show_zoom(self) -> None:
         canvas = self.canvas
@@ -1011,6 +1088,9 @@ class MainWindow(QMainWindow):
         self.layers.refresh()
         if self.area.process_view is not None:
             self.area.process_view.refresh()
+        if self.area.comparison_view is not None:
+            self.area.comparison_view.set_palette(self.layers.colors, self.layers.visible)
+            self.area.comparison_view.follow()
         if self._slow():
             self._build_in_background()
         else:
@@ -1028,6 +1108,7 @@ class MainWindow(QMainWindow):
         self.area.update_titles()
         self.draw_rulers()
         self._problems = self.document.results.problems()
+        self._corner_errors = self._failing_corners()
         self._took(self.document.results.build_seconds)
         self._refresh_panels()
 
@@ -1041,7 +1122,8 @@ class MainWindow(QMainWindow):
         version = self.document.results.version
         QTimer.singleShot(UPDATING_SHOWN_MS, lambda: self._show_updating(version))
         self.area.update_titles()
-        self.history.refresh()
+        self.commit_panel.refresh()
+        self.git.refresh()
         self.undo_action.setEnabled(self.document.can_undo())
         self.redo_action.setEnabled(self.document.can_redo())
         self._update_title()
@@ -1099,7 +1181,8 @@ class MainWindow(QMainWindow):
         self.properties.hide_implementation = hidden
         self.parameters.refresh()
         self.points.refresh()
-        self.history.refresh()
+        self.commit_panel.refresh()
+        self.git.refresh()
         self._refresh_layer_box()
         self.components.refresh()
         self.tree.rebuild([p for p in view.selection if self._exists(p)])
@@ -1124,9 +1207,24 @@ class MainWindow(QMainWindow):
         errors = [*extra, *view.errors, *(p for p in self._problems if p not in view.errors)]
         self.messages.show_messages(errors, view.violations, checking=view.checking)
 
+    def _failing_corners(self) -> list[tuple[float, float]]:
+        """Rounded corners of the open component whose radius does not fit (when the
+        build says a corner is wrong): marked on the canvas like rule violations."""
+        texts = [*self._problems, *self.view.errors]
+        if not any("corner" in text for text in texts):
+            return []
+        found = []
+        for path, shape in paths(self.document.shapes):
+            if any(isinstance(m, CornersModifier) for m in shape.modifiers):
+                with contextlib.suppress(Exception):  # it does not build at all: no mark
+                    found += self.document.corners.failing(path)
+        return found
+
     def update_overlay(self) -> None:
         view = self.view
         markers = [v.bbox_um for v in view.violations if v.bbox_um and not v.waived]
+        reach = CORNER_ERROR_MARK_PX / self.canvas.pixels_per_um()
+        markers += [(x - reach, y - reach, x + reach, y + reach) for x, y in self._corner_errors]
         results = self.document.results
         single = view.selection[0] if len(view.selection) == 1 else None
         shown = self.points_shown()
@@ -1134,9 +1232,13 @@ class MainWindow(QMainWindow):
         self.canvas.show_overlay(results.highlights(view.selection), markers, box)
         self.canvas.show_alignment(*self.alignment_link(single))
         self.canvas.show_guides(view.guides, set(view.selection))
-        changes = (
-            self.history.geometry(view.component) if self.tool_windows.is_open("history") else None
-        )
+        changes = None
+        for panel, name in (
+            (p, "commit" if p is self.commit_panel else "git") for p in self._compared
+        ):
+            if self.tool_windows.is_open(name) and panel.comparison is not None:
+                changes = panel.geometry(view.component)
+                break
         self.canvas.show_changes(*(changes or (None, None)))
         open_ = self.tool_windows.is_open("points")
         focus = (
@@ -1150,22 +1252,46 @@ class MainWindow(QMainWindow):
                 declared = []
         highlighted = {m[0] for m in focus}  # drawn once, highlighted
         self.canvas.show_points("declared", [d for d in declared if d[0] not in highlighted], True)
+        self.canvas.show_ports(
+            "declared", self._ports_of(results.declared_ports) if shown else [], True
+        )
         tool_markers = self.tool.markers()
         selected = results.node_points(single) if shown and single is not None else []
+        selected = [p for p in selected if not p[0].startswith("port.")]  # drawn as arrows
         self.canvas.show_points("selected", [] if "pick" in tool_markers else selected)
+        # A selected placement's ports, always: where its wires attach.
+        self.canvas.show_ports(
+            "selected",
+            self._ports_of(lambda: results.node_ports(single)) if single is not None else [],
+        )
         self.canvas.show_points("focus", focus, labels=True)
         for style in ("pick", "anchor"):
             self.canvas.show_points(style, tool_markers.get(style, []))
         self._place_gizmo()
         self._show_zoom()
 
+    def _ports_of(self, ports) -> list[tuple[str, float, float, float]]:
+        """``ports()``'s ports as markers (name, x, y, angle); none when it fails."""
+        try:
+            found = ports()
+        except Exception:  # noqa: BLE001 - the messages panel shows why
+            return []
+        # An array's first copy is also the node's own: drawn once, by its index.
+        return [(n, p.x, p.y, p.angle) for n, p in found.items() if f"{n}[0]" not in found]
+
     def points_shown(self) -> bool:
         """Points are drawn while you work with them: the Points panel is open (or
         the setting says always); the align tool shows its own candidates."""
         return self.settings.get("canvas/always_show_points") or self.tool_windows.is_open("points")
 
+    def _comparison_shown(self, panel) -> None:
+        """A panel shows other changes: its changes go on the canvas."""
+        self._compared.remove(panel)
+        self._compared.insert(0, panel)
+        self.update_overlay()
+
     def _go_to_change(self, change) -> None:
-        """A change clicked in the History panel: open its component and select the
+        """A change clicked in the Commit or Git panel: open its component and select the
         shape (or what held a removed one), panning to it."""
         if change.component is None or not self.document.exists(change.component):
             return
@@ -1265,6 +1391,25 @@ class MainWindow(QMainWindow):
             return None, None
         return point, target
 
+    def select_all(self) -> None:
+        """Select every shape shown in the component (Edit › Select all)."""
+        self._select_quietly([p for p, _ in getattr(self.view, "node_regions", ())])
+
+    def zoom_to_selection(self) -> None:
+        """Glide to show the selected shapes as large as they fit (View › Zoom to selection)."""
+        regions = dict(getattr(self.view, "node_regions", ()))
+        self.canvas.frame(*(regions.get(p) for p in self.selection))
+
+    def rename_selection(self) -> None:
+        """Start renaming the selected shape: its name in Properties, ready to type over."""
+        if len(self.selection) != 1:
+            return
+        self.tool_windows.open("properties")
+        name = self.properties.findChild(QLineEdit, "title-edit")
+        if name is not None and not name.isReadOnly():
+            name.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            name.selectAll()
+
     def _select_quietly(self, paths: list[NodePath]) -> None:
         """Select what was clicked on the canvas: it is where the user looks, so it
         does not glow as a shape picked in a panel does."""
@@ -1275,11 +1420,8 @@ class MainWindow(QMainWindow):
             self._quiet_selection = False
 
     def _cursor_moved(self, x: float, y: float) -> None:
-        text = f"x {x:.3f}  y {y:.3f} µm"
-        label = self.tool.hover_label(x, y)
-        if label is not None:
-            text = f"{label}   {text}"
-        self.coordinates.setText(text)
+        self.coordinates.setText(f"x {x:.3f}  y {y:.3f}")
+        self.snap_target.setText(self.tool.hover_label(x, y) or "")
         self._hover(x, y)
 
     def _hover(self, x: float, y: float) -> None:
@@ -1476,11 +1618,14 @@ class MainWindow(QMainWindow):
         self.canvas.zoom_to(QRectF(cx - size * 2, cy - size * 2, size * 4, size * 4), animated=True)
 
     def _context_menu(self, view: ComponentView, x: float, y: float, at: QPoint) -> None:
-        """The editor's right-click menu; a shape under the cursor is selected first."""
+        """The editor's right-click menu; a shape under the cursor is selected first,
+        and empty space clears the selection (its menu is for adding there)."""
         if view is not self.area.current:
             self.area.set_current(view)
         hit = self._hit(view, x, y)
-        if hit is not None and hit not in self.selection:
+        if hit is None and self.selection:
+            self._select_quietly([])
+        elif hit is not None and hit not in self.selection:
             self._select_quietly([hit])
         self.show_menu(self.actions_.context_menu(x, y), at)
 
@@ -1561,8 +1706,55 @@ class MainWindow(QMainWindow):
     def add_component(self, name: str) -> None:
         self._select_result(lambda: self.document.nodes.add_component(name))
 
+    # -- placing components (see mems_sketch.gui.component_picker) ------------
+
+    def place_popup(
+        self, at: tuple[float, float] | None = None, near: QPoint | None = None
+    ) -> PlacePopup | None:
+        """The Place popup: by ``near`` (global), else by the mouse on the canvas, else
+        under the Place button. A component chosen follows the cursor until a click
+        puts it down, or, with ``at`` (µm, a right-click), lands there."""
+        if self.document.read_only:
+            self.report_error("this component cannot be edited: copy it into the project first")
+            return None
+        popup = PlacePopup(component_picker.entries(self.document), self)
+        if at is None:
+            popup.chosen.connect(self.start_placing)
+        else:
+            popup.chosen.connect(lambda name: self.place_component_at(name, *at))
+        popup.browse.connect(lambda: self.search("Components"))
+        if near is None:
+            cursor = QCursor.pos()
+            viewport = self.canvas.viewport()
+            if viewport.rect().contains(viewport.mapFromGlobal(cursor)):
+                near = cursor
+            else:
+                button = self.place_button
+                near = button.mapToGlobal(button.rect().bottomLeft())
+        popup.popup(near)
+        self._place_popup = popup
+        return popup
+
+    def start_placing(self, name: str) -> None:
+        """Put ``name`` under the cursor; a click places it (see ``PlaceTool``)."""
+        self.set_tool("place")
+        if not self.tools["place"].begin(name):
+            self.set_tool("select")
+
+    def place_component_at(self, name: str, x: float, y: float) -> None:
+        """Place ``name`` with its origin at ``(x, y)`` µm and remember it as recent."""
+        if name == self.document.active:
+            self.report_error("a component cannot be placed inside itself")
+            return
+        component_picker.remember(name)
+        self._select_result(lambda: self.document.nodes.add_component(name, x, y))
+
     def wrap(self, operation: str) -> None:
         self._select_result(lambda: self.document.nodes.wrap(self.selection, operation))
+
+    def connect(self) -> None:
+        """Join the selected shapes' ends with a connection, and select it."""
+        self._select_result(lambda: self.document.nodes.connect(self.selection))
 
     def make_component(self) -> None:
         if not self.selection:
@@ -1687,16 +1879,18 @@ class MainWindow(QMainWindow):
             return self.save_project()
         return answer == QMessageBox.StandardButton.Discard
 
-    def new_project(self, library: bool = False) -> None:
+    def new_project(self, library: bool = False) -> bool:
         """The New Project wizard: name, folder, process and libraries; saved at once.
 
         Unsaved changes are asked about once the wizard is finished, not before.
+        True if a project was made.
         """
         last = Path(self._last_dir())  # the last project's folder: offer the one it is in
         location = last.parent if (last / "project.yaml").exists() else last
         dialog = NewProjectDialog(str(location), library, self)
         if self.show_dialog(dialog) == QDialog.DialogCode.Accepted and self._confirm_discard():
-            self.create_project(**dialog.values())
+            return self.create_project(**dialog.values())
+        return False
 
     def show_dialog(self, dialog: QDialog) -> int:
         """Run a dialog (tests fill it in instead)."""
@@ -1717,38 +1911,41 @@ class MainWindow(QMainWindow):
         if not self._run(create)[0]:
             return False
         self._remember_dir(str(Path(folder) / "project.yaml"))
+        self._remember_project()
         return True
 
     def new_library(self) -> None:
         """A new project without a top component: a set of components to place elsewhere."""
         self.new_project(library=True)
 
-    def open_project(self, path: str | None = None) -> None:
+    def open_project(self, path: str | None = None) -> bool:
         """Open a project; without ``path``, the one chosen in a file dialog.
 
         The file is chosen first. Then, if this window holds a project, the
         user chooses to open it here or in a new window; only opening it here
-        asks about unsaved changes.
+        asks about unsaved changes. True if it opened in this window.
         """
         if not path:
             path, _ = QFileDialog.getOpenFileName(
                 self, "Open project", self._last_dir(), OPEN_FILTER
             )
             if not path:
-                return
+                return False
             if self.document.path is not None or self.document.dirty:
                 where = self.ask_where_to_open(path)
                 if where is None:
-                    return
+                    return False
                 if where == "new":
                     self._remember_dir(path)
                     self.open_in_new_window(path)
-                    return
+                    return False
         if not self._confirm_discard():
-            return
+            return False
         self.save_editor_state()
-        if self._run(lambda: self._open(path))[0]:
+        opened = self._run(lambda: self._open(path))[0]
+        if opened:
             self._remember_dir(path)
+            self._remember_project()
             if self.document.project.load_notes:
                 self.notify("; ".join(self.document.project.load_notes), "warning", seconds=15)
             elif self.document.path is None:
@@ -1759,6 +1956,7 @@ class MainWindow(QMainWindow):
                     ("Save as…", self.save_project_as),
                     seconds=10,
                 )
+        return opened
 
     def ask_where_to_open(self, path: str) -> str | None:
         """``"here"``, ``"new"`` (another window) or None (cancelled)."""
@@ -1817,7 +2015,26 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 return False
         self._remember_dir(str(target / "project.yaml"))
-        return self._run(lambda: self.document.save(target))[0]
+        saved = self._run(lambda: self.document.save(target))[0]
+        if saved:
+            self._remember_project()
+        return saved
+
+    def _remember_project(self) -> None:
+        """Put the project this window holds first among the recent ones (Welcome)."""
+        if self.document.path is not None:
+            project = self.document.project
+            recent_projects.remember(self.document.path, project.name, project.top is None)
+
+    def close_project(self) -> None:
+        """Close the project and this window, and show the Welcome window."""
+        if not self._confirm_discard():
+            return
+        self.save_editor_state()
+        self._save_tool_windows()
+        self._closing_to_welcome = True
+        show_welcome()
+        self.close()
 
     def export_file(self) -> None:
         exporters = available_exporters()
@@ -1881,12 +2098,25 @@ class MainWindow(QMainWindow):
         self.settings.set_value("last_dir", str(Path(path).parent))
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if getattr(self, "_closing_to_welcome", False):  # asked already
+            event.accept()
+            return
         if self._confirm_discard():
             self.save_editor_state()
             self._save_tool_windows()
             event.accept()
         else:
             event.ignore()
+
+
+def _component_detail(project, name: str) -> str:
+    """What Search Everywhere shows by a component: where it is, and its tags."""
+    if name in project.imports:
+        return "imported"
+    where = "library" if "." in name else "project"
+    found = project.definition(name)
+    tags = found[0].tags if found is not None else []
+    return f"{where} · {', '.join(tags)}" if tags else where
 
 
 def _segment_meets_box(start, end, box: tuple[float, float, float, float]) -> bool:
@@ -1945,11 +2175,53 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     app = QApplication.instance() or QApplication(argv)
     app.setApplicationName("MEMS Sketch")
-    window = MainWindow()
     if len(argv) > 1:
+        window = MainWindow()
         window.open_project(argv[1])
-    window.show()
+        window.show()
+        _windows.append(window)
+    else:
+        show_welcome()
     return app.exec()
+
+
+_windows: list[QWidget] = []  # the windows shown from here, kept while they are open
+
+
+def show_welcome() -> WelcomeWindow:
+    """The Welcome window: a project opened or made from it gets a window of its own."""
+    from mems_sketch import __version__
+
+    theme.apply(QApplication.instance(), Settings(None).get("appearance/ui_theme"))
+    welcome = WelcomeWindow(f"Version {__version__}")
+    welcome.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+    def opened(window: MainWindow) -> None:
+        window.show()
+        _windows.append(window)
+        welcome.close()
+
+    def open_path(path: str) -> None:
+        window = MainWindow()
+        if window.open_project(path):
+            opened(window)
+        else:
+            window.deleteLater()
+            welcome.fill(welcome.search.text())
+
+    def new() -> None:
+        window = MainWindow()
+        if window.new_project():
+            opened(window)
+        else:
+            window.deleteLater()
+
+    welcome.open_project.connect(open_path)
+    welcome.new_project.connect(new)
+    welcome.destroyed.connect(lambda: _windows.remove(welcome) if welcome in _windows else None)
+    _windows.append(welcome)
+    welcome.show()
+    return welcome
 
 
 if __name__ == "__main__":

@@ -7,22 +7,33 @@ A component has **parameters** and a **shape tree** (what it is made of, see
 component: its parameters play the role of global variables, so any project
 can be placed inside another one.
 
-![Components: the project's, a library's and the built-ins](../images/components.png)
+![Components: the project's and the libraries'](../images/components.png)
 
 The **Components** panel lists every component once:
 
 - **the project's own** (purple; a star marks the top one), with **Process**
   first;
-- **each library's** (blue), read-only;
-- **Imported** layouts, if any (see [files](files.md#importing-layouts));
-- **Built-in** ones (orange): `anchor`, `comb_drive`, `serpentine_spring`.
-  They are ordinary components that ship with the tool: they draw on the
-  level they are placed on (an anchor's opening on that level's anchor
-  layer), their limits are shown like any other, and **Copy into the
-  project** makes an editable copy. A plain rectangle is the `rect` shape.
+- **each library's** (blue), read-only, in its **categories** (Springs,
+  Electrodes, …); the **bundled** libraries are among them (see
+  [Libraries](#libraries));
+- **Imported** layouts, if any (see [files](files.md#importing-layouts)).
+
+Two libraries are bundled: `mems` has anchors, springs (folded flexures,
+crab legs, serpentines, …), electrodes (comb drives, gap-closing plates),
+proof masses and two whole devices, a resonator and an accelerometer, and the
+example processes such as `mems.surface`; `std` has the parts any layout
+uses, whatever the device: alignment marks, Verniers, test structures, bond
+pads and a die frame. Their galleries, [mems](library-mems.md) and
+[std](library-std.md), show every component with its parameters. They are
+ordinary components: they draw on the level they are placed on (an anchor's
+opening on that level's anchor layer), their limits are shown like any other,
+and **Copy into the project** makes an editable copy. A plain rectangle is the
+`rect` shape.
 
 Double-click opens a component in a tab. Drag one onto the canvas, or use
-**Place**, to put it into the component you are editing. Right-click for the
+**Place** (Shift+A, see [the window](the-window.md#placing-components)), to put
+it into the component you are editing. With nothing selected, Properties shows
+the open component's **Description**, shown wherever it is placed from. Right-click for the
 rest: rename (every reference follows), duplicate, delete, set as top, new
 private component, make shared or private, copy a library component into the
 project, add or remove a library, make the project a library. The **+**
@@ -45,7 +56,7 @@ The **Parameters** panel lists the current component's parameters: default,
 min, max, a trial value and the resolved value.
 
 - A **default** is a number or an expression over other parameters
-  (`hole_r` defaulting to `pitch / 6`) and process constants
+  (`margin` defaulting to `(pitch - hole) / 2`) and process constants
   (`process.min_gap`).
 - **Min**, **max** and *integer* limit what can be passed in. A limit can be
   an expression over the other parameters (an anchor's enclosure with max
@@ -56,7 +67,7 @@ min, max, a trial value and the resolved value.
   Where the component is placed, internal parameters are not offered.
 - A **trial** value shows the component with another value without changing
   the design: it is not saved or undone and only affects that component's own
-  tab. It also works on library and built-in components, so you can try a
+  tab. It also works on library components, so you can try a
   spring with more turns before using it.
 - Values passed to a placed component are evaluated where it is placed;
   parameters left out take their defaults.
@@ -74,8 +85,9 @@ Instead of calculating positions, place things relative to each other's
   `right`, `top`, `bottom`, `top_left`, `top_right`, `bottom_left`,
   `bottom_right`.
 - **A component can declare points** for whoever places it: where a spring
-  ends, where a comb's moving spine is. Built-ins have some (`serpentine_spring`
-  has `start` and `end`; `comb_drive` has `moving` and `fixed`).
+  ends, where a comb's moving spine is. The `mems` ones have some
+  (`mems.serpentine_spring` has `start` and `end`; `mems.comb_drive` has
+  `moving` and `fixed`).
 - **In expressions**, a point's coordinates are `<shape>.<point>.x` and `.y`,
   e.g. `base.right.x - 5`.
 
@@ -93,6 +105,45 @@ Points are drawn on the canvas only while you work with them: with the Points
 panel open, or while aligning (**View → Overlays → Always show points** to
 see them all the time).
 
+## Ports
+
+A **port** is where a wire attaches: a point, plus what a wire needs to meet
+it cleanly. A component declares its ports next to its points:
+
+```yaml
+ports:
+  drive: {at: fixed_spine.bottom, direction: down, width: spine_width}
+```
+
+- **At**, **X**, **Y**: where it is, measured like a declared point.
+- **Direction**: the way a wire leaves it: `right`, `up`, `left`, `down`, or
+  an angle in degrees (counter-clockwise from +x; an expression).
+- **Width**: the width of wire it expects (empty: any).
+- **Layer**: the layer the wire runs on, like a shape's: `level` (the
+  default), `level+1`, `metal`.
+
+Where the component is placed, its ports come with it, turned and mirrored
+with the placement: `comb1.port.drive` is a point of the placement, so
+another shape can be aligned to it, an expression can use
+`comb1.port.drive.x` (and `.angle`, `.width`), and a placement can be aligned
+**by** its port (*Point* `port.drive`). An array's copies have theirs by index:
+`comb1.port.drive[2]`, counted along the rows.
+
+In the **Points** panel the component's ports follow its points: **Add port**
+(the arrow button), then set the fields in the form below the list. A placed
+component's ports are listed with its points (`port.drive`); right-click one
+and **Re-export as a port of this component**: the new port is at it and takes
+its direction, width and layer unless you give it others. On the canvas a
+selected placement shows its ports as arrows pointing the way a wire leaves,
+and the component's own ports are drawn with its points.
+
+Every path and route has two ports, `start` and `end`, at its ends, pointing
+out of it and as wide as it. The bundled electrodes have ports (`mems.comb_drive` has
+`drive`), and so does `std.bond_pad` (`signal`); the galleries list them.
+A [connection](shapes-and-operations.md#connections) joins beams by their
+ports, and a [route](shapes-and-operations.md#routes) runs a wire from one
+port to another.
+
 ## Libraries
 
 A library is a folder of components (any project folder works), added from
@@ -100,10 +151,15 @@ the Components panel's **+** or listed in `project.yaml`:
 
 ```yaml
 libraries:
-  std: ../libraries/mems_std
+  mems: bundled@2        # a bundled one, and the version the project was saved with
+  fab: ../fab-library    # a folder of your own
 ```
 
-Its components are placed as `std.perforated_plate`. Libraries are read-only:
+Its components are placed as `fab.plate`. **Bundled** libraries ship with
+mems-sketch and every project has them without listing them: `mems` (MEMS
+components and example processes) and `std` (generic layout parts). A project lists them anyway, with
+their version, so that opening it with a release whose library changed says
+so. Libraries are read-only:
 to change a library component for one project, right-click it and **Copy into
 the project**; the copy is editable and keeps using the library's other
 components.
@@ -111,6 +167,17 @@ components.
 A project without a top component is itself a library: just components, meant
 to be placed elsewhere (**File → New library**, or **Make the project a
 library** in the Components panel).
+
+**Categories:** a library shows its components in categories, the folders
+they are in (`components/springs/serpentine_spring/`). The folder is only where
+a component is shown: its name, and every reference to it, stay the same when
+it moves to another folder. A folder may have a `category.yaml` with a
+`title`, a `description` and an `order`. Components may also have `tags`,
+words that Search Everywhere finds them by.
+
+Projects saved before the `mems` library existed placed `anchor`,
+`comb_drive` and `serpentine_spring` by their bare names: opening one
+changes those to `mems.anchor` and so on, and says so once.
 
 ## The process
 
@@ -186,7 +253,9 @@ installed as plugins (`mems-sketch-cli rules` lists them).
 
 A process (layers, layer stack, constants and rules) can be shared like
 components: a library can hold processes, typically one per fab process, kept
-by whoever looks after it. Choose the one the project uses under **Process**
+by whoever looks after it. The bundled `mems` library has three example
+processes; [Processes and process libraries](process-libraries.md) shows them
+and how to write your own. Choose the one the project uses under **Process**
 at the top of the tab: the project's own, or `library.process`.
 
 On a library's process:

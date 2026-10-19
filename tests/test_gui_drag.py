@@ -151,17 +151,13 @@ def test_read_only_tabs_cannot_be_dragged(window, tmp_path):
         tmp_path / "resonator",
         ignore=shutil.ignore_patterns(".mems-sketch"),
     )
-    shutil.copytree(
-        examples / "libraries",
-        tmp_path / "libraries",
-        ignore=shutil.ignore_patterns(".mems-sketch"),
-    )
     window.open_project(str(tmp_path / "resonator"))
-    window.open_component("std.perforated_plate")
+    window.open_component("mems.perforated_plate")
     window.canvas.fit()
-    drag(window, (5, 5), (30, 5))  # its shapes are hidden: nothing to take hold of
+    # (0, 0) is where four of the plate's webs meet: material, not a hole.
+    drag(window, (0, 0), (25, 0))  # its shapes are hidden: nothing to take hold of
     assert window.selection == [] and not window.document.can_undo()
     window.settings.set("editor/show_implementation", True)
-    drag(window, (5, 5), (30, 5))
+    drag(window, (0, 0), (25, 0))
     assert any("read-only" in t for t in window.toasts.texts())
     assert not window.document.can_undo()

@@ -1,0 +1,49 @@
+description: >-
+  Lateral comb-drive resonator: a perforated proof mass hung on two folded
+  flexures (above and below), driven and sensed by comb drives on its left
+  and right, everything joined by short stems so that it all releases. It
+  moves along x; its resonant frequency is about √(k / m) / 2π with k twice
+  one flexure's `stiffness` and m the mass. As it is, it passes every check
+  of `mems.surface`; for a process with a larger undercut or minimum width,
+  widen the anchors and fingers to its rules. Ports: drive and sense, the
+  combs' connections.
+tags: [device, resonator, comb drive, folded flexure, example]
+parameters:
+  columns: {default: 16, min: 8, integer: true, description: Holes across the mass}
+  rows: {default: 12, min: 4, integer: true, description: Holes up the mass}
+  flexure_length: {default: 100, min: 20, description: Inner beam length of the flexures (µm)}
+  fingers: {default: 8, min: 1, integer: true, description: Moving fingers of each comb}
+  stem: {default: 4, min: 2, description: Gap bridged by the stems that join the parts to the mass (µm)}
+  width: {default: columns * 10 + 2.5, internal: true, description: Mass width (µm)}
+  height: {default: rows * 10 + 2.5, internal: true, description: Mass height (µm)}
+ports:
+  drive: {at: left_comb.port.drive, description: The driving comb's connection}
+  sense: {at: right_comb.port.drive, description: The sensing comb's connection}
+shapes:
+  mass: {ref: proof_mass, columns: columns, rows: rows}
+  upper_flexure:
+    ref: folded_flexure
+    length: flexure_length
+    align: {point: attach, to: mass.attach_top, dy: stem}
+  lower_flexure:
+    ref: folded_flexure
+    length: flexure_length
+    rotation: 180
+    align: {point: attach, to: mass.attach_bottom, dy: -stem}
+  left_comb:
+    ref: comb_drive
+    fingers: fingers
+    rotation: -90
+    align: {point: moving, to: mass.attach_left, dx: -stem}
+  right_comb:
+    ref: comb_drive
+    fingers: fingers
+    rotation: 90
+    align: {point: moving, to: mass.attach_right, dx: stem}
+  stems:
+    kind: transform
+    children:
+      upper_stem: {kind: rect, x0: -1.5, y0: height/2, x1: 1.5, y1: height/2 + stem}
+      lower_stem: {kind: rect, x0: -1.5, y0: -height/2 - stem, x1: 1.5, y1: -height/2}
+      left_stem: {kind: rect, x0: -width/2 - stem, y0: -1.5, x1: -width/2, y1: 1.5}
+      right_stem: {kind: rect, x0: width/2, y0: -1.5, x1: width/2 + stem, y1: 1.5}

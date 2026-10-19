@@ -41,7 +41,17 @@ def build_toolbar(window: MainWindow) -> QToolBar:
     bar.addAction(actions.redo)
     bar.addSeparator()
     _menu_button(bar, actions.add, "rect", "Add a primitive", "Add")
-    _menu_button(bar, actions.place, "place", "Place a component", "Place")
+    place = QToolButton()
+    icons.bind(place, "place")
+    place.setText(f"Place {MENU_CARET}")
+    place.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    place.setToolTip("Place a component (Shift+A)")
+    place.setObjectName("place-button")
+    place.clicked.connect(
+        lambda: window.place_popup(near=place.mapToGlobal(place.rect().bottomLeft()))
+    )
+    bar.addWidget(place)
+    window.place_button = place
     _menu_button(
         bar,
         actions.operations_menu,

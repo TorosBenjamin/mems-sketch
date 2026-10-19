@@ -11,8 +11,10 @@ from mems_sketch.core.project import new_project
 from mems_sketch.core.shapes import (
     KINDS,
     SHAPE_ADAPTER,
+    ConnectionShape,
     RectShape,
     RefShape,
+    RouteShape,
     TransformShape,
     default_shape,
     kind_class,
@@ -35,7 +37,7 @@ def samples():
     """One node of every kind: the primitives' defaults, every wrap, a reference."""
     shapes = [kind.default(LAYER) for kind in KINDS if kind.category in ("primitive", "guide")]
     shapes += [wrap_shapes(op, f"w_{op}", two_rects()) for kind in KINDS for op in kind.wraps]
-    shapes.append(RefShape(component="anchor", x=5))
+    shapes.append(RefShape(component="mems.anchor", x=5))
     return shapes
 
 
@@ -60,8 +62,14 @@ def bbox(shape):
     return None if box is None else tuple(round(v * 1000) for v in box)
 
 
+# Kinds that cannot be built alone: a connection joins other shapes' ends and
+# a route runs between their ports (tests/test_connections.py and
+# tests/test_routes.py build them beside them).
+NOT_ALONE = {ConnectionShape, RouteShape}
+
+
 def test_every_kind_has_a_sample():
-    assert {type(s) for s in SAMPLES} == set(KINDS)
+    assert {type(s) for s in SAMPLES} == set(KINDS) - NOT_ALONE
 
 
 @pytest.mark.parametrize("kind", KINDS, ids=lambda k: k.kind_name())

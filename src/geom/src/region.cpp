@@ -205,6 +205,41 @@ Region Region::rect(double x0, double y0, double x1, double y1) {
     return polygon(corners);
 }
 
+Region Region::rounded_rect(double x0, double y0, double x1, double y1, double radius) {
+    for (double v : {x0, y0, x1, y1, radius}) check_finite(v, "a rounded rectangle value");
+    if (x0 > x1) std::swap(x0, x1);
+    if (y0 > y1) std::swap(y0, y1);
+    if (x0 == x1 || y0 == y1) return Region();  // no area
+    const double w = x1 - x0, h = y1 - y0, half = std::min(w, h) / 2.0;
+    const double r = std::clamp(radius, 0.0, half);
+    if (r <= 0.0) return rect(x0, y0, x1, y1);
+    const double cx = (x0 + x1) / 2.0, cy = (y0 + y1) / 2.0;
+    constexpr double kFull = 1e-9;  // µm: a radius this close to half the side rounds it fully
+    if (r >= half - kFull) {
+        if (std::abs(w - h) <= kFull) return circle({cx, cy}, half);
+        Wire stadium = w > h ? Wire({x0 + half, y0})
+                                   .line_to({x1 - half, y0})
+                                   .arc_through({x1, cy}, {x1 - half, y1})
+                                   .line_to({x0 + half, y1})
+                                   .arc_through({x0, cy}, {x0 + half, y0})
+                             : Wire({x1, y0 + half})
+                                   .line_to({x1, y1 - half})
+                                   .arc_through({cx, y1}, {x0, y1 - half})
+                                   .line_to({x0, y0 + half})
+                                   .arc_through({cx, y0}, {x1, y0 + half});
+        return polygon(stadium);
+    }
+    return polygon(Wire({x0 + r, y0})
+                       .line_to({x1 - r, y0})
+                       .arc_to({x1, y0 + r}, r)
+                       .line_to({x1, y1 - r})
+                       .arc_to({x1 - r, y1}, r)
+                       .line_to({x0 + r, y1})
+                       .arc_to({x0, y1 - r}, r)
+                       .line_to({x0, y0 + r})
+                       .arc_to({x0 + r, y0}, r));
+}
+
 Region Region::polygon(std::span<const Point> points) {
     if (points.size() < 3) throw GeometryError("a polygon needs at least 3 points");
     Wire outline(points[0]);

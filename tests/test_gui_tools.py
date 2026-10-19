@@ -142,7 +142,7 @@ def test_move_by_typed_amount(window, monkeypatch):
 
 
 def rotate_setup(window):
-    window.document.nodes.add(RefShape(name="pad", component="anchor", x=0, y=0))
+    window.document.nodes.add(RefShape(name="pad", component="mems.anchor", x=0, y=0))
     window.canvas.zoom_to(window.canvas.content_rect())
     window.tree.select_paths([((0, 0),)])
     window.set_tool("rotate")
@@ -201,16 +201,16 @@ def test_measure_tool_snaps_and_keeps_rulers(window):
 
 
 def test_measure_works_on_read_only_tabs(window):
-    window.open_component("anchor")
+    window.open_component("mems.anchor")
     window.set_tool("measure")
     click(window, -20, -20)
     click(window, 20, -20)
-    assert window.rulers["anchor"] == [pytest.approx((-20, -20, 20, -20))]
+    assert window.rulers["mems.anchor"] == [pytest.approx((-20, -20, 20, -20))]
 
 
 def test_angle_tool_measures_between_two_arms(window):
-    """Issue #5: an angle ruler."""
-    window.set_tool("angle")
+    """Issue #5: an angle ruler (now a mode of the Measure tool)."""
+    window.measure("angle")
     click(window, 0, 0)  # the vertex
     click(window, 40, 0)  # the first arm, along x
     hover(window, 30, 30)
@@ -252,11 +252,6 @@ def example(window, tmp_path):
         tmp_path / "resonator",
         ignore=shutil.ignore_patterns(".mems-sketch"),
     )
-    shutil.copytree(
-        EXAMPLES / "libraries",
-        tmp_path / "libraries",
-        ignore=shutil.ignore_patterns(".mems-sketch"),
-    )
     window.open_project(str(tmp_path / "resonator"))
     return tmp_path / "resonator"
 
@@ -267,14 +262,14 @@ def test_editor_state_is_saved_in_the_project_and_restored(window, example, qtbo
     w.tree.select_paths([((0, 1),)])
     w.canvas.set_view_state(7.5, 12, 34)
     w.split_view()
-    w.open_component("std.perforated_plate")
+    w.open_component("mems.perforated_plate")
     w.document.set_trial("pitch", 30)
     w.set_tool("measure")
-    click(w, -80, -80)
-    click(w, 80, -80)
-    w.layers.visibility_changed.emit("anchor", False)
+    click(w, -81.25, -81.25)  # the plate's corners
+    click(w, 81.25, -81.25)
+    w.layers.visibility_changed.emit("mems.anchor", False)
     w.layers.visible["anchor"] = False
-    w.components.collapsed.add("Built-in")
+    w.components.collapsed.add("Library: mems")
     w.save_editor_state()
 
     path = state_path(example)
@@ -289,16 +284,16 @@ def test_editor_state_is_saved_in_the_project_and_restored(window, example, qtbo
     tabs = [
         [v.component for v in (p.widget(i) for i in range(p.count()))] for p in other.area.panes
     ]
-    assert tabs == [["top", "suspension"], ["suspension", "std.perforated_plate"]]
-    assert other.area.current.component == "std.perforated_plate"
+    assert tabs == [["top", "suspension"], ["suspension", "mems.perforated_plate"]]
+    assert other.area.current.component == "mems.perforated_plate"
     left = other.area.find("suspension", other.area.panes[0])
     assert left.selection == [((0, 1),)]
     zoom, x, y = left.canvas.view_state()
     assert zoom == pytest.approx(7.5) and (x, y) == pytest.approx((12, 34), abs=1)
-    assert other.document.trials == {"std.perforated_plate": {"pitch": 30}}
-    assert other.rulers["std.perforated_plate"] == [pytest.approx((-80, -80, 80, -80))]
+    assert other.document.trials == {"mems.perforated_plate": {"pitch": 30}}
+    assert other.rulers["mems.perforated_plate"] == [pytest.approx((-81.25, -81.25, 81.25, -81.25))]
     assert other.layers.visible == {"anchor": False}
-    assert "Built-in" in other.components.collapsed
+    assert "Library: mems" in other.components.collapsed
     other.close()
 
 
@@ -458,7 +453,7 @@ def test_drawing_layer_from_the_toolbar_or_layers_panel(window):
 def test_drawing_is_refused_on_read_only_tabs(window, monkeypatch):
     errors = []
     monkeypatch.setattr(window, "report_error", errors.append)
-    window.open_component("comb_drive")
+    window.open_component("mems.comb_drive")
     assert window.document.read_only
     canvas_area(window)
     window.set_tool("rect")
@@ -486,6 +481,6 @@ def test_switching_tabs_drops_a_shape_being_drawn(window):
         click(window, x, y)
     hover(window, 20, 40)
     assert first.canvas._sketch_item is not None and first.canvas._drag_items
-    window.open_component("comb_drive")
+    window.open_component("mems.comb_drive")
     assert first.canvas._sketch_item is None and not first.canvas._drag_items
     assert not window.tool.busy

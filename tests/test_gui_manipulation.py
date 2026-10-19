@@ -85,9 +85,9 @@ def test_pointing_at_a_shape_says_what_it_is_after_a_moment(window, qtbot):
 
 
 def test_a_placed_component_is_described_by_the_component_it_places(window):
-    window.add_component("anchor")
+    window.add_component("mems.anchor")
     path = window.selection[0]
-    assert window.describe_node(path).endswith("· anchor")
+    assert window.describe_node(path).endswith("· mems.anchor")
 
 
 def test_the_move_cursor_shows_over_the_selection(window, qtbot):

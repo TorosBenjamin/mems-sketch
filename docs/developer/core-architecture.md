@@ -104,7 +104,7 @@ boundary.
 
 | Stays in Python | Moves to C++ |
 |---|---|
-| The Qt GUI: canvas, tools, panels, History panel | Engine: expression evaluation (`core/expressions.py`) |
+| The Qt GUI: canvas, tools, panels, Commit and Git panels | Engine: expression evaluation (`core/expressions.py`) |
 | The project model: pydantic classes are still the one definition of the file format | Engine: shape kinds, modifiers, alignments and points (`core/shapes/`) |
 | Storage: project folders, documents, git | Engine: the compiler, fingerprints, cache, evaluation order (`core/compiler.py`) |
 | `EditSession`: commands, transactions, undo/redo | Library: geometry, booleans, offsets, fillets, extrusion |
@@ -144,8 +144,7 @@ class Region {
   static Region path(const Wire& centreline, const Width& width, PathEnds ends);
   static Region polygon(const Wire& outline);  // lines, arcs and splines: the one constructor
   static Region text(std::string_view text, const Font& font, const TextStyle& style);
-  static Region perforate(const Region& area, const Region& hole, const Grid& grid,
-                          double margin, const Region& keep_out);
+  static Region rounded_rect(double x0, double y0, double x1, double y1, double r);  // a circle or stadium when fully rounded
 
   Region operator|(const Region&) const;  // union
   Region operator-(const Region&) const;  // subtract
@@ -159,6 +158,10 @@ class Region {
   Properties properties() const;        // area, perimeter, centroid, second moments
   std::vector<Point> points(PointKind) const;  // arc centres, edge midpoints, ...
 };
+
+// For perforations (mgeom/fit.hpp): which sites a shape, moved there, lies
+// wholly inside an area, against an edge index of the area's outline.
+std::vector<bool> fits_inside(const Region& area, const Region& shape, std::span<const Point> sites);
 
 // A centreline or outline: straight, arc and spline segments.
 class Wire {
@@ -361,7 +364,8 @@ engine.update(component_name, def_json)  # an edit: only what depends on it rebu
 build = engine.build("resonator", params)  # cached; raises with the node path on error
 build.layers()  # names of layers with geometry
 build.points()  # declared alignment points, µm
-build.records()  # per node: frame, shift, bounding box, points
+build.ports()  # ports: position, direction, wire width, layer
+build.records()  # per node: frame, shift, bounding box, points, a placement's ports
 build.outlines(layer, chord_um)  # rings for drawing, as NumPy arrays
 build.instances(layer)  # (prototype, transform) pairs for drawing
 build.snapped(layer, grid_um=0.001, chord_um=0.005)  # integer rings + snapping report
@@ -455,7 +459,7 @@ src/
       model/              the project as read from JSON
       eval/               node graph, fingerprints, cache, alignment order
       shapes/             one file per shape kind, as in core/shapes/kinds/
-      modifiers/          array, polar_array, mirror, corners
+      modifiers/          array, polar_array, mirror, corners, perforate
     bindings/             nanobind module mems_sketch._core
     tests/                C++ unit tests of the engine
 ```
@@ -554,7 +558,8 @@ test passing and updates this document.
    Python backend has turned curves into segments before an operation).
    One difference is deliberate: a bevelled offset cuts every corner at the
    distance from it, where KLayout's sizing agrees only on right angles.
-   The built-in components became an ordinary library, and the C++ engine
+   The built-in components became an ordinary library (since then the
+   bundled `mems` library), and the C++ engine
    is now the only backend: `mems_sketch.engine` builds through
    `_core.Engine` (a cache shared across versions of a project, node records
    for the editor, imported cells passed in as polygons), `Geometry` holds a

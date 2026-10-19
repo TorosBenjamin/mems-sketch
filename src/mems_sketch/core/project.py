@@ -16,9 +16,11 @@ Component names are resolved like this, from the component holding the reference
 
 * ``name``: looked up from the inside out: the component's own private
   components, its owner's, and so on, then the shared ones, then the
-  built-ins (shared names may not shadow built-ins)
+  imported cells
 * ``comb/finger``: a private component by its path (only from inside ``comb``)
-* ``lib.name``: a shared component of the library loaded as ``lib``
+* ``lib.name``: a shared component of the library loaded as ``lib``; the
+  bundled libraries (:mod:`mems_sketch.libraries`, e.g. ``mems.comb_drive``)
+  are there in every project
 * inside a library, names are looked up in that library; libraries never see
   the project's local components
 
@@ -34,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mems_sketch.core.component import Component, Geometry, builtin_definitions, is_builtin
+from mems_sketch.core.component import Component, Geometry
 from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.process import Layer, Process, Value, default_process
 from mems_sketch.core.shapes import RefShape, Shape, child_lists, find, walk
@@ -76,9 +78,24 @@ class Library:
     components: dict[str, ComponentDef] = field(default_factory=dict)
     path: Path | None = None
     processes: dict[str, Process] = field(default_factory=dict)
+    description: str = ""
+    version: int | None = None
+    # The name of the bundled library it is (mems_sketch.libraries), or None for
+    # one in a folder of its own.
+    bundled: str | None = None
+    # Titles, descriptions and order of its categories (category.yaml), by category.
+    categories: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def category_title(self, category: str) -> str:
+        """What a category is called: its title, else its folder's name in words."""
+        title = self.categories.get(category, {}).get("title")
+        return title or category.rpartition("/")[2].replace("_", " ").capitalize()
 
 
 MAIN_PROCESS = "main"  # the name of a project's own process
+# The built-in components of earlier versions, components of the bundled mems
+# library now (old files are changed when opened: storage.project_files).
+FORMER_BUILTINS = frozenset({"anchor", "comb_drive", "serpentine_spring"})
 
 
 @dataclass
@@ -90,7 +107,7 @@ class Project:
     libraries: dict[str, Library] = field(default_factory=dict)
     imports: dict[str, ImportedCell] = field(default_factory=dict)  # see core/imports.py
     # Its own processes (a library's are shared), and which process it uses: one
-    # of its own, or a library's (``std.polymumps``). ``process`` is the one in
+    # of its own, or a library's (``mems.surface``). ``process`` is the one in
     # use: its own is that very object; a library's is a copy with the project's
     # changes, each with an optional reason by rule name (requirement PRJ-8).
     processes: dict[str, Process] = field(default_factory=dict)
@@ -100,6 +117,11 @@ class Project:
     load_notes: list[str] = field(default_factory=list, compare=False, repr=False)
 
     def __post_init__(self) -> None:
+        from mems_sketch.libraries import bundled_library, bundled_names
+
+        for name in bundled_names():  # always there, unless one of its own has the name
+            if name not in self.libraries:
+                self.libraries[name] = bundled_library(name)
         if self.top is not None and self.top not in self.components:
             self.components[self.top] = ComponentDef(name=self.top)
         if "." not in self.process_name:
@@ -194,7 +216,7 @@ class Project:
         e.g. to open one, where every component can be named by its unique name).
 
         A bare name is looked up from the inside out: the context's own private
-        components, then its owner's, up to the shared ones, then the built-ins.
+        components, then its owner's, up to the shared ones, then the imported cells.
         A private component can only be named from inside its owner.
         """
         # None: from outside (anything may be named); "": at project level
@@ -220,8 +242,10 @@ class Project:
             if not scope:
                 break
             scope = scope.rpartition("/")[0]
-        if name in self.imports or is_builtin(name):
+        if name in self.imports:
             return name
+        if name in FORMER_BUILTINS:
+            raise KeyError(f"unknown component '{name}': it is 'mems.{name}' now")
         raise KeyError(f"unknown component '{name}'")
 
     def reference_name(self, qualified: str, context: str | None) -> str:
@@ -239,16 +263,13 @@ class Project:
 
     def definition(self, qualified: str) -> tuple[ComponentDef, str] | None:
         """The definition of a component and the context its references are
-        written in (its unique name), or None for an imported cell. A built-in
-        is a component like any other (it places nothing)."""
+        written in (its unique name), or None for an imported cell."""
         library, path = _split(qualified)
         pool = self._pool(library)
         if library is not None and library not in self.libraries:
             raise KeyError(f"unknown component '{qualified}'")
         if path in pool:
             return pool[path], qualified
-        if library is None and path not in self.imports and is_builtin(path):
-            return builtin_definitions()[path], path
         return None
 
     def references_of(self, qualified: str) -> list[tuple[Shape, str]]:
@@ -282,9 +303,7 @@ class Project:
     def component_names(self, context: str | None = None) -> list[str]:
         """Every component that can be placed in ``context``, written as it would
         write them: its own and its owners' private components, the shared ones,
-        the libraries' shared ones and the built-ins."""
-        from mems_sketch.core.component import component_types
-
+        the libraries' shared ones and the imported cells."""
         names = []
         for name in self.components:
             with contextlib.suppress(KeyError):
@@ -296,12 +315,10 @@ class Project:
                 with contextlib.suppress(KeyError):
                     self.qualify(qualified, context or "")
                     names.append(self.reference_name(qualified, context))
-        return [*dict.fromkeys(names), *sorted(self.imports), *component_types()]
+        return [*dict.fromkeys(names), *sorted(self.imports)]
 
     def define_component(self, definition: ComponentDef) -> ComponentDef:
         """Add or replace a local component; the project is unchanged if it is invalid."""
-        if is_builtin(definition.short_name):
-            raise ValueError(f"'{definition.short_name}' is a built-in component name")
         if definition.short_name in self.imports:
             raise ValueError(f"'{definition.short_name}' is an imported component")
         previous = self.components
@@ -341,6 +358,22 @@ class Project:
                 if target == component and shape.align and shape.align.point == old:
                     shape.align.point = new
 
+    def rename_port(self, component: str, old: str, new: str) -> None:
+        """Rename a port of a local component, and update the components that place
+        it: what uses its point (``comb1.port.old``, a copy's ``port.old[2]``)."""
+        self.components[component].rename_port(old, new)
+        for user in self.users(component):
+            placing = [shape for shape, target in self.references_of(user) if target == component]
+            self.components[user].follow_point_rename(
+                {shape.name for shape in placing if shape.name}, f"port.{old}", f"port.{new}"
+            )
+            for shape, target in self.references_of(user):  # the rewritten copies
+                if target != component or not shape.align:
+                    continue
+                point = shape.align.point
+                if point == f"port.{old}" or point.startswith(f"port.{old}["):
+                    shape.align.point = f"port.{new}{point[len(old) + 5 :]}"
+
     def rename_component(self, old: str, new: str) -> None:
         """Rename a local component (``new`` is its new short name) and update
         every reference to it."""
@@ -357,7 +390,7 @@ class Project:
         if new == old:
             return
         short = new.rpartition("/")[2]
-        if new in self.components or short in self.imports or is_builtin(short):
+        if new in self.components or short in self.imports:
             raise ValueError(f"a component named '{new}' already exists")
         if new.startswith(f"{old}/"):
             raise ValueError(f"'{old}' cannot be private to itself")
@@ -404,8 +437,8 @@ class Project:
             if state.get(qualified) == "visiting":
                 raise ValueError(f"circular component reference: {' -> '.join([*path, qualified])}")
             found = self.definition(qualified)
-            if found is None or (qualified not in self.components and is_builtin(qualified)):
-                return  # imported, or built-in
+            if found is None:
+                return  # imported
             definition, context = found
             state[qualified] = "visiting"
             for ref in definition.references():

@@ -30,7 +30,7 @@ const char* PROJECT = R"({
                                       "points": [[0, 0], ["w", 0], [0, "process.gap"]]}]}]},
     "aligned": {"name": "aligned", "shapes": [{"kind": "rect", "layer": "device", "x0": 0, "y0": 0,
                 "x1": 1, "y1": 1, "align": {"point": "center", "to": "x.center"}}]},
-    "spring": {"name": "spring", "shapes": [{"kind": "ref", "component": "comb_drive"}]},
+    "spring": {"name": "spring", "shapes": [{"kind": "ref", "component": "mems.comb_drive"}]},
     "hidden_anchor": {"name": "hidden_anchor", "shapes": [
       {"kind": "rect", "name": "anchor", "layer": "metal", "x0": 10, "y0": 0, "x1": 20, "y1": 10, "enabled": false},
       {"kind": "rect", "name": "comb", "layer": "device", "x0": 0, "y0": 0, "x1": 2, "y1": 2,
@@ -38,8 +38,8 @@ const char* PROJECT = R"({
       {"kind": "rect", "name": "broken", "layer": "metal", "x0": 0, "y0": 0, "x1": "nothing", "y1": 1,
        "enabled": false}]}
   },
-  "builtins": {"comb_drive": {"name": "comb_drive",
-                 "shapes": [{"kind": "rect", "layer": "level", "x0": 0, "y0": 0, "x1": 4, "y1": 2}]}}
+  "libraries": {"mems": {"comb_drive": {"name": "comb_drive",
+                 "shapes": [{"kind": "rect", "layer": "level", "x0": 0, "y0": 0, "x1": 4, "y1": 2}]}}}
 })";
 
 }  // namespace
@@ -102,13 +102,13 @@ TEST_CASE("operations flatten what they are given; modifiers copy instances") {
     CHECK(row->flat().at("metal").area() == doctest::Approx(300 - 4 + 6 * 4));
 }
 
-TEST_CASE("built-in components, and errors") {
+TEST_CASE("library components, and errors") {
     const Project project = Project::from_json(PROJECT);
     Builder builder(project);
     CHECK_THROWS_AS(builder.build("aligned"), mems::BuildError);  // aligned to a shape that is not there
-    // A built-in is built like any other component, on the default layer stack's first level.
+    // A library's component drawn on the level of whatever places it: the stack's first.
     CHECK(builder.build("spring")->flat().at("device").area() == doctest::Approx(8.0));
-    CHECK(builder.build("comb_drive")->layers.count("device") == 1);
+    CHECK(builder.build("mems.comb_drive")->layers.count("device") == 1);
 }
 
 TEST_CASE("a switched-off shape is hidden, not removed: shapes aligned to it stay") {
@@ -119,4 +119,39 @@ TEST_CASE("a switched-off shape is hidden, not removed: shapes aligned to it sta
     const auto box = layers.at("device").bbox();  // the comb, centred on the hidden anchor
     CHECK(box.x0 == doctest::Approx(14));
     CHECK(box.y0 == doctest::Approx(4));
+}
+
+TEST_CASE("ports turn with a placement, copies have theirs by index, and a port takes over one it is at") {
+    const Project project = Project::from_json(R"({
+      "name": "ports", "top": "top",
+      "components": {
+        "pad": {"name": "pad",
+                "shapes": [{"kind": "rect", "name": "body", "layer": "metal", "x0": -10, "y0": -10, "x1": 10, "y1": 10}],
+                "ports": [{"name": "signal", "at": "body.right", "direction": "right", "width": 4, "layer": "metal"}]},
+        "top": {"name": "top",
+                "shapes": [{"kind": "ref", "name": "p", "component": "pad", "x": 100, "rotation": 90,
+                            "modifiers": [{"kind": "array", "columns": 2, "dx": 50}]},
+                           {"kind": "rect", "name": "wire", "layer": "metal", "x0": 0, "y0": 0,
+                            "x1": "p.port.signal.width", "y1": 1, "align": {"point": "bottom_left", "to": "p.port.signal[1]"}}],
+                "ports": [{"name": "out", "at": "p.port.signal[1]", "width": 6},
+                          {"name": "back", "at": "wire.right", "direction": "-90 - 90", "layer": "metal"}]}
+      }
+    })");
+    Builder builder(project);
+    const auto pad = builder.build("pad");
+    REQUIRE(pad->ports.count("signal"));
+    CHECK(pad->ports.at("signal").at.x == doctest::Approx(10));
+    CHECK(pad->points.empty());  // a port is a point only where the component is placed
+
+    const auto top = builder.build("top");
+    const auto& out = top->ports.at("out");  // the second copy's, turned 90°: up
+    CHECK(out.at.x == doctest::Approx(150));
+    CHECK(out.at.y == doctest::Approx(10));
+    CHECK(out.angle_deg == doctest::Approx(90));
+    CHECK(out.width == doctest::Approx(6));  // its own; direction and layer taken over
+    CHECK(out.layer == "metal");
+    const auto& back = top->ports.at("back");  // -180 is 180
+    CHECK(back.angle_deg == doctest::Approx(180));
+    CHECK(back.at.x == doctest::Approx(154));  // the wire: 4 wide, from the port
+    CHECK(back.width == 0);
 }

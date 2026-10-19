@@ -1,0 +1,24 @@
+description: >-
+  Square bond or probe pad on the component's level, with an opening on the
+  level above (passivation, or metal on the pad) inset by `margin`; set
+  `opening` to 0 for a pad without one. Port: signal, on its right edge.
+tags: [pad, bond pad, probe, wire bond, contact]
+parameters:
+  size: {default: 100, min: 2 * margin, min_exclusive: true, description: Pad edge length (µm)}
+  margin: {default: 8, min: 0, description: Pad around the opening (µm)}
+  opening: {default: 1, min: 0, max: 1, integer: true, description: "1: an opening on the level above; 0: none"}
+ports:
+  signal:
+    at: pad.right
+    direction: right
+    width: size / 4
+    description: Where a wire leaves the pad; turn the pad to leave another side
+shapes:
+  pad: {kind: rect, x0: -size/2, y0: -size/2, x1: size/2, y1: size/2}
+  pad_opening:
+    kind: rect
+    layer: level+1
+    x0: -(size/2 - margin) * opening
+    y0: -(size/2 - margin) * opening
+    x1: (size/2 - margin) * opening
+    y1: (size/2 - margin) * opening

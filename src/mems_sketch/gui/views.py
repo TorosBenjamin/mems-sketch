@@ -13,7 +13,9 @@ from concurrent.futures import Executor, Future, ProcessPoolExecutor, ThreadPool
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtWidgets import (
+    QFrame,
     QProxyStyle,
+    QSplitter,
     QStyle,
     QTabBar,
     QTabWidget,
@@ -27,7 +29,6 @@ from mems_sketch.core.shapes import NodePath, node_at
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons
 from mems_sketch.gui.canvas import LayoutCanvas
-from mems_sketch.gui.widgets import HairlineSplitter
 from mems_sketch.process import rules
 
 MAX_PANES = 2
@@ -142,7 +143,7 @@ class ComponentView(QWidget):
 
     def tooltip(self) -> str:
         if self.read_only:
-            where = "library" if "." in self.component else "built-in"
+            where = "library" if "." in self.component else "imported"
             return f"{self.component} — {where} component, read-only (trial values work)"
         top = " (top)" if self.component == self.document.project.top else ""
         changed = ", changed since the last save" if self.document.modified(self.component) else ""
@@ -239,7 +240,23 @@ class ComponentView(QWidget):
             return False
 
 
-class EditorArea(HairlineSplitter):
+PANE_GAP = 5  # px of frame between the two panes of a split view (as between islands)
+
+
+def _pane_island(pane: QWidget) -> QFrame:
+    """A pane as its own rounded island, so a split view has round corners in the
+    middle too (the canvas rounds itself off to the island it is in)."""
+    frame = QFrame()
+    frame.setObjectName("island")
+    frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+    layout.addWidget(pane)
+    return frame
+
+
+class EditorArea(QSplitter):
     """Tabs of component views in one or two panes.
 
     ``current`` is the view the user works in: the current tab of the pane
@@ -251,12 +268,17 @@ class EditorArea(HairlineSplitter):
     tab_menu_requested = Signal(object, QPoint)  # ComponentView, global position
 
     def __init__(self, document: EditSession) -> None:
-        super().__init__(Qt.Orientation.Horizontal)  # split: a hairline between the panes
+        super().__init__(Qt.Orientation.Horizontal)  # split: two islands, the frame between
+        self.setObjectName("islands")
+        self.setHandleWidth(PANE_GAP)
+        self.setChildrenCollapsible(False)
         self.document = document
         self.panes: list[QTabWidget] = []
         self.current: ComponentView | None = None
         self.process_view: QWidget | None = None  # the Process tab, when open
         self.process_factory = None  # makes it: set by the window
+        self.comparison_view: QWidget | None = None  # the comparison tab, when open
+        self.comparison_factory = None
         self._tab_style = _NoSlideStyle("Fusion")  # kept: widgets do not own their style
         self._add_pane()
 
@@ -273,7 +295,7 @@ class EditorArea(HairlineSplitter):
         bar.setStyle(self._tab_style)
         bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         bar.customContextMenuRequested.connect(lambda pos, p=pane: self._tab_menu(p, pos))
-        self.addWidget(pane)
+        self.addWidget(_pane_island(pane))
         self.panes.append(pane)
         return pane
 
@@ -302,8 +324,9 @@ class EditorArea(HairlineSplitter):
 
     def _remove_pane(self, pane: QTabWidget) -> None:
         self.panes.remove(pane)
-        pane.setParent(None)
-        pane.deleteLater()
+        holder = pane.parentWidget()  # its island
+        holder.setParent(None)
+        holder.deleteLater()
 
     def pane_of(self, view: ComponentView) -> QTabWidget | None:
         return next((p for p in self.panes if p.indexOf(view) >= 0), None)
@@ -335,6 +358,20 @@ class EditorArea(HairlineSplitter):
         pane = self.pane_of(self.process_view)
         pane.setCurrentWidget(self.process_view)
         return self.process_view
+
+    def open_comparison(self) -> QWidget:
+        """Show the comparison tab (at most one), next to the current tab."""
+        if self.comparison_view is None:
+            view = self.comparison_view = self.comparison_factory()
+            pane = self._current_pane()
+            pane.insertTab(
+                pane.currentIndex() + 1, view, icons.icon(view.icon_name()), view.title()
+            )
+            self._close_button(pane, view)
+            self.tabs_changed.emit()
+        pane = self.pane_of(self.comparison_view)
+        pane.setCurrentWidget(self.comparison_view)
+        return self.comparison_view
 
     def find(self, component: str, pane: QTabWidget | None = None) -> ComponentView | None:
         panes = [pane] if pane is not None else self.panes
@@ -379,6 +416,8 @@ class EditorArea(HairlineSplitter):
         pane.removeTab(index)
         if view is self.process_view:
             self.process_view = None
+        if view is self.comparison_view:
+            self.comparison_view = None
         view.deleteLater()
         if pane.count() == 0 and self.split:
             self._remove_pane(pane)
@@ -406,6 +445,7 @@ class EditorArea(HairlineSplitter):
             view.deleteLater()
         self.current = None
         self.process_view = None
+        self.comparison_view = None
 
     def other_pane(self) -> QTabWidget:
         """The pane that is not the current one, creating it (a split) if needed."""
@@ -436,7 +476,10 @@ class EditorArea(HairlineSplitter):
                 view = pane.widget(0)
                 title = pane.tabText(0)
                 pane.removeTab(0)
-                if self.find(view.component, self.panes[0]) is None:
+                if (
+                    not isinstance(view, ComponentView)
+                    or self.find(view.component, self.panes[0]) is None
+                ):
                     self.panes[0].addTab(view, icons.icon(view.icon_name()), title)
                     self._close_button(self.panes[0], view)
                 else:
@@ -475,6 +518,7 @@ class EditorArea(HairlineSplitter):
                 [
                     w.component if isinstance(w := pane.widget(i), ComponentView) else "process"
                     for i in range(pane.count())
+                    if pane.widget(i) is not self.comparison_view  # not kept: it is a look
                 ]
                 for pane in self.panes
             ],

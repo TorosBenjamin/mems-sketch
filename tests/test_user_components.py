@@ -93,7 +93,7 @@ def test_nested_refs_to_user_and_builtin_components():
             shapes=[
                 RefShape(component="triangle", params={"base": 10}),
                 RefShape(component="triangle", params={"base": 10}, x="spacing", rotation=180),
-                RefShape(component="anchor", params={"size": 20}, x="spacing / 2"),
+                RefShape(component="mems.anchor", params={"size": 20}, x="spacing / 2"),
             ],
         )
     )
@@ -113,8 +113,6 @@ def test_parameter_limits_are_enforced():
 
 def test_invalid_definitions_are_rejected():
     design = make_design()
-    with pytest.raises(ValueError, match="built-in"):
-        design.define_component(ComponentDef(name="anchor"))
     with pytest.raises(ValueError, match="unknown component"):
         design.define_component(ComponentDef(name="x", shapes=[RefShape(component="nope")]))
     with pytest.raises(ValueError, match="circular"):

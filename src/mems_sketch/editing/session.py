@@ -4,11 +4,11 @@ Frontends (the GUI, the CLI, scripts) never build geometry or touch files
 themselves; they go through a session, which uses the rest of the backend
 (project model, engine, storage, rules, export). Edits are grouped:
 ``session.components``, ``.nodes``, ``.modifiers``, ``.moves``, ``.points``,
-``.parameters`` and ``.process``; ``session.results`` is what the components evaluate to.
+``.ports``, ``.parameters`` and ``.process``; ``session.results`` is what the components evaluate to.
 
 * One component is **active**, e.g. the one in the GUI's current tab. Shape edits,
   parameters and points refer to it. Any component can be active; library
-  and built-in components are read-only.
+  components are read-only.
 * **Trial values** per component override parameter defaults for viewing
   only: they are not part of the project, not saved and not undone.
 * Every edit runs as a transaction: the change is applied, the project is
@@ -51,6 +51,7 @@ from mems_sketch.editing.naming import fresh_name
 from mems_sketch.editing.nodes import NodeEdits
 from mems_sketch.editing.parameters import ParameterEdits
 from mems_sketch.editing.points import PointEdits
+from mems_sketch.editing.ports import PortEdits
 from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
 from mems_sketch.engine import Engine
@@ -93,6 +94,7 @@ class EditSession:
         self.imports = ImportEdits(self)
         self.moves = MoveEdits(self)
         self.points = PointEdits(self)
+        self.ports = PortEdits(self)
         self.parameters = ParameterEdits(self)
         self.process = ProcessEdits(self)
         self.history = History(self)
@@ -314,11 +316,12 @@ class EditSession:
 
     @property
     def read_only(self) -> bool:
-        """Library and built-in components can be viewed but not edited."""
+        """Library components can be viewed but not edited."""
         return self.active not in self.project.components
 
     def definition_of(self, component: str) -> ComponentDef:
-        """A component's definition; for a built-in, one listing its numeric parameters."""
+        """A component's definition; for an imported cell, one listing its numeric
+        parameters (none)."""
         found = self.project.definition(self.project.qualify(component))
         if found is not None:
             return found[0]
@@ -344,8 +347,7 @@ class EditSession:
         """The active component inside ``project``, for an edit; refuses read-only ones."""
         if self.active not in project.components:
             raise ValueError(
-                f"'{self.active}' is read-only: library and built-in components cannot be "
-                "edited here"
+                f"'{self.active}' is read-only: library components cannot be edited here"
             )
         return project.components[self.active]
 
@@ -434,7 +436,7 @@ class EditSession:
         return self.project.qualify(node.component, component)
 
     def set_active(self, name: str) -> None:
-        """Make a component active: a local one to edit, or a library/built-in one to view."""
+        """Make a component active: a local one to edit, or a library one to view."""
         if not self.exists(name):
             raise ValueError(f"unknown component '{name}'")
         if name != self.active:

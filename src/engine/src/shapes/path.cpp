@@ -1,5 +1,12 @@
 // A wire of constant width along a centreline (mems_sketch.core.shapes.kinds.path):
-// flush ends, or extended by half the width (square), or round.
+// flush ends, or extended by half the width (square), or round. Its ports start
+// and end are where it ends, pointing out of it, as wide as it and on its layer
+// (at the flat end: past a square end's extension, before a round end's cap).
+#include <cmath>
+#include <numbers>
+#include <string>
+#include <tuple>
+
 #include "kinds.hpp"
 #include "mgeom/wire.hpp"
 
@@ -18,7 +25,22 @@ Result render_path(const Json& node, const Context& ctx) {
                                                    : mgeom::PathEnds::flush;
     const auto region = mgeom::Region::path(centreline, width, end);
     if (region.empty()) return {};
-    return {Layers{{ctx.layer(node), region}}, {}};
+    const std::string layer = ctx.layer(node);
+    Result result{Layers{{layer, region}}, {}};
+    const auto& segments = centreline.segments();
+    const mgeom::Point first = segments.front().end, last = centreline.end();
+    const mgeom::Point before = segments.size() > 1 ? segments[segments.size() - 2].end : centreline.start();
+    for (const auto& [name, at, towards] :
+         {std::tuple{"start", centreline.start(), first}, std::tuple{"end", last, before}}) {
+        const double length = std::hypot(at.x - towards.x, at.y - towards.y);
+        const mgeom::Point out{(at.x - towards.x) / length, (at.y - towards.y) / length};  // out of the path
+        const double past = end == mgeom::PathEnds::square ? width / 2 : 0.0;
+        const Port port{{at.x + out.x * past, at.y + out.y * past},
+                        port_angle(std::atan2(out.y, out.x) * 180 / std::numbers::pi), width, layer};
+        result.points.emplace(std::string("port.") + name, port.at);
+        result.ports.emplace(name, port);
+    }
+    return result;
 }
 
 }  // namespace mems

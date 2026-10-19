@@ -16,7 +16,7 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture
 def projects(tmp_path):
-    for name in ("resonator", "libraries"):
+    for name in ("resonator",):
         shutil.copytree(
             EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
         )

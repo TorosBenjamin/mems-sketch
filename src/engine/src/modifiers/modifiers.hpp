@@ -30,6 +30,8 @@ Result apply_polar_array(const Json& modifier, const Produce& produce, const Var
 Result apply_mirror(const Json& modifier, const Produce& produce, const Variables& variables, const ModifierContext& ctx);
 Result apply_corners(const Json& modifier, const Produce& produce, const Variables& variables,
                      const ModifierContext& ctx);
+Result apply_perforate(const Json& modifier, const Produce& produce, const Variables& variables,
+                       const ModifierContext& ctx);
 
 // -- shared by the modifiers --
 
@@ -52,5 +54,9 @@ mgeom::Point point_of(const std::string& reference, const Result& own, const Sco
 
 // Geometry moved, rotated or mirrored.
 Layers placed(const Layers& layers, const mgeom::Transform& t);
+
+// Copy ``k`` of a repeated node's ports, moved by ``t``, into ``into`` as
+// ``name[k]`` (and its point ``port.name[k]``), so that each copy can be wired.
+void add_copy_ports(Result& into, const Result& copy, const mgeom::Transform& t, int k);
 
 }  // namespace mems

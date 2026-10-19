@@ -1,0 +1,20 @@
+description: >-
+  Line-width ladder: lines of growing width, the first `start` wide and each
+  next one `step` wider, `space` apart, from the origin along +x. The
+  narrowest line that survives is the smallest resolved width.
+tags: [test structure, resolution, line width, metrology]
+parameters:
+  count: {default: 8, min: 2, integer: true, description: Number of lines}
+  start: {default: 2, min: 0, min_exclusive: true, description: Width of the first line (µm)}
+  step: {default: 0.5, min: 0, description: Width added from one line to the next (µm)}
+  length: {default: 40, min: 0, min_exclusive: true, description: Line length (µm)}
+  space: {default: 6, min: 0, min_exclusive: true, description: Space between neighbouring lines (µm)}
+shapes:
+  lines:
+    kind: rect
+    x0: i * space + i * start + step * i * (i - 1) / 2
+    y0: 0
+    x1: i * space + (i + 1) * start + step * i * (i + 1) / 2
+    y1: length
+    modifiers:
+    - {kind: array, columns: count}

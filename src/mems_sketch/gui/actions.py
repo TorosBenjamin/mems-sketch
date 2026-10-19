@@ -11,7 +11,7 @@ import functools
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCursor, QKeySequence
 from PySide6.QtWidgets import QMenu
 
 from mems_sketch.gui import icons, theme
@@ -25,6 +25,7 @@ PRIMITIVES = [
     ("arc", "Arc / ring"),
     ("polygon", "Polygon"),
     ("path", "Path"),
+    ("route", "Route"),
     ("guide", "Guide"),
 ]
 OVERLAYS = [  # View › Overlays: setting, label, icon
@@ -45,6 +46,8 @@ OPERATIONS = [
     ("layer_map", "Layer map"),
 ]
 BOOLEANS = ("subtract", "intersect", "xor")  # under Operations › Combine
+# The ☰ menu's entries' icons: File, Edit, Tools, Insert, Operations, View, Help.
+ROOT_ICONS = ("folder", "edit", "select", "add", "subtract", "eye", "help")
 
 
 def make_action(
@@ -77,6 +80,7 @@ class Actions:
         act("Open project…", w.open_project, QKeySequence.StandardKey.Open, file, "open")
         self.save = act("Save", w.save_project, QKeySequence.StandardKey.Save, file, "save")
         act("Save as…", w.save_project_as, QKeySequence.StandardKey.SaveAs, file)
+        act("Close project", w.close_project, None, file)
         file.addSeparator()
         act("Import…", lambda: w.components.import_gds(), "Ctrl+I", file, "import")
         act("Export…", w.export_file, "Ctrl+E", file, "export")
@@ -94,6 +98,10 @@ class Actions:
         self.paste = act("Paste", w.paste, QKeySequence.StandardKey.Paste, edit, "paste")
         self.duplicate = act("Duplicate", w.duplicate, "Ctrl+D", edit, "duplicate")
         self.delete = act("Delete", w.delete, QKeySequence.StandardKey.Delete, edit, "delete")
+        self.select_all = act(
+            "Select all", w.select_all, QKeySequence.StandardKey.SelectAll, edit, "select"
+        )
+        self.rename = act("Rename…", w.rename_selection, "F2", edit, "edit")
         self.unwrap = act("Unwrap operation", w.unwrap, "Ctrl+Shift+U", edit)
         self.make = act(
             "Make component from selection…", w.make_component, "Ctrl+K", edit, "make_component"
@@ -130,16 +138,29 @@ class Actions:
         for name, tool in w.tools.items():
             if name == first_drawing:
                 tools_menu.addSeparator()
+            # Measure starts measuring distances; N (below) measures angles.
+            slot = (
+                (lambda _=False: w.measure("distance"))
+                if name == "measure"
+                else (lambda _=False, n=name: w.set_tool(n))
+            )
             action = act(
                 tool.label,
-                lambda _=False, n=name: w.set_tool(n),
-                tool.shortcut,
-                tools_menu,
+                slot,
+                tool.shortcut or None,
+                tools_menu if tool.listed else None,
                 tool.icon,
             )
             action.setCheckable(True)
             group.addAction(action)
             self.tools[name] = action
+        # The Measure tool in its angle mode, listed right after Measure.
+        self.measure_angle = act("Measure angle", lambda: w.measure("angle"), "N", None, "angle")
+        entries = tools_menu.actions()
+        after = entries.index(self.tools["measure"]) + 1
+        tools_menu.insertAction(
+            entries[after] if after < len(entries) else None, self.measure_angle
+        )
         tools_menu.addSeparator()
         act("Clear rulers", w.clear_rulers, None, tools_menu, "clear")
 
@@ -155,9 +176,8 @@ class Actions:
                 else (lambda _=False, k=kind: w.add_primitive(k))
             )
             act(label, slot, menu=self.add, icon=kind)
-        self.place = insert.addMenu("Place component")
-        icons.bind(self.place.menuAction(), "place")
-        self.place.aboutToShow.connect(self._fill_place_menu)
+        # A popup that searches the components (see mems_sketch.gui.component_picker).
+        self.place = act("Place component…", lambda: w.place_popup(), "Shift+A", insert, "place")
 
         operations = self.operations_menu = QMenu("&Operations", w)
         combine = self.combine = operations.addMenu("Combine")
@@ -166,12 +186,17 @@ class Actions:
         for op, label in OPERATIONS:
             menu = combine if op in BOOLEANS else operations
             self.operations[op] = act(label, lambda _=False, o=op: w.wrap(o), menu=menu, icon=op)
+        self.connect = act("Connect", lambda: w.connect(), menu=operations, icon="connection")
+        self.connect.setToolTip("Join the selected shapes' ends (their ports) with a connection")
         operations.addSeparator()
         operations.addAction(self.make)
         operations.addAction(self.unpack)
 
         view = self.view = QMenu("&View", w)
-        act("Fit", lambda: w.canvas.fit(animated=True), "F", view, "fit")
+        self.fit = act("Fit", lambda: w.canvas.fit(animated=True), "F", view, "fit")
+        self.zoom_selection = act(
+            "Zoom to selection", w.zoom_to_selection, "Shift+F", view, "zoom_in"
+        )
         act("Zoom in", lambda: w.canvas.zoom_by(1.25, animated=True), "Ctrl+=", view, "zoom_in")
         act("Zoom out", lambda: w.canvas.zoom_by(0.8, animated=True), "Ctrl+-", view, "zoom_out")
         act("Recompile and check", w.refresh, "F5", view, "recompile")
@@ -214,8 +239,9 @@ class Actions:
 
         self.root_menus = [file, edit, tools_menu, insert, operations, view, help_menu]
         self.root = QMenu(w)  # the ☰ button's menu
-        for menu in self.root_menus:
+        for menu, icon_name in zip(self.root_menus, ROOT_ICONS, strict=True):
             self.root.addMenu(menu)
+            icons.bind(menu.menuAction(), icon_name)
 
     def all_actions(self) -> list[QAction]:
         """Every command in the menus, once each (to register their shortcuts on the window)."""
@@ -231,18 +257,15 @@ class Actions:
         visit(self.root)
         return list(found.values())
 
-    def _fill_place_menu(self) -> None:
-        w = self.window
-        self.place.clear()
-        for name in w.document.component_names():
-            if name != w.document.active:
-                make_action(w, name, lambda _=False, n=name: w.add_component(n), menu=self.place)
-
     def context_menu(self, x: float, y: float) -> QMenu:
-        """The editor's right-click menu at ``(x, y)`` µm, for the current selection.
+        """The editor's right-click menu at ``(x, y)`` µm, for what is selected.
 
+        On empty space (nothing selected) it offers what can be done there: add
+        a shape or place a component at that point, paste, select all, fit. With
+        a selection it offers what can be done to it: the operations, rotating
+        and mirroring, zooming to it, renaming one shape, and the edit commands.
         Its entries are copies of the commands (their shortcuts shown but not
-        active), enabled only when they apply, so the menu keeps its shape.
+        active), enabled only when they apply.
         """
         w = self.window
         selection = list(w.selection)
@@ -257,37 +280,44 @@ class Actions:
             action.setEnabled(enabled and editable)
             return action
 
-        add = menu.addMenu(self.add.menuAction().icon(), "Add")
-        for source in self.add.actions():
-            kind = next(k for k, label in PRIMITIVES if label == source.text())
-            slot = (lambda _=False, k=kind: w.start_drawing(k, x, y)) if kind in w.tools else None
-            item(add, source, slot)
-        place = menu.addMenu(self.place.menuAction().icon(), "Place component")
-        for name in w.document.component_names():
-            if name != w.document.active:
-                action = make_action(menu, name, lambda _=False, n=name: w.add_component(n))
-                place.addAction(action)
-                action.setEnabled(editable)
-        add.setEnabled(editable)
-        place.setEnabled(editable)
+        if not selection:
+            add = menu.addMenu(self.add.menuAction().icon(), "Add")
+            for source in self.add.actions():
+                kind = next(k for k, label in PRIMITIVES if label == source.text())
+                slot = (
+                    (lambda _=False, k=kind: w.start_drawing(k, x, y)) if kind in w.tools else None
+                )
+                item(add, source, slot)
+            # The Place popup, by the cursor; the component lands where the click was.
+            item(menu, self.place, lambda: w.place_popup(at=(x, y), near=QCursor.pos()))
+            add.setEnabled(editable)
+            menu.addSeparator()
+            item(menu, self.paste, enabled=w.can_paste())
+            item(menu, self.select_all).setEnabled(True)  # selecting changes nothing
+            item(menu, self.fit).setEnabled(True)
+            return menu
 
-        menu.addSeparator()
-        one, some, several = len(selection) == 1, bool(selection), len(selection) > 1
+        one, several = len(selection) == 1, len(selection) > 1
         reference = one and w.document.reference_target(selection[0]) is not None
         combine = menu.addMenu(self.combine.menuAction().icon(), "Combine")
         for op in BOOLEANS:
             item(combine, self.operations[op], enabled=several)
         combine.setEnabled(several and editable)
         for op in ("offset", "fillet", "transform", "layer_map"):
-            item(menu, self.operations[op], enabled=some)
-        item(menu, self.make, enabled=some)
+            item(menu, self.operations[op])
+        item(menu, self.connect, enabled=several)
+        item(menu, self.make)
         item(menu, self.unpack, enabled=reference)
         orient = menu.addMenu(self.rotate_left.icon(), "Rotate && mirror")
         for source in (self.rotate_left, self.rotate_right, self.mirror_h, self.mirror_v):
-            item(orient, source, enabled=some)
-        orient.setEnabled(some and editable)
+            item(orient, source)
+        orient.setEnabled(editable)
         menu.addSeparator()
-        self._edit_items(item, menu, some, one)
+        item(menu, self.zoom_selection).setEnabled(True)
+        if one:
+            item(menu, self.rename)
+        menu.addSeparator()
+        self._edit_items(item, menu, True, one)
         return menu
 
     def _edit_items(self, item, menu: QMenu, some: bool, one: bool) -> None:

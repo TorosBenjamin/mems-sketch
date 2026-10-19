@@ -54,6 +54,17 @@ TEST_CASE("rectangles and polygons") {
     const Point triangle[] = {{0, 0}, {4, 0}, {0, 3}};
     CHECK(Region::polygon(triangle).area() == doctest::Approx(6).epsilon(1e-12));
 
+    // Clockwise points give the same region as counter-clockwise ones, and it
+    // merges with others (a clockwise face once faced the other way and a
+    // union kept it apart).
+    const Point clockwise[] = {{0, 0}, {0, 3}, {4, 0}};
+    CHECK(Region::polygon(clockwise).area() == doctest::Approx(6).epsilon(1e-12));
+    CHECK(Region::polygon(clockwise).outlines(0.01)[0].hull.size() == 3);
+    const Region both = Region::polygon(clockwise) | Region::rect(-1, -1, 1, 1);
+    CHECK(both.pieces() == 1);
+    CHECK(both.area() == doctest::Approx(6 + 4 - 1).epsilon(1e-12));
+    CHECK(both.corners().size() == 7);
+
     const Point two[] = {{0, 0}, {1, 1}};
     CHECK_THROWS_AS(Region::polygon(two), GeometryError);
     const Point bow_tie[] = {{0, 0}, {2, 2}, {2, 0}, {0, 2}};

@@ -65,7 +65,7 @@ def test_values_are_remembered_per_format(window):
 
 @pytest.fixture
 def resonator(tmp_path):
-    for name in ("resonator", "libraries"):
+    for name in ("resonator",):
         shutil.copytree(
             EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
         )

@@ -185,7 +185,7 @@ def test_gizmos_can_be_hidden_and_are_not_shown_on_read_only_tabs(window):
     window.settings.set("canvas/show_gizmos", True)
     window.set_tool("select")
     assert window.canvas.gizmo is None  # Select has no gizmo
-    window.open_component("comb_drive")
+    window.open_component("mems.comb_drive")
     window.set_tool("move")
     assert window.canvas.gizmo is None
 
@@ -285,7 +285,7 @@ def test_status_bar_shows_problems_zoom_and_grid(window):
 
 
 def test_tabs_have_icons_a_close_button_and_a_menu(window):
-    window.open_component("comb_drive")
+    window.open_component("mems.comb_drive")
     pane = window.area.panes[0]
     assert pane.count() == 2 and not pane.tabIcon(1).isNull()
     assert "read-only" in pane.tabToolTip(1)
@@ -312,7 +312,7 @@ def test_the_main_menu_button_is_square(window):
 
 def test_canvas_caption_shows_the_component(window):
     assert window.canvas._caption == ("top", "top component")
-    window.open_component("comb_drive")
+    window.open_component("mems.comb_drive")
     assert "read-only" in window.canvas._caption[1]
 
 
@@ -331,7 +331,7 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture
 def resonator(window, tmp_path):
-    for name in ("resonator", "libraries"):
+    for name in ("resonator",):
         shutil.copytree(
             EXAMPLES / name, tmp_path / name, ignore=shutil.ignore_patterns(".mems-sketch")
         )
@@ -363,7 +363,7 @@ def test_the_explorer_lists_each_component_once_with_its_private_ones(resonator)
     suspension = explorer_item(resonator, "suspension")
     assert suspension.data(0, DETAIL_ROLE) is None  # definitions: no counts
     assert "placed in top" in suspension.toolTip(0)
-    assert "places serpentine_spring, anchor" in suspension.toolTip(0)
+    assert "places mems.serpentine_spring, mems.anchor" in suspension.toolTip(0)
     assert children(suspension) == ["clamp"]
     clamp = explorer_item(resonator, "suspension", "suspension/clamp")
     assert "private to suspension" in clamp.toolTip(0)
@@ -378,25 +378,25 @@ def test_the_explorer_copies_library_components_and_adds_libraries(resonator, tm
     from PySide6.QtWidgets import QMenu
 
     menu = QMenu()
-    resonator.components._component_actions(menu, "std.perforated_plate")
+    resonator.components._component_actions(menu, "mems.perforated_plate")
     copy = next(a for a in menu.actions() if a.text() == "Copy into the project")
     copy.trigger()
     assert "perforated_plate" in resonator.document.project.components
     assert resonator.area.current.component == "perforated_plate"  # opened to edit
-    resonator.components.add_library(str(tmp_path / "libraries" / "mems_std"))
+    resonator.components.add_library(str(Path(__file__).parent / "data" / "mems_std"))
     groups = [
         resonator.components.tree.topLevelItem(i).text(0)
         for i in range(resonator.components.tree.topLevelItemCount())
     ]
-    assert groups == ["resonator", "std", "mems_std", "Built-in"]
+    assert groups == ["resonator", "mems", "std", "mems_std"]
 
 
 def test_a_component_dropped_on_the_canvas_is_placed_there(resonator):
     resonator.open_component("suspension")
     canvas = resonator.canvas
-    canvas.component_dropped.emit("anchor", 120.0, -40.0)
+    canvas.component_dropped.emit("mems.anchor", 120.0, -40.0)
     placed = resonator.document.shapes[-1]
-    assert (placed.component, placed.x, placed.y) == ("anchor", 120, -40)
+    assert (placed.component, placed.x, placed.y) == ("mems.anchor", 120, -40)
     assert resonator.selection == [((0, len(resonator.document.shapes) - 1),)]
 
 
@@ -423,7 +423,7 @@ def test_a_new_library_has_no_top_and_its_tab_shows_a_component(window, tmp_path
 def test_the_shape_list_shows_details_and_alignment_icons(resonator):
     tree = resonator.tree
     mass, comb = tree.topLevelItem(0), tree.topLevelItem(1)
-    assert mass.data(0, DETAIL_ROLE) == "std.perforated_plate"
+    assert mass.data(0, DETAIL_ROLE) == "mems.perforated_plate"
     assert mass.icon(tree.STATUS).isNull() and not comb.icon(tree.STATUS).isNull()
     assert comb.toolTip(tree.STATUS) == "Aligned: moving at mass.top"
     resonator.document.nodes.add_primitive("rect")
@@ -499,18 +499,18 @@ def test_private_components_from_the_explorer_menu(resonator, monkeypatch):
 def test_a_read_only_component_shows_its_interface(resonator):
     from PySide6.QtWidgets import QLabel, QLineEdit
 
-    resonator.open_component("std.perforated_plate")
+    resonator.open_component("mems.perforated_plate")
     tree = resonator.tree
     assert tree.topLevelItemCount() == 1
     assert tree.topLevelItem(0).data(0, DETAIL_ROLE) == "interface only"
     labels = [lab.text() for lab in resonator.properties.findChildren(QLabel)]
-    assert "size" in labels and "pitch" in labels and "hole_r" not in labels  # internal
+    assert "size" in labels and "pitch" in labels and "margin" not in labels  # internal
     assert not resonator.properties.findChildren(QLineEdit)  # text, not inputs
-    assert resonator.parameters._names == ["size", "pitch"]
+    assert resonator.parameters._names == ["size", "pitch", "hole", "corner_radius"]
     assert resonator.hit(0, 0) is None
     resonator.settings.set("editor/show_implementation", True)
     assert tree.topLevelItem(0).data(0, DETAIL_ROLE) != "interface only"  # its shapes
-    assert "hole_r" in resonator.parameters._names
+    assert "margin" in resonator.parameters._names
 
 
 def test_placed_library_components_do_not_open_up_in_the_shape_list(resonator):
@@ -518,7 +518,7 @@ def test_placed_library_components_do_not_open_up_in_the_shape_list(resonator):
     mass = next(
         resonator.tree.topLevelItem(i)
         for i in range(resonator.tree.topLevelItemCount())
-        if resonator.tree.topLevelItem(i).text(0) == "mass"  # std.perforated_plate
+        if resonator.tree.topLevelItem(i).text(0) == "mass"  # mems.perforated_plate
     )
     assert mass.childCount() == 0
     resonator.settings.set("editor/show_implementation", True)

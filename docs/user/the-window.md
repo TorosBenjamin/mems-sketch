@@ -7,6 +7,17 @@ y axis).
 
 ![The editor with the resonator example](../images/window.png)
 
+## Welcome
+
+Started without a project (or after **File → Close project**), the program
+shows the Welcome window: **New project** (the wizard), **Open…** (a project
+folder's `project.yaml` or a project file) and the projects opened lately,
+pinned ones first, then the most recent. Each shows its folder, when it was
+opened and the git branch it is on. Type to search; Enter or a double-click
+opens one in its own window. Point at a project for its pin; right-click to pin
+it, show its folder or take it off the list. A project whose folder has gone is
+marked missing: opening it asks where it is now.
+
 ## Toolbar
 
 One row: **☰** (every menu is in it; menu paths in this guide such as
@@ -15,13 +26,55 @@ then:
 
 - **Add ▾**: primitives. Rectangle, circle, polygon and path start their
   drawing tool; an arc is added as a default one.
-- **Place ▾**: components to put into the one you are editing.
+- **Place ▾** (Shift+A): components to put into the one you are editing (see
+  [Placing components](#placing-components)).
 - **Operations ▾**: subtract, intersect, XOR, offset, fillet, layer map,
   transform, make component.
 
 On the right: split view, **Find Action** (Ctrl+Shift+A: type part of a
 command's name, Enter runs it; Shift twice searches components, shapes and
 parameters too) and settings.
+
+**Right-click on the canvas** offers what fits where you clicked. On empty
+space (which clears the selection) it is adding there: **Add**, **Place
+component…** (it lands where you clicked), **Paste**, **Select all** (Ctrl+A) and **Fit**. On a shape it
+is what can be done to the selection: the operations, **Rotate & mirror**,
+**Zoom to selection** (Shift+F), **Rename…** (F2, for one shape: its name in
+Properties, ready to type over) and cut, copy, paste, duplicate, delete.
+
+In every menu a command's shortcut is in a lighter colour at the right, and
+an option that can be switched on or off (**View → Dark canvas**) has a check
+box.
+
+Names from somewhere else are written with where they are from, as you type
+them: `mems.perforated_plate` (a library's component), `base.top` (a shape's
+point), `device.anchor` (a level's layer). The part before the dot is in a
+lighter colour so the name stands out, in the Place popup, in the process
+list and in the layer stack's levels.
+
+### Placing components
+
+**Place** (Shift+A) opens a popup listing the components you can put into
+the one you are editing: the ones you placed last first, then this project's,
+each library's (the bundled `mems` among them). Type to search (part of a
+name, a library, the description or a tag; names that start with it come
+first), Up/Down to
+choose, Enter or a click to take it: the component follows the cursor, its
+origin snapping to points and the grid (Ctrl: no snapping), until a click puts
+it down. Esc lets it go. From a right-click on the canvas it lands where you
+clicked instead.
+
+**Browse all components** (or Tab) opens Search Everywhere on its
+**Components** tab: each component with its description, under a heading per
+source. Click a heading to fold that source away (it stays folded; a search
+still shows what matches), or pick one source from the list at the top right.
+Beside the list the chosen component is previewed: a picture of it at its
+defaults, its description, parameters and points. Enter (or **Place**) places
+it, Ctrl+Enter (or **Open**) opens it.
+
+A component's description is the sentence or two you give it: with nothing
+selected, Properties shows the open component's **Description** (the first
+sentence is what the popup shows).
 
 The toolbar is also the window's title bar: minimize, maximize and close are
 at its right end. Drag an empty part of it to move the window, double-click it
@@ -35,16 +88,18 @@ Panels open and close from the stripes on the window's edges:
 
 | Where | Windows |
 |---|---|
-| Left stripe, top | **Components** |
+| Left stripe, top | **Components**, **Commit** |
 | Left stripe, below | **Shapes**, **Layers** |
-| Left stripe, bottom | **Messages** (runs along the bottom) |
-| Right stripe | **Properties**, **Parameters**, **Points**, **History** |
+| Left stripe, bottom | **Messages**, **Git** (along the bottom) |
+| Right stripe | **Properties**, **Parameters**, **Points** |
 
 Each place shows one window at a time; the left side splits when Components
 and Shapes (or Layers) are both open. Every panel has a **?** in its header:
 hover it for what the panel is for. The same **?** explains things in place
 elsewhere (alignment, points, the process, each setting). Which windows are
-open, and their sizes, are remembered. **View → Panels** lists them too.
+open, and their sizes, are remembered. **View → Panels** lists them too. Drag
+a panel's edge past the narrowest it can be and it closes; it opens again at
+the size it had.
 
 ## Tabs and split view
 
@@ -61,17 +116,19 @@ on one side and watch the resonator that uses it on the other.
   the top component, a lock a read-only one.
 - Right-click a tab to close it, the others or all, or to open it in the
   other pane.
-- Library and built-in components open **read-only** and show their
+- Library components open **read-only** and show their
   interface, as a library does in code: the geometry, the description, the
   public parameters and the points. How they are built stays hidden
   (**View → Show implementation of read-only components** shows it).
 
 ## Status bar
 
-The current hint, the active tool and its options (the drawing layer and path
-width while drawing, the angle step for Rotate), the snapping toggles (shape
-points, grid) and the gizmo toggle, then problems (click to open Messages),
-grid step, zoom and cursor position.
+On the left the active tool and its options (the drawing layer and path width
+while drawing, the angle step for Rotate), then, dimmed, what to do now (left
+out when the window is too narrow for it). Then the point the cursor would snap
+to and the problems (click to open Messages). On the right, each in a field
+that keeps its width: the snapping toggles (shape points, grid) and the gizmo
+toggle, the grid step, the zoom and the cursor position in µm.
 
 ## Notes and motion
 
@@ -83,8 +140,9 @@ status bar keeps the hint for the tool you are using.
 
 The canvas glides to a place rather than jumping: **Fit** (F), the zoom
 buttons, and a problem chosen in Messages. Scrolling or panning takes over at
-once. A shape you pick in the Shapes panel, in Search Everywhere or in History
-glows on the canvas for a moment, and comes into view if it was outside.
+once. A shape you pick in the Shapes panel, in Search Everywhere or in the
+Commit panel glows on the canvas for a moment, and comes into view if it was
+outside.
 Clicking a shape on the canvas selects it without the glow: you are already
 looking at it.
 
@@ -95,8 +153,14 @@ or path edge you are drawing, a corner's radius. Pointing at a shape for a
 moment says what it is: its name, kind and layer, or the component it places.
 Over the selection the cursor shows that a drag moves it.
 
+Scroll bars float over a panel's edge instead of taking a strip of it. A bar
+shows while the content moves or the pointer is in the panel, widens when you
+point at it, and fades out a moment later; while it is gone, clicks go to what
+is under it.
+
 **Settings → Appearance → Reduce motion** turns the animations off: the view
-jumps, notes appear and go at once, and picked shapes do not glow.
+jumps, notes and scroll bars appear and go at once, and picked shapes do not
+glow.
 
 ## Settings
 
@@ -138,6 +202,9 @@ only some colours:
 - `dark` (`true` or `false`) says whether it is a dark theme; it is taken from
   the parent when left out. **View → Dark canvas** goes by it.
 - Colours are `#rrggbb`, or `#aarrggbb` with transparency.
+- The error, warning, info and done signs are drawn in `icons` `red`, `amber`,
+  `blue` and `green`. `amber` is a yellow dark enough to read on the window's
+  background; left out, the sign uses `yellow`.
 
 The theme appears in *Interface theme* and *Canvas background* the next time
 Settings opens. A theme that cannot be used (a misspelt colour name, a size

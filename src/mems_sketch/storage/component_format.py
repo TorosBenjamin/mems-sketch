@@ -4,6 +4,7 @@ A component (``components/top/component.yaml``, or an entry of a one-file
 document)::
 
     description: Comb-driven resonator
+    tags: [resonator, comb]
     level: poly1
     parameters:
       plate: 160                                  # only a default
@@ -46,21 +47,31 @@ from mems_sketch.storage import yaml_format
 PLACEMENT_FIELDS = frozenset(RefShape.model_fields) | {"ref", "params"}
 
 
-def component_data(definition: ComponentDef, private: dict[str, Any] | None = None) -> dict:
+def component_data(
+    definition: ComponentDef, private: dict[str, Any] | None = None, category: bool = False
+) -> dict:
     """A component as written. ``private`` gives its private components by short
-    name: their folders (a project folder) or their own data (a document)."""
+    name: their folders (a project folder) or their own data (a document). In a
+    folder the category is the folder it is in; with ``category`` (a document) it
+    is written as a field."""
     if any(shape.name is None for shape in walk(definition.shapes)):
         definition = definition.model_copy(deep=True)
         name_shapes(definition.shapes)
     data: dict[str, Any] = {}
     if definition.description:
         data["description"] = definition.description
+    if category and definition.category:
+        data["category"] = definition.category
+    if definition.tags:
+        data["tags"] = list(definition.tags)
     if definition.level is not None:
         data["level"] = definition.level
     if definition.parameters:
         data["parameters"] = {p.name: _parameter_data(p) for p in definition.parameters}
     if definition.points:
         data["points"] = {p.name: _without_name(p) for p in definition.points}
+    if definition.ports:
+        data["ports"] = {p.name: _without_name(p) for p in definition.ports}
     if private:
         data["private"] = dict(private)
     if definition.shapes:
@@ -77,9 +88,12 @@ def component_from_data(name: str, data: dict[str, Any]) -> tuple[ComponentDef, 
         raise ValueError("a component is a map of its fields")  # noqa: TRY004 - a file error
     unknown = set(data) - {
         "description",
+        "category",
+        "tags",
         "level",
         "parameters",
         "points",
+        "ports",
         "private",
         "shapes",
         "waivers",
@@ -93,9 +107,12 @@ def component_from_data(name: str, data: dict[str, Any]) -> tuple[ComponentDef, 
     model = {
         "name": name,
         "description": data.get("description", ""),
+        "category": str(data.get("category") or ""),
+        "tags": [str(t) for t in data.get("tags") or []],
         "level": data.get("level"),
         "parameters": parameters,
         "points": [{"name": str(n), **(v or {})} for n, v in _map(data, "points").items()],
+        "ports": [{"name": str(n), **(v or {})} for n, v in _map(data, "ports").items()],
         "shapes": shapes_from_data(_map(data, "shapes")),
         "waivers": data.get("waivers") or [],
     }

@@ -1,0 +1,24 @@
+description: >-
+  Square pad on the component's level, centred on the origin, fixed to the
+  substrate by an opening on the level's anchor layer (`level.anchor`) inset
+  by the enclosure. Keep the enclosure within the process's undercut and its
+  enclosure rule (2 µm suits the example processes), and the opening wider
+  than twice the undercut, or the etch frees it.
+tags: [anchor, pad, support]
+parameters:
+  size: {default: 40, min: 0, min_exclusive: true, description: Pad edge length (µm)}
+  enclosure:
+    default: 2
+    min: 0
+    max: size / 2
+    max_exclusive: true
+    description: Overlap of the pad around the anchor (µm)
+shapes:
+  pad: {kind: rect, x0: -size/2, y0: -size/2, x1: size/2, y1: size/2}
+  opening:
+    kind: rect
+    layer: level.anchor
+    x0: -(size/2 - enclosure)
+    y0: -(size/2 - enclosure)
+    x1: size/2 - enclosure
+    y1: size/2 - enclosure

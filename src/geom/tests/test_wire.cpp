@@ -121,6 +121,28 @@ TEST_CASE("paths") {
         CHECK(Region::path(l, 10, PathEnds::flush, Join::bevel).area() == approx(1575 + 12.5));
         CHECK(Region::path(l, 10, PathEnds::flush, Join::round).corners().size() == 5);
     }
+    SUBCASE("a corner at any turn, either way, is one piece with no corner inside") {
+        // A slight right turn once came out as two pieces with a slit to the
+        // centreline, which rounding the corners then failed on.
+        for (const Join join : {Join::miter, Join::round, Join::bevel}) {
+            for (const int deg : {1, 2, 5, 10, 30, 60, 90, 91, 120, 150, 170, 179}) {
+                for (const int sign : {1, -1}) {
+                    const double a = (180 + sign * deg) * pi / 180;
+                    const Wire w = Wire({100 * std::cos(a), 100 * std::sin(a)}).line_to({0, 0}).line_to({100, 0});
+                    const Region r = Region::path(w, 6, PathEnds::flush, join);
+                    CAPTURE(int(join));
+                    CAPTURE(sign * deg);
+                    CHECK(r.pieces() == 1);
+                    CHECK(r.valid());
+                    for (const Corner& c : r.corners()) CHECK(std::hypot(c.at.x, c.at.y) >= 3 - 1e-9);
+                    // A miter up to 90° adds what the inside of the turn overlaps.
+                    if (join == Join::miter && deg <= 90) CHECK(r.area() == approx(2 * 100 * 6));
+                }
+            }
+        }
+        const Wire gentle = Wire({-100, -17.6327}).line_to({0, 0}).line_to({100, 0});  // a 10° right turn
+        CHECK(Region::path(gentle, 6).filleted(0, 30).valid());
+    }
     SUBCASE("a U-turn along an arc is exact and smooth") {
         const Wire u = Wire({0, 0}).line_to({50, 0}).turn(10, 180).line_to({0, 20});
         const Region r = Region::path(u, 2);

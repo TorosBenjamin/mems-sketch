@@ -113,6 +113,10 @@ _NOT_EXPRESSIONS = frozenset(
         "component",
         "op",
         "ends",
+        "start",
+        "end",
+        "style",
+        "bend",
         "corners",
         "mapping",
         "point",
@@ -143,6 +147,8 @@ def map_expressions(shapes: list[Shape], change: Callable[[str], str | None]) ->
                 value = {**value, "keep_out": [_named(n, change) for n in value["keep_out"]]}
             if value.get("kind") == "connection" and value.get("ends"):
                 value = {**value, "ends": [change(end) or end for end in value["ends"]]}
+            if value.get("kind") == "route":
+                value = {**value, **{k: change(value[k]) or value[k] for k in ("start", "end")}}
             if key == "mapping":
                 return value
             return {k: visit(v, None if key == "params" else k) for k, v in value.items()}

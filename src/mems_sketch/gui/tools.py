@@ -16,6 +16,8 @@ goes to the active tool:
   corner, centre and radius)
 * **Polygon** (P) and **Path** (W): click the points; double-click, Enter or
   a click on the first point finishes, Backspace takes back the last point
+* **Route** (E): click a port, any via points, then another port; drag a
+  selected route's via points to move them
 
 Drawing tools draw on the layer chosen in the toolbar, at the top level of
 the component being edited. Their points snap to shape points, else to the
@@ -39,6 +41,7 @@ from typing import TYPE_CHECKING, ClassVar
 import numpy as np
 from PySide6.QtCore import Qt
 
+from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.shapes import (
     Align,
     CircleShape,
@@ -47,6 +50,7 @@ from mems_sketch.core.shapes import (
     PathShape,
     PolygonShape,
     RectShape,
+    RouteShape,
     Shape,
 )
 from mems_sketch.engine import build_shapes
@@ -1531,6 +1535,233 @@ class PathTool(_PointsTool):
         )
 
 
+class RouteTool(DrawTool):
+    """A wire from port to port: click a port, any via points, then another port.
+
+    The ports are marked; a click near one picks it (snapping or not), a click
+    elsewhere places a via point (snapped as drawing does). The route is
+    Manhattan between ports along x and y, else straight; it is as wide as the
+    ports, or the path width when they have none or differ. With a route
+    selected and none being drawn, its via points have handles: drag one to
+    move it.
+    """
+
+    name, label, shortcut, noun = "route", "Route", "E", "route"
+    icon = "route"
+    uses_layer = False  # on its ports' layer
+
+    def reset(self) -> None:
+        super().reset()
+        self.start_port: str | None = None
+        self._ports = None  # reference -> Port, worked out once per design
+        self._cursor: tuple[float, float] | None = None
+        self._drag: tuple[NodePath, int] | None = None  # a selected route's via point
+        self._dragged_to: tuple[float, float] | None = None
+
+    @property
+    def busy(self) -> bool:
+        return self.start_port is not None or self._drag is not None
+
+    def design_changed(self) -> None:
+        self._ports = self._candidates = None
+
+    def hint(self) -> str:
+        if self.start_port is None:
+            return "Route: click the port to start at (or drag a selected route's via point)"
+        return (
+            f"Route from {self.start_port}: click via points, then the port to end at; "
+            "Backspace takes back a point, Esc cancels"
+        )
+
+    def ports(self) -> dict:
+        if self._ports is None:
+            try:
+                self._ports = self.document.results.all_ports()
+            except Exception:  # noqa: BLE001 - the design does not build: nothing to pick
+                self._ports = {}
+        return self._ports
+
+    def _port_at(self, x: float, y: float) -> str | None:
+        """The port a click at ``(x, y)`` picks: the nearest in reach, but not the start."""
+        best, found = self.reach, None
+        for name, port in self.ports().items():
+            distance = math.hypot(port.x - x, port.y - y)
+            if distance < best and name != self.start_port:
+                best, found = distance, name
+        return found
+
+    def _route(self) -> tuple[NodePath, Shape] | None:
+        """The selected shape whose via points can be dragged (a route)."""
+        if len(self.window.selection) != 1:
+            return None
+        path = self.window.selection[0]
+        node = self.document.node(path)
+        return (path, node) if node.handles() and len(path) == 1 else None
+
+    def _via_at(self, x: float, y: float) -> int | None:
+        selected = self._route()
+        if selected is None:
+            return None
+        best, found = self.reach, None
+        for k, (vx, vy) in enumerate(self._vias(*selected)):
+            distance = math.hypot(vx - x, vy - y)
+            if distance < best:
+                best, found = distance, k
+        return found
+
+    def _vias(self, path: NodePath, route: Shape) -> list[tuple[float, float]]:
+        """Where its via points are (they may be expressions)."""
+        scope = self.document.results.scope(path)
+        try:
+            return [(_value(px, scope), _value(py, scope)) for px, py in route.handles()]
+        except (ValueError, KeyError):  # an expression it cannot work out here
+            return []
+
+    def press(self, x, y, modifiers) -> None:
+        if self.start_port is None:
+            via = self._via_at(x, y)
+            if via is not None and self.editable():
+                self._drag, self._dragged_to = (self._route()[0], via), None
+                return
+            port = self._port_at(x, y)
+            if port is None:
+                self.window.select_click(self.window.hit(x, y), False)  # a route to edit
+                self.window.update_overlay()
+                return
+            if not self.start():
+                return
+            self.start_port = port
+        else:
+            port = self._port_at(x, y)
+            if port is not None:
+                self.finish(port)
+                return
+            point = self.locate(x, y, modifiers)
+            if not self.placed or point != self.placed[-1]:
+                self.placed.append(point)
+        self._show()
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+
+    def locate(self, x, y, modifiers) -> tuple[float, float]:
+        start = self.ports().get(self.start_port) if self.start_port else None
+        if modifiers & SHIFT and start is not None and not self.placed:  # 45° from the start
+            return self.constrain((start.x, start.y), self.locate(x, y, modifiers & ~SHIFT))
+        return super().locate(x, y, modifiers)
+
+    def move(self, x, y, modifiers, left) -> None:
+        if self._drag is not None:
+            if left:
+                self._dragged_to = self.locate(x, y, modifiers)
+                path, k = self._drag
+                route = self.document.node(path)
+                vias = self._vias(path, route)
+                vias[k] = self._dragged_to
+                ends = self.document.results.node_ports(path)
+                outline = [(p.x, p.y) for p in (ends.get("start"),) if p]
+                outline += vias + [(p.x, p.y) for p in (ends.get("end"),) if p]
+                self.canvas.show_sketch(outline, False)
+                self.canvas.set_cursor_label(
+                    f"via {k + 1}: {self._dragged_to[0]:g}, {self._dragged_to[1]:g}"
+                )
+            return
+        port = self._port_at(x, y)
+        self.canvas.set_cursor_label(port)
+        if self.start_port is None:
+            return
+        if port is not None:
+            self._cursor = (self.ports()[port].x, self.ports()[port].y)
+            self._snap = None
+        else:
+            self._cursor = self.locate(x, y, modifiers)
+        self._show()
+
+    def _show(self) -> None:
+        start = self.ports().get(self.start_port)
+        if start is None:  # gone since it was picked (undone, renamed)
+            self.cancel()
+            self.window.prompt(self.hint())
+            return
+        points = [(start.x, start.y), *self.placed]
+        if self._cursor is not None and self._cursor != points[-1]:
+            points.append(self._cursor)
+        self.canvas.show_points("snap", [self._snap] if self._snap else [])
+        self.canvas.show_sketch(points, False)
+
+    def release(self, x, y, modifiers) -> None:
+        drag, to = self._drag, self._dragged_to
+        self._drag = self._dragged_to = None
+        if drag is None:
+            return
+        self.canvas.show_sketch([], False)
+        self.canvas.set_cursor_label(None)
+        if to is None:
+            return  # a click on a handle changes nothing
+        path, k = drag
+        route = self.document.node(path)
+        moved = route.with_handle(k, to)
+        ok, _ = self.window.run(lambda: self.document.nodes.replace(path, moved))
+        if ok:
+            self.window.notify(f"Moved via point {k + 1} of {route.name}", "success")
+
+    def double_click(self, x, y) -> bool:
+        return self.start_port is not None  # never open a component while routing
+
+    def key(self, key) -> bool:
+        if self.start_port is None or key != Qt.Key.Key_Backspace:
+            return False
+        if self.placed:
+            self.placed.pop()
+            self._show()
+            self.window.update_overlay()
+        else:
+            self.cancel()
+        self.window.prompt(self.hint())
+        return True
+
+    def finish(self, end: str) -> None:
+        start, ports = self.start_port, self.ports()
+        if start not in ports:
+            self.add(None, f"the port {start} is gone: pick the start again")
+            return
+        axis = all(round(ports[p].angle, 6) % 90 == 0 for p in (start, end))
+        widths = {ports[p].width for p in (start, end) if ports[p].width > 0}
+        shape = RouteShape(
+            start=start,
+            end=end,
+            style="manhattan" if axis else "straight",
+            via=list(self.placed),
+            width=0.0 if len(widths) == 1 else self.window.path_width,
+        )
+        self.add(shape, "")
+
+    def markers(self) -> dict[str, list[Candidate]]:
+        ports = [(n, p.x, p.y) for n, p in self.ports().items() if n != self.start_port]
+        if self.start_port is None:
+            selected = self._route()
+            vias = self._vias(*selected) if selected else []
+            return {
+                "pick": ports,
+                "anchor": [(f"via {k + 1}", x, y) for k, (x, y) in enumerate(vias)],
+            }
+        start = self.ports().get(self.start_port)
+        anchors = [(self.start_port, start.x, start.y)] if start else []
+        anchors += [(f"via {k + 1}", x, y) for k, (x, y) in enumerate(self.placed)]
+        return {"pick": ports, "anchor": anchors}
+
+    def cancel(self) -> bool:
+        dragging = self._drag is not None
+        busy = super().cancel()
+        self.canvas.set_cursor_label(None)
+        if dragging:
+            self.window.update_overlay()
+        return busy
+
+
+def _value(value, scope: dict[str, float]) -> float:
+    return float(value) if isinstance(value, int | float) else float(evaluate(value, scope))
+
+
 class GuideTool(_TwoPointTool):
     """A construction line: drag, or click its two ends (Shift: 45° steps)."""
 
@@ -1649,6 +1880,7 @@ TOOLS: tuple[type[Tool], ...] = (
     CircleTool,
     PolygonTool,
     PathTool,
+    RouteTool,
     GuideTool,
     PlaceTool,
 )

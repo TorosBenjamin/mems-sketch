@@ -70,6 +70,7 @@ from mems_sketch.core.shapes.kinds import (
     PolygonShape,
     RectShape,
     RefShape,
+    RouteShape,
     TransformShape,
 )
 from mems_sketch.core.shapes.modifiers import (
@@ -166,6 +167,7 @@ __all__ = [
     "RectShape",
     "RefShape",
     "Repeat",
+    "RouteShape",
     "Shape",
     "TransformShape",
     "Value",

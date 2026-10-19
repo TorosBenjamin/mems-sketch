@@ -300,6 +300,13 @@ measurements and checks: see its design, [The Sketch language](language.md).
   away from the others, ends that overlap, a radius that does not fit (with
   the largest that does), ends on different layers. **Operations → Connect**
   joins the selected beams by their facing ports.
+- **SHP-17** (Should, exists; [#182](https://github.com/TorosBenjamin/mems-sketch/issues/182)) **Routes:** a wire from port to
+  port that follows them when parts move: Manhattan (along x and y, fewest
+  bends, then shortest), L (one bend) or straight, through via points, with
+  sharp, exactly round or chamfered bends that are checked to fit. Width and
+  layer from the ports unless given. No obstacle avoidance (the connectivity
+  check reports shorts). The Route tool draws one by clicking ports and via
+  points; a selected route's via points can be dragged.
 
 ### Modifiers
 

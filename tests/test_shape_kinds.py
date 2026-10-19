@@ -14,6 +14,7 @@ from mems_sketch.core.shapes import (
     ConnectionShape,
     RectShape,
     RefShape,
+    RouteShape,
     TransformShape,
     default_shape,
     kind_class,
@@ -61,9 +62,10 @@ def bbox(shape):
     return None if box is None else tuple(round(v * 1000) for v in box)
 
 
-# Kinds that cannot be built alone: a connection joins other shapes' ends
-# (tests/test_connections.py builds it beside them).
-NOT_ALONE = {ConnectionShape}
+# Kinds that cannot be built alone: a connection joins other shapes' ends and
+# a route runs between their ports (tests/test_connections.py and
+# tests/test_routes.py build them beside them).
+NOT_ALONE = {ConnectionShape, RouteShape}
 
 
 def test_every_kind_has_a_sample():

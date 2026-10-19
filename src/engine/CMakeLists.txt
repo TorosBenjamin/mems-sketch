@@ -54,6 +54,7 @@ add_library(mems_engine
     src/shapes/fillet.cpp
     src/shapes/layer_map.cpp
     src/shapes/connection.cpp
+    src/shapes/route.cpp
     src/modifiers/modifiers.cpp
     src/modifiers/array.cpp
     src/modifiers/polar_array.cpp

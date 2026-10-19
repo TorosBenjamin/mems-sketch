@@ -21,6 +21,7 @@ RenderKind find_kind(std::string_view kind) {
         {"fillet", render_fillet},
         {"layer_map", render_layer_map},
         {"connection", render_connection},
+        {"route", render_route},
     };
     const auto found = kinds.find(kind);
     return found == kinds.end() ? nullptr : found->second;

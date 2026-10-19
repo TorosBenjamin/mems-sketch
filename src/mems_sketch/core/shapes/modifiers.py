@@ -134,7 +134,9 @@ def _format(value: Value) -> str:
 
 
 class ArrayModifier(Modifier):
-    """Copies on a grid; the copy's column and row are ``i`` and ``j``."""
+    """Copies on a grid: ``columns`` × ``rows``, ``dx`` and ``dy`` apart (the first is
+    the shape itself). In the shape's own fields, the copy's column and row are
+    ``i`` and ``j`` (from 0), so copies can differ."""
 
     kind: Literal["array"] = "array"
     icon: ClassVar[str] = "repeat"

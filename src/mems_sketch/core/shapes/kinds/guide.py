@@ -17,6 +17,8 @@ from mems_sketch.core.shapes.base import Node, Value
 
 
 class GuideShape(Node):
+    """A construction line from (``x0``, ``y0``) to (``x1``, ``y1``) that draws nothing."""
+
     category: ClassVar[str] = "guide"
     icon: ClassVar[str] = "guide"
 

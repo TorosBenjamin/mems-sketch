@@ -8,6 +8,7 @@
 // rounded corner, or wider than its beam).
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
 #include <set>
 #include <vector>
@@ -18,6 +19,12 @@
 namespace mems {
 
 namespace {
+
+std::string number(double v) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, "%.4g", std::abs(v) < 5e-13 ? 0.0 : v);
+    return buffer;
+}
 
 constexpr double REACH_UM = 0.5;  // how far it reaches into each beam: a quarter of the width at most
 
@@ -90,7 +97,16 @@ Result render_connection(const Json& node, const Context& ctx) {
     double reach = REACH_UM;
     for (const auto& end : ends) reach = std::min(reach, end.width / 4);
     for (size_t k = 0; k < ends.size(); ++k) check_on_beam(*beams[k].first, beams[k].second, ends[k].width, reach, ends[k].label);
-    const mgeom::Region area = mgeom::connection(ends, ctx.number(node, "inner_radius", 0.0), ctx.number(node, "radius", 0.0), reach);
+    mgeom::Region area;
+    try {
+        area = mgeom::connection(ends, ctx.number(node, "inner_radius", 0.0), ctx.number(node, "radius", 0.0), reach);
+    } catch (const mgeom::GeometryError& error) {  // where the ends are, to see a wrong one
+        std::string where;
+        for (const auto& end : ends)
+            where += (where.empty() ? "" : "; ") + end.label + " at (" + number(end.at.x) + ", " + number(end.at.y) +
+                     ") facing " + number(end.angle_deg) + "°, " + number(end.width) + " wide";
+        throw mgeom::GeometryError(std::string(error.what()) + " (the ends: " + where + ")");
+    }
     if (layer.empty()) return {};
     return {Layers{{layer, area}}, {}};
 }

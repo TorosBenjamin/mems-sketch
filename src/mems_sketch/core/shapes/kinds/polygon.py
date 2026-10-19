@@ -11,6 +11,10 @@ from mems_sketch.core.shapes.base import Primitive, Value
 
 
 class PolygonShape(Primitive):
+    """Closed polygon on ``layer`` through ``points`` (three or more ``[x, y]``,
+    in order; the last joins the first). Straight edges only: round corners
+    with a corners modifier, or use a path, arc or circle for curves."""
+
     icon: ClassVar[str] = "polygon"
 
     kind: Literal["polygon"] = "polygon"

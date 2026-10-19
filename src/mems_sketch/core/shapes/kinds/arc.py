@@ -9,7 +9,11 @@ from mems_sketch.core.shapes.base import Primitive, Value
 
 
 class ArcShape(Primitive):
-    """Annular sector (a ring when the angles span 360°). Angles in degrees, CCW from +x."""
+    """Annular sector on ``layer`` centred at (``x``, ``y``), between ``inner_radius``
+    (0: a disc or pie slice) and ``outer_radius``, from ``start_angle`` to
+    ``end_angle`` (degrees, counter-clockwise from +x; a ring when they span
+    360°). ``segments``: straight edges for a full circle in exports (default:
+    within the curve tolerance)."""
 
     icon: ClassVar[str] = "arc"
 

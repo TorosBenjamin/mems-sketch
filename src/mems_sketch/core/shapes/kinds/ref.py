@@ -12,7 +12,11 @@ from mems_sketch.core.transform import Transform
 
 
 class RefShape(Node):
-    """An instance of a built-in or user-defined component.
+    """An instance of a built-in or user-defined component: ``component``, with
+    ``params`` (its parameter values; the rest take their defaults), placed at
+    (``x``, ``y``), turned by ``rotation`` (degrees, counter-clockwise) and,
+    with ``mirror_x``, mirrored about the x axis first. In the file format a
+    placement is ``{ref: <component>, <parameter>: <value>, ..., x, y}``.
 
     ``level`` puts it on a level of the layer stack (``poly2``, or relative:
     ``level+1``); left out, it is on its own default level if it declares one,

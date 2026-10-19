@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import math
+
 from mems_sketch.core.project import Project, check_shape_names
 from mems_sketch.core.shapes import (
     Align,
+    ConnectionShape,
     NodePath,
     RefShape,
     Shape,
@@ -129,6 +132,48 @@ class NodeEdits(Commands):
             f"{operation.replace('_', ' ').capitalize()} {len(nodes)} shape(s)", change
         )
         return (*ordered[0][:-1], (ordered[0][-1][0], first))
+
+    def connect(self, paths: list[NodePath], **fields) -> NodePath:
+        """A connection joining sibling shapes' ends, placed after the last of them.
+
+        For each shape the end is its port facing the others: of those pointing
+        towards the centre of all their ports, the nearest to it (an array's copies
+        by index are left out: name one in the connection's ends instead).
+        """
+        if len(paths) < 2:
+            raise ValueError("select two or more shapes with ports to connect")
+        ordered, _, nodes = self.siblings(paths)
+        results = self.session.results
+        ports = []
+        for path, node in zip(ordered, nodes, strict=True):
+            own = {n: p for n, p in results.node_ports(path).items() if "[" not in n}
+            if not own:
+                raise ValueError(f"{node.name or node.kind} has no ports to connect")
+            ports.append(own)
+        every = [p for own in ports for p in own.values()]
+        cx = sum(p.x for p in every) / len(every)
+        cy = sum(p.y for p in every) / len(every)
+
+        def facing(port) -> bool:
+            a = math.radians(port.angle)
+            return math.cos(a) * (cx - port.x) + math.sin(a) * (cy - port.y) > 0
+
+        ends = []
+        for node, own in zip(nodes, ports, strict=True):
+            towards = {n: p for n, p in own.items() if facing(p)}
+            if not towards:
+                raise ValueError(f"no port of {node.name} faces the others")
+            name = min(towards, key=lambda n: math.hypot(towards[n].x - cx, towards[n].y - cy))
+            ends.append(f"{node.name}.port.{name}")
+        shape = ConnectionShape(name=self.session.unique_name("connection"), ends=ends, **fields)
+        last = ordered[-1]
+
+        def change(project: Project) -> None:
+            target, index = container_of(self.session.shapes_in(project), last)
+            target.insert(index + 1, shape)
+
+        self.session.edit(f"Connect {len(ends)} ends", change)
+        return (*last[:-1], (last[-1][0], last[-1][1] + 1))
 
     def unwrap(self, path: NodePath) -> None:
         """Replace an operation node by its children (the inverse of :meth:`wrap`)."""

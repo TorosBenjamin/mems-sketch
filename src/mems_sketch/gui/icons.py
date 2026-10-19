@@ -151,6 +151,7 @@ ICONS = {
     'fill-opacity=".35" stroke="{blue}"/><rect x="6.5" y="11.5" width="3" height="3" rx=".5" '
     'fill="{blue}" fill-opacity=".35" stroke="{blue}"/><rect x="1.5" y="6.5" width="3" '
     'height="3" rx=".5" fill="{blue}" fill-opacity=".35" stroke="{blue}"/>',
+    "connection": '<path d="M1.6 13.4c3.2 0 4.8-1.8 6.4-4.4M14.4 13.4c-3.2 0-4.8-1.8-6.4-4.4M8 1.6V9"/>',
     "perforate": '<rect x="2" y="2" width="12" height="12" rx="1"/>'
     + "".join(
         f'<circle cx="{x}" cy="{y}" r="1.1" fill="{{blue}}" stroke="none"/>'

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from mems_sketch.core.expressions import ExpressionError, substitute
-from mems_sketch.core.shapes.base import Value
+from mems_sketch.core.shapes.base import Value, is_point_name
 from mems_sketch.core.shapes.points import measure_path, point_names
 from mems_sketch.core.shapes.registry import SHAPE_ADAPTER
 from mems_sketch.core.shapes.tree import walk
@@ -141,6 +141,8 @@ def map_expressions(shapes: list[Shape], change: Callable[[str], str | None]) ->
                 value = {**value, "about": _about(value["about"], change)}
             if value.get("kind") == "perforate" and value.get("keep_out"):
                 value = {**value, "keep_out": [_named(n, change) for n in value["keep_out"]]}
+            if value.get("kind") == "connection" and value.get("ends"):
+                value = {**value, "ends": [change(end) or end for end in value["ends"]]}
             if key == "mapping":
                 return value
             return {k: visit(v, None if key == "params" else k) for k, v in value.items()}
@@ -187,7 +189,7 @@ def rename_node_references(shapes: list[Shape], old: str, new: str) -> list[Shap
 
     def change(name: str) -> str | None:
         head, dot, rest = name.partition(".")
-        if head == old and dot and ("." not in rest or measure_path(name) is not None):
+        if head == old and dot and (is_point_name(rest) or measure_path(name) is not None):
             return f"{new}.{rest}"
         return None
 

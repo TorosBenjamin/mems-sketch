@@ -137,8 +137,11 @@ its direction, width and layer unless you give it others. On the canvas a
 selected placement shows its ports as arrows pointing the way a wire leaves,
 and the component's own ports are drawn with its points.
 
-The bundled electrodes have ports (`mems.comb_drive` has `drive`), and so does
-`std.bond_pad` (`signal`); the galleries list them.
+Every path has two ports, `start` and `end`, at its ends, pointing out of it
+and as wide as it. The bundled electrodes have ports (`mems.comb_drive` has
+`drive`), and so does `std.bond_pad` (`signal`); the galleries list them.
+A [connection](shapes-and-operations.md#connections) joins beams by their
+ports.
 
 ## Libraries
 

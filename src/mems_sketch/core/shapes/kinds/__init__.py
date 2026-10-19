@@ -8,6 +8,7 @@ subclass) and list its class in ``KINDS``. The contract test in
 from mems_sketch.core.shapes.kinds.arc import ArcShape
 from mems_sketch.core.shapes.kinds.boolean import BooleanShape
 from mems_sketch.core.shapes.kinds.circle import CircleShape
+from mems_sketch.core.shapes.kinds.connection import ConnectionShape
 from mems_sketch.core.shapes.kinds.fillet import FilletShape
 from mems_sketch.core.shapes.kinds.guide import GuideShape
 from mems_sketch.core.shapes.kinds.layer_map import LayerMapShape
@@ -31,4 +32,5 @@ KINDS = (
     FilletShape,
     LayerMapShape,
     GuideShape,
+    ConnectionShape,
 )

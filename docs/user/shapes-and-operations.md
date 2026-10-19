@@ -10,6 +10,7 @@ input, so a subtraction stays editable and parametric.
 |---|---|---|
 | Primitive | `rect`, `polygon`, `circle`, `arc`, `path` | `rect` takes a `corner_radius` (clamped to half the shorter side: a fully rounded square is a circle, a rectangle a stadium); `arc` is an annular sector (a ring at 360°); `path` is a centreline with a width and flush, square or round ends |
 | Reference | `ref` | A placed component, with its parameter values and position |
+| | `connection` | The area that joins beam ends, made from their ports (see [Connections](#connections)) |
 | Operation | `transform` | Move, rotate, mirror and scale its shapes as one piece |
 | | `boolean` | `a` subtract, intersect or XOR `b` |
 | | `offset` | Grow (+) or shrink (−) outlines |
@@ -34,6 +35,47 @@ on one layer are merged anyway.
 - **Transform or component?** Make a component when something is reused or
   deserves its own parameters; use a transform to move or mirror a few shapes
   together once.
+
+## Connections
+
+A **connection** fills in where beams meet, with rounded corners, from the
+beams' ends alone: select the beams (paths, or placed components with
+ports) and choose **Operations → Connect**. For each beam it takes the port
+facing the others; the beams are not changed.
+
+```yaml
+hub:
+  kind: connection
+  ends: [left.port.end, right.port.end, stem.port.end]
+  inner_radius: 3   # the corners between the beams
+  radius: 0         # the outer corners
+```
+
+- **Its outline:** taken around their centre, each neighbouring pair of
+  beams' sides runs on until they meet, and the corner is rounded with
+  `inner_radius` where it turns in between the beams or `radius` where it
+  turns out (0: sharp). Where the sides meet behind an end, or never (two
+  beams in line), the gap is closed straight. It reaches half a micrometre
+  back into each beam, so it joins them without a seam.
+- **Its ends** are ports (see [ports](components.md#ports)): a path has
+  `start` and `end` at its ends, as wide as it; a placed component has the
+  ports it declares. An array's copies have theirs by index
+  (`row.port.drive[1]`).
+- **It moves with its beams**, and follows when a beam or a port is renamed.
+- **It is drawn** on its ends' layer, or `layer`; a port without a width
+  takes the connection's `width`.
+
+Each way it can be wrong is an error that names the end:
+
+| Error | What it means |
+|---|---|
+| *is not on its shape* | Nothing of the beam is behind the port: the port is off the shape, or faces into it |
+| *is not square across the end there* | The beam is not there all the way across the port: a rounded corner, a curve, or a port wider than the beam |
+| *points away from the others* | That end faces away from the junction |
+| *radius … does not fit between ends …: at most …* | The corner is too close to the ends for that radius; the largest that fits is given |
+| *crosses itself* | Ends overlap, or face past one another |
+| *different layers* | The ends are on different layers: give the connection a `layer` |
+| *has no width* | Its port has no width: give the connection a `width` |
 
 ## Modifiers
 

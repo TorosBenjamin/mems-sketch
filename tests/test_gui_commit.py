@@ -343,3 +343,15 @@ def test_the_last_panel_shown_draws_on_the_canvas(window, commit, panel):
     window.git.versions.setCurrentItem(window.git.versions.topLevelItem(0))  # "Pad"
     assert len(window.canvas._change_items) == 1  # the pad, added by that commit
     assert ROW_ROLE  # (the Commit panel's rows are still there)
+
+
+def test_the_git_panel_does_not_hold_the_bottom_panel_open(window, commit):
+    # Its filters and buttons are cut off in a small panel, not making it (and the
+    # editor above) keep a large minimum size.
+    resize(window, x1=50)
+    commit(window.document, "Longer beam")
+    window.tool_windows.open("git")
+    panel = window.git
+    panel.versions.setCurrentItem(panel.versions.topLevelItem(0))
+    assert panel.minimumSizeHint().width() <= 240
+    assert panel.minimumSizeHint().height() <= 200

@@ -51,6 +51,7 @@ NO_MATCH = "No commits match"
 ALL_BRANCHES = "All branches"
 ALL_AUTHORS = "All authors"
 ALL_COMPONENTS = "All components"
+MIN_LOG_PX, MIN_DETAILS_PX, MIN_HEIGHT_PX = 120, 80, 98  # (the height: as the list before)
 
 Key = tuple[str, ...]
 
@@ -190,6 +191,10 @@ class GitPanel(_Panel):
         self.split = widgets.splitter(Qt.Orientation.Horizontal)
         self.split.addWidget(log)
         self.split.addWidget(right)
+        # Small enough for a narrow or short bottom panel: the filters and buttons
+        # are cut off rather than holding the panel (and the editor above it) open.
+        for pane, width in ((log, MIN_LOG_PX), (right, MIN_DETAILS_PX)):
+            pane.setMinimumSize(width, MIN_HEIGHT_PX)
         self.split.setStretchFactor(0, 2)
         self.split.setStretchFactor(1, 1)
         self.split.setSizes([640, 340])
@@ -204,6 +209,7 @@ class GitPanel(_Panel):
         box = QComboBox()
         box.setToolTip(tip)
         box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        box.setMinimumWidth(0)  # (the pane's minimum holds; see __init__)
         return box
 
     def _label(self, name: str | None = None) -> QLabel:

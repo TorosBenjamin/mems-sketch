@@ -43,6 +43,10 @@ mems-sketch examples/resonator/project.yaml    # the editor
 mems-sketch-cli check examples/resonator       # the same design, from the command line
 ```
 
+AI assistants can open, edit, build, look at and check designs through an MCP
+server (`pip install -e ".[gui,mcp]"`, then `mems-sketch-cli mcp`): see
+[AI assistants](docs/user/ai-assistants.md).
+
 ## Documentation
 
 - **[User guide](docs/user/README.md)**: the editor, components and

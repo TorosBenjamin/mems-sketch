@@ -1,4 +1,6 @@
-"""The backend (everything outside mems_sketch.gui) must never depend on the GUI."""
+"""The backend must never depend on the GUI. The backend is everything but the
+frontends that draw: the GUI (mems_sketch.gui) and the MCP server
+(mems_sketch.mcp_server), which draws its pictures with the GUI's painter."""
 
 import ast
 import re
@@ -8,10 +10,11 @@ from pathlib import Path
 
 PACKAGE = Path(__file__).parent.parent / "src" / "mems_sketch"
 FORBIDDEN = ("PySide6", "PyQt5", "PyQt6", "mems_sketch.gui")
+FRONTENDS = {"gui", "mcp_server"}
 
 
 def backend_modules():
-    return [p for p in PACKAGE.rglob("*.py") if "gui" not in p.relative_to(PACKAGE).parts]
+    return [p for p in PACKAGE.rglob("*.py") if not FRONTENDS & set(p.relative_to(PACKAGE).parts)]
 
 
 def test_backend_source_has_no_gui_imports():

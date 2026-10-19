@@ -41,6 +41,7 @@ from mems_sketch.editing.history import Comparison, grouped
 from mems_sketch.engine import Build
 from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.canvas import MARK_RADIUS_PX, ChangeMark, LayoutCanvas
+from mems_sketch.storage import git
 
 UNCOMMITTED = ("uncommitted",)
 MOVED = "moved"  # a mark's status besides ADDED, REMOVED and "changed"
@@ -341,7 +342,7 @@ class ComparisonView(QWidget):
 
     def _describe(self) -> str:
         history = self.document.history
-        subjects = {c.sha: c.subject for c in history.commits()}
+        subjects = {c.sha: c.subject for c in history.commits(rev=git.ALL)}
 
         def name(sha: str | None) -> str:
             if sha is None:

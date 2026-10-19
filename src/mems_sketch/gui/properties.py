@@ -74,6 +74,7 @@ _SPECIAL = {
     "align",
     "params",
     "points",
+    "via",
     "mapping",
     "children",
     "a",
@@ -263,6 +264,8 @@ class PropertyEditor(QScrollArea):
             main.hide()
         if "points" in fields:
             form.addRow("Points (x, y per line)", self._points_editor(node.points))
+        if "via" in fields:
+            form.addRow("Via (x, y per line)", self._points_editor(node.via, "via"))
         if "mapping" in fields:
             form.addRow("Mapping (from → to)", self._mapping_editor(node.mapping))
         if "params" in fields:
@@ -270,7 +273,7 @@ class PropertyEditor(QScrollArea):
         layout.addWidget(self._align_editor(node, path))
         # Fields apply on Enter, lists and boxes when changed; only text boxes of
         # several lines and modifier stacks keep an Apply button.
-        needs_apply = bool(node.modifiers) or "points" in fields or "mapping" in fields
+        needs_apply = bool(node.modifiers) or bool({"points", "via", "mapping"} & fields.keys())
         layout.addWidget(self._modifiers_editor(node, path, needs_apply))
         layout.addStretch()
         _line_up(body)
@@ -314,8 +317,17 @@ class PropertyEditor(QScrollArea):
             self._editors[field] = box.isChecked
             return box
         if field == "layer":
-            combo = self._layer_picker(value)
+            combo = self._layer_picker(value, optional=type(None) in args)
             self._editors[field] = lambda: combo.currentData()
+            return self._applies(combo)
+        if field in ("start", "end") and annotation is str:  # a route's ports
+            combo = _combo()
+            combo.setEditable(True)
+            with contextlib.suppress(Exception):  # it does not build: type one in
+                combo.addItems(sorted(self.document.results.all_ports()))
+            combo.setCurrentText(value)
+            combo.setToolTip("A port of a shape beside it: shape.port.name")
+            self._editors[field] = lambda: combo.currentText().strip()
             return self._applies(combo)
         if field == "level":  # where a placed component is
             combo = _combo()
@@ -378,9 +390,10 @@ class PropertyEditor(QScrollArea):
         self._editors[field] = lambda: chosen[0]
         return row
 
-    def _layer_picker(self, value: str) -> QComboBox:
+    def _layer_picker(self, value: str | None, optional: bool = False) -> QComboBox:
         """The layers a shape can be on, each with the colour of the layer it lands
-        on: relative ones first (``level+1 · metal``), then the layers by name."""
+        on: relative ones first (``level+1 · metal``), then the layers by name.
+        ``optional``: first, none (a connection or route on its ports' layer)."""
         project = self.document.project
         process = project.process
         stack = Stack.of(process.levels, process.default_level)
@@ -391,6 +404,8 @@ class PropertyEditor(QScrollArea):
             current = None
         colors = {name: layer_color(i) for i, name in enumerate(project.layers)}
         combo = _combo()
+        if optional:
+            combo.addItem(icons.icon("layers"), "ports' layer", None)
         choices = [*layer_choices(process.levels), *project.layers]
         if value and value not in choices:  # kept as it is, whatever it is
             choices.append(value)
@@ -403,7 +418,7 @@ class PropertyEditor(QScrollArea):
             color = colors.get(lands)
             icon = swatch_icon(color) if color is not None else icons.icon("layers")
             combo.addItem(icon, label, spec)
-        combo.setCurrentIndex(max(combo.findData(value), 0))
+        combo.setCurrentIndex(0 if value is None else max(combo.findData(value), 0))
         combo.setToolTip(
             "level: the component's level of the layer stack; level-1, level+1: the "
             "levels below and above; level.anchor: a layer of the level by role; or a "
@@ -495,7 +510,7 @@ class PropertyEditor(QScrollArea):
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))
 
-    def _points_editor(self, points) -> QWidget:
+    def _points_editor(self, points, field: str = "points") -> QWidget:
         edit = QPlainTextEdit("\n".join(f"{_format(x)}, {_format(y)}" for x, y in points))
         edit.setFixedHeight(110)
 
@@ -505,7 +520,7 @@ class PropertyEditor(QScrollArea):
                 raise ValueError("each point needs two comma-separated values")
             return [(parse_value(x), parse_value(y)) for x, y in rows]
 
-        self._editors["points"] = read
+        self._editors[field] = read
         return edit
 
     def _mapping_editor(self, mapping: dict[str, str]) -> QWidget:

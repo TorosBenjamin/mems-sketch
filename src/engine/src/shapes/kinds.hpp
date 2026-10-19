@@ -2,7 +2,9 @@
 // as mems_sketch.core.shapes.kinds has them. Nothing else switches on a kind.
 #pragma once
 
+#include <string>
 #include <string_view>
+#include <utility>
 
 #include "../eval/context.hpp"
 
@@ -27,5 +29,11 @@ Result render_offset(const Json& node, const Context& ctx);
 Result render_fillet(const Json& node, const Context& ctx);
 Result render_layer_map(const Json& node, const Context& ctx);
 Result render_connection(const Json& node, const Context& ctx);
+Result render_route(const Json& node, const Context& ctx);
+
+// The port a reference like ``beam.port.end`` names, of a shape beside the
+// node, and that shape. Errors start with the role and the reference
+// (``end 'beam.port.end': ...``).
+std::pair<const Points*, Port> port_of(const Context& ctx, const std::string& reference, const std::string& role);
 
 }  // namespace mems

@@ -99,6 +99,10 @@ ICONS = {
         '<path d="M2.6 13.4V8.6h5.2V4.2h5.8" stroke="{blue}" stroke-opacity=".35" '
         'stroke-width="3.2"/><path d="M2.6 13.4V8.6h5.2V4.2h5.8" stroke="{blue}"/>'
     ),
+    "route": (
+        '<path d="M1.6 10.8h3.2v3.2H1.6zM11.2 2h3.2v3.2h-3.2z" fill="{blue}" fill-opacity=".25" '
+        'stroke="{blue}"/><path d="M4.8 12.4h3.6V3.6h2.8" stroke="{blue}"/>'
+    ),
     "arc": '<path d="M1.8 11.5a6.2 6.2 0 0 1 12.4 0h-3a3.2 3.2 0 0 0-6.4 0z" fill="{blue}" '
     'fill-opacity=".25" stroke="{blue}"/>',
     # -- files and history ------------------------------------------------

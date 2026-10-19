@@ -143,6 +143,14 @@ class Node(BaseModel):
         """The transform a ``placed`` kind applies to its content, in µm."""
         return None
 
+    def handles(self) -> list[tuple[Value, Value]]:
+        """Points of its own that can be dragged on the canvas (a route's via points)."""
+        return []
+
+    def with_handle(self, index: int, point: tuple[Value, Value]) -> Shape:
+        """A copy with handle ``index`` (of :meth:`handles`) at ``point``."""
+        raise TypeError(f"'{self.kind}' has no handles")
+
     def summary(self) -> str:
         """Short description of the node, e.g. for a tooltip or a listing."""
         return self.kind

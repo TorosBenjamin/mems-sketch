@@ -25,6 +25,7 @@ PRIMITIVES = [
     ("arc", "Arc / ring"),
     ("polygon", "Polygon"),
     ("path", "Path"),
+    ("route", "Route"),
     ("guide", "Guide"),
 ]
 OVERLAYS = [  # View › Overlays: setting, label, icon

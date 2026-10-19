@@ -11,6 +11,7 @@ input, so a subtraction stays editable and parametric.
 | Primitive | `rect`, `polygon`, `circle`, `arc`, `path` | `rect` takes a `corner_radius` (clamped to half the shorter side: a fully rounded square is a circle, a rectangle a stadium); `arc` is an annular sector (a ring at 360°); `path` is a centreline with a width and flush, square or round ends |
 | Reference | `ref` | A placed component, with its parameter values and position |
 | | `connection` | The area that joins beam ends, made from their ports (see [Connections](#connections)) |
+| | `route` | A wire from one port to another, which follows them (see [Routes](#routes)) |
 | Operation | `transform` | Move, rotate, mirror and scale its shapes as one piece |
 | | `boolean` | `a` subtract, intersect or XOR `b` |
 | | `offset` | Grow (+) or shrink (−) outlines |
@@ -76,6 +77,56 @@ Each way it can be wrong is an error that names the end:
 | *crosses itself* | Ends overlap, or face past one another |
 | *different layers* | The ends are on different layers: give the connection a `layer` |
 | *has no width* | Its port has no width: give the connection a `width` |
+
+## Routes
+
+A **route** is a wire from one port to another: move a part and its wires
+follow. Draw one with the **Route** tool (E, or Add → Route): click a port
+(they are marked), any via points, then another port. With a route selected,
+the Route tool shows its via points: drag one to move it.
+
+```yaml
+drive_line:
+  kind: route
+  start: comb1.port.drive
+  end: pad1.port.signal
+  style: manhattan     # manhattan | l | straight
+  via: [[50, 120]]     # points it passes through, in order
+  bend: round          # sharp | round | chamfer
+  radius: 5
+  width: 4             # default: its ports'
+```
+
+- **Its style** says which way it goes. `manhattan` (the default) runs
+  along x and y only: it leaves the start and comes into the end along the
+  ports' directions, which must be along x or y, with as few bends as it can
+  and then as short as it can (a Z bends halfway; ports facing the same way
+  get a U; a port facing away gets a way round). `l` runs along the start's
+  direction, then the end's, with one bend where the two lines meet.
+  `straight` runs in straight lines from the start through each via point to
+  the end, whatever way the ports face.
+- **Its bends** are `sharp`, `round` (an exact arc of `radius`, which must be
+  more than half the width) or `chamfer` (cut `radius` along each side, as a
+  corners modifier's chamfer). A Manhattan route leaves room for them: bends
+  at least a width (or two radii) apart and a width's half (or a radius) from
+  a port; when an offset is too small for a Z with these bends, it goes round.
+- **Its width and layer** are its ports' unless `width` or `layer` is
+  given. Ports of different widths need a width (a taper waits for
+  variable-width paths, SHP-10).
+- **Its own ports** `start` and `end` are where it ends, pointing out of it,
+  so a connection or another route can carry on from it.
+- **It does not avoid other shapes.** It goes where its style and via points
+  say; the connectivity check (#183) will report what it shorts.
+
+| Error | What it means |
+|---|---|
+| *a manhattan route runs along x and y, and its start faces 30°* | A port is not along x or y: use `straight` or `l` |
+| *an l route needs its ports' lines to meet* | The ports are parallel (and not facing on one line): use `manhattan` |
+| *… where its ports' lines meet, and that is behind the start* | The lines meet behind a port |
+| *bends of radius … do not fit between … : the largest that fits is …* | The bends are too large for the runs between them |
+| *the route bends … from a port, nearer than half its width* | It would cut back across the port |
+| *turns back on itself* | A via point sends it straight back |
+| *different widths*, *different layers*, *have no width* | Give the route a `width` or a `layer` |
 
 ## Modifiers
 

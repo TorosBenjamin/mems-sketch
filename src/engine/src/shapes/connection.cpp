@@ -50,6 +50,21 @@ void check_on_beam(const Points& beam, const Port& port, double width, double de
 
 }  // namespace
 
+std::pair<const Points*, Port> port_of(const Context& ctx, const std::string& reference, const std::string& role) {
+    const std::string what = role + " '" + reference + "'";
+    const size_t dot = reference.find('.');
+    if (dot == std::string::npos || reference.compare(dot + 1, 5, "port.") != 0 || reference.size() <= dot + 6)
+        throw BuildError(what + " is not a port, like 'beam.port.end'");
+    const std::string shape = reference.substr(0, dot);
+    const auto found = ctx.scope.find(shape);
+    if (found == ctx.scope.end()) throw BuildError(what + ": there is no shape '" + shape + "'");
+    try {
+        return {&found->second, found->second.port(reference.substr(dot + 6))};
+    } catch (const BuildError& error) {
+        throw BuildError(what + ": " + error.what());
+    }
+}
+
 Result render_connection(const Json& node, const Context& ctx) {
     const bool own_layer = node.contains("layer") && node["layer"].is_string();
     std::string layer = own_layer ? ctx.layer(node) : std::string();
@@ -60,18 +75,7 @@ Result render_connection(const Json& node, const Context& ctx) {
     for (const auto& item : node.value("ends", Json::array())) {
         const std::string end = item.is_string() ? item.get<std::string>() : std::string();
         if (!named.insert(end).second) throw BuildError("end '" + end + "' is named twice");
-        const size_t dot = end.find('.');
-        if (dot == std::string::npos || end.compare(dot + 1, 5, "port.") != 0 || end.size() <= dot + 6)
-            throw BuildError("end '" + end + "' is not a port, like 'beam.port.end'");
-        const std::string shape = end.substr(0, dot);
-        const auto found = ctx.scope.find(shape);
-        if (found == ctx.scope.end()) throw BuildError("end '" + end + "': there is no shape '" + shape + "'");
-        Port port;
-        try {
-            port = found->second.port(end.substr(dot + 6));
-        } catch (const BuildError& error) {
-            throw BuildError("end '" + end + "': " + error.what());
-        }
+        const auto [beam, port] = port_of(ctx, end, "end");
         const double width = port.width > 0 ? port.width : fallback_width;
         if (!(width > 0)) throw BuildError("end '" + end + "': its port has no width, so give the connection one");
         if (!own_layer) {
@@ -81,7 +85,7 @@ Result render_connection(const Json& node, const Context& ctx) {
                                  "'): give the connection a layer");
         }
         ends.push_back({port.at, port.angle_deg, width, end});
-        beams.emplace_back(&found->second, port);
+        beams.emplace_back(beam, port);
     }
     double reach = REACH_UM;
     for (const auto& end : ends) reach = std::min(reach, end.width / 4);

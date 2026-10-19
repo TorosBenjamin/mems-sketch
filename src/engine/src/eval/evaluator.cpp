@@ -91,6 +91,10 @@ void point_dependencies(const Json& node, std::set<std::string>& found) {
         if (node.value("kind", std::string()) == "connection")  // the ends it joins: beam.port.end
             for (const auto& end : node.value("ends", Json::array()))
                 if (end.is_string()) found.insert(end.get<std::string>().substr(0, end.get<std::string>().find('.')));
+        if (node.value("kind", std::string()) == "route")  // the ports it runs between
+            for (const char* key : {"start", "end"})
+                if (node.contains(key) && node[key].is_string())
+                    found.insert(node[key].get<std::string>().substr(0, node[key].get<std::string>().find('.')));
     }
     for (const auto& [key, value] : node.items())
         if (is_child_list(key, value))

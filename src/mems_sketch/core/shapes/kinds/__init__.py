@@ -17,6 +17,7 @@ from mems_sketch.core.shapes.kinds.path import PathShape
 from mems_sketch.core.shapes.kinds.polygon import PolygonShape
 from mems_sketch.core.shapes.kinds.rect import RectShape
 from mems_sketch.core.shapes.kinds.ref import RefShape
+from mems_sketch.core.shapes.kinds.route import RouteShape
 from mems_sketch.core.shapes.kinds.transform import TransformShape
 
 KINDS = (
@@ -33,4 +34,5 @@ KINDS = (
     LayerMapShape,
     GuideShape,
     ConnectionShape,
+    RouteShape,
 )

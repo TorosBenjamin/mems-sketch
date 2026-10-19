@@ -13,10 +13,11 @@ from mems_sketch.core.shapes.handles import (
     WIDTH,
     Handle,
     point_index,
+    points_moved,
     rounded,
     shifted,
     vertex_handles,
-    vertex_moved,
+    vertex_removed,
 )
 
 
@@ -38,13 +39,15 @@ class PathShape(Primitive):
         return {"points": [(x(px), y(py)) for px, py in self.points]}
 
     def edit_handles(self, v) -> list[Handle]:
-        """A handle on each vertex, and the width on the first segment's side."""
-        handles = vertex_handles(self.points, v)
+        """A handle on each vertex and in the middle of each segment, and the width
+        on the first segment's side."""
+        handles = vertex_handles(self.points, v, closed=False)
         side = self._side(v)
         if side is not None:
             (mx, my), (nx, ny) = side
             half = v(self.width) / 2
-            handles.append(Handle("width", mx + nx * half, my + ny * half, WIDTH))
+            across = ("across", mx, my, nx, ny)
+            handles.append(Handle("width", mx + nx * half, my + ny * half, WIDTH, across))
         return handles
 
     def handle_moved(self, key, to, v) -> dict:
@@ -55,10 +58,15 @@ class PathShape(Primitive):
             (mx, my), (nx, ny) = side
             across = abs((to[0] - mx) * nx + (to[1] - my) * ny)
             return {"width": shifted(self.width, rounded(2 * across - v(self.width)))}
-        index = point_index(key)
-        if index is None or index >= len(self.points):
+        points = points_moved(self.points, key, to, v, closed=False)
+        if points is None:
             raise KeyError(f"a path has no handle '{key}'")
-        return {"points": vertex_moved(self.points, index, to, v)}
+        return {"points": points}
+
+    def handle_removed(self, key) -> dict | None:
+        index = point_index(key)
+        points = None if index is None else vertex_removed(self.points, index, fewest=2)
+        return None if points is None else {"points": points}
 
     def _side(self, v):
         """The first segment's middle and its left normal, or None if it has no length."""

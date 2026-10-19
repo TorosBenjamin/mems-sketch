@@ -8,7 +8,13 @@ from pydantic import Field
 
 from mems_sketch.core.levels import LEVEL
 from mems_sketch.core.shapes.base import Primitive, Value
-from mems_sketch.core.shapes.handles import Handle, point_index, vertex_handles, vertex_moved
+from mems_sketch.core.shapes.handles import (
+    Handle,
+    point_index,
+    points_moved,
+    vertex_handles,
+    vertex_removed,
+)
 
 
 class PolygonShape(Primitive):
@@ -26,14 +32,19 @@ class PolygonShape(Primitive):
         return {"points": [(x(px), y(py)) for px, py in self.points]}
 
     def edit_handles(self, v) -> list[Handle]:
-        """A handle on each vertex (``point.0``, ``point.1``, ...)."""
-        return vertex_handles(self.points, v)
+        """A handle on each vertex (``point.0``, ...) and in the middle of each side."""
+        return vertex_handles(self.points, v, closed=True)
 
     def handle_moved(self, key, to, v) -> dict:
-        index = point_index(key)
-        if index is None or index >= len(self.points):
+        points = points_moved(self.points, key, to, v, closed=True)
+        if points is None:
             raise KeyError(f"a polygon has no handle '{key}'")
-        return {"points": vertex_moved(self.points, index, to, v)}
+        return {"points": points}
+
+    def handle_removed(self, key) -> dict | None:
+        index = point_index(key)
+        points = None if index is None else vertex_removed(self.points, index, fewest=3)
+        return None if points is None else {"points": points}
 
     @classmethod
     def default(cls, layer: str) -> PolygonShape:

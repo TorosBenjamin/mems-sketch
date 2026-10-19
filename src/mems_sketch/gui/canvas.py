@@ -18,6 +18,7 @@ import math
 import time
 import weakref
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -76,6 +77,7 @@ from mems_sketch.gui import theme as themes
 CORNER_HANDLE_PX = 4.5  # a rounded corner's handle (radius)
 CORNER_ERROR_PX = 9  # the ring round a corner whose radius does not fit
 EDIT_HANDLE_PX = 4  # half the size of a shape's handle (a side, a vertex)
+TYPED_CHARACTERS = frozenset("0123456789.-+, ")  # a value typed for a handle
 ROUND_HANDLES = ("vertex", "angle")  # drawn as dots; the others as squares
 
 
@@ -527,6 +529,8 @@ class LayoutCanvas(QGraphicsView):
     double_clicked = Signal(float, float)
     nudged = Signal(int, int, bool)  # arrow keys: steps in x and y; True for fine steps
     key_pressed = Signal(object)  # Enter or Backspace, for the active tool
+    # Typed digits, sign, point, comma, space: the active tool takes them (True) or not
+    typed: Callable[[str], bool] | None = None
     cursor_moved = Signal(float, float)
     view_changed = Signal()  # zoomed or panned
     context_requested = Signal(float, float, QPoint)  # right click: µm, global position
@@ -1690,7 +1694,13 @@ class LayoutCanvas(QGraphicsView):
             at = self.mapFromScene(QPointF(x, y)).toPointF()
             painter.setPen(QPen(edge, 1.5))
             painter.setBrush(edge if index == self._active_handle else plain)
-            if role in ROUND_HANDLES:
+            if role == "insert":  # a side's middle: a small plus, to add a vertex
+                painter.setPen(QPen(edge, 1.2))
+                painter.drawEllipse(at, size + 0.5, size + 0.5)
+                arm = size - 1.5
+                painter.drawLine(at + QPointF(-arm, 0), at + QPointF(arm, 0))
+                painter.drawLine(at + QPointF(0, -arm), at + QPointF(0, arm))
+            elif role in ROUND_HANDLES:
                 painter.drawEllipse(at, size + 0.5, size + 0.5)
             else:
                 painter.drawRect(QRectF(at.x() - size, at.y() - size, 2 * size, 2 * size))
@@ -1782,6 +1792,12 @@ class LayoutCanvas(QGraphicsView):
             return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Backspace):
             self.key_pressed.emit(event.key())
+            return
+        text = event.text()
+        plain = not event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+        )
+        if text and plain and text in TYPED_CHARACTERS and self.typed and self.typed(text):
             return
         if event.key() == Qt.Key.Key_Space:
             if not event.isAutoRepeat():

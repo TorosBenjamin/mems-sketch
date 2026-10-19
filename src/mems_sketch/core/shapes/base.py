@@ -164,6 +164,11 @@ class Node(BaseModel):
         """The fields that change when handle ``key`` is dragged to ``to`` (its own frame)."""
         raise KeyError(f"'{self.kind}' has no handle '{key}'")
 
+    def handle_removed(self, key: str) -> dict[str, Any] | None:
+        """The fields without the vertex handle ``key`` names (Delete on a chosen
+        vertex); None when it cannot go (too few would be left, or not a vertex)."""
+        return None
+
     def summary(self) -> str:
         """Short description of the node, e.g. for a tooltip or a listing."""
         return self.kind

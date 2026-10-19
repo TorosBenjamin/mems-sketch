@@ -395,6 +395,7 @@ class MainWindow(QMainWindow):
             canvas.cursor_moved.connect(self._cursor_moved)
             canvas.nudged.connect(self.nudge)
             canvas.key_pressed.connect(lambda key: self.tool.key(key))
+            canvas.typed = lambda text: self.tool.typed(text)
             canvas.view_changed.connect(self.state_changed)
             canvas.view_changed.connect(self._show_zoom)
             canvas.context_requested.connect(
@@ -1352,9 +1353,9 @@ class MainWindow(QMainWindow):
         elif getattr(tool, "_handle", None) is None:  # (kept as they were while dragging)
             self.edit_handles = self.document.handles.handles(view.selection[0])
         active = None
-        dragged = getattr(tool, "_handle", None)
+        key = tool.active_handle() if hasattr(tool, "active_handle") and shown else None
         for index, (handle, _, _) in enumerate(self.edit_handles):
-            if dragged is not None and handle == dragged.handle:
+            if handle.key == key:
                 active = index
         markers = [(x, y, h.role) for h, x, y in self.edit_handles]
         for other in self.area.views():
@@ -1856,6 +1857,8 @@ class MainWindow(QMainWindow):
             self._select_result(lambda: self.document.nodes.duplicate(self.selection[0]))
 
     def delete(self) -> None:
+        if getattr(self.tool, "delete_chosen", lambda: False)():
+            return  # the chosen vertex of the selected shape, not the shape
         if self.selection:
             paths, self.selection = self.selection, []
             self._run(lambda: self.document.nodes.remove(paths))

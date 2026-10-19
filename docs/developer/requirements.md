@@ -447,8 +447,9 @@ behaviours every frontend must keep.
   has handles on the canvas (a rectangle's sides and corners, vertices, radii,
   angles, a path's width) that change it when dragged, snapping as moves do.
   A drag keeps expressions (it adds an offset) and alignments (the aligned
-  side changes the offset). Exists for rectangles, circles, arcs, polygons and
-  paths; adding and removing vertices and typed values follow.
+  side changes the offset). Polygons and paths get vertices added (a side's
+  middle) and removed (Delete on a chosen one); a value typed for a handle
+  sets it exactly. Exists for rectangles, circles, arcs, polygons and paths.
 
 ### Rule checks
 

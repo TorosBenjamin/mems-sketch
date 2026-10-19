@@ -30,7 +30,10 @@ class CircleShape(Primitive):
     def edit_handles(self, v) -> list[Handle]:
         """The radius, on the rim to the right and at the top."""
         x, y, r = v(self.x), v(self.y), v(self.radius)
-        return [Handle("radius", x + r, y, RADIUS), Handle("radius.top", x, y + r, RADIUS)]
+        return [
+            Handle("radius", x + r, y, RADIUS, ("radial", x, y, 0.0)),
+            Handle("radius.top", x, y + r, RADIUS, ("radial", x, y, 90.0)),
+        ]
 
     def handle_moved(self, key, to, v) -> dict:
         if key not in ("radius", "radius.top"):

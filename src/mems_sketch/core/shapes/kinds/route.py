@@ -30,6 +30,7 @@ from typing import ClassVar, Literal
 from pydantic import Field, field_validator
 
 from mems_sketch.core.shapes.base import Node, Value, check_point_reference
+from mems_sketch.core.shapes.handles import VERTEX, Handle, shifted
 
 
 class RouteShape(Node):
@@ -68,8 +69,36 @@ class RouteShape(Node):
         via[index] = point
         return self.model_validate({**self.model_dump(), "via": via})
 
+    def edit_handles(self, v) -> list[Handle]:
+        """A handle on each via point (``via.0``, ...); its ends follow its ports."""
+        return [Handle(f"via.{i}", v(x), v(y), VERTEX) for i, (x, y) in enumerate(self.via)]
+
+    def handle_moved(self, key, to, v) -> dict:
+        index = _via_index(key, len(self.via))
+        via = list(self.via)
+        x, y = via[index]
+        via[index] = (shifted(x, to[0] - v(x)), shifted(y, to[1] - v(y)))
+        return {"via": via}
+
+    def handle_removed(self, key) -> dict | None:
+        try:
+            index = _via_index(key, len(self.via))
+        except KeyError:
+            return None
+        return {"via": [p for i, p in enumerate(self.via) if i != index]}
+
+    def drag_sketch(self, v) -> tuple[list, bool]:
+        return [(v(x), v(y)) for x, y in self.via], False
+
     def summary(self) -> str:
         return f"{self.style} route"
 
     def detail(self) -> str:
         return f"{self.start} → {self.end}"
+
+
+def _via_index(key: str, count: int) -> int:
+    prefix, _, index = key.partition(".")
+    if prefix != "via" or not index.isdigit() or int(index) >= count:
+        raise KeyError(f"a route has no handle '{key}'")
+    return int(index)

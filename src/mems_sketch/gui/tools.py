@@ -504,6 +504,8 @@ class SelectTool(Tool):
             self.canvas.clear_drag_preview()
         else:
             self.canvas.show_drag_preview(preview, self.window.layers.colors)
+        sketch = edits.sketch(self._handle, node)  # a guide, a route: nothing to build
+        self.canvas.show_sketch(*(sketch or ([], False)))
         snap = self._snap
         self.canvas.show_points("snap", [snap] if snap else [])
         shown = self.canvas.edit_handles
@@ -656,6 +658,8 @@ class SelectTool(Tool):
         self.gizmo_cancel()
         Tool.cancel(self)
         self.canvas.show_points("snap", [])
+        if dragging_handle:
+            self.canvas.show_sketch([], False)
         if dragging_handle:
             self.window.update_overlay()  # the handles back where they are
         return busy

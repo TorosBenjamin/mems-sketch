@@ -95,7 +95,27 @@ class HandleEdits(Commands):
         node = drag.node
         changed = node.handle_moved(drag.handle.key, to, drag.value)
         moved = type(node).model_validate({**node.model_dump(), **changed})
-        return _keep_alignment(drag, moved)
+        return _keep_alignment(drag, _follow_corners(drag, moved))
+
+    def sketch(self, drag: HandleDrag, node: Shape) -> tuple[list, bool] | None:
+        """The line to draw for ``node`` while dragging, in the component's frame, for
+        one that has no preview of its own (a guide; a route, from its start port
+        through its via points to its end port); None for the others."""
+        try:
+            found = node.drag_sketch(drag.value)
+        except (ValueError, KeyError, ZeroDivisionError):
+            return None
+        if found is None:
+            return None
+        points, closed = found
+        points = [drag.frame.apply(x, y) for x, y in points]
+        try:
+            ends = self.session.results.node_ports(drag.path)
+        except Exception:  # noqa: BLE001 - drawn without its ends
+            ends = {}
+        if "start" in ends and "end" in ends:  # a route: its ends are its ports
+            points = [(ends["start"].x, ends["start"].y), *points, (ends["end"].x, ends["end"].y)]
+        return points, closed
 
     def preview(self, drag: HandleDrag, node: Shape) -> Geometry | None:
         """``node`` built on its own, in the component's frame (None: it does not build)."""
@@ -117,8 +137,9 @@ class HandleEdits(Commands):
             before, after = getattr(old, field), getattr(new, field)
             if before == after:
                 continue
-            if field == "points":
-                parts.append(_points_change(before, after, drag))
+            if field in ("points", "via"):
+                noun = "via point" if field == "via" else "point"
+                parts.append(_points_change(before, after, drag, noun))
             elif field == "align":  # (last: the drag's own change first)
                 for axis in ("dx", "dy"):
                     a, b = getattr(before, axis), getattr(after, axis)
@@ -149,7 +170,8 @@ class HandleEdits(Commands):
             fewest = len(getattr(node, "points", ())) or "its"
             raise ValueError(f"{node.name or node.kind} keeps at least {fewest} points")
         moved = type(node).model_validate({**node.model_dump(), **changed})
-        self._replace(path, node, _keep_alignment(drag, moved), f"Remove {handle_label(key)} of")
+        moved = _keep_alignment(drag, _follow_corners(drag, moved))
+        self._replace(path, node, moved, f"Remove {handle_label(key)} of")
 
     def _started(self, path: NodePath, key: str) -> HandleDrag:
         drag = self.start(path, key)
@@ -263,7 +285,7 @@ def _keep_alignment(drag: HandleDrag, moved: Shape) -> Shape:
     return moved.model_copy(update={"align": align.model_copy(update=offset)})
 
 
-def _points_change(before, after, drag: HandleDrag) -> str:
+def _points_change(before, after, drag: HandleDrag, noun: str = "point") -> str:
     """``point 3  (2, 30) → (10, 30)``, ``new point 3  (5, 5)`` or ``point 3 removed``."""
 
     def at(point) -> str:
@@ -274,10 +296,63 @@ def _points_change(before, after, drag: HandleDrag) -> str:
         min(len(before), len(after)),
     )
     if len(after) > len(before):
-        return f"new point {index + 1}  ({at(after[index])})"
+        return f"new {noun} {index + 1}  ({at(after[index])})"
     if len(after) < len(before):
-        return f"point {index + 1} removed"
-    return f"point {index + 1}  ({at(before[index])}) → ({at(after[index])})"
+        return f"{noun} {index + 1} removed"
+    return f"{noun} {index + 1}  ({at(before[index])}) → ({at(after[index])})"
+
+
+def _follow_corners(drag: HandleDrag, moved: Shape) -> Shape:
+    """``moved`` with the rounded corners of its corners modifier (the Corners tool's)
+    on the vertices they round: a corner on a vertex the drag moved moves with it
+    (an offset, so expressions are kept); one on a vertex that is gone goes too.
+    Corners at a named point (``self.top_left``) follow by themselves."""
+    from mems_sketch.core.shapes.handles import shifted
+    from mems_sketch.core.shapes.modifiers import CornersModifier
+
+    node = drag.node
+    index = next((i for i, m in enumerate(node.modifiers) if isinstance(m, CornersModifier)), None)
+    if index is None:
+        return moved
+    try:
+        before, after = node.corner_vertices(drag.value), moved.corner_vertices(drag.value)
+    except (ValueError, KeyError, ZeroDivisionError):
+        return moved
+    if before is None or after is None:
+        return moved
+    corners = []
+    for corner in node.modifiers[index].corners:
+        if corner.at is not None or "self." in f"{corner.x}{corner.y}":
+            corners.append(corner)
+            continue
+        try:
+            at = (drag.value(corner.x), drag.value(corner.y))
+        except (ValueError, KeyError, ZeroDivisionError):
+            corners.append(corner)
+            continue
+        vertex = next((i for i, p in enumerate(before) if _same(p, at)), None)
+        if vertex is None:
+            corners.append(corner)  # not on a vertex now: an error it shows already
+        elif len(after) == len(before):  # a vertex moved
+            dx, dy = after[vertex][0] - before[vertex][0], after[vertex][1] - before[vertex][1]
+            corners.append(
+                corner.model_copy(
+                    update={
+                        "x": shifted(corner.x, round(dx, 6)),
+                        "y": shifted(corner.y, round(dy, 6)),
+                    }
+                )
+            )
+        elif any(_same(p, at) for p in after):  # one added or removed elsewhere
+            corners.append(corner)
+        # else: its vertex was removed, so it goes too
+    modifiers = list(moved.modifiers)
+    modifiers[index] = modifiers[index].model_copy(update={"corners": corners})
+    return moved.model_copy(update={"modifiers": modifiers})
+
+
+def _same(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    return abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) < 1e-6
 
 
 def _shown(value, drag: HandleDrag, unit: str | None = None) -> str:

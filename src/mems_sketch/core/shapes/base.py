@@ -164,6 +164,18 @@ class Node(BaseModel):
         """The fields that change when handle ``key`` is dragged to ``to`` (its own frame)."""
         raise KeyError(f"'{self.kind}' has no handle '{key}'")
 
+    def drag_sketch(self, v: Callable[[Value], float]) -> tuple[list, bool] | None:
+        """A line to draw while a handle is dragged, for a node that cannot be built
+        on its own to preview it (a guide, a route): its points in its own frame and
+        whether it is closed; None for the others."""
+        return None
+
+    def corner_vertices(self, v: Callable[[Value], float]) -> list[tuple[float, float]] | None:
+        """The corners of its outline, in order, for rounded corners (a corners
+        modifier) to follow when a handle moves one; None when they are not simply
+        its own points (a path's outline, a circle)."""
+        return None
+
     def handle_removed(self, key: str) -> dict[str, Any] | None:
         """The fields without the vertex handle ``key`` names (Delete on a chosen
         vertex); None when it cannot go (too few would be left, or not a vertex)."""

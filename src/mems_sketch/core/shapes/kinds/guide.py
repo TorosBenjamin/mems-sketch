@@ -14,6 +14,7 @@ import math
 from typing import ClassVar, Literal
 
 from mems_sketch.core.shapes.base import Node, Value
+from mems_sketch.core.shapes.handles import VERTEX, Handle, shifted
 
 
 class GuideShape(Node):
@@ -30,6 +31,25 @@ class GuideShape(Node):
 
     def moved(self, x, y, inner) -> dict:
         return {"x0": x(self.x0), "x1": x(self.x1), "y0": y(self.y0), "y1": y(self.y1)}
+
+    def edit_handles(self, v) -> list[Handle]:
+        """Its two ends: ``x0 y0`` (the start) and ``x1 y1``."""
+        return [
+            Handle("x0 y0", v(self.x0), v(self.y0), VERTEX),
+            Handle("x1 y1", v(self.x1), v(self.y1), VERTEX),
+        ]
+
+    def handle_moved(self, key, to, v) -> dict:
+        if key not in ("x0 y0", "x1 y1"):
+            raise KeyError(f"a guide has no handle '{key}'")
+        x, y = key.split()
+        return {
+            x: shifted(getattr(self, x), to[0] - v(getattr(self, x))),
+            y: shifted(getattr(self, y), to[1] - v(getattr(self, y))),
+        }
+
+    def drag_sketch(self, v) -> tuple[list, bool]:
+        return [(v(self.x0), v(self.y0)), (v(self.x1), v(self.y1))], False
 
     def summary(self) -> str:
         values = (self.x0, self.y0, self.x1, self.y1)

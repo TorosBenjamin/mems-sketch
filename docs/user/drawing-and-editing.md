@@ -63,7 +63,14 @@ shape shows its handles:
   each side (drag it to add a vertex there), and a path a square for its width
   on the first segment's side;
 - a **circle** its radius on the rim; an **arc** its outer and inner radius,
-  and a dot on each end for its angles.
+  and a dot on each end for its angles;
+- a **guide** a dot on each end (a line shows where it goes while you drag);
+- a **route** a dot on each via point (a line shows its new course, from port
+  to port); Delete removes a chosen one.
+
+Rounded corners made with the **Corners** tool follow the vertex they round
+when a handle moves it, and go with a vertex that is removed (on a rectangle
+or a polygon).
 
 The cursor shows which way a handle drags. Handles snap as moving does, to
 other shapes' points, else to the grid (Ctrl: no snapping); Shift keeps a

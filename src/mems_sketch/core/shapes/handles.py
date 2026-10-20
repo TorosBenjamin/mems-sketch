@@ -80,6 +80,8 @@ def handle_label(key: str) -> str:
     prefix, _, rest = key.partition(".")
     if prefix == "insert" and rest.isdigit():
         return f"a new point after point {int(rest) + 1}"
+    if prefix == "via" and rest.isdigit():
+        return f"via point {int(rest) + 1}"
     return ", ".join(part.replace("_", " ") for part in key.split()).replace(".top", "")
 
 

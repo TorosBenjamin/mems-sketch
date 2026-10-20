@@ -199,3 +199,24 @@ def test_delete_while_typing_removes_nothing(window):
     keys(window, "1")
     window.delete()
     assert len(window.document.node(path).points) == 4 and window.document.shapes
+
+
+# -- phase 3: guides --------------------------------------------------------------------------
+
+
+def test_a_guides_end_is_dragged_with_a_line_drawn_meanwhile(window):
+    from mems_sketch.core.shapes import GuideShape
+
+    two_rects(window)
+    window.document.nodes.add(GuideShape(name="axis", x0=50, y0=-20, x1=50, y1=80))
+    axis = ((0, 2),)
+    window.select_click(axis, False)
+    assert [h.key for h, _, _ in window.edit_handles] == ["x0 y0", "x1 y1"]
+    canvas = window.canvas
+    mouse(canvas, QEvent.Type.MouseButtonPress, 50, 80)
+    mouse(canvas, QEvent.Type.MouseMove, 70, 80)
+    assert canvas._sketch_item is not None  # the guide as it would be
+    mouse(canvas, QEvent.Type.MouseButtonRelease, 70, 80)
+    guide = window.document.node(axis)
+    assert (guide.x1, guide.y1) == (70, 80)
+    assert canvas._sketch_item is None

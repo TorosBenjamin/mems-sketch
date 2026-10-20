@@ -1250,6 +1250,17 @@ class LayersPanel(_Panel):
             self.layers.setItem(row, 1, _readonly(f"{layer.gds_layer}/{layer.gds_datatype}"))
         self.layers.blockSignals(False)
 
+    def layer_at(self, row: int) -> str | None:
+        """The layer shown in ``row`` (the top of the stack first)."""
+        return self._layer_names[row] if 0 <= row < len(self._layer_names) else None
+
+    def show_current(self, name: str | None) -> None:
+        """Highlight the drawing layer ``name``, without choosing it again."""
+        row = self._layer_names.index(name) if name in self._layer_names else -1
+        self.layers.blockSignals(True)
+        self.layers.setCurrentCell(row, 0 if row >= 0 else -1)
+        self.layers.blockSignals(False)
+
     def _layer_changed(self, item: QTableWidgetItem) -> None:
         if item.column() != 0:
             return

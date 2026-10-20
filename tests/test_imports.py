@@ -79,6 +79,17 @@ def test_reimporting_updates_every_placement(session, gds, tmp_path, write_gds):
     assert area(session) == pytest.approx(2 * 2000)
 
 
+def test_reimporting_keeps_a_layer_left_out(session, gds, tmp_path, write_gds):
+    """A layer left out stays out on a re-import; one the new file adds is mapped
+    by its numbers (#244)."""
+    name = session.imports.add(gds, layers={"1/0": "device", "5/0": ""})
+    newer = write_gds(
+        tmp_path / "v2.gds", [(1, 0, 0, 0, 10, 10), (5, 0, 0, 0, 5, 5), (7, 0, 0, 0, 1, 1)]
+    )
+    session.imports.reimport(name, newer)
+    assert session.project.imports[name].layers == {"1/0": "device", "7/0": "gds7_0"}
+
+
 def test_names_and_removal(session, gds):
     name = session.imports.add(gds)
     with pytest.raises(ValueError, match="already exists"):

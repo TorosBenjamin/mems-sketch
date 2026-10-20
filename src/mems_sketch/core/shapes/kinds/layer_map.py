@@ -9,6 +9,8 @@ from pydantic import model_validator
 from mems_sketch.core.shapes.base import Operation
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from mems_sketch.core.shapes.registry import Shape
 
 
@@ -37,6 +39,9 @@ class LayerMapShape(Operation):
 
     def summary(self) -> str:
         return "layers " + ", ".join(f"{a}→{b}" for a, b in self.mapping.items())
+
+    def map_layers(self, layer: Callable[[str], str]) -> None:
+        self.mapping = {layer(a): layer(b) for a, b in self.mapping.items()}
 
     @classmethod
     def wrap(cls, op: str, name: str, nodes: list[Shape]) -> LayerMapShape:

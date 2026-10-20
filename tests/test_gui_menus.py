@@ -194,3 +194,34 @@ def test_every_command_still_has_its_shortcut_once(window):
     ]
     assert len(keys) == len(set(keys))
     assert QApplication.instance() is not None
+
+
+def test_keys_in_another_panel_leave_the_shapes_alone(window, qtbot):
+    """Delete, Ctrl+D and F2 act on the shapes in the editor and the Shapes panel,
+    never from another panel that has the focus (#242)."""
+    window.tree.select_paths([min(window.document.results.inspection())])  # bar
+    assert len(window.selection) == 1
+    window.components.setFocus()
+    qtbot.waitUntil(window.components.hasFocus)
+    for key in (Qt.Key.Key_Delete, Qt.Key.Key_F2):
+        qtbot.keyClick(QApplication.focusWidget(), key)
+    qtbot.keyClick(QApplication.focusWidget(), Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
+    assert [s.name for s in window.document.shapes] == ["bar", "pad"]
+    window.canvas.setFocus()
+    qtbot.waitUntil(window.canvas.hasFocus)
+    qtbot.keyClick(window.canvas, Qt.Key.Key_Delete)
+    assert [s.name for s in window.document.shapes] == ["pad"]
+
+
+def test_clicking_a_layer_draws_on_that_layer(window):
+    """The Layers panel lists the stack top first; the row clicked is the layer
+    drawn on, and the drawing layer chosen elsewhere is highlighted (#241)."""
+    window.tool_windows.open("layers")
+    table = window.layers.layers
+    for row in range(table.rowCount()):
+        name = table.item(row, 0).text()
+        table.setCurrentCell(row, 0)
+        assert window.draw_layer == name
+    window.layer_box.setCurrentIndex(window.layer_box.findText("device"))
+    assert window.draw_layer == "device"
+    assert table.item(table.currentRow(), 0).text() == "device"

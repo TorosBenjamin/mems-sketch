@@ -17,6 +17,10 @@ from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.region import DBU_UM, Box, IntPolygon, Region
 from mems_sketch.core.transform import Transform
 
+# The widest gap closed between turned parts placed side by side: what rounding
+# each onto the 1 nm grid can leave between outlines that meet exactly.
+SLIVER_NM = 1
+
 
 def to_dbu(value_um: float) -> int:
     return round(value_um / DBU_UM)
@@ -85,12 +89,19 @@ class Geometry:
 
     def _flatten(self) -> dict[str, Region]:
         parts: dict[str, list] = {}
+        turned: set[str] = set()  # layers with a part turned off the grid's axes
         for layer, region in self._own.items():
             parts.setdefault(layer, []).extend(region.each())
         for geometry, transform in self.instances:
             for layer, region in geometry.layers.items():
                 parts.setdefault(layer, []).extend(region.transformed(transform).each())
-        return {layer: Region.from_polygons(polygons).merged() for layer, polygons in parts.items()}
+                if transform.angle % 90:
+                    turned.add(layer)
+        flat = {layer: Region.from_polygons(polygons).merged() for layer, polygons in parts.items()}
+        for layer in turned:  # parts that meet exactly, rounded onto the grid each on
+            # its own, can be a fraction of a nanometre apart: close such slivers (#246)
+            flat[layer] = flat[layer].sized(SLIVER_NM).sized(-SLIVER_NM)
+        return flat
 
     def place(self, geometry: Geometry, transform: Transform | None = None) -> None:
         """Place ``geometry`` whole (kept as an instance, not copied)."""

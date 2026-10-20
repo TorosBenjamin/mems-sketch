@@ -22,7 +22,12 @@ from PySide6.QtWidgets import (
 
 from mems_sketch.export.base import ExportOption
 from mems_sketch.gui.app import MainWindow
-from mems_sketch.gui.export_dialog import ExportOptionsDialog, remember, remembered
+from mems_sketch.gui.export_dialog import (
+    ExportOptionsDialog,
+    project_scope,
+    remember,
+    remembered,
+)
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 OPTIONS = (
@@ -59,8 +64,23 @@ def test_values_are_remembered_per_format(window):
     remember(settings, "probe", OPTIONS, {**remembered(settings, "probe", OPTIONS), "size": 7.0})
     assert remembered(settings, "probe", OPTIONS)["size"] == 7.0
     assert remembered(settings, "other", OPTIONS)["size"] == 2.5
-    settings.set_value("export/probe/count", "nonsense")  # no longer fits: the default
+    settings.set_value("export/unsaved/probe/count", "nonsense")  # no longer fits: the default
     assert remembered(settings, "probe", OPTIONS)["count"] == 3
+
+
+def test_values_are_remembered_per_project_and_only_where_changed(window, tmp_path):
+    """One project's grid is not offered to the next, which starts from its own
+    process's again (#244)."""
+    settings, a, b = window.settings, project_scope(tmp_path / "a"), project_scope(tmp_path / "b")
+    start_a, start_b = {"size": 0.25}, {"size": 0.001}
+    values = remembered(settings, "probe", OPTIONS, start_a, a)
+    assert values["size"] == 0.25
+    remember(settings, "probe", OPTIONS, {**values, "name": "chip_a"}, start_a, a)
+    assert remembered(settings, "probe", OPTIONS, start_b, b)["size"] == 0.001
+    assert remembered(settings, "probe", OPTIONS, start_b, b)["name"] == ""
+    assert remembered(settings, "probe", OPTIONS, start_a, a)["name"] == "chip_a"
+    assert settings.value(f"export/{a}/probe/size") is None  # the same as its start
+    assert remembered(settings, "probe", OPTIONS, {"size": 0.5}, a)["size"] == 0.5  # follows it
 
 
 @pytest.fixture
@@ -97,7 +117,8 @@ def test_export_asks_for_the_options(window, resonator, monkeypatch, tmp_path):
     layout = read_gds(f"{target}.gds")
     assert layout.dbu == pytest.approx(0.005)
     assert layout.top_cells() == ["CHIP"]
-    assert window.settings.value("export/gds/grid_um") == "0.005"
+    scope = project_scope(resonator)
+    assert window.settings.value(f"export/{scope}/gds/grid_um") == "0.005"
 
 
 def test_cancelling_the_options_exports_nothing(window, resonator, monkeypatch, tmp_path):
@@ -156,6 +177,6 @@ def test_export_says_when_snapping_changed_the_shape(window, monkeypatch, tmp_pa
     assert len(shown) == 1 and any("gap narrower than the grid closed" in s for s in shown[0])
     shown.clear()
     monkeypatch.setattr(ExportOptionsDialog, "exec", lambda d: QDialog.DialogCode.Accepted)
-    window.settings.set_value("export/gds/grid_um", "0.001")
+    window.settings.set_value(f"export/{project_scope(tmp_path / 'gap')}/gds/grid_um", "0.001")
     window.export_file()  # the default grid changes nothing: no message
     assert shown == []

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from mems_sketch.core.project import Project, check_shape_names
+from mems_sketch.core.project import Project, check_shape_name, check_shape_names
 from mems_sketch.core.shapes import (
     Align,
     ConnectionShape,
@@ -39,7 +39,16 @@ class NodeEdits(Commands):
     def add(self, shape: Shape) -> NodePath:
         if shape.name is None:
             shape = shape.model_copy(update={"name": self.session.unique_name(shape.kind)})
-        self.session.edit(f"Add {shape.name}", lambda p: self.session.shapes_in(p).append(shape))
+        for node in walk([shape]):
+            if node.name:
+                check_shape_name(node.name)
+
+        def change(project: Project) -> None:
+            shapes = self.session.shapes_in(project)
+            shapes.append(shape)
+            check_shape_names(shapes)
+
+        self.session.edit(f"Add {shape.name}", change)
         return ((0, len(self.session.shapes) - 1),)
 
     def add_primitive(self, kind: str, layer: str = "device") -> NodePath:
@@ -68,6 +77,10 @@ class NodeEdits(Commands):
     def replace(self, path: NodePath, new: Shape) -> None:
         """Replace a node. A new name is also used by alignments and point expressions."""
         old_name = self.session.node(path).name
+        had = {n.name for n in walk([self.session.node(path)]) if n.name}
+        for node in walk([new]):
+            if node.name and node.name not in had:
+                check_shape_name(node.name)
 
         def change(project: Project) -> None:
             if old_name and new.name and new.name != old_name:

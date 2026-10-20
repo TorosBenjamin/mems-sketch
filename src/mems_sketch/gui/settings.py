@@ -403,6 +403,9 @@ class Settings(QObject):
     def set_value(self, key: str, value: Any) -> None:
         self._store.setValue(key, value)
 
+    def remove_value(self, key: str) -> None:
+        self._store.remove(key)
+
 
 def _convert(value: Any, setting: Setting) -> Any:
     default = setting.default

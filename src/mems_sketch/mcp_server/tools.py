@@ -52,8 +52,8 @@ class DesignTools:
         self.session.create(folder, name, library=library)
         return self.project_summary()
 
-    def save(self, folder: str | None = None) -> str:
-        return f"saved in {self.session.save(folder)}"
+    def save(self, folder: str | None = None, replace: bool = False) -> str:
+        return f"saved in {self.session.save(folder, replace=replace)}"
 
     def undo(self) -> str:
         if not self.session.can_undo():

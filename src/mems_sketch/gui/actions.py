@@ -243,6 +243,26 @@ class Actions:
             self.root.addMenu(menu)
             icons.bind(menu.menuAction(), icon_name)
 
+    def shape_actions(self) -> list[QAction]:
+        """The commands on the selected shapes: their shortcuts work in the editor
+        and the Shapes panel only, so a key pressed in another panel (Delete in
+        the Components panel) never changes the shapes."""
+        return [
+            self.cut,
+            self.copy,
+            self.paste,
+            self.duplicate,
+            self.delete,
+            self.select_all,
+            self.rename,
+            self.unwrap,
+            self.make,
+            self.unpack,
+            self.move_by,
+            self.rotate_left,
+            self.rotate_right,
+        ]
+
     def all_actions(self) -> list[QAction]:
         """Every command in the menus, once each (to register their shortcuts on the window)."""
         found: dict[int, QAction] = {}

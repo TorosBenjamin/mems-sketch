@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import keyword
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,7 +41,12 @@ from mems_sketch.core.component import Component, Geometry
 from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.process import Layer, Process, Value, default_process
 from mems_sketch.core.shapes import RefShape, Shape, child_lists, find, walk
-from mems_sketch.core.user_component import ComponentDef, ParamDef, name_shapes
+from mems_sketch.core.user_component import (
+    RESERVED_PARAM_NAMES,
+    ComponentDef,
+    ParamDef,
+    name_shapes,
+)
 
 if TYPE_CHECKING:
     from mems_sketch.engine import Engine
@@ -619,6 +625,21 @@ def _check_visible(qualified: str, path: str, where: str | None) -> None:
     raise PrivateComponentError(
         f"'{qualified}' is private to '{owner}': it can only be placed inside '{owner}'"
     )
+
+
+# Names a shape cannot have: expressions read them as something else.
+RESERVED_SHAPE_NAMES = RESERVED_PARAM_NAMES | {"port", "self"}
+
+
+def check_shape_name(name: str) -> None:
+    """A shape's name must be usable in expressions (``beam.right.x``)."""
+    if not name.isidentifier() or keyword.iskeyword(name):
+        raise ValueError(
+            f"'{name}' is not a valid shape name: use letters, digits and _, "
+            "not starting with a digit"
+        )
+    if name in RESERVED_SHAPE_NAMES:
+        raise ValueError(f"'{name}' is reserved: expressions use it, so a shape cannot")
 
 
 def check_shape_names(shapes: list[Shape]) -> None:

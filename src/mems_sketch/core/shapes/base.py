@@ -144,6 +144,12 @@ class Node(BaseModel):
         """The transform a ``placed`` kind applies to its content, in µm."""
         return None
 
+    def map_layers(self, layer: Callable[[str], str]) -> None:
+        """Rename, in place, the layers it draws on itself (not its children's):
+        each name ``n`` becomes ``layer(n)``."""
+        if isinstance(own := getattr(self, "layer", None), str):
+            self.layer = layer(own)
+
     def handles(self) -> list[tuple[Value, Value]]:
         """Points of its own that can be dragged on the canvas (a route's via points)."""
         return []

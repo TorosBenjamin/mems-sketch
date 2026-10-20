@@ -19,6 +19,8 @@ class PortEdits(Commands):
         name = fields.pop("name", None) or fresh_name(
             "port", {p.name for p in self.session.active_definition.ports}
         )
+        if any(p.name == name for p in self.session.active_definition.ports):
+            raise ValueError(f"port '{name}' already exists")
         port = PortDef(name=name, at=at, **fields)
         self.session.edit(f"Add port {name}", lambda p: self.session.local(p).ports.append(port))
         return name

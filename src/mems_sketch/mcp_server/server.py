@@ -76,9 +76,10 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
         return tools.new_project(folder, name, library)
 
     @tool
-    def save(folder: str | None = None) -> str:
-        """Save the project (in its folder, or in ``folder``)."""
-        return tools.save(folder)
+    def save(folder: str | None = None, replace: bool = False) -> str:
+        """Save the project (in its folder, or in ``folder``). A folder that holds
+        another project is refused unless ``replace`` is true, which overwrites it."""
+        return tools.save(folder, replace)
 
     @tool
     def undo() -> str:

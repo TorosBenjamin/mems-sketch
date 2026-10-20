@@ -368,6 +368,8 @@ def _formats(args: argparse.Namespace) -> int:
 
 def _convert(args: argparse.Namespace) -> int:
     project = load(args.source)
+    if is_document(args.target) and args.target.exists():
+        raise FileExistsError(f"{args.target} already exists")
     if not is_document(args.target) and (args.target / "project.yaml").exists():
         raise FileExistsError(f"{args.target} already contains a project")
     save(project, args.target)

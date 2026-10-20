@@ -21,7 +21,7 @@ namespace mems {
 
 namespace {
 
-constexpr double DBU_UM = 0.001;  // alignment moves are snapped to the database grid, as in Python
+constexpr double DBU_UM = 0.001;  // the database grid, which alignment moves keep to (on_grid)
 
 const std::vector<std::string> BBOX_POINTS = {"center",   "left",      "right",       "top",         "bottom",
                                               "top_left", "top_right", "bottom_left", "bottom_right"};
@@ -101,6 +101,15 @@ void point_dependencies(const Json& node, std::set<std::string>& found) {
             for (const auto& child : value) point_dependencies(child, found);
 }
 
+// A move on the database grid but for floating-point noise (0.30000000000000004) is
+// put on it, so points read as written; one off the grid (a rotated part's point
+// onto another's) is kept as it is, so the aligned outlines meet exactly instead of
+// missing by a fraction of the grid (#246).
+double on_grid(double move) {
+    const double snapped = std::nearbyint(move / DBU_UM) * DBU_UM;
+    return std::fabs(move - snapped) < 1e-9 ? snapped : move;
+}
+
 // The move an alignment makes: the node's point onto the target, plus dx, dy.
 mgeom::Transform alignment(const Json& node, const Points& own, const Variables& variables, const Scope& scope,
                            Builder& builder, const std::string& component) {
@@ -116,10 +125,7 @@ mgeom::Transform alignment(const Json& node, const Points& own, const Variables&
     const mgeom::Point at = own.point(align.value("point", std::string("center")));
     const Context ctx{builder, component, variables, scope};
     const double dx = ctx.number(align, "dx", 0.0), dy = ctx.number(align, "dy", 0.0);
-    // Snapped to the database grid, so that geometry and points agree (as in Python).
-    const double move_x = std::nearbyint((target.x + dx - at.x) / DBU_UM) * DBU_UM;
-    const double move_y = std::nearbyint((target.y + dy - at.y) / DBU_UM) * DBU_UM;
-    return mgeom::Transform::translation(move_x, move_y);
+    return mgeom::Transform::translation(on_grid(target.x + dx - at.x), on_grid(target.y + dy - at.y));
 }
 
 struct NodeResult {

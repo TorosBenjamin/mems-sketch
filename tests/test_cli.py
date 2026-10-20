@@ -29,6 +29,14 @@ def test_new_and_info(tmp_path, capsys):
     assert "device" in capsys.readouterr().out
 
 
+def test_convert_never_overwrites_a_project(resonator, tmp_path):
+    target = tmp_path / "r.json"
+    assert main(["convert", str(resonator), str(target)]) == 0
+    assert main(["convert", str(resonator), str(target)]) == 2  # a one-file project too
+    assert main(["convert", str(resonator), str(tmp_path / "copy")]) == 0
+    assert main(["convert", str(target), str(tmp_path / "copy")]) == 2
+
+
 def test_check_passes_and_fails_with_overrides(resonator, capsys):
     assert main(["check", str(resonator)]) == 0
     assert main(["check", str(resonator), "--set", "w_finger=1", "--json"]) == 1

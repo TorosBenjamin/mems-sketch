@@ -194,6 +194,23 @@ def test_save_open_export(doc, tmp_path):
     assert load(tmp_path / "proj") == doc.project
 
 
+def test_saving_over_another_project_needs_replace(doc, tmp_path):
+    """Saving in a folder (or a one-file project) that holds another project is
+    refused unless asked to replace it; the project's own folder is not (#240)."""
+    other = EditSession()
+    other.create(tmp_path / "other", "other")
+    other.nodes.add(RectShape(name="keep", layer="device", x0=0, y0=0, x1=5, y1=5))
+    other.save()
+    doc.save(tmp_path / "doc.json")
+    for target in (tmp_path / "other", tmp_path / "other" / "project.yaml", tmp_path / "doc.json"):
+        with pytest.raises(ValueError, match="already holds a project"):
+            EditSession().save(target)
+    assert [s.name for s in load(tmp_path / "other").components["top"].shapes] == ["keep"]
+    other.save(tmp_path / "other")  # its own
+    doc.save(tmp_path / "other", replace=True)
+    assert load(tmp_path / "other") == doc.project
+
+
 # -- alignment, transforms and unpacking -------------------------------------
 
 from mems_sketch.core.shapes import Align, TransformShape
@@ -584,3 +601,21 @@ def test_create_a_library_and_what_it_refuses(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(ValueError, match="no project.yaml"):
         EditSession().create(tmp_path / "x", "x", libraries=[tmp_path / "empty"])
+
+
+def test_shape_and_port_names_are_checked_when_added_or_renamed(doc):
+    """A second shape or port of the same name, and a name expressions cannot use,
+    are refused (#245)."""
+    doc.nodes.add(RectShape(name="a", layer="device", x0=0, y0=0, x1=5, y1=5))
+    with pytest.raises(ValueError, match="a shape named 'a' already exists"):
+        doc.nodes.add(RectShape(name="a", layer="device", x0=9, y0=0, x1=15, y1=5))
+    for bad in ("my shape", "2nd", "pi", "sin", "process", "port", "if"):
+        with pytest.raises(ValueError, match="not a valid shape name|is reserved"):
+            doc.nodes.add(RectShape(name=bad, layer="device", x0=0, y0=0, x1=1, y1=1))
+        with pytest.raises(ValueError, match="not a valid shape name|is reserved"):
+            doc.nodes.replace(((0, 0),), doc.shapes[0].model_copy(update={"name": bad}))
+    assert [s.name for s in doc.shapes] == ["a"]
+    doc.ports.add(at="a.right", name="out", width=4)
+    with pytest.raises(ValueError, match="port 'out' already exists"):
+        doc.ports.add(at="a.top", name="out")
+    assert [(p.name, p.at) for p in doc.active_definition.ports] == [("out", "a.right")]

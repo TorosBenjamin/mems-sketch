@@ -271,3 +271,14 @@ def test_variants_zoom_in_and_ports_are_arrows(tools):
     assert not (whole.is_error or zoomed.is_error or ports.is_error)
     assert whole.content[0].data != zoomed.content[0].data
     assert ports.content[0].type == "image"
+
+
+def test_save_never_replaces_another_project_unasked(tools, tmp_path):
+    other = DesignTools()
+    other.new_project(str(tmp_path / "other"), "other")
+    other.add_shape(None, "keep", rect(x1=5))
+    other.save()
+    with pytest.raises(ValueError, match="already holds a project"):
+        tools.save(str(tmp_path / "other"))
+    assert [s.name for s in load(tmp_path / "other").components["top"].shapes] == ["keep"]
+    assert "saved in" in tools.save(str(tmp_path / "other"), replace=True)

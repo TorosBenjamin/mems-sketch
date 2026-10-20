@@ -140,3 +140,34 @@ def test_the_stack_follows_renamed_and_removed_layers():
         session.process.set_levels([Level("nothing")])
     with pytest.raises(ValueError, match="twice"):
         session.process.set_levels([Level("poly0"), Level("poly2", {"anchor": "poly0"})])
+
+
+def layer_areas(project: Project) -> dict[str, float]:
+    layers = project.render().layers.items()
+    return {name: region.area() for name, region in layers if not region.is_empty()}
+
+
+@pytest.mark.parametrize("level", [None, "poly1", "level+1", "poly0"])
+def test_unpacking_keeps_every_shape_on_its_layer(level):
+    """Unpack writes the shapes for the level they were placed on (#243): relative
+    layers shift or become names, placements inside keep their levels."""
+    project = stacked(default_level="poly0")
+    project.define_component(post())
+    project.define_component(ComponentDef(name="high", level="poly2", shapes=[square()]))
+    mapped = LayerMapShape(
+        mapping={"level": "level+1"}, children=[RectShape(x0=0, y0=40, x1=3, y1=43)]
+    )
+    pair = [
+        RectShape(name="plate", x0=0, y0=20, x1=10, y1=25),
+        RefShape(name="lower", component="post", x=40),
+        RefShape(name="upper", component="post", level="level+1", x=60),
+        RefShape(name="own", component="high", x=80),
+        mapped,
+    ]
+    project.define_component(ComponentDef(name="pair", shapes=pair))
+    project.top_component.shapes = [RefShape(name="p", component="pair", level=level)]
+    before = layer_areas(project)
+    doc = EditSession(project)
+    doc.components.unpack(((0, 0),))
+    assert doc.project.top_component.shapes[0].kind == "transform"
+    assert layer_areas(doc.project) == before

@@ -57,7 +57,7 @@ from mems_sketch.editing.process import ProcessEdits
 from mems_sketch.editing.results import Results
 from mems_sketch.engine import Engine
 from mems_sketch.export.base import export_with_report
-from mems_sketch.storage import is_copy, load, save
+from mems_sketch.storage import is_copy, is_document, load, save
 from mems_sketch.storage.project_files import PROJECT_FILE, load_library, project_folder
 
 UNDO_LIMIT = 200
@@ -243,10 +243,16 @@ class EditSession:
         else:
             self._reset(project, project_folder(path))
 
-    def save(self, folder: str | Path | None = None) -> Path:
+    def save(self, folder: str | Path | None = None, *, replace: bool = False) -> Path:
+        """Save in the project's folder, or in ``folder``: one that holds another
+        project (or a one-file project that exists) only with ``replace``."""
         target = Path(folder) if folder is not None else self.path
         if target is None:
             raise ValueError("choose a folder to save the project in")
+        if not is_document(target):
+            target = project_folder(target)
+        if not replace and _holds_another_project(target, self.path):
+            raise ValueError(f"{target} already holds a project: choose another folder")
         save(self.project, target)
         self.path = target
         self._saved = self._fingerprints()
@@ -455,3 +461,12 @@ def _references_valid(project: Project) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _holds_another_project(target: Path, own: Path | None) -> bool:
+    """Whether saving in ``target`` would replace a project other than ``own``."""
+    if own is not None and target.resolve() == own.resolve():
+        return False
+    if is_document(target):
+        return target.exists()
+    return (target / PROJECT_FILE).exists()

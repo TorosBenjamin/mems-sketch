@@ -42,7 +42,12 @@ from mems_sketch.gui.commit_panel import CommitPanel
 from mems_sketch.gui.comparison_view import UNCOMMITTED, ComparisonView
 from mems_sketch.gui.component_picker import PlacePopup
 from mems_sketch.gui.editor_state import load_state, save_state
-from mems_sketch.gui.export_dialog import ExportOptionsDialog, remember, remembered
+from mems_sketch.gui.export_dialog import (
+    ExportOptionsDialog,
+    project_scope,
+    remember,
+    remembered,
+)
 from mems_sketch.gui.git_panel import GitPanel
 from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
@@ -912,7 +917,12 @@ class MainWindow(QMainWindow):
 
     def _build_actions(self) -> None:
         self.actions_ = actions = Actions(self)
-        self.addActions(actions.all_actions())  # shortcuts work without a menu bar
+        shape_actions = actions.shape_actions()
+        self.addActions([a for a in actions.all_actions() if a not in shape_actions])
+        for action in shape_actions:  # only where the shapes are (#242)
+            action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            self.area.addAction(action)
+            self.tree.addAction(action)
         for name in self.tool_windows.names():
             action = make_action(
                 self,
@@ -1048,6 +1058,7 @@ class MainWindow(QMainWindow):
                 self.layer_box.setItemIcon(self.layer_box.count() - 1, swatch_icon(color))
         self.layer_box.setCurrentIndex(layers.index(self.draw_layer) if self.draw_layer else -1)
         self.layer_box.blockSignals(False)
+        self.layers.show_current(self.draw_layer)
 
     def set_draw_layer(self, name: str) -> None:
         """The layer the drawing tools draw on."""
@@ -1062,9 +1073,9 @@ class MainWindow(QMainWindow):
 
     def _layer_row_chosen(self, row: int, *_) -> None:
         """Clicking a layer in the Layers panel makes it the drawing layer."""
-        names = list(self.document.project.layers)
-        if 0 <= row < len(names):
-            self.set_draw_layer(names[row])
+        name = self.layers.layer_at(row)
+        if name is not None:
+            self.set_draw_layer(name)
 
     def _path_width_chosen(self, value: float) -> None:
         self.path_width = round(value, 6)
@@ -2049,7 +2060,7 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 return False
         self._remember_dir(str(target / "project.yaml"))
-        saved = self._run(lambda: self.document.save(target))[0]
+        saved = self._run(lambda: self.document.save(target, replace=True))[0]
         if saved:
             self._remember_project()
         return saved
@@ -2093,13 +2104,13 @@ class MainWindow(QMainWindow):
         if options:
             process = self.document.project.process
             start = {"grid_um": process.grid_um, "chord_um": process.chord_um}
-            dialog = ExportOptionsDialog(
-                title_of(cls), options, remembered(self.settings, format_name, options, start), self
-            )
+            scope = project_scope(self.document.path)
+            last = remembered(self.settings, format_name, options, start, scope)
+            dialog = ExportOptionsDialog(title_of(cls), options, last, self)
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             values = dialog.values()
-            remember(self.settings, format_name, options, values)
+            remember(self.settings, format_name, options, values, start, scope)
         ok, result = self._run(lambda: self.document.export_with_report(path, format_name, values))
         if ok:
             self._remember_dir(path)

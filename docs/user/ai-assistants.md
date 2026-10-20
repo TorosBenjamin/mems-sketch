@@ -62,6 +62,8 @@ Edits go through the same edit session as the editor:
   them, but not change them.
 
 Nothing is written to disk until the assistant calls `save` (or `export`).
+`save` into a folder that holds another project is refused unless the
+assistant asks to replace it.
 
 ## Working together
 

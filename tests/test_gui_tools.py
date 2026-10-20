@@ -445,7 +445,9 @@ def test_drawing_layer_from_the_toolbar_or_layers_panel(window):
     window.set_tool("rect")
     drag(window, (0, 0), (20, 20))
     assert drawn(window).layer == "metal"
-    window.layers.layers.setCurrentCell(1, 0)  # the anchor layer
+    table = window.layers.layers
+    rows = [table.item(row, 0).text() for row in range(table.rowCount())]
+    table.setCurrentCell(rows.index("anchor"), 0)
     assert window.draw_layer == "anchor" and window.layer_box.currentText() == "anchor"
     assert window.editor_state()["drawing"] == {"layer": "anchor", "path_width": 2.0}
 

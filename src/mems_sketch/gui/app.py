@@ -1534,10 +1534,15 @@ class MainWindow(QMainWindow):
             self.canvas.show_hover(None)
             self.canvas.set_hover_label(None)
             return False
-        names = self.edit_dimensions[index].names
-        dimensions = self.document.dimensions
-        self.canvas.show_hover(self.document.results.highlight(dimensions.affected(names).paths))
-        self.canvas.set_hover_label(dimensions.describe(names))
+        dimension = self.edit_dimensions[index]
+        dimensions, names = self.document.dimensions, dimension.names
+        if names:  # what its parameters move
+            moved, said = dimensions.affected(names).paths, dimensions.describe(names)
+        else:  # a placement's own value: that placement
+            moved = [dimension.owner] if dimension.owner else []
+            said = dimension.about or dimension.label
+        self.canvas.show_hover(self.document.results.highlight(moved))
+        self.canvas.set_hover_label(said)
         self.canvas.set_over_selection(False)
         return True
 

@@ -453,3 +453,52 @@ def test_name_equals_value_for_a_chosen_handle(session):
     assert box(session, PAD)[::2] == (42, 62)
     with pytest.raises(ValueError, match="takes two"):
         session.dimensions.make_for_handle(PAD, "x1 y1", "c = 3")
+
+
+# -- phase 3: a placed component's parameters -------------------------------------------------
+
+
+@pytest.fixture
+def placed():
+    from mems_sketch import ComponentDef, Instance
+
+    project = Project(name="placed")
+    project.add_layer(Layer("device", 1))
+    project.components["top"].parameters.append(ParamDef(name="L", default=60))
+    project.define_component(
+        ComponentDef(
+            name="beam",
+            parameters=[
+                ParamDef(name="length", default=50),
+                ParamDef(name="fingers", default=3, integer=True),
+            ],
+            shapes=[RectShape(name="body", layer="device", x0=0, y0=0, x1="length", y1=2)],
+        )
+    )
+    project.add(Instance("b1", "beam", {"length": 80}, x=10, rotation=90))
+    project.add(Instance("b2", "beam", {"length": "L"}, x=-20))
+    return EditSession(project)
+
+
+B1, B2 = ((0, 0),), ((0, 1),)
+
+
+def test_a_placement_shows_its_parameters(placed):
+    length, fingers = placed.dimensions.of(B1)
+    assert (length.label, length.field, length.owner) == ("length = 80", "params.length", B1)
+    # the side inside, placed: (0, 2) → (80, 2) turned by 90° and moved by 10
+    assert length.a == pytest.approx((8, 0)) and length.b == pytest.approx((8, 80))
+    assert (fingers.style, fingers.label) == ("chip", "fingers = 3")  # no size: a label
+    assert fingers.about == "fingers of b1 (beam)"
+    (from_outside, _) = placed.dimensions.of(B2)
+    assert from_outside.label == "length = L (60)" and from_outside.names == ("L",)
+
+
+def test_typing_for_a_placement_sets_its_value_or_the_parameter_it_names(placed):
+    placed.dimensions.set(B1, "params.fingers", "5")
+    assert placed.node(B1).params == {"length": 80, "fingers": 5}
+    assert placed.node(B2).params == {"length": "L"}  # the other placement keeps its own
+    placed.dimensions.set(B2, "params.length", "70")
+    assert placed.node(B2).params == {"length": "L"}
+    assert placed.active_definition.parameters[0].default == 70
+    assert placed.dimensions.preview(B1, "params.length", "90")[1] == "length  80 → 90"

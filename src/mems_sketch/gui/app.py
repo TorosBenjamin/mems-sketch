@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mems_sketch.core.errors import explain
 from mems_sketch.core.shapes import CornersModifier, NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
@@ -1442,12 +1443,16 @@ class MainWindow(QMainWindow):
 
     def zoom_to_selection(self) -> None:
         """Glide to show the selected shapes as large as they fit (View › Zoom to selection)."""
+        if not self.selection:
+            self.report_error("select the shapes to zoom to first")
+            return
         regions = dict(getattr(self.view, "node_regions", ()))
         self.canvas.frame(*(regions.get(p) for p in self.selection))
 
     def rename_selection(self) -> None:
         """Start renaming the selected shape: its name in Properties, ready to type over."""
         if len(self.selection) != 1:
+            self.report_error("select one shape to rename")
             return
         self.tool_windows.open("properties")
         name = self.properties.findChild(QLineEdit, "title-edit")
@@ -1737,7 +1742,7 @@ class MainWindow(QMainWindow):
         try:
             return True, action()
         except Exception as exc:  # noqa: BLE001 - reported to the user
-            self.report_error(str(exc))
+            self.report_error(explain(exc))
             return False, None
 
     def _select_result(self, action) -> None:
@@ -1855,21 +1860,41 @@ class MainWindow(QMainWindow):
         self._run(lambda: self.document.moves.mirror(paths, left_right, center))
 
     def remove_alignment(self) -> None:
-        if len(self.selection) == 1:
-            path = self.selection[0]
-            self._run(lambda: self.document.nodes.set_align(path, None))
+        if len(self.selection) != 1:
+            self.report_error("select one shape to remove its alignment")
+            return
+        path = self.selection[0]
+        node = self.document.node(path)
+        if node.align is None:  # nothing to remove: no step to undo either
+            self.notify(f"{node.name or node.kind} is not aligned", seconds=3)
+            return
+        self._run(lambda: self.document.nodes.set_align(path, None))
 
     def unpack(self) -> None:
-        if len(self.selection) == 1:
-            self._select_result(lambda: self.document.components.unpack(self.selection[0]))
+        if len(self.selection) != 1:
+            self.report_error("select one placed component to unpack")
+            return
+        self._select_result(lambda: self.document.components.unpack(self.selection[0]))
 
     def unwrap(self) -> None:
-        if len(self.selection) == 1:
-            self._run(lambda: self.document.nodes.unwrap(self.selection[0]))
+        if len(self.selection) != 1:
+            self.report_error("select one operation to unwrap")
+            return
+        self._run(lambda: self.document.nodes.unwrap(self.selection[0]))
 
     def duplicate(self) -> None:
+        """A copy of each selected shape (one step to undo), selected."""
+        if not self.selection:
+            self.report_error("select the shapes to duplicate first")
+            return
         if len(self.selection) == 1:
             self._select_result(lambda: self.document.nodes.duplicate(self.selection[0]))
+            return
+        paths = list(self.selection)
+        clipboard = self.document.clipboard
+        ok, pasted = self._run(lambda: clipboard.paste(clipboard.copy(paths)))
+        if ok and pasted:
+            self._select_quietly(list(pasted))
 
     def delete(self) -> None:
         if getattr(self.tool, "delete_chosen", lambda: False)():

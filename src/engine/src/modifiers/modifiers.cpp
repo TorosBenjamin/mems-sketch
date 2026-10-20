@@ -20,10 +20,9 @@ ApplyModifier find_modifier(std::string_view kind) {
 
 int copy_count(const Context& ctx, const Json& modifier, const char* key, double fallback, const char* what) {
     const double number = ctx.number(modifier, key, fallback);
-    if (number != std::trunc(number) || number < 0) {
-        char buffer[32];
-        std::snprintf(buffer, sizeof buffer, "%g", number);
-        throw BuildError(std::string(what) + " must be a non-negative integer, got " + buffer);
+    if (number != std::trunc(number) || number < 1) {
+        throw BuildError(std::string(what) + " must be a whole number, at least 1, not " + number_text(number) +
+                         " (switch the shape off to hide it)");
     }
     check_copies(number > static_cast<double>(MAX_COPIES) ? MAX_COPIES + 1 : static_cast<long long>(number), what);
     return static_cast<int>(number);

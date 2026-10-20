@@ -123,3 +123,14 @@ def test_named_points_come_before_corners_and_corners_before_edges():
     assert targets.nearest(0.2, 0.1, 1) == pytest.approx((0, 0, "corner"))
     assert targets.nearest(3, 0.3, 1)[:2] == pytest.approx((3, 0))
     assert targets.nearest(5, 5, 1) is None
+
+
+def test_a_ruler_needs_a_length(window):
+    """#253: two clicks on one point, or an angle's arms on one point, add nothing."""
+    tool = window.tools["measure"]
+    window.set_tool("measure")
+    tool.set_mode(DISTANCE)
+    before = len(window.rulers.get(window.document.active, []))
+    for _ in range(2):
+        tool.press(100, 20, Qt.KeyboardModifier.ControlModifier)
+    assert len(window.rulers.get(window.document.active, [])) == before and tool.busy

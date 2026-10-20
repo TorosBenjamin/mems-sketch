@@ -97,6 +97,9 @@ class ParamDef(_Model):
 
     @model_validator(mode="after")
     def _numeric_default_in_range(self):
+        low, high = self.min, self.max
+        if isinstance(low, int | float) and isinstance(high, int | float) and low > high:
+            raise ValueError(f"the min of '{self.name}' ({low:g}) is more than its max ({high:g})")
         if isinstance(self.default, str):
             return self  # checked when the expression is resolved
         if self.integer and self.default != int(self.default):

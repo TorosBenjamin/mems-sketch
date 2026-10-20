@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mems_sketch.core.errors import explain
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
@@ -151,7 +152,7 @@ class _Panel(QWidget):
             action()
             return True
         except Exception as exc:  # noqa: BLE001 - reported to the user
-            self.error.emit(str(exc))
+            self.error.emit(explain(exc))
             return False
 
 

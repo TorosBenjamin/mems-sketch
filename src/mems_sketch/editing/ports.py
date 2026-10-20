@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mems_sketch.core.levels import is_relative
 from mems_sketch.core.project import Project
 from mems_sketch.core.user_component import PortDef
 from mems_sketch.editing.commands import Commands
@@ -21,6 +22,7 @@ class PortEdits(Commands):
         )
         if any(p.name == name for p in self.session.active_definition.ports):
             raise ValueError(f"port '{name}' already exists")
+        self._check_layer(fields.get("layer"))
         port = PortDef(name=name, at=at, **fields)
         self.session.edit(f"Add port {name}", lambda p: self.session.local(p).ports.append(port))
         return name
@@ -30,6 +32,7 @@ class PortEdits(Commands):
         description). A new name is followed by the components that place this one."""
 
         new = fields.pop("name", name)
+        self._check_layer(fields.get("layer"))
 
         def change(project: Project) -> None:
             if new != name:
@@ -49,3 +52,10 @@ class PortEdits(Commands):
             definition.ports = [p for p in definition.ports if p.name != name]
 
         self.session.edit(f"Delete port {name}", change)
+
+    def _check_layer(self, layer: str | None) -> None:
+        """A port's layer is one of the project's, or relative to the level (#253)."""
+        layers = self.session.project.layers
+        if layer is None or is_relative(layer) or layer in layers:
+            return
+        raise ValueError(f"there is no layer '{layer}' (the layers: {', '.join(layers)})")

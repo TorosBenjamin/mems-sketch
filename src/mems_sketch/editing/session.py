@@ -366,6 +366,12 @@ class EditSession:
         if value is None:
             trials.pop(name, None)
         else:
+            target = self.engine.component(component)
+            if name not in target.Params.model_fields:
+                known = ", ".join(k for k in target.Params.model_fields if k not in target.internal)
+                raise ValueError(
+                    f"'{component}' has no parameter '{name}' (its parameters: {known})"
+                )
             previous = trials.get(name)
             trials[name] = value
             try:

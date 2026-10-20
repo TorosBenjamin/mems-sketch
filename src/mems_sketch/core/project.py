@@ -511,6 +511,7 @@ class Project:
 
     def remove_parameter(self, name: str, component: str | None = None) -> None:
         definition = self.components[self._target(component)]
+        definition.parameter(name)  # there is one, or say so
         definition.parameters = [p for p in definition.parameters if p.name != name]
 
     def resolved_parameters(

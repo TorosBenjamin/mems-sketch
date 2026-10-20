@@ -203,6 +203,21 @@ class Results:
         outline.merge(record[path].geometry, frame_of(record, path))
         return build.geometry, None if outline.is_empty() else outline, shapes
 
+    def preview_added(self, node: Shape) -> Geometry:
+        """``node`` as it would be if added to the active component (e.g. a route
+        being drawn, which needs its siblings' ports), in the component's frame.
+        Raises if it does not build."""
+        project, component = self.session.project, self.session.active
+        definition = project.components[component].model_copy(deep=True)
+        definition.shapes.append(node)
+        path = ((0, len(definition.shapes) - 1),)
+        trial = dataclasses.replace(
+            project, components={**project.components, component: definition}
+        )
+        engine = self.session.engine.trial(trial)
+        record = engine.build(component, self.session.trials_for(component)).records()
+        return record[path].geometry.transformed(frame_of(record, path))
+
     def shapes(self, component: str | None = None) -> list[Geometry]:
         """The geometry of each shown top-level node of a component, in its frame:
         drawn outlined one by one over the merged layers."""
@@ -305,8 +320,14 @@ class Results:
         if path not in record:
             return []
         frame = frame_of(record, path)
-        result = []
+        # A node that draws nothing (a guide) has only its own points: its box
+        # points would be a box of those, points in empty space.
+        drawn = not record[path].geometry.is_empty()
+        result, seen = [], set()
         for name in record[path].points.names():
+            if name in seen or (not drawn and name in BBOX_POINTS and name != "center"):
+                continue
+            seen.add(name)
             try:
                 x, y = record[path].points.point(name)
             except ValueError:  # e.g. no geometry, so no bounding box

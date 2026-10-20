@@ -52,8 +52,14 @@ class NodeEdits(Commands):
         self.session.edit(f"Add {shape.name}", change)
         return ((0, len(self.session.shapes) - 1),)
 
-    def add_primitive(self, kind: str, layer: str = "device") -> NodePath:
-        return self.add(default_shape(kind, layer))
+    def add_primitive(
+        self, kind: str, layer: str = "device", x: float = 0.0, y: float = 0.0
+    ) -> NodePath:
+        """Add a default ``kind`` on ``layer``, moved by ``(x, y)`` µm."""
+        shape = default_shape(kind, layer)
+        if x or y:
+            shape = shape.model_copy(update=shape.moved(lambda v: v + x, lambda v: v + y, None))
+        return self.add(shape)
 
     def add_component(self, component: str, x: float = 0.0, y: float = 0.0) -> NodePath:
         """Place a component (its origin at ``x, y``) in the active component.

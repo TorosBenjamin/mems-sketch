@@ -40,7 +40,7 @@ several.
 | **Measure** | D, N | Two modes, switched in the status bar (**Distance** / **Angle**): D measures a distance (two clicks: the length, dx and dy), N an angle (the vertex, then a point on each arm: two arms and an arc with the angle; Shift: 15° steps). Points snap to the shapes' points, then to the corners and edges of everything drawn, placed components included, then to the grid (Ctrl: no snapping); a dot shows where, ringed on a point and following the cursor along an edge. Rulers stay until **Tools → Clear rulers**. |
 | **Rectangle**, **Circle** | B, C | Drag, or click corner and opposite corner (centre and radius). Shift: a square. |
 | **Polygon**, **Path** | P, W | Click the points; double-click, Enter or (polygon) the first point finishes; Backspace takes back a point. Shift: 0°, 45°, 90° segments. |
-| **Route** | E | A wire from port to port (the ports are marked): click a port, any via points, then another port. It runs along x and y between ports along x and y, else straight; as wide as its ports, or the path **Width** when they differ. With a route selected, drag its via points. See [Routes](shapes-and-operations.md#routes). |
+| **Route** | E | A wire from port to port (the ports are marked): click a port, any via points, then another port; over the end port it shows the route as it will be built. It runs along x and y between ports along x and y, else straight; as wide as its ports, or the path **Width** when they differ. With a route selected, drag its via points. See [Routes](shapes-and-operations.md#routes). |
 | **Guide** | G | A construction line: draws nothing, but has points and can be mirrored about. |
 
 The drawing tools draw on the layer chosen in the status bar (or by clicking a

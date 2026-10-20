@@ -1804,8 +1804,12 @@ class MainWindow(QMainWindow):
         if ok and path:
             self._select_quietly([path])  # just made where the user is looking
 
-    def add_primitive(self, kind: str) -> None:
-        self._select_result(lambda: self.document.nodes.add_primitive(kind))
+    def add_primitive(self, kind: str, at: tuple[float, float] | None = None) -> None:
+        """Add a default ``kind`` on the drawing layer, centred at ``at`` µm (a
+        right-click, put on the grid) or at the origin."""
+        x, y = (0.0, 0.0) if at is None else self.on_grid(*at)
+        layer = self.draw_layer or "device"
+        self._select_result(lambda: self.document.nodes.add_primitive(kind, layer, x, y))
 
     def add_component(self, name: str) -> None:
         self._select_result(lambda: self.document.nodes.add_component(name))
@@ -1825,7 +1829,7 @@ class MainWindow(QMainWindow):
         if at is None:
             popup.chosen.connect(self.start_placing)
         else:
-            popup.chosen.connect(lambda name: self.place_component_at(name, *at))
+            popup.chosen.connect(lambda name: self.place_component_at(name, *self.on_grid(*at)))
         popup.browse.connect(lambda: self.search("Components"))
         if near is None:
             cursor = QCursor.pos()
@@ -1851,7 +1855,14 @@ class MainWindow(QMainWindow):
             self.report_error("a component cannot be placed inside itself")
             return
         component_picker.remember(name)
+        x, y = round(x, 6) + 0.0, round(y, 6) + 0.0  # no float noise in the file
         self._select_result(lambda: self.document.nodes.add_component(name, x, y))
+
+    def on_grid(self, x: float, y: float) -> tuple[float, float]:
+        """``(x, y)`` µm on the canvas grid, unless grid snapping is off."""
+        if not self.settings.get("snapping/grid"):
+            return x, y
+        return self.canvas.on_grid(x, y)
 
     def wrap(self, operation: str) -> None:
         self._select_result(lambda: self.document.nodes.wrap(self.selection, operation))

@@ -220,3 +220,24 @@ def test_a_guides_end_is_dragged_with_a_line_drawn_meanwhile(window):
     guide = window.document.node(axis)
     assert (guide.x1, guide.y1) == (70, 80)
     assert canvas._sketch_item is None
+
+
+# -- phase 4: Alt changes the parameter -------------------------------------------------------
+
+
+def test_alt_drag_changes_the_parameter_the_side_names(window):
+    from mems_sketch.core.shapes import RectShape
+
+    window.document.parameters.set("size", 100)
+    window.document.nodes.add(RectShape(name="base", layer="device", x0=0, y0=0, x1="size", y1=20))
+    window.canvas.zoom_to(window.canvas.content_rect())
+    window.select_click(BASE, False)
+    alt = Qt.KeyboardModifier.AltModifier
+    canvas = window.canvas
+    mouse(canvas, QEvent.Type.MouseButtonPress, 100, 10, alt)
+    mouse(canvas, QEvent.Type.MouseMove, 120, 10, alt)
+    assert canvas.cursor_label == "size  100 → 120"
+    mouse(canvas, QEvent.Type.MouseButtonRelease, 120, 10, alt)
+    assert window.document.node(BASE).x1 == "size"
+    assert window.document.active_definition.parameters[0].default == 120
+    assert handle(window, "x1") == (120, 10)

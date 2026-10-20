@@ -8,6 +8,12 @@ moves the point it is aligned by (the side its ``left`` sits on), the
 alignment's offset changes by as much, so the dragged handle still ends up
 under the cursor and the rest of the shape stays put.
 
+Dragged with Alt (:meth:`HandleEdits.retuned`), a coordinate that names a
+parameter changes that parameter instead: ``x1 = length`` dragged 3 µm sets
+``length`` from 40 to 43, and everything else that uses it follows. A parameter
+reached through a derived one (``pitch = width + gap``) is found too; one with a
+trial value, or a coordinate that names none, gets the offset as usual.
+
 While dragging, :meth:`HandleEdits.preview` builds the changed shape on its
 own (its expressions evaluated, without modifiers), so the canvas can show it
 without building the whole component.
@@ -15,15 +21,16 @@ without building the whole component.
 
 from __future__ import annotations
 
+import re
 import typing
 from dataclasses import dataclass
 from typing import Any
 
 from mems_sketch.core.component import Geometry
-from mems_sketch.core.expressions import evaluate
+from mems_sketch.core.expressions import evaluate, names_in, resolve_variables
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import NodePath, Shape, container_of, frame_of, node_at
-from mems_sketch.core.shapes.handles import Handle, handle_label, typed_point
+from mems_sketch.core.shapes.handles import Handle, handle_label, rounded, typed_point
 from mems_sketch.core.shapes.points import BBOX_POINTS
 from mems_sketch.core.transform import Transform
 from mems_sketch.editing.commands import Commands
@@ -97,6 +104,155 @@ class HandleEdits(Commands):
         moved = type(node).model_validate({**node.model_dump(), **changed})
         return _keep_alignment(drag, _follow_corners(drag, moved))
 
+    def retuned(self, drag: HandleDrag, x: float, y: float) -> tuple[Shape, dict[str, float]]:
+        """The drag to ``(x, y)`` done with Alt: the node, and the parameters that change
+        (name: new default). A coordinate that names a parameter keeps its expression
+        and the parameter changes to put it under the cursor; the others get an
+        offset, as :meth:`dragged` does."""
+        node = drag.node
+        to = drag.frame.inverted().apply(x, y)
+        changed = node.handle_moved(drag.handle.key, to, drag.value)
+        tuned: dict[str, float] = {}
+        rest: dict[str, Any] = {}
+        for field, new in changed.items():
+            old = getattr(node, field)
+            if isinstance(new, list) and isinstance(old, list) and len(new) == len(old):
+                new = [self._tuned_point(drag, a, b, tuned) for a, b in zip(old, new, strict=True)]
+                if new != old:
+                    rest[field] = new
+            elif not self._tune(drag, old, new, tuned):
+                rest[field] = new
+        if not rest:
+            return node, tuned
+        moved = type(node).model_validate({**node.model_dump(), **rest})
+        return _keep_alignment(drag, _follow_corners(drag, moved)), tuned
+
+    def _tuned_point(self, drag: HandleDrag, old, new, tuned: dict[str, float]):
+        if not isinstance(old, list | tuple) or old == new:
+            return new
+        kept = [a if self._tune(drag, a, b, tuned) else b for a, b in zip(old, new, strict=True)]
+        return type(new)(kept)
+
+    def _tune(self, drag: HandleDrag, old, new, tuned: dict[str, float]) -> bool:
+        """Change a parameter ``old`` (an expression) names so it is worth ``new``;
+        False if none can (``tuned`` gains it, and holds those changed already)."""
+        if not isinstance(old, str) or old == new:
+            return False
+        try:
+            target = _number(new, self._scope_with(drag, tuned))
+        except (ValueError, KeyError, ZeroDivisionError):
+            return False
+        for name in self._tunable(old):
+            if name in tuned:
+                return True  # another coordinate set it: this one follows it
+            value = self._solved(drag, old, name, target, tuned)
+            if value is not None:
+                tuned[name] = value
+                return True
+        return False
+
+    def _tunable(self, expression: str) -> list[str]:
+        """The parameters an expression depends on that a drag can change, in the order
+        it names them: its own, or those a derived one uses; not one with a trial
+        value (that is what it is built with)."""
+        definitions = {p.name: p for p in self.session.active_definition.parameters}
+        trials = self.session.trials_for(self.session.active)
+        found: list[str] = []
+
+        def visit(text: str, seen: set[str]) -> None:
+            for name in _ordered(text, _named(text)):
+                if name not in definitions or name in seen or name in trials:
+                    continue
+                seen.add(name)
+                default = definitions[name].default
+                if isinstance(default, str):
+                    visit(default, seen)
+                elif name not in found:
+                    found.append(name)
+
+        visit(expression, set())
+        return found
+
+    def _solved(self, drag, expression: str, name: str, target: float, tuned) -> float | None:
+        """The value of parameter ``name`` that makes ``expression`` worth ``target``
+        (kept within its limits), or None if none does."""
+        definition = next(p for p in self.session.active_definition.parameters if p.name == name)
+
+        def worth(value: float) -> float:
+            return _number(expression, self._scope_with(drag, {**tuned, name: value}))
+
+        try:
+            value = float(definition.default)
+            for _ in range(20):  # Newton's method: one step for a linear expression
+                now = worth(value)
+                if abs(now - target) < 1e-9:
+                    break
+                step = max(abs(value) * 1e-6, 1e-6)
+                slope = (worth(value + step) - now) / step
+                if abs(slope) < 1e-12:
+                    return None
+                value += (target - now) / slope
+            if abs(worth(value) - target) > 1e-6:
+                return None  # it cannot reach it
+            return self._within_limits(drag, definition, value, tuned)
+        except (ValueError, KeyError, ZeroDivisionError, OverflowError):
+            return None
+
+    def _within_limits(self, drag, definition, value: float, tuned) -> float | None:
+        if definition.integer:
+            value = float(round(value))
+        scope = self._scope_with(drag, tuned)
+        for limit, exclusive, low in (
+            (definition.min, definition.min_exclusive, True),
+            (definition.max, definition.max_exclusive, False),
+        ):
+            if limit is None:
+                continue
+            bound = _number(limit, scope)
+            past = value < bound if low else value > bound
+            if past or (exclusive and value == bound):
+                if exclusive:
+                    return None
+                value = bound
+        return rounded(value)
+
+    def _scope_with(self, drag: HandleDrag, tuned: dict[str, float]) -> dict[str, float]:
+        """The drag's scope with parameters set to ``tuned`` (derived ones follow)."""
+        if not tuned:
+            return drag.scope
+        definitions = self.session.active_definition.parameters
+        values: dict[str, Any] = {p.name: p.default for p in definitions}
+        values.update(self.session.trials_for(self.session.active))
+        values.update(tuned)
+        fixed = {k: v for k, v in drag.scope.items() if k not in values}
+        return {**drag.scope, **resolve_variables(values, fixed)}
+
+    def followers(self, drag: HandleDrag, tuned: dict[str, float]) -> list[str]:
+        """The other top-level shapes a change of ``tuned`` moves: those that use the
+        parameters (or ones derived from them), and those aligned to the dragged one."""
+        if not tuned:
+            return []
+        definitions = self.session.active_definition.parameters
+        changed = set(tuned)
+        grew = True
+        while grew:  # derived parameters change too
+            grew = False
+            for p in definitions:
+                derived = p.name not in changed and isinstance(p.default, str)
+                if derived and _named(p.default) & changed:
+                    changed.add(p.name)
+                    grew = True
+        own = drag.node.name
+        mine = node_at(self.session.shapes, drag.path[:1])
+        found = []
+        for shape in self.session.shapes:
+            if shape is mine:
+                continue
+            aligned = own and shape.align is not None and shape.align.to.startswith(f"{own}.")
+            if aligned or _uses(shape.model_dump(), changed):
+                found.append(shape.name or shape.kind)
+        return found
+
     def sketch(self, drag: HandleDrag, node: Shape) -> tuple[list, bool] | None:
         """The line to draw for ``node`` while dragging, in the component's frame, for
         one that has no preview of its own (a guide; a route, from its start port
@@ -117,22 +273,29 @@ class HandleEdits(Commands):
             points = [(ends["start"].x, ends["start"].y), *points, (ends["end"].x, ends["end"].y)]
         return points, closed
 
-    def preview(self, drag: HandleDrag, node: Shape) -> Geometry | None:
-        """``node`` built on its own, in the component's frame (None: it does not build)."""
+    def preview(
+        self, drag: HandleDrag, node: Shape, tuned: dict[str, float] | None = None
+    ) -> Geometry | None:
+        """``node`` built on its own, in the component's frame, with the parameters
+        ``tuned`` (:meth:`retuned`) (None: it does not build)."""
         from mems_sketch.engine import build_shapes
 
         try:
-            plain = numeric(node, drag.scope)
+            plain = numeric(node, self._scope_with(drag, tuned or {}))
             if plain is None:
                 return None
             return build_shapes([plain]).transformed(drag.frame)
         except Exception:  # noqa: BLE001 - e.g. a degenerate shape: no preview
             return None
 
-    def describe(self, drag: HandleDrag, node: Shape) -> str:
-        """What the drag changes, e.g. ``x1  length → length + 3   (43 µm)``."""
+    def describe(self, drag: HandleDrag, node: Shape, tuned: dict[str, float] | None = None) -> str:
+        """What the drag changes, e.g. ``x1  length → length + 3   (43 µm)``, or with
+        Alt ``length  40 → 43   also moves: pad``."""
         old, new = drag.node, node
         parts, aligned = [], []
+        definitions = {p.name: p for p in self.session.active_definition.parameters}
+        for name, value in (tuned or {}).items():
+            parts.append(f"{name}  {_shown(definitions[name].default, drag)} → {value:g}")
         for field in type(old).model_fields:
             before, after = getattr(old, field), getattr(new, field)
             if before == after:
@@ -148,12 +311,39 @@ class HandleEdits(Commands):
             else:
                 unit = "°" if field.endswith("angle") else " µm"
                 parts.append(f"{field}  {_shown(before, drag)} → {_shown(after, drag, unit)}")
-        return "   ".join(parts + aligned)
+        text = "   ".join(parts + aligned)
+        others = self.followers(drag, tuned or {})
+        if others:
+            shown = ", ".join(others[:3]) + (
+                f" and {len(others) - 3} more" if len(others) > 3 else ""
+            )
+            text += f"   also moves: {shown}"
+        return text
 
     def drag(self, path: NodePath, key: str, x: float, y: float) -> None:
         """Drag handle ``key`` of the node at ``path`` to ``(x, y)``: one edit."""
         drag = self._started(path, key)
         self._replace(path, drag.node, self.dragged(drag, x, y), "Resize")
+
+    def drag_parameters(self, path: NodePath, key: str, x: float, y: float) -> None:
+        """Drag handle ``key`` to ``(x, y)`` with Alt (see :meth:`retuned`): one edit,
+        the parameters and the node together."""
+        drag = self._started(path, key)
+        node, tuned = self.retuned(drag, x, y)
+        if not tuned:
+            self._replace(path, drag.node, node, "Resize")
+            return
+
+        def change(project: Project) -> None:
+            parameters = self.session.local(project).parameters
+            for index, p in enumerate(parameters):
+                if p.name in tuned:
+                    parameters[index] = p.model_copy(update={"default": tuned[p.name]})
+            if node != drag.node:
+                container, index = container_of(self.session.shapes_in(project), path)
+                container[index] = node
+
+        self.session.edit(f"Set {', '.join(tuned)}", change)
 
     def type_in(self, path: NodePath, key: str, values: list[float]) -> None:
         """Put handle ``key`` where typed ``values`` say (see :meth:`typed`): one edit."""
@@ -239,6 +429,31 @@ def _evaluated(value, scope):
 
 def _number(value, scope: dict[str, float]) -> float:
     return float(value) if isinstance(value, int | float) else float(evaluate(value, scope))
+
+
+def _named(expression: str) -> set[str]:
+    """The names in an expression, or none if it does not parse."""
+    try:
+        return names_in(expression)
+    except (ValueError, SyntaxError):
+        return set()
+
+
+def _ordered(expression: str, names: set[str]) -> list[str]:
+    def where(name: str) -> int:
+        found = re.search(rf"(?<![\w.]){re.escape(name)}(?![\w.])", expression)
+        return found.start() if found else len(expression)
+
+    return sorted(names, key=lambda n: (where(n), n))
+
+
+def _uses(data, names: set[str]) -> bool:
+    """Whether a shape's dumped fields name one of ``names`` in an expression."""
+    if isinstance(data, dict):
+        return any(_uses(v, names) for k, v in data.items() if k not in ("name", "layer", "kind"))
+    if isinstance(data, list | tuple):
+        return any(_uses(v, names) for v in data)
+    return isinstance(data, str) and bool(_named(data) & names)
 
 
 def _box(node: Shape | None) -> tuple[float, float, float, float] | None:

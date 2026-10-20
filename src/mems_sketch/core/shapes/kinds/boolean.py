@@ -15,6 +15,10 @@ if TYPE_CHECKING:
 
 
 class BooleanShape(Operation):
+    """``a`` ``op`` ``b``, layer by layer: ``subtract`` (a without b), ``intersect``
+    (where both are) or ``xor`` (where one is). ``a`` and ``b`` are shapes, a map
+    by name."""
+
     icon: ClassVar[str] = "subtract"
     child_fields: ClassVar[tuple[str, ...]] = ("a", "b")
     wraps: ClassVar[tuple[str, ...]] = ("subtract", "intersect", "xor")

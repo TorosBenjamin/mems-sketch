@@ -46,8 +46,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mems_sketch.core.errors import explain
 from mems_sketch.core.expressions import evaluate
-from mems_sketch.core.levels import Stack
+from mems_sketch.core.levels import Stack, is_relative
 from mems_sketch.core.shapes import (
     MODIFIER_KINDS,
     CornersModifier,
@@ -513,6 +514,7 @@ class PropertyEditor(QScrollArea):
     def _points_editor(self, points, field: str = "points") -> QWidget:
         edit = QPlainTextEdit("\n".join(f"{_format(x)}, {_format(y)}" for x, y in points))
         edit.setFixedHeight(110)
+        edit.setTabChangesFocus(True)  # Tab moves on; leaving applies it
 
         def read():
             rows = [line.split(",") for line in edit.toPlainText().splitlines() if line.strip()]
@@ -526,15 +528,25 @@ class PropertyEditor(QScrollArea):
     def _mapping_editor(self, mapping: dict[str, str]) -> QWidget:
         edit = QPlainTextEdit("\n".join(f"{a} -> {b}" for a, b in mapping.items()))
         edit.setFixedHeight(80)
+        edit.setTabChangesFocus(True)  # Tab moves on; leaving applies it
 
         def read():
             result = {}
-            for line in edit.toPlainText().splitlines():
-                if line.strip():
-                    source, sep, target = line.partition("->")
-                    if not sep:
-                        raise ValueError("write each mapping as 'source -> target'")
-                    result[source.strip()] = target.strip()
+            layers = self.document.project.layers
+            for line in edit.toPlainText().replace("→", "->").splitlines():
+                if not line.strip():
+                    continue
+                source, sep, target = (part.strip() for part in line.partition("->"))
+                if not sep or not source or not target:
+                    raise ValueError(
+                        f"write each mapping as 'source -> target', not '{line.strip()}'"
+                    )
+                if source in result:
+                    raise ValueError(f"'{source}' is mapped twice")
+                for layer in (source, target):
+                    if layer not in layers and not is_relative(layer):
+                        raise ValueError(f"there is no layer '{layer}'")
+                result[source] = target
             return result
 
         self._editors["mapping"] = read
@@ -663,8 +675,8 @@ class PropertyEditor(QScrollArea):
             if not box.isChecked():
                 return None
             to = target.currentText().strip()
-            if not to:
-                raise ValueError("choose the point to align to")
+            if not to:  # ticked, no point chosen yet: not an edit until one is
+                return align
             return {
                 "point": own.currentText().strip() or "center",
                 "to": to,
@@ -1092,7 +1104,7 @@ class PropertyEditor(QScrollArea):
         """A text field of the form lost focus: apply what it says, if it changed."""
         body = self.widget()
         if (
-            not isinstance(old, QLineEdit)
+            not isinstance(old, QLineEdit | QPlainTextEdit)
             or not shiboken6.isValid(old)
             or body is None
             or not body.isAncestorOf(old)
@@ -1103,18 +1115,19 @@ class PropertyEditor(QScrollArea):
         if isinstance(new, ExpandedEdit) or getattr(old, "expanded", None) is not None:
             return  # into the field's wider editor: still editing
         path = self.path
-        try:
-            node = self._collect()
-        except Exception as exc:  # noqa: BLE001 - reported, as Enter would
-            self.error.emit(_message(exc))
-            return
-        with contextlib.suppress(KeyError):
-            if node == self.document.node(path):
-                return
         # The field the focus went to, by its place in the form: the form is built
         # again once applied, and the focus goes back to the same place.
         fields = _focusable(body)
         at = fields.index(new) if new in fields else None
+        try:
+            node = self._collect()
+        except Exception as exc:  # noqa: BLE001 - reported, as Enter would
+            self.error.emit(_message(exc))
+            QTimer.singleShot(0, lambda: self._rejected(path, at))
+            return
+        with contextlib.suppress(KeyError):
+            if node == self.document.node(path):
+                return
         # After the focus has moved, not inside the focus change being delivered.
         QTimer.singleShot(0, lambda: self._apply_left(path, node, at))
 
@@ -1123,22 +1136,44 @@ class PropertyEditor(QScrollArea):
             self.document.nodes.replace(path, node)
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))
+            self._rejected(path, at)
             return
         self.applied.emit()
-        body = self.widget()
-        if at is not None and self.path == path and body is not None:
-            fields = _focusable(body)
-            if at < len(fields):
-                fields[at].setFocus(Qt.FocusReason.OtherFocusReason)
+        self._focus_field(path, at)
 
     def apply(self) -> None:
+        """Apply the form (Enter in a field). The focus stays on the field, in the
+        form built again; a value refused goes back to the one stored."""
         if self.path is None:
             return
+        path, body, focused = self.path, self.widget(), QApplication.focusWidget()
+        fields = _focusable(body) if body is not None else []
+        at = fields.index(focused) if focused in fields else None
         try:
-            self.document.nodes.replace(self.path, self._collect())
-            self.applied.emit()
+            self.document.nodes.replace(path, self._collect())
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))
+            self._rejected(path, at)
+            return
+        self.applied.emit()
+        self._focus_field(path, at)
+
+    def _rejected(self, path: NodePath, at: int | None) -> None:
+        """A value was refused: show the node as it is (the value stored, not the
+        one typed), so the refused text cannot block the next edit."""
+        if self.path != path:
+            return
+        self.show_node(path)
+        self._focus_field(path, at)
+
+    def _focus_field(self, path: NodePath, at: int | None) -> None:
+        """Put the focus on the form's field number ``at`` (the form was built again)."""
+        body = self.widget()
+        if at is None or self.path != path or body is None:
+            return
+        fields = _focusable(body)
+        if at < len(fields):
+            fields[at].setFocus(Qt.FocusReason.OtherFocusReason)
 
 
 class ElidedLabel(QLabel):
@@ -1376,14 +1411,7 @@ def _limit(limit, relation: str, values: dict[str, float]) -> str:
 
 def _message(exc: Exception) -> str:
     """A readable message; validation errors list each field with its problem."""
-    errors = getattr(exc, "errors", None)
-    if callable(errors):
-        with contextlib.suppress(Exception):  # not a pydantic error after all
-            return "; ".join(
-                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" if e["loc"] else e["msg"]
-                for e in errors()
-            )
-    return str(exc)
+    return explain(exc)
 
 
 def _with_button(widget: QWidget, button: QToolButton) -> QWidget:

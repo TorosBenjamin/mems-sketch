@@ -77,13 +77,17 @@ def test_library_tabs_are_read_only_but_take_trial_values(example):
     assert w.document.results.geometry().layers["device"].area() == area_before
 
 
-def test_trial_values_do_not_change_the_design(example):
+def test_trial_values_do_not_change_the_design(example, qtbot):
     w = example
     w.open_component("suspension")
     w.document.set_trial("turns", 6)
     assert w.document.project.components["suspension"].parameter("turns").default == 3
-    row = w.parameters._names.index("turns")
-    assert w.parameters.table.item(row, w.parameters.TRIAL).text() == "6"
+
+    def trial_shown() -> str:  # after the build, in the background when it is slow
+        row = w.parameters._names.index("turns")
+        return w.parameters.table.item(row, w.parameters.TRIAL).text()
+
+    qtbot.waitUntil(lambda: trial_shown() == "6")
     with pytest.raises(ValueError, match="turns"):
         w.document.set_trial("turns", 0.5)  # must be an integer
     assert w.document.trials["suspension"] == {"turns": 6}

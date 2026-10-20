@@ -3,11 +3,13 @@ the top component, libraries, and which components place which."""
 
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
 from typing import Any
 
 from mems_sketch.core.expressions import ExpressionError, names_in
+from mems_sketch.core.levels import LEVEL, Stack, is_relative, offset, shifted
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import (
     NodePath,
@@ -318,6 +320,8 @@ class ComponentEdits(Commands):
                         "make that shared first, then unpack"
                     ) from None
                 shape.component = project.reference_name(target, active)
+        own_level = lambda ref: _own_level(project, ref, context)
+        shapes = _on_level(shapes, node.level or definition.level, project, own_level)
         taken = {s.name for s in walk(self.session.shapes) if s.name}
         for old in [s.name for s in walk(shapes) if s.name in taken]:
             new = fresh_name(old, taken | {s.name for s in walk(shapes) if s.name})
@@ -389,14 +393,16 @@ def _as_expression(value: Value) -> str:
 
 def parameters_used(definition: ComponentDef, nodes: list[Shape]) -> list[ParamDef]:
     """The parameters of ``definition`` that ``nodes`` use, with those their
-    defaults use in turn, in the definition's order."""
+    defaults and limits use in turn, in the definition's order."""
     by_name = {p.name: p for p in definition.parameters}
     used = _names_used(nodes) & by_name.keys()
     pending = list(used)
-    while pending:  # defaults may depend on further parameters
-        default = by_name[pending.pop()].default
-        if isinstance(default, str):
-            for dep in names_in(default) & by_name.keys():
+    while pending:  # defaults and limits may depend on further parameters
+        parameter = by_name[pending.pop()]
+        for value in (parameter.default, parameter.min, parameter.max):
+            if not isinstance(value, str):
+                continue
+            for dep in names_in(value) & by_name.keys():
                 if dep not in used:
                     used.add(dep)
                     pending.append(dep)
@@ -438,3 +444,36 @@ def _resolved(project: Project, name: str, context: str) -> str | None:
         return project.qualify(name, context)
     except KeyError:
         return None
+
+
+def _own_level(project: Project, ref: RefShape, context: str) -> bool:
+    """Whether the component ``ref`` places declares its own default level."""
+    found = project.definition(project.qualify(ref.component, context))
+    return found is not None and found[0].level is not None
+
+
+def _on_level(shapes: list[Shape], spec: str | None, project: Project, own_level) -> list[Shape]:
+    """A placed component's shapes, written as seen from the component placing
+    it, where the placement put them on the level ``spec`` (relative, or by
+    name): so unpacking keeps every shape on its layer. ``own_level(ref)`` says
+    whether a placed component inside has its own level (which then stays)."""
+    if spec is None:  # on the placing component's level already
+        return shapes
+    if is_relative(spec):  # so many levels up: relative names shift
+        layer = place = functools.partial(shifted, by=offset(spec))
+    else:  # on a level by name: relative names become names
+        stack = Stack.of(project.process.levels, project.process.default_level)
+        layer = functools.partial(stack.layer, current=spec)
+        place = functools.partial(stack.place, own=None, current=spec)
+
+    def level(ref: RefShape) -> str | None:
+        if ref.level is None:  # it was on the placed component's level
+            return None if own_level(ref) else place(LEVEL)
+        return place(ref.level)
+
+    for shape in walk(shapes):
+        if isinstance(shape, RefShape):
+            shape.level = level(shape)
+        else:
+            shape.map_layers(layer)
+    return shapes

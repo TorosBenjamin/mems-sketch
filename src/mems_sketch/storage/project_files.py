@@ -92,10 +92,13 @@ class ProjectFormatError(ValueError):
 
 
 def save_project(project: Project, folder: str | Path) -> Path:
-    """Write ``project`` into ``folder``. Unchanged files are not rewritten; files
-    of components and processes the project no longer has are removed."""
+    """Write ``project`` into ``folder``. Files whose contents did not change are
+    not rewritten (a hand-edited file keeps its comments and layout); files of
+    components, processes and imports the project had and no longer has are
+    removed, and no others."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
+    owned = _owned(folder)
     libraries = {
         name: library_entry(lib) if lib.bundled else _relative(lib.path, folder)
         for name, lib in project.libraries.items()
@@ -110,7 +113,7 @@ def save_project(project: Project, folder: str | Path) -> Path:
     if project.imports:
         manifest["imports"] = imports_data(project)
     _write(folder / PROJECT_FILE, yaml_format.dump(_without_empty(manifest)))
-    _save_imports(project, folder / IMPORTS_DIR)
+    _save_imports(project, folder / IMPORTS_DIR, owned)
     written = set()
     for name, process in project.processes.items():
         path = folder / PROCESSES_DIR / name / PROCESS_FILE
@@ -125,7 +128,7 @@ def save_project(project: Project, folder: str | Path) -> Path:
         written.add(path)
     for directory, file in ((COMPONENTS_DIR, COMPONENT_FILE), (PROCESSES_DIR, PROCESS_FILE)):
         for stale in (folder / directory).rglob(file):
-            if stale not in written:
+            if stale not in written and _is_in(stale, owned):
                 stale.unlink()
         for empty in sorted((folder / directory).rglob("*"), reverse=True):  # deepest first
             if empty.is_dir() and not any(empty.iterdir()):
@@ -414,8 +417,31 @@ def rule_from_data(name: str, entry: dict[str, Any]) -> Rule:
     )
 
 
-def _save_imports(project: Project, imports_dir: Path) -> None:
-    """The imported files, each written once, and none that nothing uses any more."""
+def _owned(folder: Path) -> set[Path]:
+    """The folders and files the project already in ``folder`` lists (its
+    components', processes' and imported files): the ones a save may remove.
+    Empty when there is no project there, so nothing is removed."""
+    try:
+        manifest = _manifest(folder)
+    except ProjectFormatError:
+        return set()
+    listed = [*(manifest.get("components") or {}).values()]
+    listed += (manifest.get("processes") or {}).values()
+    owned = {(folder / str(rel)).resolve() for rel in listed}
+    for entry in (manifest.get("imports") or {}).values():
+        if isinstance(entry, dict) and "file" in entry:
+            owned.add((folder / IMPORTS_DIR / str(entry["file"])).resolve())
+    return owned
+
+
+def _is_in(path: Path, owned: set[Path]) -> bool:
+    path = path.resolve()
+    return any(path == o or o in path.parents for o in owned)
+
+
+def _save_imports(project: Project, imports_dir: Path, owned: set[Path]) -> None:
+    """The imported files, each written once, and none that nothing uses any more
+    (of those the project listed)."""
     files = {imported.file: imported.data for imported in project.imports.values()}
     if files:
         imports_dir.mkdir(exist_ok=True)
@@ -427,18 +453,29 @@ def _save_imports(project: Project, imports_dir: Path) -> None:
             os.replace(tmp, path)
     if imports_dir.is_dir():
         for stale in imports_dir.iterdir():
-            if stale.is_file() and stale.name not in files:
+            if stale.is_file() and stale.name not in files and _is_in(stale, owned):
                 stale.unlink()
         if not any(imports_dir.iterdir()):
             imports_dir.rmdir()
 
 
 def _write(path: Path, text: str) -> None:
-    if path.is_file() and path.read_text(encoding="utf-8") == text:
-        return
+    """Write ``text`` unless the file already says the same: the same text, or
+    YAML with the same contents written differently (by hand: comments, ``0.10``)."""
+    if path.is_file():
+        old = path.read_text(encoding="utf-8")
+        if old == text or _same_data(old, text):
+            return
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _same_data(old: str, new: str) -> bool:
+    try:
+        return yaml_format.load(old) == yaml_format.load(new)
+    except Exception:  # noqa: BLE001 - an unreadable file is rewritten
+        return False
 
 
 def _relative(path: Path | None, folder: Path) -> str:

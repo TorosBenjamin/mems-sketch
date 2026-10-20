@@ -135,6 +135,41 @@ def test_align_a_reference_with_rotation():
     assert pieces[1][1] > 50
 
 
+@pytest.mark.parametrize("rotation", [0, 10, 20, 30, 45, 60, -30])
+def test_rotated_parts_aligned_point_to_point_meet(rotation):
+    """A rotated part's point lands exactly on another's, off the grid, so the two
+    are one piece, not two a fraction of a nanometre apart (#246)."""
+    project = Project()
+    project.add(Instance("b1", "mems.guided_beam", rotation=rotation))
+    project.add(
+        Instance(
+            "b2",
+            "mems.guided_beam",
+            rotation=rotation + 180,
+            align=Align(point="tip", to="b1.tip"),
+        )
+    )
+    project.add(
+        Instance(
+            "sp",
+            "mems.serpentine_spring",
+            rotation=rotation,
+            align=Align(point="start", to="b1.tip"),
+        )
+    )
+    assert len(boxes(project)) == 1
+
+
+def test_an_alignment_on_the_grid_reads_as_written():
+    from mems_sketch.editing import EditSession
+
+    doc = EditSession()
+    doc.nodes.add(rect("a", 0, 0, 0.1, 0.2))
+    doc.nodes.add(rect("b", 0, 0, 1, 1, align=Align(point="bottom_left", to="a.top_right", dx=0.2)))
+    points = {name: (x, y) for name, x, y in doc.results.all_points()}
+    assert points["b.bottom_left"] == (0.3, 0.2)  # not 0.30000000000000004
+
+
 def test_booleans_see_both_operands():
     project = Project()
     project.add(
@@ -206,7 +241,7 @@ def test_cycles_and_bad_references_are_reported():
     project = Project()
     project.add(rect("a", 0, 0, 10, 10))
     project.add(rect("b", 0, 0, 10, 10, align=Align(to="a.top")))
-    with pytest.raises(ValueError, match="circular alignment"):
+    with pytest.raises(ValueError, match="circular: .a. depends on its own points"):
         project.replace("a", rect("a", 0, 0, 10, 10, align=Align(to="b.top")))
     with pytest.raises(ValueError, match="no point 'nose'"):
         project.replace("b", rect("b", 0, 0, 10, 10, align=Align(to="a.nose")))

@@ -17,7 +17,10 @@ from __future__ import annotations
 import math
 import time
 import weakref
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 import shiboken6
@@ -27,6 +30,7 @@ from PySide6.QtCore import (
     QLineF,
     QPoint,
     QPointF,
+    QRect,
     QRectF,
     QSize,
     QSizeF,
@@ -45,11 +49,12 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
-    QPixmapCache,
+    QPixmap,
     QPolygonF,
     QTransform,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPathItem,
@@ -72,6 +77,12 @@ from mems_sketch.gui import theme as themes
 
 CORNER_HANDLE_PX = 4.5  # a rounded corner's handle (radius)
 CORNER_ERROR_PX = 9  # the ring round a corner whose radius does not fit
+EDIT_HANDLE_PX = 4  # half the size of a shape's handle (a side, a vertex)
+TYPED_CHARACTERS = frozenset("0123456789.-+, ")  # a value typed for a handle
+DIMENSION_GAP_PX = 22  # how far a dimension's line is set off from what it measures
+DIMENSION_ARROW_PX = 7  # an arrowhead's length
+DIMENSION_END_REACH_PX = 7  # a press this close to a dimension's end drags it
+ROUND_HANDLES = ("vertex", "angle")  # drawn as dots; the others as squares
 
 
 @dataclass(frozen=True)
@@ -110,12 +121,10 @@ DEFAULT_OPTIONS = {
 GIZMO_GRAB_PX = 7  # how close to a gizmo handle counts as on it
 RIGHT_CLICK_SLOP_PX = 4  # a right press that moves further is a pan, not a click
 MENU_CARET = "▾"  # after the text of a button that opens a menu
-# Rendered items are kept as pictures (Qt's item cache, held in the pixmap cache):
-# room for several full-view pictures on a large, high-resolution screen.
-PIXMAP_CACHE_KB = 256 * 1024
+TILE_PX = 256  # pictures of the shapes are kept in tiles this many device pixels square
+TILE_STORE_KB = 256 * 1024  # room for those tiles: several full views on a large screen
 DRAFT_SETTLE_MS = 200  # full quality again this long after the last zoom or resize step
 DRAFT_ABOVE_MS = 25.0  # draft quality only when a full-quality frame takes longer than this
-CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
 OUTLINE_PX = 1.0
@@ -151,9 +160,6 @@ def geometry_path(geometry: Geometry, layer: str) -> QPainterPath:
 # engine built once is the same geometry wherever and however often it is
 # placed, so it is turned into a path once.
 _PATHS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
-# Placed copies past this many are drawn without a cached picture each (the
-# pictures would take more memory than they save time).
-MAX_CACHED_ITEMS = 2000
 GHOST_FILL = 0.35  # a component being placed: its fill, against its layer's colour
 GHOST_OPACITY = 0.75
 
@@ -179,14 +185,256 @@ def own_path(geometry: Geometry, layer: str) -> QPainterPath:
     return paths[layer]
 
 
-class ShapeItem(QGraphicsPathItem):
+class _Tiles:
+    """Pictures in device pixels, in tiles on a grid fixed to the scene, for what a
+    view shows: drawn once, then reused while the view pans.
+
+    Not Qt's own item cache: that keeps its pictures in logical pixels, so at a
+    fractional scale (130 % on a laptop screen) they land between device pixels,
+    and the strips it adds while panning a big item no longer meet the rest: the
+    shapes tear. Panning moves these tiles by whole device pixels (the scroll,
+    rounded, the same for every tile), so they always meet."""
+
+    _serial = 0
+    # Every tile shown lately, least recently used first: its key, then the picture
+    # it is part of (tiles drawn together share one) and where in it it is.
+    _store: ClassVar[OrderedDict[str, tuple[QPixmap, QRect]]] = OrderedDict()
+    _store_bytes = 0
+
+    @classmethod
+    def _keep(cls, key: str, picture: QPixmap, rect: QRect) -> None:
+        cls._store[key] = (picture, rect)
+        cls._store_bytes += rect.width() * rect.height() * 4
+        while cls._store_bytes > TILE_STORE_KB * 1024 and len(cls._store) > 1:
+            _, (_, old) = cls._store.popitem(last=False)
+            cls._store_bytes -= old.width() * old.height() * 4
+
+    @classmethod
+    def _find(cls, key: str) -> tuple[QPixmap, QRect] | None:
+        found = cls._store.get(key)
+        if found is not None:
+            cls._store.move_to_end(key)
+        return found
+
+    def __init__(self) -> None:
+        _Tiles._serial += 1
+        self.name = f"mems-tiles:{_Tiles._serial}"
+        self.version = 0  # raised when what they show changes
+
+    def paint(
+        self, owner: QGraphicsItem, painter: QPainter, widget, bounds: QRectF, draw, snapped=False
+    ) -> bool:
+        """Draw ``bounds`` (in ``owner``'s coordinates) from the tiles, calling
+        ``draw(painter, grid_rect)`` (the painter in ``owner``'s coordinates) for those
+        missing. ``snapped``: ``owner`` itself is put on whole device pixels, so moving
+        it reuses the tiles. False if they cannot be used (not in a view)."""
+        view = widget.parent() if widget is not None else None
+        if not isinstance(view, QGraphicsView):
+            return False
+        dpr = widget.devicePixelRatioF()
+        to_device = QTransform.fromScale(dpr, dpr)
+        exact = painter.worldTransform() * to_device  # owner to device pixels
+        placed = owner.sceneTransform() * view.transform() * to_device  # the same, unscrolled
+        linear = (exact.m11(), exact.m12(), exact.m21(), exact.m22())
+        size = abs(linear[0]) + abs(linear[1]) + abs(linear[2]) + abs(linear[3])
+        if (
+            not exact.isAffine()
+            or size == 0
+            or abs(linear[0] - placed.m11())
+            + abs(linear[1] - placed.m12())
+            + abs(linear[2] - placed.m21())
+            + abs(linear[3] - placed.m22())
+            > 1e-9 * size
+        ):
+            return False
+        anchor = (0.0, 0.0) if snapped else (placed.dx(), placed.dy())
+        fx, fy = anchor[0] - math.floor(anchor[0]), anchor[1] - math.floor(anchor[1])
+        # The grid's origin on the device: whole pixels, the scroll rounded.
+        ox = math.floor(anchor[0]) + round(exact.dx() - anchor[0])
+        oy = math.floor(anchor[1]) + round(exact.dy() - anchor[1])
+        to_grid = QTransform(*linear, fx, fy)
+        area = to_grid.mapRect(bounds).toAlignedRect()
+        shown = QRectF(-ox, -oy, widget.width() * dpr, widget.height() * dpr).toAlignedRect() & area
+        if shown.isEmpty():
+            return True
+        antialiased = painter.testRenderHint(QPainter.RenderHint.Antialiasing)
+        key = (
+            f"{self.name}:{self.version}:{linear[0]:.12g},{linear[1]:.12g},{linear[2]:.12g},"
+            f"{linear[3]:.12g}:{fx:.6f},{fy:.6f}:{dpr:g}:{int(antialiased)}"
+        )
+        tiles = [
+            (QRect(tx * TILE_PX, ty * TILE_PX, TILE_PX, TILE_PX) & area, f"{key}:{tx},{ty}")
+            for ty in range(shown.top() // TILE_PX, shown.bottom() // TILE_PX + 1)
+            for tx in range(shown.left() // TILE_PX, shown.right() // TILE_PX + 1)
+        ]
+        pictures = {tile_key: self._find(tile_key) for _, tile_key in tiles}
+        missing = [(tile, tile_key) for tile, tile_key in tiles if pictures[tile_key] is None]
+        # Missing tiles are drawn together (a big shape costs nearly as much to draw
+        # into one tile as into all of them): all at once when they fill their
+        # bounds (after a zoom), else a row at a time (a pan's new edge).
+        span = QRect()
+        for tile, _ in missing:
+            span |= tile
+        whole = sum(tile.width() * tile.height() for tile, _ in missing)
+        if missing and span.width() * span.height() <= 1.5 * whole:
+            groups = [missing]
+        else:
+            rows: dict[int, list] = {}
+            for tile, tile_key in missing:
+                rows.setdefault(tile.y(), []).append((tile, tile_key))
+            groups = list(rows.values())
+        from_grid = to_grid.inverted()[0]
+        to_logical = to_device.inverted()[0]
+        for group in groups:
+            span = QRect()
+            for tile, _ in group:
+                span |= tile
+            picture = QPixmap(span.size())
+            picture.setDevicePixelRatio(dpr)
+            picture.fill(Qt.GlobalColor.transparent)
+            p = QPainter(picture)
+            p.setRenderHints(painter.renderHints())
+            p.setTransform(to_grid * QTransform.fromTranslate(-span.x(), -span.y()) * to_logical)
+            draw(p, from_grid.mapRect(QRectF(span)))
+            p.end()
+            for tile, tile_key in group:
+                pictures[tile_key] = (picture, tile.translated(-span.topLeft()))
+                self._keep(tile_key, *pictures[tile_key])
+        painter.save()
+        painter.resetTransform()  # the view's own pixels
+        for tile, tile_key in tiles:
+            picture, source = pictures[tile_key]
+            at = QRectF(
+                (ox + tile.x()) / dpr,
+                (oy + tile.y()) / dpr,
+                tile.width() / dpr,
+                tile.height() / dpr,
+            )
+            painter.drawPixmap(at, picture, QRectF(source))
+        painter.restore()
+        return True
+
+
+class CachedPathItem(QGraphicsPathItem):
+    """A path item that, when ``cached``, is drawn from pictures in device pixels
+    (see _Tiles), reused while the view pans; ``snapped`` (a drag preview), also
+    while the item itself moves: it is put on whole device pixels.
+
+    In a TileBand (``band``) it draws nothing itself: the band draws it."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self._tiles: _Tiles | None = None
+        self.snapped = False
+        self.band: TileBand | None = None
+
+    @property
+    def cached(self) -> bool:
+        return self._tiles is not None
+
+    @cached.setter
+    def cached(self, on: bool) -> None:
+        self._tiles = (self._tiles or _Tiles()) if on else None
+
+    def setPath(self, path) -> None:
+        super().setPath(path)
+        self._changed()
+
+    def setPen(self, pen) -> None:
+        super().setPen(pen)
+        self._changed()
+
+    def setBrush(self, brush) -> None:
+        super().setBrush(brush)
+        self._changed()
+
+    def _changed(self) -> None:
+        for tiles in (self._tiles, self.band and self.band.tiles):
+            if tiles is not None:
+                tiles.version += 1
+
+    def draw(self, painter, option, widget=None) -> None:
+        super().paint(painter, option, widget)
+
+    def paint(self, painter, option, widget=None) -> None:
+        if self._tiles is None:
+            self.draw(painter, option, widget)
+            return
+        pad = 2 + self.pen().widthF() * 2  # pixels: a cosmetic outline beyond the path
+        scale = math.sqrt(abs(painter.worldTransform().determinant())) or 1.0
+        bounds = self.boundingRect().adjusted(-pad / scale, -pad / scale, pad / scale, pad / scale)
+
+        def draw(p, _rect):
+            self.draw(p, option, None)
+
+        if not self._tiles.paint(self, painter, widget, bounds, draw, self.snapped):
+            self.draw(painter, option, widget)
+
+
+class TileBand(QGraphicsItem):
+    """Draws many path items at once, from shared tiles (see _Tiles): the items stay
+    in the scene (their visibility, bounds and order count) but draw nothing
+    themselves, so a frame does not visit thousands of them. Everything in a band
+    is drawn at the band's z value, in the items' own order within it."""
+
+    def __init__(self, z: float) -> None:
+        super().__init__()
+        self.tiles = _Tiles()
+        self._bounds = QRectF()  # of the items shown, in the scene
+        self.setZValue(z)
+
+    def add(self, item: CachedPathItem) -> None:
+        """Draw ``item`` (call :meth:`changed` once the items are all added)."""
+        item.band = self
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
+
+    def changed(self, items) -> None:
+        """What the band shows changed (``items``: all of its items now): draw again."""
+        bounds = QRectF()
+        for item in items:
+            if item.isVisible():
+                bounds = bounds.united(item.sceneBoundingRect())
+        self.prepareGeometryChange()
+        self._bounds = bounds
+        self.tiles.version += 1
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        return self._bounds
+
+    def paint(self, painter, option, widget=None) -> None:
+        scale = math.sqrt(abs(painter.worldTransform().determinant())) or 1.0
+        pad = 4 / scale  # a cosmetic outline beyond an item's bounds
+
+        def draw(p: QPainter, rect: QRectF) -> None:
+            scene = self.scene()
+            found = scene.items(
+                rect.adjusted(-pad, -pad, pad, pad),
+                Qt.ItemSelectionMode.IntersectsItemBoundingRect,
+                Qt.SortOrder.AscendingOrder,
+            )
+            base = p.transform()
+            for item in found:
+                if getattr(item, "band", None) is self and item.isVisible():
+                    p.setTransform(item.sceneTransform() * base)
+                    p.setOpacity(item.effectiveOpacity())
+                    item.draw(p, option, None)
+
+        if self._bounds.isEmpty():
+            return
+        area = self._bounds.adjusted(-pad, -pad, pad, pad)
+        if not self.tiles.paint(self, painter, widget, area, draw):
+            draw(painter, area)
+
+
+class ShapeItem(CachedPathItem):
     """A filled shape: its fill drawn without antialiasing, its outline over it with.
 
     Antialiasing a fill costs some fifty times as much on a path with thousands
     of holes (10,000 round holes: 3.6 s against 0.08 s a picture), and it is not
     seen: the outline covers the fill's edge."""
 
-    def paint(self, painter, option, widget=None) -> None:
+    def draw(self, painter, option, widget=None) -> None:
         if self.brush().style() != Qt.BrushStyle.NoBrush:
             antialiased = painter.testRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
@@ -285,6 +533,10 @@ class LayoutCanvas(QGraphicsView):
     double_clicked = Signal(float, float)
     nudged = Signal(int, int, bool)  # arrow keys: steps in x and y; True for fine steps
     key_pressed = Signal(object)  # Enter or Backspace, for the active tool
+    # Typed digits, sign, point, comma, space: the active tool takes them (True) or not
+    typed: Callable[[str], bool] | None = None
+    # Whether any text typed is a value (letters too, not shortcuts): see SelectTool
+    takes_text: Callable[[], bool] | None = None
     cursor_moved = Signal(float, float)
     view_changed = Signal()  # zoomed or panned
     context_requested = Signal(float, float, QPoint)  # right click: µm, global position
@@ -341,6 +593,15 @@ class LayoutCanvas(QGraphicsView):
         # each (name, x, y) in µm (see show_alignment).
         self._alignment: tuple[tuple[str, float, float], tuple[str, float, float]] | None = None
         self._corner_handles: list[CornerHandle] = []  # the Corners tool's handles
+        self._edit_handles: list[tuple[float, float, str]] = []  # the selected shape's
+        self._active_handle: int | None = None  # the one being dragged
+        # The selected shape's values that use parameters (see show_dimensions), the
+        # one under the cursor, and where their labels are (viewport pixels).
+        self._dimensions: list = []
+        self._hovered_dimension: int | None = None
+        self._editing_dimension: tuple[int, str] | None = None
+        self._dimension_boxes: list[QRectF] = []
+        self._dimension_ends: list[QPointF | None] = []  # where each can be dragged from
         self._corner_preview: list[tuple[float, float]] = []  # a rounding being dragged
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
@@ -359,8 +620,6 @@ class LayoutCanvas(QGraphicsView):
         self.setAcceptDrops(True)
         self._has_content = False
         self._wheel_anchor: QPointF | None = None  # scene point held under the cursor
-        if QPixmapCache.cacheLimit() < PIXMAP_CACHE_KB:
-            QPixmapCache.setCacheLimit(PIXMAP_CACHE_KB)
         self._drafting = False
         self._full_frame_ms = 0.0  # how long the last full-quality frame took
         self._draft_timer = QTimer(self)
@@ -376,6 +635,12 @@ class LayoutCanvas(QGraphicsView):
         self.corner_color: QColor | None = None  # what lies around the editor island
         # A large scene rect lets the user pan freely beyond the geometry.
         self.scene().setSceneRect(WORLD)
+        # The shapes, under everything else, and the selection's highlight: each
+        # drawn at once from shared pictures (see TileBand).
+        self._shape_band = TileBand(-1)
+        self._highlight_band = TileBand(1000)
+        self.scene().addItem(self._shape_band)
+        self.scene().addItem(self._highlight_band)
 
     # -- content -----------------------------------------------------------
 
@@ -499,10 +764,7 @@ class LayoutCanvas(QGraphicsView):
     def _end_draft(self) -> None:
         self._drafting = False
         self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        for item in self.scene().items():
-            if item.cacheMode() != QGraphicsItem.CacheMode.NoCache:
-                item.update()  # its picture was drawn in draft quality
-        self.viewport().update()
+        self.viewport().update()  # pictures are kept by quality: full quality ones are drawn
 
     def _place_overlays(self) -> None:
         width, height = self.viewport().width(), self.viewport().height()
@@ -641,7 +903,6 @@ class LayoutCanvas(QGraphicsView):
         width = self.options["outline_width"]
         order = stack_order(geometry, colors)
         leaves = geometry.leaves()
-        cache = CACHED if len(leaves) <= MAX_CACHED_ITEMS else QGraphicsItem.CacheMode.NoCache
         old, new = self._items_by_key, {}
         self._layer_items = {}
         for leaf, at in leaves:
@@ -662,7 +923,7 @@ class LayoutCanvas(QGraphicsView):
                     pen.setCosmetic(True)  # the same width in pixels at any zoom
                     item.setPen(pen)
                     item.setBrush(QBrush(fill))
-                    item.setCacheMode(cache)  # drawn once; pans, hovers and drags reuse it
+                    self._shape_band.add(item)
                     self.scene().addItem(item)
                 item.setZValue(order[layer])
                 item.setVisible(visible.get(layer, True))
@@ -678,12 +939,12 @@ class LayoutCanvas(QGraphicsView):
                 if kept:
                     item = kept.pop()
                 else:
-                    item = QGraphicsPathItem(own_path(shape, layer))
+                    item = CachedPathItem(own_path(shape, layer))
                     pen = QPen(color, width)
                     pen.setCosmetic(True)
                     item.setPen(pen)
                     item.setBrush(Qt.BrushStyle.NoBrush)
-                    item.setCacheMode(cache)
+                    self._shape_band.add(item)
                     self.scene().addItem(item)
                 item.setZValue(order[layer] + 0.5)  # over its layer's fill, under the next
                 item.setVisible(visible.get(layer, True))
@@ -693,6 +954,7 @@ class LayoutCanvas(QGraphicsView):
             for item in items:
                 self.scene().removeItem(item)
         self._items_by_key = new
+        self._shape_band.changed(item for items in new.values() for item in items)
         if not self._has_content and not geometry.is_empty():
             self._has_content = True
             self.fit()
@@ -700,6 +962,7 @@ class LayoutCanvas(QGraphicsView):
     def set_layer_visible(self, layer: str, visible: bool) -> None:
         for item in self._layer_items.get(layer, []):
             item.setVisible(visible)
+        self._shape_band.changed(item for items in self._items_by_key.values() for item in items)
 
     def show_overlay(
         self,
@@ -734,9 +997,12 @@ class LayoutCanvas(QGraphicsView):
                     tint.setAlpha(60)  # a stronger tint makes up for the thin outline
                     item.setBrush(QBrush(tint))
                     item.setZValue(1000)
-                    item.setCacheMode(CACHED)
+                    self._highlight_band.add(item)
                     self.scene().addItem(item)
                     self._overlay.append(item)
+        self._highlight_band.changed(
+            item for item in self._overlay if getattr(item, "band", None) is self._highlight_band
+        )
         if box is not None:
             item = QGraphicsPolygonItem(QPolygonF([QPointF(x, y) for x, y in box]))
             pen = QPen(QColor(self.theme["highlight"]), 1, Qt.PenStyle.DashLine)
@@ -873,7 +1139,7 @@ class LayoutCanvas(QGraphicsView):
                 item.setPen(pen)
                 item.setBrush(QBrush(fill))
                 item.setZValue(1050 + order[layer] / 1000)  # over everything, in stack order
-                item.setCacheMode(CACHED)  # moving it reuses the picture
+                item.cached = item.snapped = True  # moving it reuses the picture
                 self.scene().addItem(item)
                 self._drag_items.append(item)
 
@@ -991,10 +1257,10 @@ class LayoutCanvas(QGraphicsView):
         outline = QPainterPath()
         for leaf, at in geometry.leaves():
             outline.addPath(qtransform(at).map(own_path(leaf, "")))
-        self._hover_item = QGraphicsPathItem(outline)
+        self._hover_item = CachedPathItem(outline)
         self._hover_item.setPen(pen)
         self._hover_item.setZValue(990)
-        self._hover_item.setCacheMode(CACHED)
+        self._hover_item.cached = True
         self.scene().addItem(self._hover_item)
 
     # -- gizmos --------------------------------------------------------------
@@ -1231,7 +1497,10 @@ class LayoutCanvas(QGraphicsView):
         if event.type() == QEvent.Type.NativeGesture:
             if event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
                 self.stop_gliding()
-                self._zoom_by_at(1.0 + event.value(), event.position())
+                # Wayland (Qt 6.11, KDE) gives a pinch's position in the window, not
+                # in the view; the position on the screen is right everywhere.
+                at = self.viewport().mapFromGlobal(event.globalPosition())
+                self._zoom_by_at(1.0 + event.value(), at)
                 return True
             if event.gestureType() == Qt.NativeGestureType.SmartZoomNativeGesture:
                 self.fit(animated=True)  # a two-finger double tap
@@ -1416,6 +1685,210 @@ class LayoutCanvas(QGraphicsView):
         self._corner_preview = list(points)
         self.viewport().update()
 
+    def show_edit_handles(
+        self, handles: list[tuple[float, float, str]], active: int | None = None
+    ) -> None:
+        """The selected shape's handles (x, y in µm, and the handle's role: see
+        :mod:`mems_sketch.core.shapes.handles`); ``active`` is the one being dragged."""
+        handles = list(handles)
+        if handles != self._edit_handles or active != self._active_handle:
+            self._edit_handles, self._active_handle = handles, active
+            self.viewport().update()
+
+    @property
+    def edit_handles(self) -> list[tuple[float, float, str]]:
+        return list(self._edit_handles)
+
+    def show_dimensions(
+        self, dimensions: list, hovered: int | None = None, editing: tuple | None = None
+    ) -> None:
+        """The selected shape's values that use parameters, as dimensions (each a
+        :class:`~mems_sketch.editing.dimensions.PlacedDimension`, in µm);
+        ``hovered``: the one under the cursor, drawn highlighted; ``editing``: the
+        one a value is typed for, and what is typed (index, text), or one being
+        dragged (index, value, False: no caret)."""
+        dimensions = list(dimensions)
+        state = (dimensions, hovered, editing)
+        if state != (self._dimensions, self._hovered_dimension, self._editing_dimension):
+            self._dimensions, self._hovered_dimension = dimensions, hovered
+            self._editing_dimension = editing
+            if not dimensions:
+                self._dimension_boxes, self._dimension_ends = [], []
+            self.viewport().update()
+
+    @property
+    def dimensions(self) -> list:
+        return list(self._dimensions)
+
+    def dimension_at(self, x: float, y: float) -> int | None:
+        """The dimension whose label is under ``(x, y)`` µm, or None."""
+        if not self._dimension_boxes:
+            return None
+        at = self.mapFromScene(QPointF(x, y)).toPointF()
+        for index, box in enumerate(self._dimension_boxes):
+            if box.adjusted(-2, -2, 2, 2).contains(at):
+                return index
+        return None
+
+    def dimension_end_at(self, x: float, y: float) -> int | None:
+        """The dimension whose end (the dot it is dragged by) is near ``(x, y)`` µm."""
+        at = self.mapFromScene(QPointF(x, y)).toPointF()
+        best, found = DIMENSION_END_REACH_PX, None
+        for index, end in enumerate(self._dimension_ends):
+            if end is not None:
+                distance = math.hypot(end.x() - at.x(), end.y() - at.y())
+                if distance <= best:
+                    best, found = distance, index
+        return found
+
+    def _draw_dimension_end(self, painter: QPainter, at: QPointF, color: QColor) -> QPointF:
+        painter.setPen(QPen(color, 1.3))
+        painter.setBrush(QColor(self.theme["background"]))
+        painter.drawEllipse(at, 3.5, 3.5)
+        return at
+
+    def _draw_dimensions(self, painter: QPainter) -> None:
+        """Each dimension: its line with arrows, and its label (see show_dimensions)."""
+
+        def px(point) -> QPointF:
+            return self.mapFromScene(QPointF(*point)).toPointF()
+
+        accent = QColor(self.theme["highlight"])
+        plain = QColor(self.theme["overlay"])
+        plain.setAlpha(170)
+        boxes, ends = [], []
+        rows: dict[tuple[int, int], float] = {}  # how far each row of labels reaches
+        editing = self._editing_dimension
+        for index, d in enumerate(self._dimensions):
+            typing = editing is not None and editing[0] == index
+            hovered = index == self._hovered_dimension or typing
+            color = accent if hovered else plain
+            label = d.label
+            if typing:  # (name = value: a new parameter, shown as typed)
+                text = editing[1]
+                caret = "▏" if len(editing) < 3 or editing[2] else ""  # (not while dragged)
+                label = f"{text}{caret}" if "=" in text else f"{d.expression} = {text}{caret}"
+            a, b = px(d.a), px(d.b)
+            if d.style == "chip":  # a placement's value with no size: in a row under it
+                key = (round(a.x()), round(a.y()))
+                left = rows.get(key, 0.0)
+                width = self._label_width(label)
+                center = a + QPointF(left + width / 2, DIMENSION_GAP_PX * 0.75)
+                rows[key] = left + width + 6
+                ends.append(None)
+                boxes.append(self._dimension_label(painter, center, label, hovered, None, typing))
+                continue
+            if d.style == "radial":
+                painter.setPen(QPen(color, 1.3))
+                painter.drawLine(a, b)
+                _arrow(painter, b, a, color)
+                painter.setBrush(color)
+                painter.drawEllipse(a, 2, 2)
+                ends.append(self._draw_dimension_end(painter, b, color))
+                along = _unit(b - a)
+                center = b + along * (DIMENSION_GAP_PX * 0.6)
+                boxes.append(self._dimension_label(painter, center, label, hovered, along, typing))
+                continue
+            if d.style == "across":
+                along = _unit(b - a)
+                outside = DIMENSION_ARROW_PX * 2
+                painter.setPen(QPen(color, 1.3))
+                painter.drawLine(a - along * outside, b + along * outside)
+                _arrow(painter, a, a - along, color)
+                _arrow(painter, b, b + along, color)
+                ends.append(None)  # (its end is the width's handle)
+                center = b + along * (outside + 10)
+                boxes.append(self._dimension_label(painter, center, label, hovered, along, typing))
+                continue
+            side = QPointF(d.side[0], -d.side[1])  # (the view's y runs down)
+            gap = side * DIMENSION_GAP_PX
+            pen = QPen(color, 1)
+            painter.setPen(pen)
+            if not side.isNull():  # extension lines from what it measures
+                for end in (a, b):
+                    painter.drawLine(end + side * 3, end + gap + side * 4)
+            a, b = a + gap, b + gap
+            painter.setPen(QPen(color, 1.3))
+            painter.drawLine(a, b)
+            if (b - a).manhattanLength() > 2 * DIMENSION_ARROW_PX:
+                _arrow(painter, a, b, color)
+                _arrow(painter, b, a, color)
+            ends.append(self._draw_dimension_end(painter, b, color))
+            # Beside an upright line, not over it (and what it measures)
+            past = side if abs(side.x()) > 0.5 else None
+            boxes.append(self._dimension_label(painter, (a + b) / 2, label, hovered, past, typing))
+        self._dimension_boxes, self._dimension_ends = boxes, ends
+
+    def _label_width(self, text: str) -> float:
+        """How wide :meth:`_dimension_label` draws ``text``."""
+        font = QFont(self.font())
+        bold = QFont(font)
+        bold.setBold(True)
+        expression, _, value = text.rpartition(" = ")
+        width = QFontMetricsF(bold).horizontalAdvance(expression)
+        return width + QFontMetricsF(font).horizontalAdvance(f" = {value}") + 14
+
+    def _dimension_label(
+        self,
+        painter: QPainter,
+        center: QPointF,
+        text: str,
+        hovered: bool,
+        past=None,
+        typing: bool = False,
+    ) -> QRectF:
+        """``text`` in a box centred on ``center`` (or, with ``past``, a unit vector,
+        just beyond it that way); the expression bold, its value plain. ``typing``:
+        a value is being typed in it (an outlined box, not a filled one)."""
+        font = QFont(self.font())
+        bold = QFont(font)
+        bold.setBold(True)
+        expression, _, value = text.rpartition(" = ")
+        value = f" = {value}"
+        width = QFontMetricsF(bold).horizontalAdvance(expression)
+        width += QFontMetricsF(font).horizontalAdvance(value) + 14
+        height = QFontMetricsF(font).height() + 6
+        if past is not None:  # beyond the point, not over it
+            center = center + QPointF(past.x() * width / 2, past.y() * height / 2)
+        box = QRectF(center.x() - width / 2, center.y() - height / 2, width, height)
+        accent = QColor(self.theme["highlight"])
+        background = QColor(self.theme["background"])
+        background.setAlpha(235)
+        edge = QColor(self.theme["overlay"])
+        edge.setAlpha(120)
+        filled = hovered and not typing
+        painter.setPen(QPen(accent if hovered else edge, 1.5 if typing else 1))
+        painter.setBrush(accent if filled else background)
+        painter.drawRoundedRect(box, 4, 4)
+        ink = QColor("white") if filled else QColor(self.theme["overlay"])
+        painter.setPen(ink)
+        painter.setFont(bold)
+        name_width = QFontMetricsF(bold).horizontalAdvance(expression)
+        inner = box.adjusted(7, 0, -7, 0)
+        painter.drawText(inner, Qt.AlignmentFlag.AlignVCenter, expression)
+        painter.setFont(font)
+        painter.drawText(inner.adjusted(name_width, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter, value)
+        return box
+
+    def _draw_edit_handles(self, painter: QPainter) -> None:
+        edge = QColor(self.theme["highlight"])
+        plain = QColor(self.theme["background"])
+        size = EDIT_HANDLE_PX
+        for index, (x, y, role) in enumerate(self._edit_handles):
+            at = self.mapFromScene(QPointF(x, y)).toPointF()
+            painter.setPen(QPen(edge, 1.5))
+            painter.setBrush(edge if index == self._active_handle else plain)
+            if role == "insert":  # a side's middle: a small plus, to add a vertex
+                painter.setPen(QPen(edge, 1.2))
+                painter.drawEllipse(at, size + 0.5, size + 0.5)
+                arm = size - 1.5
+                painter.drawLine(at + QPointF(-arm, 0), at + QPointF(arm, 0))
+                painter.drawLine(at + QPointF(0, -arm), at + QPointF(0, arm))
+            elif role in ROUND_HANDLES:
+                painter.drawEllipse(at, size + 0.5, size + 0.5)
+            else:
+                painter.drawRect(QRectF(at.x() - size, at.y() - size, 2 * size, 2 * size))
+
     def _draw_corners(self, painter: QPainter) -> None:
         def px(point):
             return self.mapFromScene(QPointF(*point)).toPointF()
@@ -1455,6 +1928,9 @@ class LayoutCanvas(QGraphicsView):
 
     def leaveEvent(self, event) -> None:
         self.set_hover_label(None)  # a drag's label stays: the drag may come back
+        if QApplication.mouseButtons() == Qt.MouseButton.NoButton:  # not dragging out
+            self.show_snap_marker(None)  # where a click would snap: no click there (#251)
+            self.show_points("snap", [])
         super().leaveEvent(event)
 
     def set_cursor_label(self, text: str | None) -> None:
@@ -1497,12 +1973,31 @@ class LayoutCanvas(QGraphicsView):
         else:
             self.setCursor(getattr(self, "_tool_cursor", Qt.CursorShape.ArrowCursor))
 
+    def _takes_text(self) -> bool:
+        return bool(self.takes_text and self.takes_text())
+
+    def event(self, event) -> bool:
+        """While a value is typed, letters reach it rather than the tools' shortcuts."""
+        if event.type() == QEvent.Type.ShortcutOverride and self._takes_text():
+            ctrl_alt = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+            if event.text().isprintable() and event.text() and not event.modifiers() & ctrl_alt:
+                event.accept()
+                return True
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F:
             self.fit(animated=True)
             return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Backspace):
             self.key_pressed.emit(event.key())
+            return
+        text = event.text()
+        plain = not event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+        )
+        wanted = text in TYPED_CHARACTERS or (self._takes_text() and text.isprintable())
+        if text and plain and wanted and self.typed and self.typed(text):
             return
         if event.key() == Qt.Key.Key_Space:
             if not event.isAutoRepeat():
@@ -1581,6 +2076,10 @@ class LayoutCanvas(QGraphicsView):
             self._draw_gizmo(painter)
         if self._corner_handles or self._corner_preview:
             self._draw_corners(painter)
+        if self._dimensions:
+            self._draw_dimensions(painter)
+        if self._edit_handles:
+            self._draw_edit_handles(painter)
         if self._marks:
             self._draw_marks(painter)
         label = self.cursor_label or self.hover_label
@@ -1975,3 +2474,20 @@ def _outline(geometries) -> QPainterPath:
         for leaf, at in geometry.leaves():
             outline.addPath(qtransform(at).map(own_path(leaf, "")))
     return outline
+
+
+def _unit(vector: QPointF) -> QPointF:
+    length = math.hypot(vector.x(), vector.y()) or 1.0
+    return QPointF(vector.x() / length, vector.y() / length)
+
+
+def _arrow(painter: QPainter, tip: QPointF, toward: QPointF, color: QColor) -> None:
+    """An arrowhead at ``tip``, its body towards ``toward`` (viewport pixels)."""
+    along = _unit(toward - tip)
+    across = QPointF(-along.y(), along.x()) * 3.2
+    base = tip + along * DIMENSION_ARROW_PX
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(QPolygonF([tip, base + across, base - across]))
+    painter.restore()

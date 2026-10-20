@@ -116,6 +116,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.gui == 'true'  # every change to the program reaches the GUI
     runs-on: ubuntu-latest
+    timeout-minutes: 45  # a hung test stops here, its log kept (usually 10-20 minutes)
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
+import re
 
-from mems_sketch.core.project import Project, check_shape_names
+from mems_sketch.core.project import Project, check_shape_name, check_shape_names
 from mems_sketch.core.shapes import (
     Align,
     ConnectionShape,
@@ -39,7 +40,16 @@ class NodeEdits(Commands):
     def add(self, shape: Shape) -> NodePath:
         if shape.name is None:
             shape = shape.model_copy(update={"name": self.session.unique_name(shape.kind)})
-        self.session.edit(f"Add {shape.name}", lambda p: self.session.shapes_in(p).append(shape))
+        for node in walk([shape]):
+            if node.name:
+                check_shape_name(node.name)
+
+        def change(project: Project) -> None:
+            shapes = self.session.shapes_in(project)
+            shapes.append(shape)
+            check_shape_names(shapes)
+
+        self.session.edit(f"Add {shape.name}", change)
         return ((0, len(self.session.shapes) - 1),)
 
     def add_primitive(self, kind: str, layer: str = "device") -> NodePath:
@@ -68,6 +78,10 @@ class NodeEdits(Commands):
     def replace(self, path: NodePath, new: Shape) -> None:
         """Replace a node. A new name is also used by alignments and point expressions."""
         old_name = self.session.node(path).name
+        had = {n.name for n in walk([self.session.node(path)]) if n.name}
+        for node in walk([new]):
+            if node.name and node.name not in had:
+                check_shape_name(node.name)
 
         def change(project: Project) -> None:
             if old_name and new.name and new.name != old_name:
@@ -88,7 +102,13 @@ class NodeEdits(Commands):
                     s for i, s in enumerate(container) if (id(container), i) not in doomed
                 ]
 
-        self.session.edit("Delete", change)
+        doomed_nodes = [n for p in paths for n in walk([self.session.node(p)])]
+        names = {n.name for n in doomed_nodes if n.name}
+        try:
+            self.session.edit("Delete", change)
+        except ValueError as error:
+            kept = [n for n in walk(self.session.shapes) if all(n is not d for d in doomed_nodes)]
+            raise ValueError(_refused_delete(str(error), names, kept)) from None
 
     def duplicate(self, path: NodePath) -> NodePath:
         copy_ = self.session.node(path).model_copy(deep=True)
@@ -136,9 +156,10 @@ class NodeEdits(Commands):
     def connect(self, paths: list[NodePath], **fields) -> NodePath:
         """A connection joining sibling shapes' ends, placed after the last of them.
 
-        For each shape the end is its port facing the others: of those pointing
-        towards the centre of all their ports, the nearest to it (an array's copies
-        by index are left out: name one in the connection's ends instead).
+        For each shape the end is its port nearest another shape's ports, if it
+        points towards the middle of those ends, else the nearest of its ports
+        that does (an array's copies by index are left out: name one in the
+        connection's ends instead).
         """
         if len(paths) < 2:
             raise ValueError("select two or more shapes with ports to connect")
@@ -150,20 +171,29 @@ class NodeEdits(Commands):
             if not own:
                 raise ValueError(f"{node.name or node.kind} has no ports to connect")
             ports.append(own)
-        every = [p for own in ports for p in own.values()]
-        cx = sum(p.x for p in every) / len(every)
-        cy = sum(p.y for p in every) / len(every)
+
+        def gap(port, index: int) -> float:  # to the nearest port of another shape
+            others = [q for i, own in enumerate(ports) if i != index for q in own.values()]
+            return min(math.hypot(q.x - port.x, q.y - port.y) for q in others)
+
+        # Each shape's port nearest the others' is its end; where they meet is
+        # the middle of those ends (not of every port: the far ends of long arms
+        # would pull it off, past a T junction's stem).
+        chosen = [min(own, key=lambda n, i=i, o=own: gap(o[n], i)) for i, own in enumerate(ports)]
+        cx = sum(own[n].x for own, n in zip(ports, chosen, strict=True)) / len(chosen)
+        cy = sum(own[n].y for own, n in zip(ports, chosen, strict=True)) / len(chosen)
 
         def facing(port) -> bool:
             a = math.radians(port.angle)
             return math.cos(a) * (cx - port.x) + math.sin(a) * (cy - port.y) > 0
 
         ends = []
-        for node, own in zip(nodes, ports, strict=True):
-            towards = {n: p for n, p in own.items() if facing(p)}
-            if not towards:
-                raise ValueError(f"no port of {node.name} faces the others")
-            name = min(towards, key=lambda n: math.hypot(towards[n].x - cx, towards[n].y - cy))
+        for node, own, name in zip(nodes, ports, chosen, strict=True):
+            if not facing(own[name]):  # the nearest points away: one facing the middle
+                towards = {n: p for n, p in own.items() if facing(p)}
+                if not towards:
+                    raise ValueError(f"no port of {node.name} faces the others")
+                name = min(towards, key=lambda n: math.hypot(towards[n].x - cx, towards[n].y - cy))
             ends.append(f"{node.name}.port.{name}")
         shape = ConnectionShape(name=self.session.unique_name("connection"), ends=ends, **fields)
         last = ordered[-1]
@@ -187,3 +217,27 @@ class NodeEdits(Commands):
             container[index : index + 1] = children
 
         self.session.edit(f"Unwrap {node.name or node.kind}", change)
+
+
+def _refused_delete(message: str, names: set[str], kept: list[Shape]) -> str:
+    """Why a delete was refused, from what still uses a deleted shape: "can't
+    delete 'mass': 'post' is aligned to it" (the build only says that something
+    can no longer find it)."""
+    text = message.split(": ", 1)[1] if re.match(r"[\w/.]+: ", message) else message
+    for name in sorted(names):
+        aligned = re.search(rf"'([^']+)' is aligned to '{re.escape(name)}\.", text)
+        if aligned:
+            return f"can't delete '{name}': '{aligned[1]}' is aligned to it"
+        if not re.search(rf"(?<![\w.]){re.escape(name)}\.|shape '{re.escape(name)}'", text):
+            continue
+        users = [n.name or n.kind for n in kept if _uses(n, name)]
+        if users:
+            return f"can't delete '{name}': {', '.join(f'{u!r}' for u in users)} uses its points"
+        return f"can't delete '{name}': something still uses it ({text})"
+    return message
+
+
+def _uses(node: Shape, name: str) -> bool:
+    """Whether ``node`` itself (not its children) uses a point of the shape ``name``."""
+    own = node.model_dump(exclude=set(node.child_fields))
+    return re.search(rf"(?<![\w.]){re.escape(name)}\.", repr(own)) is not None

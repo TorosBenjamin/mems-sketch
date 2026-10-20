@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QCursor, QKeySequence
 from PySide6.QtWidgets import QMenu
 
+from mems_sketch.core.shapes import RefShape
 from mems_sketch.gui import icons, theme
 
 if TYPE_CHECKING:
@@ -128,6 +129,10 @@ class Actions:
         edit.addSeparator()
         act("Align…", w.start_align, "Ctrl+L", edit, "align")
         self.remove_alignment = act("Remove alignment", w.remove_alignment, None, edit)
+        # Shown greyed out where they cannot apply; their keys work again once it
+        # closes, and say why (#253).
+        edit.aboutToShow.connect(self.show_what_applies)
+        edit.aboutToHide.connect(lambda: self.show_what_applies(everything=True))
         act("Cancel", w.escape, "Esc", edit)
 
         tools_menu = self.tools_menu = QMenu("&Tools", w)
@@ -242,6 +247,51 @@ class Actions:
         for menu, icon_name in zip(self.root_menus, ROOT_ICONS, strict=True):
             self.root.addMenu(menu)
             icons.bind(menu.menuAction(), icon_name)
+
+    def show_what_applies(self, everything: bool = False) -> None:
+        """Enable the Edit menu's commands that apply to the selection, and grey out
+        the others (``everything``: all of them, for their keys)."""
+        w = self.window
+        paths = list(w.selection)
+        node = w.document.node(paths[0]) if len(paths) == 1 and w._exists(paths[0]) else None
+        applies = {
+            self.cut: bool(paths),
+            self.copy: bool(paths),
+            self.duplicate: bool(paths),
+            self.delete: bool(paths),
+            self.move_by: bool(paths),
+            self.rotate_left: bool(paths),
+            self.rotate_right: bool(paths),
+            self.mirror_h: bool(paths),
+            self.mirror_v: bool(paths),
+            self.make: bool(paths),
+            self.rename: node is not None,
+            self.unwrap: node is not None and any(node.child_lists()),
+            self.unpack: isinstance(node, RefShape),
+            self.remove_alignment: node is not None and node.align is not None,
+        }
+        for action, on in applies.items():
+            action.setEnabled(everything or on)
+
+    def shape_actions(self) -> list[QAction]:
+        """The commands on the selected shapes: their shortcuts work in the editor
+        and the Shapes panel only, so a key pressed in another panel (Delete in
+        the Components panel) never changes the shapes."""
+        return [
+            self.cut,
+            self.copy,
+            self.paste,
+            self.duplicate,
+            self.delete,
+            self.select_all,
+            self.rename,
+            self.unwrap,
+            self.make,
+            self.unpack,
+            self.move_by,
+            self.rotate_left,
+            self.rotate_right,
+        ]
 
     def all_actions(self) -> list[QAction]:
         """Every command in the menus, once each (to register their shortcuts on the window)."""

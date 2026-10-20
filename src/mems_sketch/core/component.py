@@ -11,11 +11,15 @@ from collections.abc import Iterable, Mapping
 from typing import Any, ClassVar, NamedTuple
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-from mems_sketch.core.expressions import evaluate
+from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.core.region import DBU_UM, Box, IntPolygon, Region
 from mems_sketch.core.transform import Transform
+
+# The widest gap closed between turned parts placed side by side: what rounding
+# each onto the 1 nm grid can leave between outlines that meet exactly.
+SLIVER_NM = 1
 
 
 def to_dbu(value_um: float) -> int:
@@ -85,12 +89,19 @@ class Geometry:
 
     def _flatten(self) -> dict[str, Region]:
         parts: dict[str, list] = {}
+        turned: set[str] = set()  # layers with a part turned off the grid's axes
         for layer, region in self._own.items():
             parts.setdefault(layer, []).extend(region.each())
         for geometry, transform in self.instances:
             for layer, region in geometry.layers.items():
                 parts.setdefault(layer, []).extend(region.transformed(transform).each())
-        return {layer: Region.from_polygons(polygons).merged() for layer, polygons in parts.items()}
+                if transform.angle % 90:
+                    turned.add(layer)
+        flat = {layer: Region.from_polygons(polygons).merged() for layer, polygons in parts.items()}
+        for layer in turned:  # parts that meet exactly, rounded onto the grid each on
+            # its own, can be a fraction of a nanometre apart: close such slivers (#246)
+            flat[layer] = flat[layer].sized(SLIVER_NM).sized(-SLIVER_NM)
+        return flat
 
     def place(self, geometry: Geometry, transform: Transform | None = None) -> None:
         """Place ``geometry`` whole (kept as an instance, not copied)."""
@@ -356,7 +367,79 @@ def resolve_params(
     """
     fields = component.Params.model_fields
     values: dict[str, Any] = {}
+    expressions: dict[str, str] = {}
     for key, value in raw.items():
         is_text = key in fields and fields[key].annotation is str
-        values[key] = value if is_text or not isinstance(value, str) else evaluate(value, variables)
-    return component.Params(**values)
+        if is_text or not isinstance(value, str):
+            values[key] = value
+        else:
+            expressions[key] = value
+    if expressions:
+        values |= _evaluated(component, expressions, values, variables)
+    try:
+        return component.Params(**values)
+    except ValidationError as error:
+        raise ValueError(params_problem(component, error)) from None
+
+
+def _evaluated(
+    component: Component,
+    expressions: dict[str, str],
+    given: dict[str, Any],
+    variables: Mapping[str, float],
+) -> dict[str, float]:
+    """Expressions given for parameters: over ``variables`` (where the component
+    is placed), else, for one that names the component's other parameters, over
+    those as its defaults can (``pitch = plate / 16``: those given, else their
+    defaults)."""
+    definition = getattr(component, "definition", None)
+    try:
+        return {k: evaluate(v, variables) for k, v in expressions.items()}
+    except ExpressionError:
+        if definition is None:
+            raise
+    known = {**variables, **{k: float(v) for k, v in given.items() if isinstance(v, int | float)}}
+    pending = {p.name: p.default for p in definition.parameters if p.name not in known}
+    pending |= expressions
+    resolved = resolve_variables(pending, known)
+    return {k: resolved[k] for k in expressions}
+
+
+def params_problem(component: Component, error: ValidationError) -> str:
+    """What is wrong with the values given for a component's parameters, in words."""
+    name = component.type_name
+    known = [k for k in component.Params.model_fields if k not in component.internal]
+    lines = []
+    for problem in error.errors():
+        field = ".".join(str(p) for p in problem["loc"])
+        kind, given, limits = problem["type"], problem.get("input"), problem.get("ctx") or {}
+        if kind == "extra_forbidden":
+            lines.append(
+                f"'{name}' has no parameter '{field}' (its parameters: {', '.join(known) or 'none'})"
+            )
+            continue
+        words = {
+            "greater_than_equal": f"must be at least {_number(limits.get('ge'))}",
+            "greater_than": f"must be more than {_number(limits.get('gt'))}",
+            "less_than_equal": f"must be at most {_number(limits.get('le'))}",
+            "less_than": f"must be less than {_number(limits.get('lt'))}",
+            "int_from_float": "must be a whole number",
+            "int_parsing": "must be a whole number",
+            "float_parsing": "must be a number",
+            "finite_number": "must be a finite number",
+        }.get(kind)
+        if words is not None:
+            lines.append(f"parameter '{field}' of '{name}' {words}, not {_number(given)}")
+        elif kind == "value_error":
+            lines.append(str(problem["msg"]).removeprefix("Value error, "))
+        else:
+            lines.append(f"parameter '{field}' of '{name}': {problem['msg']}")
+    return "; ".join(lines)
+
+
+def _number(value: Any) -> str:
+    return (
+        f"{value:g}"
+        if isinstance(value, int | float) and not isinstance(value, bool)
+        else str(value)
+    )

@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 
 class OffsetShape(Operation):
-    """Grow (positive ``distance``) or shrink (negative) the children's outlines."""
+    """Grow (positive ``distance``) or shrink (negative) the ``children``'s outlines,
+    per layer. ``corners`` that grow open up are ``square`` (sharp, cut straight
+    beyond 90°) or ``bevel`` (cut straight across)."""
 
     icon: ClassVar[str] = "offset"
     wraps: ClassVar[tuple[str, ...]] = ("offset",)

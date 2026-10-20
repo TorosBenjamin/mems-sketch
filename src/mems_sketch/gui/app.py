@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mems_sketch.core.errors import explain
 from mems_sketch.core.shapes import CornersModifier, NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
@@ -42,7 +43,12 @@ from mems_sketch.gui.commit_panel import CommitPanel
 from mems_sketch.gui.comparison_view import UNCOMMITTED, ComparisonView
 from mems_sketch.gui.component_picker import PlacePopup
 from mems_sketch.gui.editor_state import load_state, save_state
-from mems_sketch.gui.export_dialog import ExportOptionsDialog, remember, remembered
+from mems_sketch.gui.export_dialog import (
+    ExportOptionsDialog,
+    project_scope,
+    remember,
+    remembered,
+)
 from mems_sketch.gui.git_panel import GitPanel
 from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
@@ -120,11 +126,14 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "project and commits those files, nothing else; *Amend* replaces the last "
     "commit. Right-click a row to roll it back to the last commit (an ordinary edit, "
     "which Undo takes back), or to add or ignore a file git does not track.",
-    "git": "The project's commits. Choose one to see what it changed (on the canvas "
-    "too), double-click it to compare in a tab; right-click it to compare it with "
-    "the design now, or to restore the project (or the component you are editing) as "
-    "it was: an ordinary edit, which Undo takes back. Branches, merging and remotes "
-    "stay with your git tools for now.",
+    "git": "The project's commits as a graph, with their branches and tags: those on "
+    "the branch checked out, another branch, or all of them. Search the messages, or "
+    "narrow the list to one author or one component. Choose a commit to see its "
+    "message and what it changed (on the canvas too); double-click it to compare in "
+    "a tab. *Compare with now* shows everything since; *Restore* brings back the "
+    "project (or the component you are editing) as it was: an ordinary edit, which "
+    "Undo takes back. Checking out, merging and remotes stay with your git tools for "
+    "now.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "
@@ -229,6 +238,9 @@ class MainWindow(QMainWindow):
         self.points.hovered.connect(self._point_hovered)
         self.points.focused.connect(self._point_focused)
         self._hovered_point = None
+        self.edit_handles: list = []  # the selected shape's handles: (Handle, x, y) in µm
+        self.edit_dimensions: list = []  # its values that use parameters (PlacedDimension)
+        self._dimension_hovered: int | None = None  # the dimension under the cursor
         self.messages = MessagesPanel()
         self.commit_panel = CommitPanel(self.document)
         self.git = GitPanel(self.document)
@@ -382,8 +394,13 @@ class MainWindow(QMainWindow):
     def _render(self, view: ComponentView) -> ComponentView:
         if not getattr(view, "rendered", False):
             view.rendered = True
-            view.refresh(self.layers.colors, self.layers.visible)
             canvas = view.canvas
+            # Before anything is drawn: refreshing paints the canvas at once (see
+            # ComponentView._check), and a new canvas starts with light colours.
+            canvas.set_theme(self.canvas_theme)
+            canvas.corner_color = self._frame_color()
+            canvas.configure(**self._canvas_options())
+            view.refresh(self.layers.colors, self.layers.visible)
             canvas.pressed.connect(lambda x, y, m, v=view: self._pressed(v, x, y, m))
             canvas.moved.connect(lambda x, y, m, left, v=view: self._moved(v, x, y, m, left))
             canvas.released.connect(lambda x, y, m, v=view: self._released(v, x, y, m))
@@ -391,6 +408,8 @@ class MainWindow(QMainWindow):
             canvas.cursor_moved.connect(self._cursor_moved)
             canvas.nudged.connect(self.nudge)
             canvas.key_pressed.connect(lambda key: self.tool.key(key))
+            canvas.typed = lambda text: self.tool.typed(text)
+            canvas.takes_text = lambda: getattr(self.tool, "takes_text", lambda: False)()
             canvas.view_changed.connect(self.state_changed)
             canvas.view_changed.connect(self._show_zoom)
             canvas.context_requested.connect(
@@ -400,9 +419,6 @@ class MainWindow(QMainWindow):
             canvas.component_dropped.connect(
                 lambda name, x, y, v=view: self._component_dropped(v, name, x, y)
             )
-            canvas.set_theme(self.canvas_theme)
-            canvas.corner_color = self._frame_color()
-            canvas.configure(**self._canvas_options())
             self._caption(view)
             canvas.left_pans = self.tool.name == "hand"
             canvas.set_tool_cursor(self.tool.cursor)
@@ -905,7 +921,12 @@ class MainWindow(QMainWindow):
 
     def _build_actions(self) -> None:
         self.actions_ = actions = Actions(self)
-        self.addActions(actions.all_actions())  # shortcuts work without a menu bar
+        shape_actions = actions.shape_actions()
+        self.addActions([a for a in actions.all_actions() if a not in shape_actions])
+        for action in shape_actions:  # only where the shapes are (#242)
+            action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            self.area.addAction(action)
+            self.tree.addAction(action)
         for name in self.tool_windows.names():
             action = make_action(
                 self,
@@ -1041,6 +1062,7 @@ class MainWindow(QMainWindow):
                 self.layer_box.setItemIcon(self.layer_box.count() - 1, swatch_icon(color))
         self.layer_box.setCurrentIndex(layers.index(self.draw_layer) if self.draw_layer else -1)
         self.layer_box.blockSignals(False)
+        self.layers.show_current(self.draw_layer)
 
     def set_draw_layer(self, name: str) -> None:
         """The layer the drawing tools draw on."""
@@ -1055,9 +1077,9 @@ class MainWindow(QMainWindow):
 
     def _layer_row_chosen(self, row: int, *_) -> None:
         """Clicking a layer in the Layers panel makes it the drawing layer."""
-        names = list(self.document.project.layers)
-        if 0 <= row < len(names):
-            self.set_draw_layer(names[row])
+        name = self.layers.layer_at(row)
+        if name is not None:
+            self.set_draw_layer(name)
 
     def _path_width_chosen(self, value: float) -> None:
         self.path_width = round(value, 6)
@@ -1268,6 +1290,7 @@ class MainWindow(QMainWindow):
         for style in ("pick", "anchor"):
             self.canvas.show_points(style, tool_markers.get(style, []))
         self._place_gizmo()
+        self._place_handles()
         self._show_zoom()
 
     def _ports_of(self, ports) -> list[tuple[str, float, float, float]]:
@@ -1331,6 +1354,50 @@ class MainWindow(QMainWindow):
         for other in self.area.views():
             other.canvas.set_gizmo(kind if other is view and center else None, center)
 
+    def _place_handles(self) -> None:
+        """The selected shape's handles, while the tool drags them (Select), in the
+        current tab; none on a read-only one or for several shapes."""
+        view = self.view
+        tool = self.tool
+        one = (
+            getattr(tool, "shows_handles", False)
+            and len(view.selection) == 1
+            and not self.document.read_only
+        )
+        shown = one and not (tool.busy and getattr(tool, "_handle", None) is None)
+        if not shown:
+            self.edit_handles = []
+        elif getattr(tool, "_handle", None) is None:  # (kept as they were while dragging)
+            self.edit_handles = self.document.handles.handles(view.selection[0])
+        active = None
+        key = tool.active_handle() if hasattr(tool, "active_handle") and shown else None
+        for index, (handle, _, _) in enumerate(self.edit_handles):
+            if handle.key == key:
+                active = index
+        markers = [(x, y, h.role) for h, x, y in self.edit_handles]
+        for other in self.area.views():
+            other.canvas.show_edit_handles(markers if other is view else [], active)
+        editing = tool.dimension_editing() if hasattr(tool, "dimension_editing") else None
+        self._place_dimensions(one and (not tool.busy or editing is not None), editing)
+
+    def _place_dimensions(self, shown: bool, editing: tuple | None = None) -> None:
+        """The selected shape's values that use parameters, as dimensions (#266);
+        ``editing``: the one a value is typed for or dragged (see
+        :meth:`SelectTool.dimension_editing`)."""
+        view = self.view
+        dimensions = self.document.dimensions.of(view.selection[0]) if shown else []
+        if dimensions != self.edit_dimensions:
+            self.edit_dimensions = dimensions
+            if self._dimension_hovered is not None:  # it is gone: so is what it showed
+                self._dimension_hovered = None
+                self.canvas.show_hover(None)
+                self.canvas.set_hover_label(None)
+        for other in self.area.views():
+            hovered = self._dimension_hovered if other is view else None
+            other.canvas.show_dimensions(
+                dimensions if other is view else [], hovered, editing if other is view else None
+            )
+
     _update_overlay = update_overlay
 
     def _exists(self, path: NodePath) -> bool:
@@ -1361,6 +1428,8 @@ class MainWindow(QMainWindow):
             self.canvas.pulse(*(regions[p] for p in picked if p in regions))
         self.properties.show_node(paths[0] if len(paths) == 1 else None)
         self.update_overlay()
+        if not self.tool.busy:  # its hint may depend on what is selected (#251)
+            self.prompt(self.tool.hint())
         self.state_changed()
 
     def _pick_alignment(self, field: str, point: str, to: str) -> None:
@@ -1397,12 +1466,16 @@ class MainWindow(QMainWindow):
 
     def zoom_to_selection(self) -> None:
         """Glide to show the selected shapes as large as they fit (View › Zoom to selection)."""
+        if not self.selection:
+            self.report_error("select the shapes to zoom to first")
+            return
         regions = dict(getattr(self.view, "node_regions", ()))
         self.canvas.frame(*(regions.get(p) for p in self.selection))
 
     def rename_selection(self) -> None:
         """Start renaming the selected shape: its name in Properties, ready to type over."""
         if len(self.selection) != 1:
+            self.report_error("select one shape to rename")
             return
         self.tool_windows.open("properties")
         name = self.properties.findChild(QLineEdit, "title-edit")
@@ -1426,7 +1499,10 @@ class MainWindow(QMainWindow):
 
     def _hover(self, x: float, y: float) -> None:
         """Outline the shape under the cursor (what a click would select); after a
-        pause, say what it is; over the selection, show that a drag moves it."""
+        pause, say what it is; over the selection, show that a drag moves it. Over a
+        dimension, outline what its parameters move instead."""
+        if self._hover_dimension(x, y):
+            return
         tool = self.tool
         free = tool.hovers and not tool.busy and self.canvas.gizmo_hit(x, y) is None
         under = self.hit(x, y) if free else None
@@ -1447,6 +1523,34 @@ class MainWindow(QMainWindow):
         self.canvas.set_over_selection(
             free and tool.name == "select" and under is not None and under in self.selection
         )
+
+    def _hover_dimension(self, x: float, y: float) -> bool:
+        """Over a dimension's label: outline everything its parameters move and say
+        what (True); else False, having let go of one hovered before."""
+        tool = self.tool
+        free = self.edit_dimensions and not tool.busy
+        index = self.canvas.dimension_at(x, y) if free else None
+        if index == self._dimension_hovered:
+            return index is not None
+        self._dimension_hovered = index
+        self.canvas.show_dimensions(self.edit_dimensions, index)
+        self._hovered = self._tip_for = None  # (the shape under the cursor: found again)
+        self._tip_timer.stop()
+        if index is None:
+            self.canvas.show_hover(None)
+            self.canvas.set_hover_label(None)
+            return False
+        dimension = self.edit_dimensions[index]
+        dimensions, names = self.document.dimensions, dimension.names
+        if names:  # what its parameters move
+            moved, said = dimensions.affected(names).paths, dimensions.describe(names)
+        else:  # a placement's own value: that placement
+            moved = [dimension.owner] if dimension.owner else []
+            said = dimension.about or dimension.label
+        self.canvas.show_hover(self.document.results.highlight(moved))
+        self.canvas.set_hover_label(said)
+        self.canvas.set_over_selection(False)
+        return True
 
     def _show_tip(self) -> None:
         if self._tip_for is None or self.canvas.cursor_label or self.tool.busy:
@@ -1692,7 +1796,7 @@ class MainWindow(QMainWindow):
         try:
             return True, action()
         except Exception as exc:  # noqa: BLE001 - reported to the user
-            self.report_error(str(exc))
+            self.report_error(explain(exc))
             return False, None
 
     def _select_result(self, action) -> None:
@@ -1810,26 +1914,50 @@ class MainWindow(QMainWindow):
         self._run(lambda: self.document.moves.mirror(paths, left_right, center))
 
     def remove_alignment(self) -> None:
-        if len(self.selection) == 1:
-            path = self.selection[0]
-            self._run(lambda: self.document.nodes.set_align(path, None))
+        if len(self.selection) != 1:
+            self.report_error("select one shape to remove its alignment")
+            return
+        path = self.selection[0]
+        node = self.document.node(path)
+        if node.align is None:  # nothing to remove: no step to undo either
+            self.notify(f"{node.name or node.kind} is not aligned", seconds=3)
+            return
+        self._run(lambda: self.document.nodes.set_align(path, None))
 
     def unpack(self) -> None:
-        if len(self.selection) == 1:
-            self._select_result(lambda: self.document.components.unpack(self.selection[0]))
+        if len(self.selection) != 1:
+            self.report_error("select one placed component to unpack")
+            return
+        self._select_result(lambda: self.document.components.unpack(self.selection[0]))
 
     def unwrap(self) -> None:
-        if len(self.selection) == 1:
-            self._run(lambda: self.document.nodes.unwrap(self.selection[0]))
+        if len(self.selection) != 1:
+            self.report_error("select one operation to unwrap")
+            return
+        self._run(lambda: self.document.nodes.unwrap(self.selection[0]))
 
     def duplicate(self) -> None:
+        """A copy of each selected shape (one step to undo), selected."""
+        if not self.selection:
+            self.report_error("select the shapes to duplicate first")
+            return
         if len(self.selection) == 1:
             self._select_result(lambda: self.document.nodes.duplicate(self.selection[0]))
+            return
+        paths = list(self.selection)
+        clipboard = self.document.clipboard
+        ok, pasted = self._run(lambda: clipboard.paste(clipboard.copy(paths)))
+        if ok and pasted:
+            self._select_quietly(list(pasted))
 
     def delete(self) -> None:
+        if getattr(self.tool, "delete_chosen", lambda: False)():
+            return  # the chosen vertex of the selected shape, not the shape
         if self.selection:
             paths, self.selection = self.selection, []
-            self._run(lambda: self.document.nodes.remove(paths))
+            ok, _ = self._run(lambda: self.document.nodes.remove(paths))
+            if not ok:  # refused: what was selected still is (#251)
+                self._select_quietly(paths)
 
     def copy(self) -> None:
         """The selected shapes onto the clipboard, as text (other windows can paste them)."""
@@ -1846,6 +1974,8 @@ class MainWindow(QMainWindow):
             ok, text = self._run(lambda: self.document.clipboard.cut(paths))
             if ok:
                 QApplication.clipboard().setText(text)
+            else:
+                self._select_quietly(paths)
 
     def can_paste(self) -> bool:
         return is_shapes(QApplication.clipboard().text())
@@ -2015,7 +2145,7 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 return False
         self._remember_dir(str(target / "project.yaml"))
-        saved = self._run(lambda: self.document.save(target))[0]
+        saved = self._run(lambda: self.document.save(target, replace=True))[0]
         if saved:
             self._remember_project()
         return saved
@@ -2059,13 +2189,13 @@ class MainWindow(QMainWindow):
         if options:
             process = self.document.project.process
             start = {"grid_um": process.grid_um, "chord_um": process.chord_um}
-            dialog = ExportOptionsDialog(
-                title_of(cls), options, remembered(self.settings, format_name, options, start), self
-            )
+            scope = project_scope(self.document.path)
+            last = remembered(self.settings, format_name, options, start, scope)
+            dialog = ExportOptionsDialog(title_of(cls), options, last, self)
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             values = dialog.values()
-            remember(self.settings, format_name, options, values)
+            remember(self.settings, format_name, options, values, start, scope)
         ok, result = self._run(lambda: self.document.export_with_report(path, format_name, values))
         if ok:
             self._remember_dir(path)

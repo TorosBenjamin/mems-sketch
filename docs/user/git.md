@@ -2,8 +2,8 @@
 
 For a project saved in a git repository, the **Commit** panel (on the left
 edge) lists what changed since the last commit and commits it, and the
-**Git** panel (along the bottom) lists the commits, what each changed, and
-brings back earlier versions.
+**Git** panel (along the bottom) draws the commits of every branch as a
+graph, shows what each changed, and brings back earlier versions.
 
 ![The Commit panel: the top comb went from 16 fingers to 20, with the material added and removed on the canvas](../images/git.png)
 
@@ -83,17 +83,32 @@ changed.
 
 ## The Git panel
 
-The commits that changed the project, newest first. Choose one to see what it
-changed, beside the list and on the canvas.
+The commits that changed the project, drawn as a graph, newest first: each
+branch has a line and a colour of its own, and the commits carry their branch
+and tag labels (a filled label is a local branch, an outlined one a remote
+branch, a yellow one a tag; the branch checked out is in bold, its commit
+ringed).
 
-- Right-click a commit and **Compare with the design now** to see everything
-  since then.
-- **Restore the project as it was**, or **Restore &lt;component&gt; as it
-  was** for the one you are editing: an ordinary edit, which Undo takes back,
-  and nothing in git changes. The Commit panel then shows what the restore
-  changed; commit it to keep it.
+![The Git panel: the commits of every branch, with the chosen one's message and changes on the right](../images/git-panel.png)
+
+- **The branch filter** lists the commits on the branch checked out (the
+  default), on another branch, or on **All branches**.
+- **Search** the messages (or type the start of a sha), or keep **one
+  author's** commits. The graph's lines are hidden while you do, as the
+  commits left out would break them.
+- **The component filter** keeps the commits that changed one component (and
+  its private ones).
+- **Choose a commit** for its message, sha, author, date and labels on the
+  right, with what it changed by component; the canvas shows the material it
+  added and removed in the component you are editing. Click a change to go to
+  it, double-click it (or the commit) to compare in a tab.
+- **Compare with now** shows everything changed since that commit.
+  **Restore** brings back the project as it was, or the component you are
+  editing: an ordinary edit, which Undo takes back, and nothing in git
+  changes. The Commit panel then shows what the restore changed; commit it to
+  keep it. The same are on a commit's right-click menu.
 
 ## Starting a repository
 
 A saved project that is not in a repository gets **Initialize git here**.
-Branches, merging, push and pull stay with your usual git tools for now.
+Checking out, merging, push and pull stay with your usual git tools for now.

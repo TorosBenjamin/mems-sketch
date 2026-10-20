@@ -36,7 +36,7 @@ using NodePtr = std::shared_ptr<const Node>;
 [[noreturn]] void fail(const std::string& message) { throw ExpressionError(message); }
 
 const std::set<std::string, std::less<>> FUNCTIONS = {
-    "abs", "min", "max", "round", "sqrt", "sin", "cos", "tan", "ceil", "floor"};
+    "abs", "min", "max", "round", "sqrt", "sin", "cos", "tan", "sind", "cosd", "tand", "ceil", "floor"};
 const double PI = 3.141592653589793;
 
 bool reserved(std::string_view name) { return FUNCTIONS.count(name) || name == "pi"; }
@@ -513,6 +513,22 @@ double math_1(const char* name, double x, double (*f)(double)) {
     return r;
 }
 
+// sin, cos or tan of an angle in degrees: exact at multiples of 90° (cosd(90)
+// is 0, not 6e-17), as mems_sketch.core.expressions has it.
+double in_degrees(const std::string& name, double degrees) {
+    if (!std::isfinite(degrees)) fail("math domain error (" + name + ")");
+    if (std::fmod(degrees, 90.0) == 0.0) {
+        const int quarter = static_cast<int>(std::fmod(std::fmod(degrees / 90.0, 4.0) + 4.0, 4.0));
+        static constexpr double sines[] = {0, 1, 0, -1}, cosines[] = {1, 0, -1, 0};
+        if (name == "sind") return sines[quarter];
+        if (name == "cosd") return cosines[quarter];
+        if (quarter % 2) fail("math range error (tand of " + std::to_string(static_cast<long long>(degrees)) + "°)");
+        return 0.0;
+    }
+    const double radians = degrees * (PI / 180.0);  // as Python's math.radians, to the bit
+    return name == "sind" ? std::sin(radians) : name == "cosd" ? std::cos(radians) : std::tan(radians);
+}
+
 Number call(const std::string& name, const std::vector<Number>& args) {
     auto count = [&](size_t n) {
         if (args.size() != n)
@@ -556,6 +572,7 @@ Number call(const std::string& name, const std::vector<Number>& args) {
     if (name == "sin") return Number::of_float(math_1("sin", x.value, [](double v) { return std::sin(v); }));
     if (name == "cos") return Number::of_float(math_1("cos", x.value, [](double v) { return std::cos(v); }));
     if (name == "tan") return Number::of_float(math_1("tan", x.value, [](double v) { return std::tan(v); }));
+    if (name == "sind" || name == "cosd" || name == "tand") return Number::of_float(in_degrees(name, x.value));
     fail("unsupported function '" + name + "'");
 }
 
@@ -583,7 +600,8 @@ Number eval(const Node& node, const Lookup& lookup) {
     case Node::Kind::call: {
         const Node& function = *node.children[0];
         if (function.kind != Node::Kind::name || !FUNCTIONS.count(function.id))
-            fail("unsupported syntax: only " "abs, min, max, round, sqrt, sin, cos, tan, ceil and floor can be called");
+            fail("unsupported syntax: only abs, min, max, round, sqrt, sin, cos, tan, sind, cosd, tand, "
+                 "ceil and floor can be called");
         std::vector<Number> args;
         for (size_t k = 1; k < node.children.size(); ++k) args.push_back(eval(*node.children[k], lookup));
         return call(function.id, args);

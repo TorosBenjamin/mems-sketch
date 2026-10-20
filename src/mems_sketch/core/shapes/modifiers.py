@@ -117,8 +117,11 @@ class Modifier(BaseModel):
 
 def _count(value: Value, variables: dict[str, float], what: str) -> int:
     number = evaluate(value, variables)
-    if number != int(number) or number < 0:
-        raise ValueError(f"{what} must be a non-negative integer, got {number:g}")
+    if number != int(number) or number < 1:
+        raise ValueError(
+            f"{what} must be a whole number, at least 1, not {number:g} "
+            "(switch the shape off to hide it)"
+        )
     return int(number)
 
 
@@ -134,7 +137,9 @@ def _format(value: Value) -> str:
 
 
 class ArrayModifier(Modifier):
-    """Copies on a grid; the copy's column and row are ``i`` and ``j``."""
+    """Copies on a grid: ``columns`` × ``rows``, ``dx`` and ``dy`` apart (the first is
+    the shape itself). In the shape's own fields, the copy's column and row are
+    ``i`` and ``j`` (from 0), so copies can differ."""
 
     kind: Literal["array"] = "array"
     icon: ClassVar[str] = "repeat"

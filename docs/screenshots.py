@@ -1,7 +1,7 @@
 """Regenerate the pictures in docs/images from the example project.
 
     python docs/screenshots.py            # all of them
-    python docs/screenshots.py history    # the ones whose name contains "history"
+    python docs/screenshots.py git        # the ones whose name contains "git"
 
 Runs offscreen (no window opens) on a copy of examples/resonator, with
 fresh settings, so the pictures do not depend on the machine. Run it after a
@@ -185,26 +185,63 @@ def process(ws: Workspace) -> None:
     save(w, "process")
 
 
-@shot
-def history(ws: Workspace) -> None:
-    def git(*args: str) -> None:
-        subprocess.run(
-            ["git", "-c", "user.name=Designer", "-c", "user.email=d@example.com", *args],
-            cwd=ws.project,
-            check=True,
-            capture_output=True,
-        )
+def git_in(folder: Path, *args: str, author: str = "Designer") -> None:
+    subprocess.run(
+        ["git", "-c", f"user.name={author}", "-c", "user.email=d@example.com", *args],
+        cwd=folder,
+        check=True,
+        capture_output=True,
+    )
 
-    git("init", "-q")
-    git("add", "-A", ".")
-    git("commit", "-q", "-m", "Resonator, first version")
-    w = ws.window("shapes", "history")
+
+@shot
+def commit_panel(ws: Workspace) -> None:
+    git_in(ws.project, "init", "-q")
+    git_in(ws.project, "add", "-A", ".")
+    git_in(ws.project, "commit", "-q", "-m", "Resonator, first version")
+    w = ws.window("shapes", "commit")
     doc = w.document
     comb = doc.node(((0, 1),))
     data = comb.model_dump()
     data["params"] = {**data["params"], "fingers": 10}
     doc.nodes.replace(((0, 1),), type(comb).model_validate(data))
-    save(w, "history")
+    save(w, "git")
+
+
+@shot
+def git_panel(ws: Workspace) -> None:
+    top = ws.project / "components" / "top" / "component.yaml"
+
+    def commit(message: str, old: str, new: str, author: str = "Designer") -> None:
+        top.write_text(top.read_text().replace(old, new))
+        git_in(ws.project, "commit", "-q", "-am", message, author=author)
+
+    git_in(ws.project, "init", "-q", "-b", "main")
+    git_in(ws.project, "add", "-A", ".")
+    git_in(ws.project, "commit", "-q", "-m", "Resonator, first version")
+    git_in(ws.project, "tag", "v0.1")
+    git_in(ws.project, "checkout", "-q", "-b", "more-fingers")
+    commit("Comb drive: 20 fingers", "fingers: 16", "fingers: 20", "Reviewer")
+    commit("Plate 162.5 → 170 µm", "plate: 162.5", "plate: 170", "Reviewer")
+    git_in(ws.project, "checkout", "-q", "main")
+    commit("Top comb 1 µm further out", "dy: -1}", "dy: -2}")
+    git_in(ws.project, "update-ref", "refs/remotes/origin/main", "main")
+    git_in(ws.project, "merge", "-q", "--no-ff", "-m", "Merge more-fingers", "more-fingers")
+    git_in(ws.project, "checkout", "-q", "-b", "bigger-plate")
+    commit("Plate 170 → 180 µm", "plate: 170", "plate: 180")
+    git_in(ws.project, "checkout", "-q", "main")
+    w = ws.window("shapes", "git", component="top")
+    panel = w.git
+    index = panel.branch_box.findData("--all")
+    panel.branch_box.setCurrentIndex(index)
+    panel.branch_box.activated.emit(index)
+    for row in range(panel.versions.topLevelItemCount()):
+        item = panel.versions.topLevelItem(row)
+        if item.text(0).startswith("Comb drive"):
+            panel.versions.setCurrentItem(item)
+    sizes = w.tool_windows.center.sizes()
+    w.tool_windows.center.setSizes([sum(sizes) - 260, 260])
+    save(panel, "git-panel")
 
 
 @shot

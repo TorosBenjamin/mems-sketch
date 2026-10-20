@@ -7,6 +7,7 @@
     mems-sketch-cli export  my_project out.gds [--set pitch=15] [--option grid_um=0.005]
     mems-sketch-cli formats                                         (export formats, their options)
     mems-sketch-cli convert my_project design.json                  (and back; .xml .mat .yaml)
+    mems-sketch-cli mcp     [my_project]                            (an MCP server, on stdio)
 
 ``check`` exits with status 1 when a rule is violated with severity error (or
 any rule, with ``--strict``), so it can gate CI. Errors exit with status 2. Nothing here depends on the GUI.
@@ -22,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from mems_sketch.core.component import Geometry
+from mems_sketch.core.errors import explain
 from mems_sketch.core.process import changes_between
 from mems_sketch.core.project import Project, new_project
 from mems_sketch.engine import Build, Engine
@@ -43,7 +45,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return args.handler(args)
     except Exception as exc:  # noqa: BLE001 - reported as a CLI error
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {explain(exc)}", file=sys.stderr)
         return 2
 
 
@@ -71,6 +73,12 @@ def _parser() -> argparse.ArgumentParser:
         help="the process it starts as a copy of (default mems.surface; 'empty' for none)",
     )
     new_process.set_defaults(handler=_new_process)
+
+    mcp = commands.add_parser(
+        "mcp", help="serve the design tools to AI assistants (MCP, on stdio; the mcp extra)"
+    )
+    mcp.add_argument("project", type=Path, nargs="?", help="a project to open first")
+    mcp.set_defaults(handler=_mcp)
 
     info = commands.add_parser("info", help="list components, parameters and layers")
     info.add_argument("project", type=Path)
@@ -148,8 +156,21 @@ def _build(project: Project, component: str | None, params: dict[str, Any]) -> B
     return Engine().load(project).build(component, params)
 
 
+def _values(project: Project, component: str | None, assignments: list[str]) -> dict[str, float]:
+    """The ``--set`` values, checked and worked out: an expression may use the
+    component's other parameters (``pitch=plate/16``), as a default can."""
+    params = _parameters(assignments)
+    if not params:
+        return {}
+    name = component or project.top
+    if name is None:
+        raise ValueError("this project has no top component: name the component")
+    resolved = Engine().load(project).variables(name, params)
+    return {key: resolved[key] for key in params}
+
+
 def _geometry(project: Project, args: argparse.Namespace) -> Geometry:
-    return _build(project, args.component, _parameters(args.set)).geometry
+    return _build(project, args.component, _values(project, args.component, args.set)).geometry
 
 
 def _new(args: argparse.Namespace) -> int:
@@ -191,6 +212,17 @@ def _new_process(args: argparse.Namespace) -> int:
     )
     save(project, args.folder)
     print(f"created {args.folder}: edit processes/{name}/process.yaml, then add it as a library")
+    return 0
+
+
+def _mcp(args: argparse.Namespace) -> int:
+    try:
+        from mems_sketch.mcp_server.server import run
+    except ImportError as error:
+        raise ValueError(
+            f"the MCP server needs the mcp extra: pip install 'mems-sketch[mcp]' ({error})"
+        ) from error
+    run(str(args.project) if args.project else None)
     return 0
 
 
@@ -249,7 +281,9 @@ def _number(value: float | str) -> str:
 
 def _check(args: argparse.Namespace) -> int:
     project = load(args.project)
-    checked = rules.checked_geometry(project, args.component, _parameters(args.set))
+    checked = rules.checked_geometry(
+        project, args.component, _values(project, args.component, args.set)
+    )
     violations = rules.check(project, checked, args.component)
     if args.json:
         print(
@@ -300,7 +334,7 @@ def _export(args: argparse.Namespace) -> int:
     format_name = args.format or format_for(args.output)
     options = _options(format_name, args.option)
     project = load(args.project)
-    params = _parameters(args.set)
+    params = _values(project, args.component, args.set)
     build = _build(project, args.component, params)
     path, written = export_with_report(
         project,
@@ -350,6 +384,8 @@ def _formats(args: argparse.Namespace) -> int:
 
 def _convert(args: argparse.Namespace) -> int:
     project = load(args.source)
+    if is_document(args.target) and args.target.exists():
+        raise FileExistsError(f"{args.target} already exists")
     if not is_document(args.target) and (args.target / "project.yaml").exists():
         raise FileExistsError(f"{args.target} already contains a project")
     save(project, args.target)

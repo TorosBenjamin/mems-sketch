@@ -91,13 +91,19 @@ class ImportEdits(Commands):
 
     def reimport(self, name: str, path: str | Path) -> None:
         """Take a new version of the file: every placement of ``name`` follows. The
-        cell and layer mapping stay; new GDS layers are mapped by their numbers."""
+        cell and layer mapping stay (a layer left out stays out); GDS layers the
+        old file did not have are mapped by their numbers."""
         data, _ = self.read(path)
         imported = self.session.project.imports[name]
         if imported.cell not in cells(data):
             raise ValueError(f"the new file has no cell '{imported.cell}'")
-        defaults = self.default_layers(data, imported.cell)
-        mapping = {**defaults, **imported.layers}
+        known = {layer_key(gds) for gds in gds_layers(imported.data, imported.cell)}
+        added = {
+            gds: layer
+            for gds, layer in self.default_layers(data, imported.cell).items()
+            if gds not in known
+        }
+        mapping = {**added, **imported.layers}
 
         def change(project: Project) -> None:
             target = project.imports[name]

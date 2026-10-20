@@ -21,6 +21,26 @@ _BINARY_OPS = {
     ast.Pow: operator.pow,
 }
 _UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+
+def _in_degrees(name: str, function: Callable[[float], float]) -> Callable[[float], float]:
+    """``function`` of an angle in degrees, exact at multiples of 90° (``cosd(90)``
+    is 0, not 6e-17), as the engine has it."""
+    exact = {"sind": (0, 1, 0, -1), "cosd": (1, 0, -1, 0), "tand": (0, None, 0, None)}[name]
+
+    def call(degrees: float) -> float:
+        if not math.isfinite(degrees):
+            raise ExpressionError(f"math domain error ({name})")
+        if math.fmod(degrees, 90.0) == 0.0:
+            value = exact[int(math.fmod(math.fmod(degrees / 90.0, 4.0) + 4.0, 4.0))]
+            if value is None:
+                raise ExpressionError(f"math range error (tand of {degrees:g}°)")
+            return float(value)
+        return function(math.radians(degrees))
+
+    return call
+
+
 _FUNCTIONS = {
     "abs": abs,
     "min": min,
@@ -30,6 +50,9 @@ _FUNCTIONS = {
     "sin": math.sin,
     "cos": math.cos,
     "tan": math.tan,
+    "sind": _in_degrees("sind", math.sin),
+    "cosd": _in_degrees("cosd", math.cos),
+    "tand": _in_degrees("tand", math.tan),
     "ceil": math.ceil,
     "floor": math.floor,
 }
@@ -170,6 +193,11 @@ def _eval(node: ast.AST, variables: Mapping[str, float]) -> float:
             return _UNARY_OPS[type(op)](_eval(operand, variables))
         case ast.Call(func=ast.Name(id=fname), args=args, keywords=[]) if fname in _FUNCTIONS:
             return _FUNCTIONS[fname](*(_eval(arg, variables) for arg in args))
+        case ast.Call():
+            known = list(_FUNCTIONS)
+            raise ExpressionError(
+                f"unsupported syntax: only {', '.join(known[:-1])} and {known[-1]} can be called"
+            )
     raise ExpressionError(f"unsupported syntax: {ast.dump(node)}")
 
 

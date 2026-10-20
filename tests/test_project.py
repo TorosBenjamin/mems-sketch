@@ -247,6 +247,40 @@ def test_removed_components_lose_their_files(tmp_path):
     assert (folder / "components" / "spare" / "notes.txt").read_text() == "kept"  # not ours
 
 
+def test_a_hand_edited_file_that_did_not_change_is_left_as_it_is(tmp_path):
+    """Comments and layout stay until the file's contents change (#240)."""
+    project = make_project()
+    folder = save(project, tmp_path / "demo")
+    bar_file = folder / "components" / "bar" / "component.yaml"
+    by_hand = "# the beam\n" + bar_file.read_text().replace("min: 0.5", "min: 0.50")
+    bar_file.write_text(by_hand)
+    project = load(folder)
+    project.set_variable("w_top", 4)
+    save(project, folder)
+    assert bar_file.read_text() == by_hand
+    assert "w_top: 4" in (folder / "components" / "top" / "component.yaml").read_text()
+
+
+def test_saving_into_a_folder_removes_only_what_the_project_had(tmp_path):
+    """A folder without a project keeps its files; a project's own folder loses
+    the files of components it no longer has (#240)."""
+    folder = tmp_path / "dest"
+    stray = folder / "components" / "old" / "component.yaml"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("description: someone else's\n")
+    (folder / "imports").mkdir()
+    (folder / "imports" / "pads.gds").write_bytes(b"not ours")
+    project = make_project()
+    save(project, folder)
+    assert stray.is_file() and (folder / "imports" / "pads.gds").is_file()
+    project.define_component(bar("spare"))
+    save(project, folder)
+    project.remove_component("spare")
+    save(project, folder)
+    assert not (folder / "components" / "spare").exists()
+    assert stray.is_file()
+
+
 def test_names_come_from_the_files_not_their_places(tmp_path):
     folder = save(make_project(), tmp_path / "demo")
     (folder / "components" / "bar").rename(folder / "components" / "beam_files")

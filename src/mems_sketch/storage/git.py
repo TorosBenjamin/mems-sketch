@@ -30,12 +30,29 @@ class GitError(RuntimeError):
     pass
 
 
+# What a ref is (Ref.role)
+HEAD, BRANCH, REMOTE, TAG = "head", "branch", "remote", "tag"
+ALL = "--all"  # commits(): on every branch, remote and tag
+
+
+@dataclass(frozen=True)
+class Ref:
+    """A name for a commit: ``main`` (``HEAD`` when it is the branch checked out),
+    ``origin/main``, ``v0.1``; or ``HEAD`` itself when detached."""
+
+    name: str
+    role: str  # HEAD (the branch checked out, or a detached HEAD), BRANCH, REMOTE or TAG
+
+
 @dataclass(frozen=True)
 class Commit:
     sha: str
     author: str
     date: datetime
     subject: str
+    parents: tuple[str, ...] = ()  # in the history listed (see commits())
+    refs: tuple[Ref, ...] = ()
+    body: str = ""  # the message after its subject
 
     @property
     def short(self) -> str:
@@ -56,29 +73,94 @@ def repository(folder: str | Path) -> Path | None:
         return None
 
 
-def commits(folder: str | Path, limit: int = 200) -> list[Commit]:
-    """The commits that changed the project in ``folder``, newest first."""
+def commits(
+    folder: str | Path,
+    limit: int = 200,
+    rev: str | None = None,
+    path: str | None = None,
+) -> list[Commit]:
+    """The commits that changed the project in ``folder`` (or ``path`` in it), newest
+    first, with a parent before its children only after them (a graph can be drawn).
+    ``rev`` is where to start: a branch, ``ALL``, or None for ``HEAD``. Parents are
+    those in this history: the nearest listed ancestor along each line."""
     folder = Path(folder)
-    if repository(folder) is None:
+    root = repository(folder)
+    if root is None:
         return []
+    spec = [] if path is None and folder.resolve() == root.resolve() else [path or "."]
     try:
         out = _git(
             folder,
             "log",
             f"-n{limit}",
-            f"--format=%H{FIELD}%an{FIELD}%aI{FIELD}%s{RECORD}",
+            "--topo-order",
+            "--decorate=full",
+            *(["--parents", "--full-history", "--simplify-merges"] if spec else []),
+            f"--format=%H{FIELD}%P{FIELD}%an{FIELD}%aI{FIELD}%D{FIELD}%s{FIELD}%b{RECORD}",
+            rev or "HEAD",
             "--",
-            ".",
+            *spec,
         )
     except GitError:  # e.g. a repository without commits yet
         return []
     result = []
     for record in out.split(RECORD):
-        record = record.strip()
-        if record:
-            sha, author, date, subject = record.split(FIELD, 3)
-            result.append(Commit(sha, author, datetime.fromisoformat(date), subject))
+        record = record.lstrip("\n")  # (not strip(): an empty body ends in FIELD)
+        if not record:
+            continue
+        sha, parents, author, date, refs, subject, body = record.split(FIELD, 6)
+        result.append(
+            Commit(
+                sha,
+                author,
+                datetime.fromisoformat(date),
+                subject,
+                tuple(parents.split()),
+                _refs(refs),
+                body.strip(),
+            )
+        )
     return result
+
+
+def _refs(decorations: str) -> tuple[Ref, ...]:
+    """git log's ``%D`` with full names: ``HEAD -> refs/heads/main, tag: refs/tags/v0.1``."""
+    found = []
+    for text in decorations.split(", "):
+        text = text.strip().removeprefix("tag: ")
+        role = HEAD if text.startswith("HEAD -> ") else None
+        text = text.removeprefix("HEAD -> ")
+        if text == "HEAD":
+            found.append(Ref("HEAD", HEAD))
+        elif text.startswith("refs/heads/"):
+            found.append(Ref(text.removeprefix("refs/heads/"), role or BRANCH))
+        elif text.startswith("refs/remotes/") and not text.endswith("/HEAD"):
+            found.append(Ref(text.removeprefix("refs/remotes/"), REMOTE))
+        elif text.startswith("refs/tags/"):
+            found.append(Ref(text.removeprefix("refs/tags/"), TAG))
+    return tuple(found)
+
+
+def branches(folder: str | Path) -> list[Ref]:
+    """The local branches (the one checked out as ``HEAD``), then the remote ones."""
+    try:
+        out = _git(
+            folder,
+            "for-each-ref",
+            "--format=%(refname)%09%(HEAD)",
+            "refs/heads",
+            "refs/remotes",
+        )
+    except GitError:
+        return []
+    found = []
+    for line in out.splitlines():
+        name, _, current = line.partition("\t")
+        if name.startswith("refs/heads/"):
+            found.append(Ref(name.removeprefix("refs/heads/"), HEAD if current == "*" else BRANCH))
+        elif not name.endswith("/HEAD"):
+            found.append(Ref(name.removeprefix("refs/remotes/"), REMOTE))
+    return found
 
 
 def parent(folder: str | Path, rev: str) -> str | None:

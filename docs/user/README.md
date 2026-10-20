@@ -22,6 +22,8 @@ design rules, and exported for the rest of the flow.
 8. **[Files, import and export](files.md)**: the project folder, other
    formats, GDS import, the command line.
 9. **[Git](git.md)**: what changed, committing and restoring with git.
+10. **[AI assistants](ai-assistants.md)**: let Claude or another assistant
+    open, edit, build, look at and check designs (MCP).
 
 Looking for the Python API or how the tool works inside? See the
 [developer guide](../developer/README.md).

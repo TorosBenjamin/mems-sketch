@@ -36,6 +36,26 @@ def is_relative(spec: str) -> bool:
     return _RELATIVE.fullmatch(spec) is not None
 
 
+def offset(spec: str) -> int:
+    """How many levels above the component's a relative ``spec`` is (``level-1``: -1)."""
+    match = _RELATIVE.fullmatch(spec)
+    if match is None:
+        raise ValueError(f"'{spec}' is not relative to the level")
+    sign, count = match.group(1), int(match.group(2) or 0)
+    return -count if sign == "-" else count
+
+
+def shifted(spec: str, by: int) -> str:
+    """A relative layer or level ``by`` levels higher (``level.anchor`` by 1 is
+    ``level+1.anchor``); a layer by name stays as it is."""
+    match = _RELATIVE.fullmatch(spec)
+    if match is None:
+        return spec
+    total = offset(spec) + by
+    text = LEVEL if total == 0 else f"{LEVEL}{total:+d}"
+    return f"{text}.{match.group(3)}" if match.group(3) else text
+
+
 @dataclass(frozen=True)
 class Stack:
     """The process's layer stack, bottom to top, and its default level."""

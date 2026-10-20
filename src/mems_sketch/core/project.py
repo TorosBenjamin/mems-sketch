@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import keyword
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,7 +41,12 @@ from mems_sketch.core.component import Component, Geometry
 from mems_sketch.core.imports import ImportedCell
 from mems_sketch.core.process import Layer, Process, Value, default_process
 from mems_sketch.core.shapes import RefShape, Shape, child_lists, find, walk
-from mems_sketch.core.user_component import ComponentDef, ParamDef, name_shapes
+from mems_sketch.core.user_component import (
+    RESERVED_PARAM_NAMES,
+    ComponentDef,
+    ParamDef,
+    name_shapes,
+)
 
 if TYPE_CHECKING:
     from mems_sketch.engine import Engine
@@ -358,6 +364,15 @@ class Project:
                 if target == component and shape.align and shape.align.point == old:
                     shape.align.point = new
 
+    def rename_parameter(self, component: str, old: str, new: str) -> None:
+        """Rename a parameter of a local component, the expressions in it that use
+        it, and the value each placement of it passes (``params: {old: 5}``)."""
+        self.components[component].rename_parameter(old, new)
+        for user in self.users(component):
+            for shape, target in self.references_of(user):
+                if target == component and old in shape.params:
+                    shape.params = {new if k == old else k: v for k, v in shape.params.items()}
+
     def rename_port(self, component: str, old: str, new: str) -> None:
         """Rename a port of a local component, and update the components that place
         it: what uses its point (``comb1.port.old``, a copy's ``port.old[2]``)."""
@@ -496,6 +511,7 @@ class Project:
 
     def remove_parameter(self, name: str, component: str | None = None) -> None:
         definition = self.components[self._target(component)]
+        definition.parameter(name)  # there is one, or say so
         definition.parameters = [p for p in definition.parameters if p.name != name]
 
     def resolved_parameters(
@@ -619,6 +635,21 @@ def _check_visible(qualified: str, path: str, where: str | None) -> None:
     raise PrivateComponentError(
         f"'{qualified}' is private to '{owner}': it can only be placed inside '{owner}'"
     )
+
+
+# Names a shape cannot have: expressions read them as something else.
+RESERVED_SHAPE_NAMES = RESERVED_PARAM_NAMES | {"port", "self"}
+
+
+def check_shape_name(name: str) -> None:
+    """A shape's name must be usable in expressions (``beam.right.x``)."""
+    if not name.isidentifier() or keyword.iskeyword(name):
+        raise ValueError(
+            f"'{name}' is not a valid shape name: use letters, digits and _, "
+            "not starting with a digit"
+        )
+    if name in RESERVED_SHAPE_NAMES:
+        raise ValueError(f"'{name}' is reserved: expressions use it, so a shape cannot")
 
 
 def check_shape_names(shapes: list[Shape]) -> None:

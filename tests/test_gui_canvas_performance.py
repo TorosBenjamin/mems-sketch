@@ -6,14 +6,12 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPixmapCache, QWheelEvent
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QWheelEvent
 from PySide6.QtWidgets import QApplication, QGraphicsItem
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.region import Region
-from mems_sketch.gui.canvas import LayoutCanvas
-
-CACHED = QGraphicsItem.CacheMode.DeviceCoordinateCache
+from mems_sketch.gui.canvas import LayoutCanvas, ShapeItem
 
 
 @pytest.fixture
@@ -42,20 +40,25 @@ def subpaths(path: QPainterPath) -> int:
 
 
 def test_the_geometry_and_overlays_are_drawn_from_a_cache(canvas):
-    assert QPixmapCache.cacheLimit() >= 128 * 1024  # KB: room for a few full-view pictures
+    """Shapes and the selection's highlight are drawn by a band each, from shared
+    pictures; the hover outline and a drag preview from pictures of their own."""
     geometry = Geometry()
     geometry.layers["device"] = plate_with_holes()
     canvas.show_geometry(geometry, {"device": QColor("#4c78a8")}, {})
     canvas.show_overlay(geometry, [])
     canvas.show_hover(geometry)
     canvas.show_drag_preview(geometry, {"device": QColor("#4c78a8")})
-    items = [
-        *(item for items in canvas._layer_items.values() for item in items),
-        *canvas._overlay,
-        canvas._hover_item,
-        *canvas._drag_items,
-    ]
-    assert items and all(item.cacheMode() == CACHED for item in items)
+    no_contents = QGraphicsItem.GraphicsItemFlag.ItemHasNoContents
+    shapes = [item for items in canvas._layer_items.values() for item in items]
+    highlights = [item for item in canvas._overlay if isinstance(item, ShapeItem)]
+    assert shapes and highlights
+    for band, items in ((canvas._shape_band, shapes), (canvas._highlight_band, highlights)):
+        assert all(item.band is band and item.flags() & no_contents for item in items)
+    assert canvas._hover_item.cached
+    assert canvas._drag_items and all(item.cached and item.snapped for item in canvas._drag_items)
+    assert all(
+        item.cacheMode() == QGraphicsItem.CacheMode.NoCache for item in canvas.scene().items()
+    )
 
 
 def test_the_hover_outline_is_the_outer_outline_only(canvas):

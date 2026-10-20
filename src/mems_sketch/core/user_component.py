@@ -97,6 +97,9 @@ class ParamDef(_Model):
 
     @model_validator(mode="after")
     def _numeric_default_in_range(self):
+        low, high = self.min, self.max
+        if isinstance(low, int | float) and isinstance(high, int | float) and low > high:
+            raise ValueError(f"the min of '{self.name}' ({low:g}) is more than its max ({high:g})")
         if isinstance(self.default, str):
             return self  # checked when the expression is resolved
         if self.integer and self.default != int(self.default):
@@ -312,6 +315,31 @@ class ComponentDef(_Model):
                 self.ports[index] = PortDef.model_validate({**port.model_dump(), "name": new})
                 return
         raise KeyError(f"component '{self.name}' has no port '{old}'")
+
+    def rename_parameter(self, old: str, new: str) -> None:
+        """Rename one of this component's parameters, and the expressions that use
+        it: other parameters' defaults and limits, shapes, points and ports (see
+        :meth:`Project.rename_parameter` for the components that place it)."""
+        if any(p.name == new for p in self.parameters):
+            raise ValueError(f"parameter '{new}' already exists")
+        if all(p.name != old for p in self.parameters):
+            raise KeyError(f"component '{self.name}' has no parameter '{old}'")
+
+        def change(name: str) -> str | None:
+            return new if name == old else None
+
+        self.parameters = [
+            ParamDef.model_validate(
+                {
+                    **p.model_dump(),
+                    "name": new if p.name == old else p.name,
+                    **{k: rewrite(getattr(p, k), change) for k in ("default", "min", "max")},
+                }
+            )
+            for p in self.parameters
+        ]
+        self.shapes = map_expressions(self.shapes, change)
+        self._rewrite_points(change)
 
     def follow_point_rename(self, nodes: set[str], old: str, new: str) -> None:
         """Update what uses point ``old`` of the nodes named in ``nodes``, which place

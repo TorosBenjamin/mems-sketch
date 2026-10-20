@@ -27,6 +27,7 @@
 #include <gp_Vec.hxx>
 
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <numbers>
 #include <string>
@@ -49,9 +50,16 @@ constexpr double kCornerMatch = 0.002;
 // other: not a corner.
 constexpr double kSmooth = 1e-9;
 
+// A number as people write it: 100, 2.5, not 100.000000.
+std::string number(double value) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%g", value);
+    return text;
+}
+
 std::string where(const gp_Pnt& p) {
     const Point q = from_occ(p);
-    return "(" + std::to_string(q.x) + ", " + std::to_string(q.y) + ")";
+    return "(" + number(q.x) + ", " + number(q.y) + ")";
 }
 
 TopoDS_Shape copied(const TopoDS_Shape& shape) { return BRepBuilderAPI_Copy(shape).Shape(); }
@@ -278,7 +286,7 @@ namespace {
 
 void check_fillet(const BRepFilletAPI_MakeFillet2d& fillet, const gp_Pnt& at, double radius) {
     if (fillet.Status() != ChFi2d_IsDone) {
-        throw GeometryError("a radius of " + std::to_string(radius) +
+        throw GeometryError("a radius of " + number(radius) +
                             " does not fit the corner at " + where(at));
     }
 }
@@ -380,8 +388,8 @@ Region Region::rounded(std::span<const CornerRounding> wanted) const {
     for (const TopoDS_Face& face : faces_of(copied(impl_->shape))) result.push_back(rounded_face(face, add));
     for (size_t k = 0; k < wanted.size(); ++k) {
         if (!found[k]) {
-            throw GeometryError("(" + std::to_string(wanted[k].at.x) + ", " +
-                                std::to_string(wanted[k].at.y) + ") is not a corner of the shape");
+            throw GeometryError("(" + number(wanted[k].at.x) + ", " + number(wanted[k].at.y) +
+                                ") is not a corner of the shape");
         }
     }
     return RegionAccess::make(compound_of(result));

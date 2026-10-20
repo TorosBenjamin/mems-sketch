@@ -194,6 +194,23 @@ def test_save_open_export(doc, tmp_path):
     assert load(tmp_path / "proj") == doc.project
 
 
+def test_saving_over_another_project_needs_replace(doc, tmp_path):
+    """Saving in a folder (or a one-file project) that holds another project is
+    refused unless asked to replace it; the project's own folder is not (#240)."""
+    other = EditSession()
+    other.create(tmp_path / "other", "other")
+    other.nodes.add(RectShape(name="keep", layer="device", x0=0, y0=0, x1=5, y1=5))
+    other.save()
+    doc.save(tmp_path / "doc.json")
+    for target in (tmp_path / "other", tmp_path / "other" / "project.yaml", tmp_path / "doc.json"):
+        with pytest.raises(ValueError, match="already holds a project"):
+            EditSession().save(target)
+    assert [s.name for s in load(tmp_path / "other").components["top"].shapes] == ["keep"]
+    other.save(tmp_path / "other")  # its own
+    doc.save(tmp_path / "other", replace=True)
+    assert load(tmp_path / "other") == doc.project
+
+
 # -- alignment, transforms and unpacking -------------------------------------
 
 from mems_sketch.core.shapes import Align, TransformShape
@@ -307,6 +324,38 @@ def test_parameters_can_be_renamed(doc):
     doc.parameters.set("w", 2)
     doc.parameters.update("w", name="width")
     assert [p.name for p in doc.active_definition.parameters] == ["width"]
+
+
+def test_a_renamed_parameter_is_followed_everywhere(doc):
+    """#248: the expressions of the component (shapes, points, other parameters'
+    defaults and limits) and the values its placements pass follow the rename."""
+    doc.components.new("beam")
+    doc.parameters.set("w", 10)
+    doc.parameters.set("gap", "w / 2", max="w")
+    doc.nodes.add(RectShape(name="body", layer="device", x0=0, y0=0, x1="w", y1="w + gap"))
+    doc.points.update(doc.points.add(at="body.right"), x="w")
+    doc.set_active("top")
+    doc.nodes.add(RefShape(name="b", component="beam", params={"w": 20}))
+    doc.set_active("beam")
+    doc.parameters.update("w", name="width")
+    beam = doc.project.components["beam"]
+    assert [p.name for p in beam.parameters] == ["width", "gap"]
+    assert (beam.parameters[1].default, beam.parameters[1].max) == ("width / 2", "width")
+    assert (beam.shapes[0].x1, beam.shapes[0].y1) == ("width", "width + gap")
+    assert beam.points[0].x == "width"
+    assert doc.project.components["top"].shapes[0].params == {"width": 20}
+    doc.undo()
+    assert doc.project.components["top"].shapes[0].params == {"w": 20}
+    with pytest.raises(ValueError, match="not a valid parameter name"):
+        doc.parameters.update("w", name="my w")
+
+
+def test_make_component_takes_the_parameters_its_limits_use(doc):
+    doc.parameters.set("size", 100)
+    doc.parameters.set("w", 10, max="size / 2")
+    doc.nodes.add(RectShape(name="a", layer="device", x0=0, y0=0, x1="w", y1=5))
+    doc.components.make([((0, 0),)], "part")
+    assert [p.name for p in doc.project.components["top/part"].parameters] == ["size", "w"]
 
 
 # -- moving ------------------------------------------------------------------
@@ -584,3 +633,21 @@ def test_create_a_library_and_what_it_refuses(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(ValueError, match="no project.yaml"):
         EditSession().create(tmp_path / "x", "x", libraries=[tmp_path / "empty"])
+
+
+def test_shape_and_port_names_are_checked_when_added_or_renamed(doc):
+    """A second shape or port of the same name, and a name expressions cannot use,
+    are refused (#245)."""
+    doc.nodes.add(RectShape(name="a", layer="device", x0=0, y0=0, x1=5, y1=5))
+    with pytest.raises(ValueError, match="a shape named 'a' already exists"):
+        doc.nodes.add(RectShape(name="a", layer="device", x0=9, y0=0, x1=15, y1=5))
+    for bad in ("my shape", "2nd", "pi", "sin", "process", "port", "if"):
+        with pytest.raises(ValueError, match="not a valid shape name|is reserved"):
+            doc.nodes.add(RectShape(name=bad, layer="device", x0=0, y0=0, x1=1, y1=1))
+        with pytest.raises(ValueError, match="not a valid shape name|is reserved"):
+            doc.nodes.replace(((0, 0),), doc.shapes[0].model_copy(update={"name": bad}))
+    assert [s.name for s in doc.shapes] == ["a"]
+    doc.ports.add(at="a.right", name="out", width=4)
+    with pytest.raises(ValueError, match="port 'out' already exists"):
+        doc.ports.add(at="a.top", name="out")
+    assert [(p.name, p.at) for p in doc.active_definition.ports] == [("out", "a.right")]

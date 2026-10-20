@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from mems_sketch.core.shapes.modifiers import AnyModifier, ArrayModifier
 
 if TYPE_CHECKING:
+    from mems_sketch.core.shapes.handles import Dimension, Handle
     from mems_sketch.core.shapes.registry import Shape
     from mems_sketch.core.transform import Transform
 
@@ -143,6 +144,12 @@ class Node(BaseModel):
         """The transform a ``placed`` kind applies to its content, in µm."""
         return None
 
+    def map_layers(self, layer: Callable[[str], str]) -> None:
+        """Rename, in place, the layers it draws on itself (not its children's):
+        each name ``n`` becomes ``layer(n)``."""
+        if isinstance(own := getattr(self, "layer", None), str):
+            self.layer = layer(own)
+
     def handles(self) -> list[tuple[Value, Value]]:
         """Points of its own that can be dragged on the canvas (a route's via points)."""
         return []
@@ -150,6 +157,45 @@ class Node(BaseModel):
     def with_handle(self, index: int, point: tuple[Value, Value]) -> Shape:
         """A copy with handle ``index`` (of :meth:`handles`) at ``point``."""
         raise TypeError(f"'{self.kind}' has no handles")
+
+    def edit_handles(self, v: Callable[[Value], float]) -> list[Handle]:
+        """What can be dragged on the canvas to change it (see
+        :mod:`~mems_sketch.core.shapes.handles`), in its own frame; ``v`` gives a
+        value as a number."""
+        return []
+
+    def handle_moved(
+        self, key: str, to: tuple[float, float], v: Callable[[Value], float]
+    ) -> dict[str, Any]:
+        """The fields that change when handle ``key`` is dragged to ``to`` (its own frame)."""
+        raise KeyError(f"'{self.kind}' has no handle '{key}'")
+
+    def placed_component(self) -> tuple[str, dict[str, Value]] | None:
+        """For a placement of a component: its name and the parameter values it
+        gives; None for the other nodes."""
+        return None
+
+    def dimensions(self, v: Callable[[Value], float]) -> list[Dimension]:
+        """Its values that are expressions, as dimensions to draw on the canvas (see
+        :class:`~mems_sketch.core.shapes.handles.Dimension`), in its own frame."""
+        return []
+
+    def drag_sketch(self, v: Callable[[Value], float]) -> tuple[list, bool] | None:
+        """A line to draw while a handle is dragged, for a node that cannot be built
+        on its own to preview it (a guide, a route): its points in its own frame and
+        whether it is closed; None for the others."""
+        return None
+
+    def corner_vertices(self, v: Callable[[Value], float]) -> list[tuple[float, float]] | None:
+        """The corners of its outline, in order, for rounded corners (a corners
+        modifier) to follow when a handle moves one; None when they are not simply
+        its own points (a path's outline, a circle)."""
+        return None
+
+    def handle_removed(self, key: str) -> dict[str, Any] | None:
+        """The fields without the vertex handle ``key`` names (Delete on a chosen
+        vertex); None when it cannot go (too few would be left, or not a vertex)."""
+        return None
 
     def summary(self) -> str:
         """Short description of the node, e.g. for a tooltip or a listing."""

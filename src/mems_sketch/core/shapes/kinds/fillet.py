@@ -11,7 +11,15 @@ if TYPE_CHECKING:
 
 
 class FilletShape(Operation):
-    """Round corners: ``radius`` for convex corners, ``inner_radius`` for concave ones."""
+    """Round every corner of its ``children``: ``radius`` for convex corners,
+    ``inner_radius`` for concave ones (0: sharp). ``segments`` per quarter circle in
+    exports (default: within the curve tolerance). For chosen corners only, use a
+    corners modifier.
+
+    Fillet or connection? A fillet rounds whatever its children make, however
+    they were drawn (overlapping beams, a polygon); a connection fills in where
+    beams' ends meet, from their ports, without the beams overlapping, and
+    checks each end lies on its beam."""
 
     icon: ClassVar[str] = "fillet"
     wraps: ClassVar[tuple[str, ...]] = ("fillet",)

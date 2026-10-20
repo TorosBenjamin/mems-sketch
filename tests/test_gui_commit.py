@@ -250,6 +250,89 @@ def test_committing_updates_the_git_panel(window, panel):
     assert commits(window.git) == ["Longer beam", "Beam"]
 
 
+def shown(panel):
+    tree = panel.versions
+    items = [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
+    return [item.text(0) for item in items if not item.isHidden()]
+
+
+def run_git(folder, *args):
+    __import__("subprocess").run(["git", *args], cwd=folder, check=True, capture_output=True)
+
+
+def test_the_git_panel_lists_the_branch_checked_out_another_or_all(window, commit, git_repo):
+    resize(window, x1=50)
+    commit(window.document, "Longer beam")
+    current = git.branch(git_repo)
+    run_git(git_repo, "checkout", "-q", "-b", "side")
+    resize(window, y1=8)
+    commit(window.document, "Wider beam")
+    run_git(git_repo, "checkout", "-q", current)
+    window.tool_windows.open("git")
+    panel = window.git
+    box = panel.branch_box
+    assert [box.itemText(i) for i in range(box.count())] == [current, "side", "All branches"]
+    assert commits(panel) == ["Longer beam", "Beam"]
+    box.setCurrentIndex(2)
+    box.activated.emit(2)
+    assert commits(panel) == ["Wider beam", "Longer beam", "Beam"]
+    labels = [
+        ref.name for ref in panel._commits[panel.versions.topLevelItem(1).data(0, KEY_ROLE)[1]].refs
+    ]
+    assert labels == [current]
+    box.setCurrentIndex(1)
+    box.activated.emit(1)
+    assert commits(panel) == ["Wider beam", "Longer beam", "Beam"]
+    assert panel.branch == "side"
+    panel.reload()  # the choice stays
+    assert panel.branch_box.currentText() == "side"
+
+
+def test_searching_and_the_author_filter_narrow_the_commits(window, commit):
+    resize(window, x1=50)
+    commit(window.document, "Longer beam")
+    window.tool_windows.open("git")
+    panel = window.git
+    assert not panel.graph.flat
+    panel.search.setText("longer")
+    assert shown(panel) == ["Longer beam"]
+    assert panel.graph.flat  # the lines would join the wrong commits
+    sha = panel.versions.topLevelItem(1).data(0, KEY_ROLE)[1]
+    panel.search.setText(sha[:7])
+    assert shown(panel) == ["Beam"]
+    panel.search.setText("nothing like it")
+    assert panel.no_match.isVisible() and not panel.versions.isVisible()
+    panel.search.clear()
+    assert shown(panel) == ["Longer beam", "Beam"] and not panel.graph.flat
+    authors = panel.author_box
+    assert [authors.itemText(i) for i in range(authors.count())] == ["All authors", "Test"]
+    authors.setCurrentIndex(1)
+    authors.activated.emit(1)
+    assert shown(panel) == ["Longer beam", "Beam"] and panel.graph.flat
+
+
+def test_the_chosen_commit_shows_its_message_and_where_it_is(window, commit, git_repo):
+    resize(window, x1=50)
+    commit(window.document, "Notes\n\nWhy <it> matters.")
+    run_git(git_repo, "tag", "v1")
+    window.tool_windows.open("git")
+    panel = window.git
+    assert not panel.details.isVisible()
+    panel.versions.setCurrentItem(panel.versions.topLevelItem(0))
+    assert panel.details.isVisible()
+    assert "Notes" in panel.subject.text()
+    assert "Why &lt;it&gt; matters." in panel.message.text()
+    sha = panel.key[1]
+    assert sha[:7] in panel.meta.text() and "Test" in panel.meta.text()
+    assert "v1" in panel.meta.text() and git.branch(git_repo) in panel.meta.text()
+    panel.since_button.click()
+    assert panel.key == ("since", sha)
+    opened = []
+    panel.compare_requested.connect(lambda *args: opened.append(args))
+    panel.open_button.click()
+    assert opened == [(("since", sha), None, None)]
+
+
 def test_the_last_panel_shown_draws_on_the_canvas(window, commit, panel):
     window.document.nodes.add(RectShape(name="pad", layer="device", x0=0, y0=20, x1=10, y1=30))
     commit(window.document, "Pad")
@@ -260,3 +343,15 @@ def test_the_last_panel_shown_draws_on_the_canvas(window, commit, panel):
     window.git.versions.setCurrentItem(window.git.versions.topLevelItem(0))  # "Pad"
     assert len(window.canvas._change_items) == 1  # the pad, added by that commit
     assert ROW_ROLE  # (the Commit panel's rows are still there)
+
+
+def test_the_git_panel_does_not_hold_the_bottom_panel_open(window, commit):
+    # Its filters and buttons are cut off in a small panel, not making it (and the
+    # editor above) keep a large minimum size.
+    resize(window, x1=50)
+    commit(window.document, "Longer beam")
+    window.tool_windows.open("git")
+    panel = window.git
+    panel.versions.setCurrentItem(panel.versions.topLevelItem(0))
+    assert panel.minimumSizeHint().width() <= 240
+    assert panel.minimumSizeHint().height() <= 200

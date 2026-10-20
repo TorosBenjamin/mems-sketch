@@ -19,6 +19,9 @@
 
 namespace mems {
 
+// A number as people write it in a message: 100, 2.5, 1e-06.
+std::string number_text(double value);
+
 using Json = nlohmann::ordered_json;
 
 // The geometry of a node, for its minimal box: the points of its convex hull

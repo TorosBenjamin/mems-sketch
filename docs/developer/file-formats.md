@@ -142,7 +142,10 @@ files, and a change shows as a small diff.
   last, everything else in declaration order.
 - Whole numbers are written without `.0`; lists of plain values, and maps of
   plain values short enough (72 characters), go on one line.
-- Unchanged files are not rewritten.
+- Unchanged files are not rewritten: a file is left as it is when it reads as
+  the same data (so hand-written comments and layout stay until it changes).
+- A save removes only files the folder's previous `project.yaml` listed
+  (components, processes, imports), never other files.
 
 ## One tree, many formats
 

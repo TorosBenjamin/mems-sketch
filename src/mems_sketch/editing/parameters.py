@@ -21,16 +21,20 @@ class ParameterEdits(Commands):
         self.session.edit(f"Set {name}", change)
 
     def update(self, name: str, /, **fields: Any) -> None:
-        """Change any field of a parameter (name, default, min, max, integer, description)."""
+        """Change any field of a parameter (name, default, min, max, integer,
+        description). A new name is followed by the expressions that use it and
+        by the placements that pass it a value."""
+        new = fields.pop("name", name)
 
         def change(project: Project) -> None:
+            self.session.local(project)
+            if new != name:
+                ParamDef(name=new)  # a valid name, or why not
+                project.rename_parameter(self.session.active, name, new)
             parameters = self.session.local(project).parameters
             for index, existing in enumerate(parameters):
-                if existing.name == name:
-                    updated = ParamDef.model_validate({**existing.model_dump(), **fields})
-                    if updated.name != name and any(p.name == updated.name for p in parameters):
-                        raise ValueError(f"parameter '{updated.name}' already exists")
-                    parameters[index] = updated
+                if existing.name == new:
+                    parameters[index] = ParamDef.model_validate({**existing.model_dump(), **fields})
                     return
             raise KeyError(name)
 

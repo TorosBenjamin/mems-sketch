@@ -23,8 +23,11 @@ hold processes as well as components, so a fab's process (its layers, stack,
 constants and rules) is shared the way components are.
 
 Files are always written the same way: values equal to their default are left
-out, keys keep a fixed order, and unchanged files are not rewritten. Changing
-one value changes one line. See `examples/resonator`, and the bundled library it uses,
+out, keys keep a fixed order, and unchanged files are not rewritten: a file you
+edited by hand keeps its comments and layout until something in it changes.
+Changing one value changes one line. Saving removes only the files of
+components, processes and imports the project itself had; other files in the
+folder are left alone. See `examples/resonator`, and the bundled library it uses,
 `src/mems_sketch/libraries/mems`.
 
 **File** (in **☰**): New (Ctrl+N), New library, Open (Ctrl+O), Save (Ctrl+S)
@@ -109,18 +112,24 @@ mems-sketch-cli export  my_project out.gds [--set pitch=15]  # also .oas .dxf .j
 mems-sketch-cli formats                                      # the formats and their settings
 mems-sketch-cli convert my_project design.json               # and back; .xml .mat .yaml
 mems-sketch-cli convert old_design.mems my_project           # the earlier format
+mems-sketch-cli mcp     [my_project]                         # for AI assistants (MCP)
 ```
 
 - `check` exits with status 1 when a rule with severity *error* is violated
   (with `--strict`, a *warning* too), so it can gate CI; errors exit with
   status 2. Waived violations are listed but never fail it.
-- `--set` takes numbers or expressions and can be repeated: convenient for
-  parameter sweeps.
-- `convert` does not overwrite a folder that already holds a project.
+- `--set` takes numbers or expressions (which may use the component's other
+  parameters, as a default can: `--set pitch=plate/16`) and can be repeated:
+  convenient for parameter sweeps.
+- `convert` does not overwrite a folder that already holds a project, or a
+  one-file project that exists.
+- `mcp` serves the design tools to an AI assistant over stdin/stdout; the
+  assistant's app starts it (see [AI assistants](ai-assistants.md)).
 - `-O NAME=VALUE` (or `--option`) sets one of the format's settings and can
   be repeated; `formats` lists them. GDSII, OASIS and DXF take `grid_um`, the
   file's grid (a whole multiple of 1 nm), `chord_um`, the curve tolerance
   (both default to the process's), and `top_cell`, the top cell's name. What
   rounding onto the grid changed in the shape of the design is printed after
   the file is written. **File → Export…** asks for the same settings and
-  remembers them per format.
+  remembers, per project and format, the ones you changed from the
+  project's own (so another project starts from its process's grid again).

@@ -105,7 +105,7 @@ def test_the_main_menu_holds_every_menu(window):
 
 
 def test_every_menu_shortcut_is_registered_on_the_window(window):
-    registered = set(window.actions())
+    registered = {*window.actions(), *window.area.actions()}  # shape commands: on the editor
     listed = {id(a): a for _, a in menu_actions(window.actions_.root)}.values()  # once each
     with_keys = [a for a in listed if not a.shortcut().isEmpty()]
     assert len(with_keys) > 20

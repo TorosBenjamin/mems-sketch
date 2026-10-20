@@ -136,7 +136,7 @@ Bond and probe pads.
 
 ![std.bond_pad](../images/gallery/std/bond_pad.png)
 
-Square bond or probe pad on the component's level, with an opening on the level above (passivation, or metal on the pad) inset by `margin`; set `opening` to 0 for a pad without one. Port: signal, on its right edge.
+Square bond or probe pad on the component's level, with an opening on the level above (passivation, or metal on the pad) inset by `margin`; set `opening` to 0 for a pad without one. A pad is meant to stay put, so the rule check's "not released" warning on it is expected. Port: signal, on its right edge.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|

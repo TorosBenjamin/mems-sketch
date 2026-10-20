@@ -19,9 +19,15 @@
 
 namespace mems {
 
+std::string number_text(double value) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%g", value);
+    return text;
+}
+
 namespace {
 
-constexpr double DBU_UM = 0.001;  // alignment moves are snapped to the database grid, as in Python
+constexpr double DBU_UM = 0.001;  // the database grid, which alignment moves keep to (on_grid)
 
 const std::vector<std::string> BBOX_POINTS = {"center",   "left",      "right",       "top",         "bottom",
                                               "top_left", "top_right", "bottom_left", "bottom_right"};
@@ -101,6 +107,15 @@ void point_dependencies(const Json& node, std::set<std::string>& found) {
             for (const auto& child : value) point_dependencies(child, found);
 }
 
+// A move on the database grid but for floating-point noise (0.30000000000000004) is
+// put on it, so points read as written; one off the grid (a rotated part's point
+// onto another's) is kept as it is, so the aligned outlines meet exactly instead of
+// missing by a fraction of the grid (#246).
+double on_grid(double move) {
+    const double snapped = std::nearbyint(move / DBU_UM) * DBU_UM;
+    return std::fabs(move - snapped) < 1e-9 ? snapped : move;
+}
+
 // The move an alignment makes: the node's point onto the target, plus dx, dy.
 mgeom::Transform alignment(const Json& node, const Points& own, const Variables& variables, const Scope& scope,
                            Builder& builder, const std::string& component) {
@@ -116,10 +131,7 @@ mgeom::Transform alignment(const Json& node, const Points& own, const Variables&
     const mgeom::Point at = own.point(align.value("point", std::string("center")));
     const Context ctx{builder, component, variables, scope};
     const double dx = ctx.number(align, "dx", 0.0), dy = ctx.number(align, "dy", 0.0);
-    // Snapped to the database grid, so that geometry and points agree (as in Python).
-    const double move_x = std::nearbyint((target.x + dx - at.x) / DBU_UM) * DBU_UM;
-    const double move_y = std::nearbyint((target.y + dy - at.y) / DBU_UM) * DBU_UM;
-    return mgeom::Transform::translation(move_x, move_y);
+    return mgeom::Transform::translation(on_grid(target.x + dx - at.x), on_grid(target.y + dy - at.y));
 }
 
 struct NodeResult {
@@ -551,22 +563,39 @@ double Context::value(const Json& value) const {
         if (found == scope.end()) continue;  // an unknown variable, as in Python
         extra[name] = found->second.measure(measure->path);
     }
-    if (extra.empty()) return expression.evaluate(variables);
     Variables all = variables;
     all.insert(extra.begin(), extra.end());
-    return expression.evaluate(all);
+    const double result = expression.evaluate(extra.empty() ? variables : all);
+    if (!std::isfinite(result)) throw ExpressionError(value.get<std::string>() + " is not a finite number");
+    return result;
 }
+
+namespace {
+
+// A field's value; an expression's error says which field (x1: w / 0: division by zero).
+double field_value(const Context& ctx, const Json& value, const char* key) {
+    try {
+        return ctx.value(value);
+    } catch (const ExpressionError& error) {
+        const std::string text = value.is_string() ? value.get<std::string>() : value.dump();
+        const std::string what = error.what();
+        if (what.rfind(text, 0) == 0) throw ExpressionError(std::string(key) + ": " + what);
+        throw ExpressionError(std::string(key) + ": " + text + ": " + what);
+    }
+}
+
+}  // namespace
 
 double Context::number(const Json& node, const char* key, double fallback) const {
     const auto found = node.find(key);
     if (found == node.end() || found->is_null()) return fallback;
-    return value(*found);
+    return field_value(*this, *found, key);
 }
 
 double Context::number(const Json& node, const char* key) const {
     const auto found = node.find(key);
     if (found == node.end() || found->is_null()) throw BuildError(std::string("missing '") + key + "'");
-    return value(*found);
+    return field_value(*this, *found, key);
 }
 
 std::vector<Layers> Context::children(const std::vector<const Json*>& lists, const Scope* replaced) const {
@@ -631,7 +660,9 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
     std::function<void(size_t)> visit = [&](size_t k) {
         if (results[k]) return;
         const Json& node = *entries[k].node;
-        if (visiting[k]) throw BuildError("circular alignment involving '" + label_of(node) + "'");
+        if (visiting[k])
+            throw BuildError("circular: '" + label_of(node) +
+                             "' depends on its own points (through alignments or expressions)");
         visiting[k] = true;
         std::set<std::string> dependencies;
         point_dependencies(node, dependencies);
@@ -653,7 +684,10 @@ Rendered render_lists(const std::vector<const Json*>& lists, Builder& builder, c
         } catch (const mgeom::GeometryError& error) {
             if (!entries[k].enabled) return finish_hidden(k);
             throw BuildError("'" + label_of(node) + "': " + error.what());
-        } catch (const std::exception&) {  // a build or expression error
+        } catch (const ExpressionError& error) {  // said with the shape it is in
+            if (!entries[k].enabled) return finish_hidden(k);
+            throw BuildError("'" + label_of(node) + "': " + error.what());
+        } catch (const std::exception&) {  // a build error
             if (!entries[k].enabled) return finish_hidden(k);
             throw;
         }
@@ -799,11 +833,16 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
         if (given("direction")) {
             const Json& direction = port["direction"];
             const std::string word = direction.is_string() ? direction.get<std::string>() : std::string();
-            made_port.angle_deg = word == "right" ? 0.0
-                                  : word == "up"  ? 90.0
-                                  : word == "left" ? 180.0
-                                  : word == "down" ? 270.0
-                                                   : ctx.value(direction);
+            try {
+                made_port.angle_deg = word == "right" ? 0.0
+                                      : word == "up"  ? 90.0
+                                      : word == "left" ? 180.0
+                                      : word == "down" ? 270.0
+                                                       : ctx.value(direction);
+            } catch (const ExpressionError& error) {
+                throw BuildError("port '" + name + "': its direction is right, up, left, down or an angle, not '" +
+                                 (word.empty() ? direction.dump() : word) + "' (" + error.what() + ")");
+            }
         } else if (from) {
             made_port.angle_deg = from->angle_deg;
         }

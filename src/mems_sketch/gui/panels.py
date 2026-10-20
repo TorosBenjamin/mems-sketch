@@ -30,13 +30,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mems_sketch.core.errors import explain
 from mems_sketch.core.expressions import ExpressionError, evaluate, resolve_variables
 from mems_sketch.core.process import Layer, Level
 from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.canvas import COMPONENT_MIME
-from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
+from mems_sketch.gui.value_edit import (
+    DRAG_START_PX,
+    dragged_value,
+    is_number,
+    number_or_expression,
+)
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message
@@ -73,12 +79,9 @@ def modifier_stack(shape: Shape) -> str:
 def parse_value(text: str) -> float | str:
     """A number if the text is one, otherwise the text as an expression."""
     text = text.strip()
-    try:
-        return float(text)
-    except ValueError:
-        if not text:
-            raise ValueError("a value is required") from None
-        return text
+    if not text:
+        raise ValueError("a value is required")
+    return number_or_expression(text)
 
 
 def _format(value) -> str:
@@ -149,7 +152,7 @@ class _Panel(QWidget):
             action()
             return True
         except Exception as exc:  # noqa: BLE001 - reported to the user
-            self.error.emit(str(exc))
+            self.error.emit(explain(exc))
             return False
 
 
@@ -784,9 +787,14 @@ class ShapeTree(QTreeWidget):
         self.collapse_changed.emit()
 
     def rebuild(self, keep: list[NodePath] | None = None) -> None:
+        """Fill the tree again, keeping ``keep`` selected. The selection is said once,
+        at the end: clearing the rows does not empty it on the way (the canvas would
+        drop the highlight and greet the shapes again, e.g. on every arrow-key nudge)."""
         keep = self.selected_paths() if keep is None else keep
         self._rebuilding = True
+        self.blockSignals(True)
         self.clear()
+        self.blockSignals(False)
         if self.hide_implementation:
             self._interface_note()
             self._rebuilding = False
@@ -1243,6 +1251,17 @@ class LayersPanel(_Panel):
             name_cell.setIcon(swatch_icon(self.colors[layer.name]))
             self.layers.setItem(row, 0, name_cell)
             self.layers.setItem(row, 1, _readonly(f"{layer.gds_layer}/{layer.gds_datatype}"))
+        self.layers.blockSignals(False)
+
+    def layer_at(self, row: int) -> str | None:
+        """The layer shown in ``row`` (the top of the stack first)."""
+        return self._layer_names[row] if 0 <= row < len(self._layer_names) else None
+
+    def show_current(self, name: str | None) -> None:
+        """Highlight the drawing layer ``name``, without choosing it again."""
+        row = self._layer_names.index(name) if name in self._layer_names else -1
+        self.layers.blockSignals(True)
+        self.layers.setCurrentCell(row, 0 if row >= 0 else -1)
         self.layers.blockSignals(False)
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:

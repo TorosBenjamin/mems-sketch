@@ -13,6 +13,7 @@ Result apply_polar_array(const Json& modifier, const Produce& produce, const Var
     const double step = modifier.contains("step") && !modifier["step"].is_null() ? ctx.value(modifier["step"])
                         : count ? 360.0 / count
                                 : 0.0;
+    if (count > 1 && step == 0.0) throw BuildError("polar array step must not be 0: every copy would be in one place");
     const double cx = ctx.number(modifier, "x", 0.0), cy = ctx.number(modifier, "y", 0.0);
     const bool rotate = modifier.value("rotate", true);
     LayerSet layers;

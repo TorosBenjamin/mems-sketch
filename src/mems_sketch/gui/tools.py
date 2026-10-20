@@ -5,7 +5,8 @@ is held) work in every tool; the canvas handles those itself. Everything else
 goes to the active tool:
 
 * **Select** (V): click to select, drag the selection to move it, drag on
-  empty space to select with a box
+  empty space to select with a box; drag a selected shape's handles (its
+  sides, vertices, radii) to change it
 * **Hand** (H): the left button pans
 * **Move** (M): click a base point, then where it should go (both snap)
 * **Rotate** (R): click a pivot, then the angle (snaps to 15°)
@@ -53,6 +54,7 @@ from mems_sketch.core.shapes import (
     RouteShape,
     Shape,
 )
+from mems_sketch.core.shapes.handles import INSERT, VERTEX, entry_size, handle_label
 from mems_sketch.engine import build_shapes
 from mems_sketch.gui.canvas import angle_between
 
@@ -64,6 +66,7 @@ SNAP_PX = 10  # default: a point snaps to another within this many pixels
 DRAG_THRESHOLD_PX = 4  # a press moving less than this is a click, not a drag
 GRID_POINTS = 64  # a move snaps the nearest of at most this many moving points to the grid
 ANGLE_STEP = 15.0  # default: degrees the Rotate tool snaps to
+EDIT_HANDLE_REACH_PX = 7  # a press this close to a shape's handle drags it
 CTRL = Qt.KeyboardModifier.ControlModifier
 SHIFT = Qt.KeyboardModifier.ShiftModifier
 ALT = Qt.KeyboardModifier.AltModifier
@@ -146,8 +149,10 @@ class Tool:
         return busy
 
     def design_changed(self) -> None:
-        """After any edit or undo: by default, drop what the tool was doing."""
-        self.cancel()
+        """After any edit or undo: by default, drop what the tool was doing, and
+        say again what to do first (not what it was doing: #251)."""
+        if self.cancel():
+            self.window.prompt(self.hint())
 
     def hint(self) -> str:
         return ""
@@ -169,6 +174,11 @@ class Tool:
 
     def key(self, key: Qt.Key) -> bool:
         """Enter or Backspace on the canvas; True if the tool used it."""
+        return False
+
+    def typed(self, text: str) -> bool:
+        """A digit, sign, point, comma or space typed on the canvas; True if the tool
+        took it (e.g. as a value for a handle)."""
         return False
 
     def hover_label(self, x: float, y: float) -> str | None:
@@ -297,11 +307,29 @@ class Tool:
 
 
 class SelectTool(Tool):
+    """Also drags the selected shape's handles (its sides, vertices, radii; see
+    :mod:`mems_sketch.editing.handles`): they snap as moving does, Shift keeps a
+    vertex or corner on a straight line from where it was, Ctrl turns snapping off,
+    Alt changes the parameter a dragged coordinate names instead of the coordinate."""
+
     name, label, shortcut = "select", "Select", "V"
     edits = False
     hovers, icon = True, "select"
+    shows_handles = True  # the window shows the selected shape's handles
+
+    chosen: tuple[NodePath, str] | None = None  # a handle clicked: (shape path, key)
+    chosen_by_click = False  # (then letters go to its value: name = value)
 
     def reset(self) -> None:
+        self.entry: str | None = None  # a value being typed for a handle or a dimension
+        self.dimension: tuple[NodePath, str, int] | None = None  # the one being typed for:
+        # (shape path, field, index among the window's edit_dimensions)
+        self._dimension_drag: tuple[NodePath, str, int] | None = None  # its end dragged
+        self._dimension_value: float | None = None  # the value it is dragged to
+        self._handle = None  # a HandleDrag in progress
+        self._handle_to: tuple[float, float] | None = None
+        self._handle_alt = False  # the drag changes parameters (Alt held)
+        self._handle_targets: list[Candidate] | None = None
         self._press: tuple[float, float] | None = None
         self._press_hit: NodePath | None = None
         self._pending: NodePath | None = None
@@ -310,12 +338,24 @@ class SelectTool(Tool):
         self._snap = None
 
     def hint(self) -> str:
-        return "Click to select, drag to move, drag on empty space to select with a box"
+        return (
+            self._chosen_hint()
+            or "Click to select, drag to move, drag on empty space to select with a box"
+        )
 
     def press(self, x, y, modifiers) -> None:
+        if self.dimension is not None:
+            self._stop()  # (what was typed for it is dropped)
         self.reset()
         if self.gizmo_press(x, y):
             return
+        if self._press_dimension(x, y):
+            return
+        if self._press_handle(x, y):
+            return
+        if self._press_dimension_end(x, y):
+            return
+        self.chosen = None
         additive = bool(modifiers & (CTRL | SHIFT))
         hit = self.window.hit(x, y)
         self._press, self._press_hit = (x, y), hit
@@ -329,6 +369,16 @@ class SelectTool(Tool):
             if left:
                 self.gizmo_move(x, y, modifiers)
             return
+        if self._handle is not None:
+            if left:
+                self._drag_handle(x, y, modifiers)
+            return
+        if self._dimension_drag is not None:
+            if left:
+                self._drag_dimension(x, y, modifiers)
+            return
+        if not left:
+            self._hover_handle(x, y)
         if not left or self._press is None:
             return
         x0, y0 = self._press
@@ -387,6 +437,14 @@ class SelectTool(Tool):
         if self.gizmo_dragging:
             self.gizmo_release(x, y, modifiers)
             return
+        if self._handle is not None:
+            self._release_handle(x, y, modifiers)
+            return
+        if self.dimension is not None:  # its label was clicked: a value is typed now
+            return
+        if self._dimension_drag is not None:
+            self._release_dimension()
+            return
         mode, press, pending, plan = self._mode, self._press, self._pending, self._plan
         self.cancel()
         self.canvas.show_points("snap", [])
@@ -413,15 +471,365 @@ class SelectTool(Tool):
         detach = bool(modifiers & ALT)
         window.run(lambda: self.document.moves.move(plan.roots, dx, dy, detach=detach))
 
+    # -- the selected shape's handles ---------------------------------------
+
+    def handle_at(self, x: float, y: float):
+        """The handle shown under ``(x, y)`` µm (the nearest in reach), or None."""
+        reach = (EDIT_HANDLE_REACH_PX) / self.canvas.pixels_per_um()
+        best, found = reach, None
+        for handle, hx, hy in self.window.edit_handles:
+            distance = math.hypot(hx - x, hy - y)
+            if distance <= best:
+                best, found = distance, handle
+        return found
+
+    def _press_handle(self, x, y) -> bool:
+        handle = self.handle_at(x, y)
+        if handle is None or len(self.window.selection) != 1:
+            return False
+        if not self.editable():
+            return True
+        self._handle = self.document.handles.start(self.window.selection[0], handle.key)
+        if self._handle is None:
+            return False
+        node = self._handle.node
+        own = f"{node.name}." if node.name else None
+        self._handle_targets = [
+            c for c in self.document.results.all_points() if own is None or not c[0].startswith(own)
+        ]
+        self.window.update_overlay()
+        return True
+
+    def _handle_target(self, x, y, modifiers) -> tuple[float, float]:
+        """Where the dragged handle goes for the cursor at ``(x, y)``: snapped, and with
+        Shift kept level, upright or at 45° from where it started."""
+        hx, hy = self._handle.at
+        if modifiers & SHIFT:
+            dx, dy = x - hx, y - hy
+            angle = round(math.atan2(dy, dx) / (math.pi / 4)) * (math.pi / 4)
+            ux, uy = round(math.cos(angle), 12), round(math.sin(angle), 12)
+            length = dx * ux + dy * uy
+            return _um(hx + length * ux), _um(hy + length * uy)
+        px, py, label = self.snap(x, y, self._handle_targets or [], modifiers)
+        self._snap = (label, px, py) if label else None
+        return _um(px), _um(py)
+
+    def _drag_handle(self, x, y, modifiers) -> None:
+        self._snap = None
+        to = self._handle_target(x, y, modifiers)
+        self._handle_to = to
+        edits = self.document.handles
+        alt = bool(modifiers & ALT)
+        try:
+            if alt:
+                node, tuned = edits.retuned(self._handle, *to)
+            else:
+                node, tuned = edits.dragged(self._handle, *to), {}
+        except (ValueError, KeyError):  # e.g. a radius dragged through the centre
+            return
+        self._handle_alt = alt
+        preview = edits.preview(self._handle, node, tuned)
+        if preview is None:
+            self.canvas.clear_drag_preview()
+        else:
+            self.canvas.show_drag_preview(preview, self.window.layers.colors)
+        sketch = edits.sketch(self._handle, node)  # a guide, a route: nothing to build
+        self.canvas.show_sketch(*(sketch or ([], False)))
+        snap = self._snap
+        self.canvas.show_points("snap", [snap] if snap else [])
+        shown = self.canvas.edit_handles
+        index = next(
+            (i for i, (h, _, _) in enumerate(self.window.edit_handles) if h == self._handle.handle),
+            None,
+        )
+        if index is not None:
+            shown[index] = (*to, shown[index][2])
+            self.canvas.show_edit_handles(shown, index)
+        text = edits.describe(self._handle, node, tuned) or "no change"
+        keys = "Shift: straight, Ctrl: no snapping, Alt: the parameter, Esc cancels"
+        status = f"{text}   ({keys})"
+        if snap:
+            status += f"   on {snap[0]}"
+        self.window.live(status, text)
+
+    def _release_handle(self, x, y, modifiers) -> None:
+        drag, to, alt = self._handle, self._handle_to, self._handle_alt
+        self._stop()
+        handle = drag.handle
+        if to is None:  # a click: choose it (to delete, or type a value for it)
+            self.chosen = None if handle.role == INSERT else (drag.path, handle.key)
+            self.chosen_by_click = self.chosen is not None
+        else:
+            self.chosen = (drag.path, handle.key) if handle.role == VERTEX else None
+            self.chosen_by_click = False
+            edits = self.document.handles
+            apply = edits.drag_parameters if alt else edits.drag
+            self.window.run(lambda: apply(drag.path, handle.key, *to))
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+
+    def _chosen_hint(self) -> str | None:
+        handle = self._chosen_handle()
+        if handle is not None:
+            what = "x, y" if entry_size(handle) == 2 else "a value (or name = value)"
+            delete = "Delete removes it, " if handle.role == VERTEX else ""
+            return (
+                f"{handle_label(handle.key).capitalize()} chosen: {delete}type {what} "
+                "and Enter to set it, Esc lets go"
+            )
+        return None
+
+    def _chosen_handle(self):
+        """The chosen handle, while its shape is the one selected (else None)."""
+        if self.chosen is None or self.window.selection != [self.chosen[0]]:
+            return None
+        return next((h for h, _, _ in self.window.edit_handles if h.key == self.chosen[1]), None)
+
+    def active_handle(self) -> str | None:
+        """The key of the handle drawn filled: the one dragged, else the chosen one."""
+        if self._handle is not None:
+            return self._handle.handle.key
+        handle = self._chosen_handle()
+        return handle.key if handle is not None else None
+
+    # -- typing a value for a handle ------------------------------------------
+
+    def _entry_handle(self):
+        """The handle typed values go to: the one dragged, else the chosen one."""
+        return self._handle.handle if self._handle is not None else self._chosen_handle()
+
+    def takes_text(self) -> bool:
+        """Whether letters (and = * / ...) typed on the canvas are a value being typed,
+        not shortcuts: for a dimension, or for a handle chosen by a click."""
+        if self.dimension is not None or self.entry is not None and self._handle is None:
+            return True
+        return self.chosen_by_click and self._chosen_handle() is not None
+
+    def typed(self, text: str) -> bool:
+        if self.dimension is not None:
+            self.entry = (self.entry or "") + text
+            self._show_dimension_entry()
+            return True
+        handle = self._entry_handle()
+        if handle is None or (self.entry is None and text.isspace()):
+            return False  # (a space before anything typed pans, as always)
+        self.entry = (self.entry or "") + text
+        self._show_entry(handle)
+        return True
+
+    def _show_entry(self, handle) -> None:
+        what = "x, y" if entry_size(handle) == 2 else "a value"
+        label = f"{handle_label(handle.key)} = {self.entry}▏"
+        self.window.live(
+            f"Type {what} for {handle_label(handle.key)}: Enter sets it, Esc cancels", label
+        )
+
+    def key(self, key) -> bool:
+        if self.dimension is not None:
+            return self._dimension_key(key)
+        if self.entry is None:
+            return False
+        handle = self._entry_handle()
+        if key == Qt.Key.Key_Backspace:
+            self.entry = self.entry[:-1]
+            if handle is not None:
+                self._show_entry(handle)
+            return True
+        text = self.entry
+        path = (
+            self._handle.path
+            if self._handle is not None
+            else self.chosen[0]
+            if self.chosen
+            else None
+        )
+        self._stop()
+        if handle is not None and path is not None and text.strip():
+            self._type_in(path, handle, text)
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+        return True
+
+    def _type_in(self, path, handle, text: str) -> None:
+        if "=" in text:  # name = value: a new parameter
+            make = self.document.dimensions.make_for_handle
+            self.window.run(lambda: make(path, handle.key, text))
+            return
+        try:
+            values = [float(part) for part in text.replace(",", " ").split()]
+        except ValueError:
+            self.window.report_error(f"'{text}' is not a number")
+            return
+        self.window.run(lambda: self.document.handles.type_in(path, handle.key, values))
+
+    # -- typing for a dimension (parameters on the canvas, #266) -----------------
+
+    def _press_dimension(self, x, y) -> bool:
+        """A press on a dimension's label: type a value for it."""
+        index = self.canvas.dimension_at(x, y) if self.window.edit_dimensions else None
+        if index is None or len(self.window.selection) != 1:
+            return False
+        if not self.editable():
+            return True
+        dimension = self.window.edit_dimensions[index]
+        self.dimension = (self.window.selection[0], dimension.field, index)
+        self.entry = ""
+        self.chosen = None
+        self._show_dimension_entry()
+        return True
+
+    def dimension_editing(self) -> tuple | None:
+        """The dimension being typed for and what is typed: (index, text); one being
+        dragged and its value: (index, value, False); else None."""
+        if self._dimension_drag is not None:
+            value = self._dimension_value
+            shown = (
+                f"{value:g}"
+                if value is not None
+                else self.window.edit_dimensions[self._dimension_drag[2]].label.rpartition(" = ")[2]
+            )
+            return self._dimension_drag[2], shown, False
+        if self.dimension is None:
+            return None
+        return self.dimension[2], self.entry or ""
+
+    def _press_dimension_end(self, x, y) -> bool:
+        """A press on a dimension's end: drag it to change the value."""
+        index = self.canvas.dimension_end_at(x, y) if self.window.edit_dimensions else None
+        if index is None or len(self.window.selection) != 1:
+            return False
+        if not self.editable():
+            return True
+        dimension = self.window.edit_dimensions[index]
+        self._dimension_drag = (self.window.selection[0], dimension.field, index)
+        self._dimension_value = None
+        self.chosen = None
+        self.window.update_overlay()
+        return True
+
+    def _drag_dimension(self, x, y, modifiers) -> None:
+        path, field, index = self._dimension_drag
+        dimension = self.window.edit_dimensions[index]
+        value = self.document.dimensions.dragged_value(dimension, x, y)
+        if not modifiers & CTRL and self.setting("snapping/grid", True):
+            step = self.canvas.grid_step()
+            value = _um(round(value / step) * step)
+        self._dimension_value = value
+        self.canvas.show_dimensions(self.window.edit_dimensions, None, (index, f"{value:g}", False))
+        try:
+            geometry, said = self.document.dimensions.preview(path, field, f"{value:g}")
+        except (ValueError, KeyError) as error:
+            geometry, said = None, str(error).strip("'\"")
+        if geometry is None:
+            self.canvas.clear_drag_preview()
+        else:
+            self.canvas.show_drag_preview(geometry, self.window.layers.colors)
+        self.window.live(f"{said}   (Ctrl: no snapping, Esc cancels)", said)
+
+    def _release_dimension(self) -> None:
+        (path, field, _), value = self._dimension_drag, self._dimension_value
+        self._stop()
+        if value is not None:
+            text = f"{value:g}"
+            self.window.run(lambda: self.document.dimensions.set(path, field, text))
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+
+    def _show_dimension_entry(self) -> None:
+        path, field, index = self.dimension
+        dimension = self.window.edit_dimensions[index]
+        self.canvas.show_dimensions(self.window.edit_dimensions, None, (index, self.entry))
+        status = (
+            f"Type a value or expression for {dimension.expression} (or name = value for a "
+            "new parameter): Enter sets it, Esc cancels"
+        )
+        said = None
+        if self.entry.strip():
+            try:
+                geometry, said = self.document.dimensions.preview(path, field, self.entry)
+            except (ValueError, KeyError) as error:
+                geometry, said = None, str(error).strip("'\"")
+            if geometry is None:
+                self.canvas.clear_drag_preview()
+            else:
+                self.canvas.show_drag_preview(geometry, self.window.layers.colors)
+        else:
+            self.canvas.clear_drag_preview()
+        self.window.live(status, said)
+
+    def _dimension_key(self, key) -> bool:
+        if key == Qt.Key.Key_Backspace:
+            self.entry = (self.entry or "")[:-1]
+            self._show_dimension_entry()
+            return True
+        (path, field, _), text = self.dimension, self.entry or ""
+        self._stop()
+        if text.strip():
+            self.window.run(lambda: self.document.dimensions.set(path, field, text))
+        self.window.prompt(self.hint())
+        return True
+
+    def delete_chosen(self) -> bool:
+        """Delete with a vertex chosen: remove that vertex (True), not the shape."""
+        if self.entry is not None:
+            return True  # while a value is typed, Delete removes nothing
+        handle = self._chosen_handle()
+        if handle is None or handle.role != VERTEX or self.busy:
+            return False
+        path = self.chosen[0]
+        self.chosen = None
+        self.window.run(lambda: self.document.handles.remove(path, handle.key))
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+        return True
+
+    def _hover_handle(self, x, y) -> None:
+        """The cursor over a handle shows which way it drags."""
+        handle = self.handle_at(x, y) if self.window.edit_handles else None
+        on_end = handle is None and self.window.edit_dimensions
+        if on_end and self.canvas.dimension_end_at(x, y) is not None:  # a dimension's end
+            self.canvas.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+            return
+        if handle is None:
+            self.canvas.viewport().unsetCursor()
+        else:
+            self.canvas.viewport().setCursor(_handle_cursor(handle))
+
     @property
     def busy(self) -> bool:
-        return self._mode in ("move", "box") or self.gizmo_dragging
+        return (
+            self._mode in ("move", "box")
+            or self.gizmo_dragging
+            or self._handle is not None
+            or self.entry is not None
+            or self.dimension is not None
+            or self._dimension_drag is not None
+        )
 
     def cancel(self) -> bool:
+        """Stop what it is doing; when idle, let go of the chosen handle."""
+        busy = self._stop()
+        if not busy:
+            self.chosen = None
+        return busy
+
+    def design_changed(self) -> None:
+        self._stop()  # (the chosen handle stays: e.g. after typing a value for it)
+
+    def _stop(self) -> bool:
         busy = self.busy
+        dragging_handle = (
+            self._handle is not None
+            or self.dimension is not None
+            or self._dimension_drag is not None
+        )
         self.gizmo_cancel()
-        super().cancel()
+        Tool.cancel(self)
         self.canvas.show_points("snap", [])
+        if dragging_handle:
+            self.canvas.show_sketch([], False)
+        if dragging_handle:
+            self.window.update_overlay()  # the handles back where they are
         return busy
 
 
@@ -454,6 +862,7 @@ class MoveTool(Tool):
         self._plan: DragPlan | None = None
         self._snap: Candidate | None = None
         self._candidates: list[Candidate] | None = None
+        self._down: tuple[float, float] | None = None  # where the base point was pressed
 
     @property
     def busy(self) -> bool:
@@ -463,8 +872,13 @@ class MoveTool(Tool):
         if not self.window.selection:
             return "Move: click a shape to move"
         if self._base is None:
+            gizmo = (
+                "drag an arrow of the gizmo, or "
+                if self.window.settings.get("canvas/show_gizmos")
+                else ""
+            )
             return (
-                "Move: drag an arrow of the gizmo, or click a base point (snaps to shape "
+                f"Move: {gizmo}click a base point, or drag from it (snaps to shape "
                 "points; Ctrl: no snapping)"
             )
         return "Move: click where the base point goes (Esc cancels)"
@@ -488,11 +902,14 @@ class MoveTool(Tool):
             self._plan = self.document.moves.plan_drag(self.window.selection)
             if not self._plan.roots:
                 return
-            self._base = (bx, by, label)
+            self._base, self._down = (bx, by, label), (x, y)
             self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
             self.window.update_overlay()
             self.window.prompt(self.hint())
             return
+        self._place(x, y, modifiers)
+
+    def _place(self, x, y, modifiers) -> None:
         dx, dy = self._destination(x, y, modifiers)
         roots = self._plan.roots
         self.cancel()
@@ -527,6 +944,13 @@ class MoveTool(Tool):
     def release(self, x, y, modifiers) -> None:
         if self.gizmo_dragging:
             self.gizmo_release(x, y, modifiers)
+            return
+        down, self._down = self._down, None
+        if self._base is None or down is None:
+            return
+        moved = math.hypot(x - down[0], y - down[1]) * self.canvas.pixels_per_um()
+        if moved >= DRAG_THRESHOLD_PX:  # dragged from the base point: drop it here (#251)
+            self._place(x, y, modifiers)
 
     def markers(self) -> dict[str, list[Candidate]]:
         return {"anchor": [("base", self._base[0], self._base[1])]} if self._base else {}
@@ -1178,8 +1602,8 @@ class MeasureTool(Tool):
 
     def press(self, x, y, modifiers) -> None:
         px, py, _ = self._point(x, y, modifiers)
-        if self.mode == ANGLE and self._placed and (px, py) == self._placed[0]:
-            return  # an arm needs a point other than the vertex
+        if (px, py) in self._placed:
+            return  # a ruler needs a length, an arm a point other than the vertex and the other arm
         self._placed.append((px, py))
         if len(self._placed) < self.needed:
             self.window.prompt(self.hint())
@@ -1295,6 +1719,7 @@ class DrawTool(Tool):
         self.cancel()
         if shape is None:
             self.window.report_error(problem)
+            self.window.prompt(self.hint())  # back to the first step
             return
         self.window.add_drawn(shape)
         if self.once:
@@ -1756,6 +2181,18 @@ class RouteTool(DrawTool):
         if dragging:
             self.window.update_overlay()
         return busy
+
+
+def _handle_cursor(handle) -> Qt.CursorShape:
+    """The cursor over a handle: a rectangle's side drags across it, a corner
+    diagonally, the others any way."""
+    keys = handle.key.split()
+    if handle.role == "edge":
+        return Qt.CursorShape.SizeHorCursor if keys[0][0] == "x" else Qt.CursorShape.SizeVerCursor
+    if handle.role == "corner":
+        rising = (keys[0] == "x1") == (keys[1] == "y1")  # bottom left or top right
+        return Qt.CursorShape.SizeBDiagCursor if rising else Qt.CursorShape.SizeFDiagCursor
+    return Qt.CursorShape.SizeAllCursor
 
 
 def _value(value, scope: dict[str, float]) -> float:

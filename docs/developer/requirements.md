@@ -203,7 +203,8 @@ but should not have to program. Scripting is there for those who want it.
   parameter default or placement can be a number or an expression.
 - **EXP-2** (Must, exists) Expressions are **safe arithmetic**: `+ - * / //
   % **`, unary `+ -`, parentheses, numbers, `pi`, and the functions `abs`,
-  `min`, `max`, `round`, `sqrt`, `sin`, `cos`, `tan`, `ceil`, `floor`.
+  `min`, `max`, `round`, `sqrt`, `sin`, `cos`, `tan` (radians), `sind`,
+  `cosd`, `tand` (degrees, exact at multiples of 90°), `ceil`, `floor`.
   Anything else is an error, never executed.
 - **EXP-3** (Must, exists) Names in scope: the component's parameters,
   `process.<constant>`, point coordinates (`<shape>.<point>.x`, `.y`), inside
@@ -442,6 +443,19 @@ behaviours every frontend must keep.
   the component and alignable like guides, never fabricated. They can
   optionally be exported as GDS text labels (zero-area text records) on a
   chosen layer, which other tools read as names.
+- **EDT-11** (Should, changes; [#222](https://github.com/TorosBenjamin/mems-sketch/issues/222)) **Direct editing:** the selected shape
+  has handles on the canvas (a rectangle's sides and corners, vertices, radii,
+  angles, a path's width) that change it when dragged, snapping as moves do.
+  A drag keeps expressions (it adds an offset) and alignments (the aligned
+  side changes the offset). Polygons and paths get vertices added (a side's
+  middle) and removed (Delete on a chosen one); a value typed for a handle
+  sets it exactly. Rounded corners follow the vertices they round. With Alt,
+  a drag changes the parameter a coordinate names instead. The selected
+  shape's values that use parameters are drawn as dimensions, and pointing at
+  one outlines what its parameter affects; clicking one and typing sets the
+  parameter, and `name = value` makes a new one; a placed component shows
+  its parameters the same way, and a dimension's end drags its value ([#266](https://github.com/TorosBenjamin/mems-sketch/issues/266)). Exists for
+  rectangles, circles, arcs, polygons, paths, guides and routes' via points.
 
 ### Rule checks
 
@@ -621,7 +635,7 @@ Ansys) can mesh the STEP export themselves (OUT-6).
 - **HIS-4** (Must, exists) **Restore** a project or one component as it was in
   a commit, as an ordinary edit that can be undone.
 - **HIS-5** (Should, exists) Initialize a repository for a saved project.
-  Branches, merging, push and pull stay with the user's git tools.
+  Checking out, merging, push and pull stay with the user's git tools.
 - **HIS-6** (Should, exists; [#131](https://github.com/TorosBenjamin/mems-sketch/issues/131)) Commit **some of the changes**: the
   local changes are listed by component (the unit, being a file of its own),
   each chosen or not, with the other files in the folder; amend the last
@@ -630,6 +644,10 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   component in a tab of its own: overlaid or side by side, a mark on each
   edited shape and a ring on each shape another change moved, stepping
   through them all; roll one shape back.
+- **HIS-8** (Should, exists; [#131](https://github.com/TorosBenjamin/mems-sketch/issues/131)) The commits as a **graph** with their
+  branch and tag labels: on the branch checked out, another branch or all of
+  them; searched, and narrowed to one author or one component; the chosen
+  commit's message and changes beside it.
 
 ### Command line and scripting
 
@@ -642,6 +660,12 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   way the editor does: the same commands, checks and undo.
 - **CLI-4** (Should, exists) Usable **from MATLAB**: through the command line,
   MATLAB's Python interface, and geometry documents in `.mat`.
+- **CLI-6** (Should, exists; [#193](https://github.com/TorosBenjamin/mems-sketch/issues/193)) An **MCP server**
+  (`mems-sketch-cli mcp`, the `mcp` extra) for AI assistants: one more
+  frontend over the edit session (validation, rollback, undo, read-only
+  libraries), with tools to open, read (in the file format), edit by name,
+  build, render pictures and parameter sweeps offscreen, check and export.
+  Every failure is a tool error with the editor's message.
 - **CLI-5** (Could, new; [#85](https://github.com/TorosBenjamin/mems-sketch/issues/85)) The geometry library usable **on its own** from
   Python and C++, without projects
   ([core architecture](core-architecture.md#overview)).

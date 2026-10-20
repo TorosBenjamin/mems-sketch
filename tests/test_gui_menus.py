@@ -194,3 +194,81 @@ def test_every_command_still_has_its_shortcut_once(window):
     ]
     assert len(keys) == len(set(keys))
     assert QApplication.instance() is not None
+
+
+def test_keys_in_another_panel_leave_the_shapes_alone(window, qtbot):
+    """Delete, Ctrl+D and F2 act on the shapes in the editor and the Shapes panel,
+    never from another panel that has the focus (#242)."""
+    window.tree.select_paths([min(window.document.results.inspection())])  # bar
+    assert len(window.selection) == 1
+    window.components.setFocus()
+    qtbot.waitUntil(window.components.hasFocus)
+    for key in (Qt.Key.Key_Delete, Qt.Key.Key_F2):
+        qtbot.keyClick(QApplication.focusWidget(), key)
+    qtbot.keyClick(QApplication.focusWidget(), Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
+    assert [s.name for s in window.document.shapes] == ["bar", "pad"]
+    window.canvas.setFocus()
+    qtbot.waitUntil(window.canvas.hasFocus)
+    qtbot.keyClick(window.canvas, Qt.Key.Key_Delete)
+    assert [s.name for s in window.document.shapes] == ["pad"]
+
+
+def test_clicking_a_layer_draws_on_that_layer(window):
+    """The Layers panel lists the stack top first; the row clicked is the layer
+    drawn on, and the drawing layer chosen elsewhere is highlighted (#241)."""
+    window.tool_windows.open("layers")
+    table = window.layers.layers
+    for row in range(table.rowCount()):
+        name = table.item(row, 0).text()
+        table.setCurrentCell(row, 0)
+        assert window.draw_layer == name
+    window.layer_box.setCurrentIndex(window.layer_box.findText("device"))
+    assert window.draw_layer == "device"
+    assert table.item(table.currentRow(), 0).text() == "device"
+
+
+def test_commands_on_the_wrong_selection_say_why(window, monkeypatch):
+    """#253: nothing selected, or too many: the command says what it needs."""
+    errors = []
+    monkeypatch.setattr(window, "report_error", errors.append)
+    window.tree.select_paths([])
+    for command in (
+        window.duplicate,
+        window.zoom_to_selection,
+        window.rename_selection,
+        window.unwrap,
+        window.unpack,
+        window.remove_alignment,
+    ):
+        command()
+    assert len(errors) == 6 and all(e.startswith("select ") for e in errors)
+
+
+def test_duplicate_copies_every_selected_shape_in_one_step(window):
+    window.select_all()
+    window.duplicate()
+    assert [s.name for s in window.document.shapes] == ["bar", "pad", "bar1", "pad1"]
+    assert len(window.selection) == 2
+    window.undo()
+    assert [s.name for s in window.document.shapes] == ["bar", "pad"]
+
+
+def test_removing_an_alignment_that_is_not_there_adds_no_step(window):
+    window.tree.select_paths([min(window.document.results.inspection())])
+    window.document._undo.clear()
+    window.remove_alignment()
+    assert not window.document.can_undo()
+
+
+def test_the_edit_menu_greys_out_what_does_not_apply(window):
+    actions = window.actions_
+    window.tree.select_paths([])
+    actions.edit.aboutToShow.emit()
+    assert not actions.delete.isEnabled() and not actions.duplicate.isEnabled()
+    actions.edit.aboutToHide.emit()
+    assert actions.delete.isEnabled()  # its key says why, once the menu is closed
+    window.tree.select_paths([min(window.document.results.inspection())])
+    actions.edit.aboutToShow.emit()
+    assert actions.delete.isEnabled() and actions.rename.isEnabled()
+    assert not actions.unpack.isEnabled() and not actions.remove_alignment.isEnabled()
+    actions.edit.aboutToHide.emit()

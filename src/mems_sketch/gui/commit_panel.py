@@ -22,7 +22,7 @@ the front (git may have been used meanwhile).
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtCore import QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -705,7 +705,8 @@ def make_tree() -> QTreeWidget:
     tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     tree.header().setStretchLastSection(False)
     tree.setItemDelegate(_KeepColor(tree))
-    tree.expanded.connect(lambda _index: fit_columns(tree))
+    # (after the expanding: resizing from within it leaves the arrows drawn closed)
+    tree.expanded.connect(lambda _index: QTimer.singleShot(0, tree, lambda: fit_columns(tree)))
     return tree
 
 

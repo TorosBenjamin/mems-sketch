@@ -31,7 +31,7 @@ several.
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Select** | V | Click to select (Ctrl/Shift adds), drag the selection to move it, drag on empty space for a box: it selects what it touches (dashed), or what is entirely inside it (solid), as *Preferences → Editor → Box selection* says (also: by the direction you drag). A drag snaps a point of the moved shapes to another shape's point, else to the grid (Ctrl: no snapping); release with **Shift** on a snapped point to *align* there. |
+| **Select** | V | Click to select (Ctrl/Shift adds), drag the selection to move it, drag on empty space for a box: it selects what it touches (dashed), or what is entirely inside it (solid), as *Preferences → Editor → Box selection* says (also: by the direction you drag). A drag snaps a point of the moved shapes to another shape's point, else to the grid (Ctrl: no snapping); release with **Shift** on a snapped point to *align* there. The selected shape has **handles** to drag (below). |
 | **Hand** | H | The left button pans (for trackpads). |
 | **Move** | M | A gizmo: drag the red arrow along x, the green along y, the centre freely. Or click a base point, then where it goes. **Edit → Move by…** takes a typed dx, dy; arrow keys nudge by a grid step (Shift: a tenth). |
 | **Rotate** | R | Drag anywhere to turn the selection about its centre; the angle follows the mouse (Ctrl: 15° steps). **Shift+click** sets another pivot (snaps to points), Esc goes back to the centre; a click without dragging selects. **Rotate 90°** is Ctrl+R / Ctrl+Shift+R; **Mirror** is in the right-click menu. |
@@ -53,6 +53,88 @@ relative to its parent: `plate/2 + 39` moved by 11 becomes `plate/2 + 50`.
 An aligned shape keeps its alignment and changes its offset, shown by the
 cursor while you drag (Alt-drag removes the alignment instead). Primitives have no rotation of their own, so rotating
 one wraps it in a transform.
+
+**Drag a shape's handles to change it.** With the Select tool, one selected
+shape shows its handles:
+
+- a **rectangle** a square on each side and corner: a side moves one edge, a
+  corner two;
+- a **polygon** or **path** a dot on each vertex and a **+** in the middle of
+  each side (drag it to add a vertex there), and a path a square for its width
+  on the first segment's side;
+- a **circle** its radius on the rim; an **arc** its outer and inner radius,
+  and a dot on each end for its angles;
+- a **guide** a dot on each end (a line shows where it goes while you drag);
+- a **route** a dot on each via point (a line shows its new course, from port
+  to port); Delete removes a chosen one.
+
+Rounded corners made with the **Corners** tool follow the vertex they round
+when a handle moves it, and go with a vertex that is removed (on a rectangle
+or a polygon).
+
+The cursor shows which way a handle drags. Handles snap as moving does, to
+other shapes' points, else to the grid (Ctrl: no snapping); Shift keeps a
+vertex or corner level, upright or at 45° from where it was. The shape is
+previewed and the cursor shows the change (`x1  length → length + 3  (43 µm)`);
+Esc drops the drag, and one Undo takes it back. Like moving, a drag **keeps
+expressions**: it adds an offset. An **aligned** shape stays aligned: dragging
+the side its alignment holds (its left, for one aligned by `left`) changes the
+alignment's offset instead, so the other sides stay where they are.
+
+**Hold Alt while dragging** to change the **parameter** instead: a side at
+`x1 = length` dragged 3 µm sets `length` from 40 to 43, and every shape that
+uses `length` (or is aligned to this one) follows; the cursor shows it
+(`length  40 → 43   also moves: pad`). A parameter used through a derived one
+(`reach = 2 * length + 1`) is found too, and stays within its limits (a whole
+number for an integer one). A coordinate that names no parameter, or only one
+with a trial value, gets an offset as without Alt.
+
+**Parameters show on the selected shape.** With the Select tool, each of the
+selected shape's values that uses a parameter (or a process constant) is drawn
+as a dimension: `length = 40` along a beam, `w / 2 = 4` on a circle's radius,
+`trace = 3` across a path. A coordinate is measured from the axis, so the
+dimension says what the value is (`x1 = length` runs from x = 0 to the side).
+Values that are plain numbers show nothing. **Point at a dimension's label** to
+see what its parameter affects: every shape that uses it (directly or through
+a derived parameter) and every shape aligned to one of those is outlined, and
+the label by the cursor says which (`length  used by beam, rail · moves pad
+(aligned)`).
+
+**Click a dimension's label to change it.** Type a value and press Enter; the
+shape is previewed meanwhile, with what else moves (`length  40 → 45   moves
+beam, pad`). A value for `length` sets the parameter `length`; a number for
+`w / 2` sets `w` so the radius is that number; an expression for `length`
+becomes its default (`2 * w`), and one for `length + 3` replaces the value.
+Type **`name = value`** to make a new parameter and use it there (`span =
+60`). The same works for a handle you chose by clicking it: type `gap = 3` and
+Enter, and that side, radius or width uses the new parameter `gap`. While you
+type, letters go to the value, not to the tools' shortcuts; Esc or a click
+elsewhere drops what you typed.
+
+**A placed component shows its parameters too.** Each one a shape inside the
+component uses as a value (a side at `x1 = length`) is drawn as that shape's
+dimension, placed and turned with the placement; the others (a count, a gap
+used in a sum) are labels in a row under it. They say this placement's values:
+`length = 80`, or `length = L (60)` when the placement gives an expression.
+Click one and type to change this placement's value (the component and its
+other placements keep theirs); when the value is an expression that names a
+parameter (`L`), a number sets that parameter instead. A component made in
+Python (a library one) has no shapes to look inside, so all of its parameters
+are labels.
+
+**Drag a dimension's end** (the small circle at its arrow) to change its value
+by hand: for a shape it does what Alt-drag on the handle does (the parameter
+changes), for a placement it changes this placement's value (or the parameter
+its expression names). The value snaps to the grid (Ctrl: no snapping), the
+result is previewed, and Esc drops the drag.
+
+**Click a handle** (without dragging) to choose it; it is drawn filled.
+**Delete** then removes a chosen vertex (a polygon keeps three, a path two)
+instead of the shape. **Type a value** for the chosen handle, or while
+dragging one, and press **Enter**: a side's coordinate (`45`), a vertex's or a
+corner's x and y (`10, 30`), a radius, an angle in degrees, or a path's width.
+Typed values keep expressions too (`length` typed 45 becomes `length + 5`).
+Esc drops what you typed, and pressed again lets go of the handle.
 
 **Cut, copy and paste** (Ctrl+X, Ctrl+C, Ctrl+V; in the Edit menu and the
 right-click menus of the canvas and the Shapes tree) work on the selected

@@ -74,13 +74,15 @@ Result render_route(const Json& node, const Context& ctx) {
     for (const auto& point : node.value("via", Json::array())) via.push_back({ctx.value(point.at(0)), ctx.value(point.at(1))});
     const std::string style = node.value("style", std::string("manhattan"));
     const std::string bend = node.value("bend", std::string("sharp"));
+    const double radius = ctx.number(node, "radius", 0.0);
+    if (radius < 0) throw BuildError("a route's bend radius must not be negative, not " + number_text(radius));
     const mgeom::Wire centreline = mgeom::route(
         {start.at, start.angle_deg}, {end.at, end.angle_deg}, via,
         style == "straight" ? mgeom::RouteStyle::straight
         : style == "l"      ? mgeom::RouteStyle::l
                             : mgeom::RouteStyle::manhattan,
         bend == "round" ? mgeom::Bend::round : bend == "chamfer" ? mgeom::Bend::chamfer : mgeom::Bend::sharp,
-        ctx.number(node, "radius", 0.0), width);
+        radius, width);
 
     Result result{Layers{{layer, mgeom::Region::path(centreline, width)}}, {}};
     const mgeom::Point leaving = start_direction(centreline), arriving = centreline.end_direction();

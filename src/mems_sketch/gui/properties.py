@@ -46,8 +46,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mems_sketch.core.errors import explain
 from mems_sketch.core.expressions import evaluate
-from mems_sketch.core.levels import Stack
+from mems_sketch.core.levels import Stack, is_relative
 from mems_sketch.core.shapes import (
     MODIFIER_KINDS,
     CornersModifier,
@@ -531,12 +532,21 @@ class PropertyEditor(QScrollArea):
 
         def read():
             result = {}
-            for line in edit.toPlainText().splitlines():
-                if line.strip():
-                    source, sep, target = line.partition("->")
-                    if not sep:
-                        raise ValueError("write each mapping as 'source -> target'")
-                    result[source.strip()] = target.strip()
+            layers = self.document.project.layers
+            for line in edit.toPlainText().replace("→", "->").splitlines():
+                if not line.strip():
+                    continue
+                source, sep, target = (part.strip() for part in line.partition("->"))
+                if not sep or not source or not target:
+                    raise ValueError(
+                        f"write each mapping as 'source -> target', not '{line.strip()}'"
+                    )
+                if source in result:
+                    raise ValueError(f"'{source}' is mapped twice")
+                for layer in (source, target):
+                    if layer not in layers and not is_relative(layer):
+                        raise ValueError(f"there is no layer '{layer}'")
+                result[source] = target
             return result
 
         self._editors["mapping"] = read
@@ -1401,14 +1411,7 @@ def _limit(limit, relation: str, values: dict[str, float]) -> str:
 
 def _message(exc: Exception) -> str:
     """A readable message; validation errors list each field with its problem."""
-    errors = getattr(exc, "errors", None)
-    if callable(errors):
-        with contextlib.suppress(Exception):  # not a pydantic error after all
-            return "; ".join(
-                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" if e["loc"] else e["msg"]
-                for e in errors()
-            )
-    return str(exc)
+    return explain(exc)
 
 
 def _with_button(widget: QWidget, button: QToolButton) -> QWidget:

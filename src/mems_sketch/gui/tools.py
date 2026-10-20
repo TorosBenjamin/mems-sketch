@@ -1531,8 +1531,8 @@ class MeasureTool(Tool):
 
     def press(self, x, y, modifiers) -> None:
         px, py, _ = self._point(x, y, modifiers)
-        if self.mode == ANGLE and self._placed and (px, py) == self._placed[0]:
-            return  # an arm needs a point other than the vertex
+        if (px, py) in self._placed:
+            return  # a ruler needs a length, an arm a point other than the vertex and the other arm
         self._placed.append((px, py))
         if len(self._placed) < self.needed:
             self.window.prompt(self.hint())

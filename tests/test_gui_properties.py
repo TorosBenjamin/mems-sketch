@@ -562,3 +562,31 @@ def test_leaving_a_list_of_points_applies_it(window, qtbot):
     box.setPlainText("0, 0\n20, 0\n0, 20")
     _focus(qtbot, window.canvas)
     qtbot.waitUntil(lambda: window.document.shapes[1].points[1] == (20, 0))
+
+
+def test_a_layer_mapping_is_checked_and_takes_the_arrow_it_shows(window, qtbot):
+    """#253: the label's → is accepted; unknown layers, empty sides and a source
+    mapped twice are refused."""
+    from mems_sketch import LayerMapShape
+
+    messages = []
+    window.properties.error.connect(messages.append)
+    mapped = LayerMapShape(name="m", mapping={"device": "device"}, children=[])
+    window.tree.select_paths([window.document.nodes.add(mapped)])
+
+    def enter(text):
+        box = window.properties.findChild(QPlainTextEdit)
+        _focus(qtbot, box)
+        box.setPlainText(text)
+        window.properties.apply()
+
+    enter("device → anchor")
+    assert window.document.shapes[1].mapping == {"device": "anchor"}
+    for text, why in (
+        ("device -> nolayer", "there is no layer 'nolayer'"),
+        ("device ->", "write each mapping as 'source -> target'"),
+        ("device -> anchor\ndevice -> metal", "'device' is mapped twice"),
+    ):
+        enter(text)
+        assert why in messages[-1]
+    assert window.document.shapes[1].mapping == {"device": "anchor"}

@@ -193,6 +193,11 @@ def _eval(node: ast.AST, variables: Mapping[str, float]) -> float:
             return _UNARY_OPS[type(op)](_eval(operand, variables))
         case ast.Call(func=ast.Name(id=fname), args=args, keywords=[]) if fname in _FUNCTIONS:
             return _FUNCTIONS[fname](*(_eval(arg, variables) for arg in args))
+        case ast.Call():
+            known = list(_FUNCTIONS)
+            raise ExpressionError(
+                f"unsupported syntax: only {', '.join(known[:-1])} and {known[-1]} can be called"
+            )
     raise ExpressionError(f"unsupported syntax: {ast.dump(node)}")
 
 

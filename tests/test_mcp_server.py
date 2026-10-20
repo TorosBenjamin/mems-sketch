@@ -69,7 +69,7 @@ def test_a_session_over_the_protocol_makes_builds_renders_and_checks(tools, tmp_
                 "place_component", name="anchor", place="mems.anchor", x="plate.right.x + 20"
             )
             bad = await call("add_shape", name="oops", shape={"kind": "rect", "x1": 3})
-            assert bad.is_error and "x0: Field required" in bad.content[0].text
+            assert bad.is_error and "x0: is required" in bad.content[0].text
             built = json.loads((await call("build", params={"w": 30})).content[0].text)
             assert built["layers"]["device"]["area_um2"] == pytest.approx(
                 30 * 20 + 40 * 40

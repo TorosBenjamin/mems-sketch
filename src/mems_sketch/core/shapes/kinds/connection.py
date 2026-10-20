@@ -41,9 +41,9 @@ class ConnectionShape(Node):
     @classmethod
     def _ends(cls, ends: list[str]) -> list[str]:
         for end in ends:
-            check_point_reference(end)
             if ".port." not in end:
                 raise ValueError(f"'{end}' is not a port, like 'beam.port.end'")
+            check_point_reference(end)
         return ends
 
     def point_references(self) -> list[str]:

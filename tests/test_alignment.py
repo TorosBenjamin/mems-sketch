@@ -241,7 +241,7 @@ def test_cycles_and_bad_references_are_reported():
     project = Project()
     project.add(rect("a", 0, 0, 10, 10))
     project.add(rect("b", 0, 0, 10, 10, align=Align(to="a.top")))
-    with pytest.raises(ValueError, match="circular alignment"):
+    with pytest.raises(ValueError, match="circular: .a. depends on its own points"):
         project.replace("a", rect("a", 0, 0, 10, 10, align=Align(to="b.top")))
     with pytest.raises(ValueError, match="no point 'nose'"):
         project.replace("b", rect("b", 0, 0, 10, 10, align=Align(to="a.nose")))

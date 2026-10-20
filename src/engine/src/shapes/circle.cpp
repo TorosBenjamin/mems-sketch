@@ -9,11 +9,11 @@ namespace mems {
 
 Result render_circle(const Json& node, const Context& ctx) {
     const double r = ctx.number(node, "radius");
+    if (!(r > 0)) throw BuildError("circle radius must be more than 0, not " + number_text(r));
     const double cx = ctx.number(node, "x", 0.0), cy = ctx.number(node, "y", 0.0);
     const std::string layer = ctx.layer(node);
     const double segments = explicit_segments(node, ctx);
     if (segments == 0.0 && r > ARC_TOLERANCE_UM) return {Layers{{layer, mgeom::Region::circle({cx, cy}, r)}}, {}};
-    if (r == 0.0) return {};
     const auto region = mgeom::Region::polygon(arc_points(cx, cy, r, 0, 360, segment_count(r, segments)));
     if (region.empty()) return {};
     return {Layers{{layer, region}}, {}};

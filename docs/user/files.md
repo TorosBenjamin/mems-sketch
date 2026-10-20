@@ -118,8 +118,9 @@ mems-sketch-cli mcp     [my_project]                         # for AI assistants
 - `check` exits with status 1 when a rule with severity *error* is violated
   (with `--strict`, a *warning* too), so it can gate CI; errors exit with
   status 2. Waived violations are listed but never fail it.
-- `--set` takes numbers or expressions and can be repeated: convenient for
-  parameter sweeps.
+- `--set` takes numbers or expressions (which may use the component's other
+  parameters, as a default can: `--set pitch=plate/16`) and can be repeated:
+  convenient for parameter sweeps.
 - `convert` does not overwrite a folder that already holds a project, or a
   one-file project that exists.
 - `mcp` serves the design tools to an AI assistant over stdin/stdout; the

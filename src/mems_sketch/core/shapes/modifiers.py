@@ -117,8 +117,11 @@ class Modifier(BaseModel):
 
 def _count(value: Value, variables: dict[str, float], what: str) -> int:
     number = evaluate(value, variables)
-    if number != int(number) or number < 0:
-        raise ValueError(f"{what} must be a non-negative integer, got {number:g}")
+    if number != int(number) or number < 1:
+        raise ValueError(
+            f"{what} must be a whole number, at least 1, not {number:g} "
+            "(switch the shape off to hide it)"
+        )
     return int(number)
 
 

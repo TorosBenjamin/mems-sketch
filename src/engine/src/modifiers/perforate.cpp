@@ -80,6 +80,10 @@ Result apply_perforate(const Json& modifier, const Produce& produce, const Varia
                                  : (hex ? pitch * std::sqrt(3.0) / 2.0 : pitch);
     const double width = positive(ctx, modifier, "hole_size", 4.0, "hole size");
     const double height = given(modifier, "hole_height") ? positive(ctx, modifier, "hole_height", width, "hole height") : width;
+    if (width >= pitch || height >= row_pitch)
+        throw BuildError("the holes (" + number_text(width) + " x " + number_text(height) +
+                         ") must be smaller than their pitch (" + number_text(pitch) + ", " + number_text(row_pitch) +
+                         "): they would run into each other");
     const double radius = ctx.number(modifier, "corner_radius", std::min(width, height) / 2.0);
     if (radius < 0) throw BuildError("hole corner radius must not be negative");
     const double margin = ctx.number(modifier, "margin", 2.0);

@@ -15,8 +15,7 @@ import itertools
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
-
+from mems_sketch.core import errors
 from mems_sketch.core.shapes import NodePath, Shape, paths
 from mems_sketch.core.shapes.registry import kind_class
 from mems_sketch.core.user_component import ComponentDef, PointDef
@@ -390,16 +389,8 @@ def _shape(name: str, data: dict[str, Any]) -> Shape:
 
 
 def explain(error: Exception) -> str:
-    """An error as the tool says it: a validation error one line per field."""
-    if isinstance(error, ValidationError):
-        lines = []
-        for problem in error.errors():
-            where = ".".join(str(p) for p in problem["loc"] if not str(p).startswith("function-"))
-            lines.append(f"{where}: {problem['msg']}" if where else problem["msg"])
-        return f"{error.title}: " + "; ".join(lines)
-    if isinstance(error, KeyError) and error.args:
-        return str(error.args[0])
-    return str(error) or type(error).__name__
+    """An error as the tool says it, as the editor would (one problem per field)."""
+    return errors.explain(error)
 
 
 def _entry(name: str, definition: ComponentDef, category: str = "") -> dict[str, Any]:

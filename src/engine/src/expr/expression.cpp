@@ -600,7 +600,8 @@ Number eval(const Node& node, const Lookup& lookup) {
     case Node::Kind::call: {
         const Node& function = *node.children[0];
         if (function.kind != Node::Kind::name || !FUNCTIONS.count(function.id))
-            fail("unsupported syntax: only " "abs, min, max, round, sqrt, sin, cos, tan, ceil and floor can be called");
+            fail("unsupported syntax: only abs, min, max, round, sqrt, sin, cos, tan, sind, cosd, tand, "
+                 "ceil and floor can be called");
         std::vector<Number> args;
         for (size_t k = 1; k < node.children.size(); ++k) args.push_back(eval(*node.children[k], lookup));
         return call(function.id, args);

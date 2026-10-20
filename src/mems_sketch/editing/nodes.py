@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 from mems_sketch.core.project import Project, check_shape_name, check_shape_names
 from mems_sketch.core.shapes import (
@@ -101,7 +102,13 @@ class NodeEdits(Commands):
                     s for i, s in enumerate(container) if (id(container), i) not in doomed
                 ]
 
-        self.session.edit("Delete", change)
+        doomed_nodes = [n for p in paths for n in walk([self.session.node(p)])]
+        names = {n.name for n in doomed_nodes if n.name}
+        try:
+            self.session.edit("Delete", change)
+        except ValueError as error:
+            kept = [n for n in walk(self.session.shapes) if all(n is not d for d in doomed_nodes)]
+            raise ValueError(_refused_delete(str(error), names, kept)) from None
 
     def duplicate(self, path: NodePath) -> NodePath:
         copy_ = self.session.node(path).model_copy(deep=True)
@@ -210,3 +217,27 @@ class NodeEdits(Commands):
             container[index : index + 1] = children
 
         self.session.edit(f"Unwrap {node.name or node.kind}", change)
+
+
+def _refused_delete(message: str, names: set[str], kept: list[Shape]) -> str:
+    """Why a delete was refused, from what still uses a deleted shape: "can't
+    delete 'mass': 'post' is aligned to it" (the build only says that something
+    can no longer find it)."""
+    text = message.split(": ", 1)[1] if re.match(r"[\w/.]+: ", message) else message
+    for name in sorted(names):
+        aligned = re.search(rf"'([^']+)' is aligned to '{re.escape(name)}\.", text)
+        if aligned:
+            return f"can't delete '{name}': '{aligned[1]}' is aligned to it"
+        if not re.search(rf"(?<![\w.]){re.escape(name)}\.|shape '{re.escape(name)}'", text):
+            continue
+        users = [n.name or n.kind for n in kept if _uses(n, name)]
+        if users:
+            return f"can't delete '{name}': {', '.join(f'{u!r}' for u in users)} uses its points"
+        return f"can't delete '{name}': something still uses it ({text})"
+    return message
+
+
+def _uses(node: Shape, name: str) -> bool:
+    """Whether ``node`` itself (not its children) uses a point of the shape ``name``."""
+    own = node.model_dump(exclude=set(node.child_fields))
+    return re.search(rf"(?<![\w.]){re.escape(name)}\.", repr(own)) is not None

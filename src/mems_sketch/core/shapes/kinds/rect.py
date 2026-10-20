@@ -35,10 +35,10 @@ class RectShape(Primitive):
         x0, y0, x1, y1 = v(self.x0), v(self.y0), v(self.x1), v(self.y1)
         xm, ym = (x0 + x1) / 2, (y0 + y1) / 2
         return [
-            Handle("x0", x0, ym, EDGE),
-            Handle("x1", x1, ym, EDGE),
-            Handle("y0", xm, y0, EDGE),
-            Handle("y1", xm, y1, EDGE),
+            Handle("x0", x0, ym, EDGE, ("x",)),
+            Handle("x1", x1, ym, EDGE, ("x",)),
+            Handle("y0", xm, y0, EDGE, ("y",)),
+            Handle("y1", xm, y1, EDGE, ("y",)),
             *(
                 Handle(f"{kx} {ky}", x, y, CORNER)
                 for kx, x in (("x0", x0), ("x1", x1))

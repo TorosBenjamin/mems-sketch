@@ -58,7 +58,7 @@ def test_circle_and_arc_radii_and_angles():
 
 def test_polygon_and_path_vertices_and_the_path_width():
     poly = PolygonShape(layer="device", points=[(0, 0), ("length", 0), (20, 30)])
-    assert keys(poly) == ["point.0", "point.1", "point.2"]
+    assert keys(poly) == ["point.0", "point.1", "point.2", "insert.0", "insert.1", "insert.2"]
     assert poly.handle_moved("point.1", (45, 1), v)["points"][1] == ("length + 5", 1)
     path = PathShape(layer="device", points=[(0, 0), (10, 0), (10, 10)], width="w")
     assert keys(path)[-1] == "width"
@@ -151,3 +151,82 @@ def test_no_handle_no_drag(session):
     assert session.handles.start(BEAM, "radius") is None
     with pytest.raises(ValueError, match="no handle"):
         session.handles.drag(BEAM, "radius", 0, 0)
+
+
+# -- phase 2: adding and removing vertices, typed values --------------------------------------
+
+
+def test_a_sides_middle_adds_a_vertex_where_it_is_dragged():
+    poly = PolygonShape(layer="device", points=[(0, 0), ("length", 0), (20, 30)])
+    middle = next(h for h in poly.edit_handles(v) if h.key == "insert.0")
+    assert (middle.x, middle.y, middle.role) == (20, 0, "insert")
+    assert poly.handle_moved("insert.0", (20, -5), v)["points"] == [
+        (0, 0),
+        (20, -5),
+        ("length", 0),
+        (20, 30),
+    ]
+    assert poly.handle_moved("insert.2", (0, 15), v)["points"][-1] == (0, 15)  # closing side
+    path = PathShape(layer="device", points=[(0, 0), (10, 0), (10, 10)], width=2)
+    assert [k for k in keys(path) if k.startswith("insert")] == ["insert.0", "insert.1"]
+
+
+def test_a_vertex_is_removed_while_enough_are_left():
+    poly = PolygonShape(layer="device", points=[(0, 0), (10, 0), (10, 10), (0, 10)])
+    assert poly.handle_removed("point.1") == {"points": [(0, 0), (10, 10), (0, 10)]}
+    triangle = PolygonShape(layer="device", points=[(0, 0), (10, 0), (0, 10)])
+    assert triangle.handle_removed("point.1") is None  # a polygon keeps three
+    path = PathShape(layer="device", points=[(0, 0), (10, 0)], width=2)
+    assert path.handle_removed("point.0") is None  # a path keeps two
+    assert RectShape(layer="device", x0=0, y0=0, x1=1, y1=1).handle_removed("x1") is None
+
+
+def test_typed_values_place_a_handle():
+    from mems_sketch.core.shapes.handles import entry_size, handle_label, typed_point
+
+    beam = RectShape(layer="device", x0=0, y0=0, x1="length", y1="w")
+    right = next(h for h in beam.edit_handles(v) if h.key == "x1")
+    assert entry_size(right) == 1 and typed_point(right, [45]) == (45, 2)
+    corner = next(h for h in beam.edit_handles(v) if h.key == "x1 y1")
+    assert entry_size(corner) == 2 and handle_label(corner.key) == "x1, y1"
+    with pytest.raises(ValueError, match="x, y"):
+        typed_point(corner, [3])
+    arc = ArcShape(layer="device", inner_radius=6, outer_radius=10, end_angle=220)
+    end = next(h for h in arc.edit_handles(v) if h.key == "end_angle")
+    assert arc.handle_moved("end_angle", typed_point(end, [270]), v) == {"end_angle": 270}
+    outer = next(h for h in arc.edit_handles(v) if h.key == "outer_radius")
+    assert arc.handle_moved("outer_radius", typed_point(outer, [14]), v) == {"outer_radius": 14}
+    path = PathShape(layer="device", points=[(0, 0), (10, 0)], width="w")
+    width = next(h for h in path.edit_handles(v) if h.key == "width")
+    assert path.handle_moved("width", typed_point(width, [7]), v) == {"width": "w + 3"}
+
+
+def test_typing_keeps_expressions_and_is_one_edit(session):
+    session.handles.type_in(BEAM, "x1", [45])
+    assert session.node(BEAM).x1 == "length + 5"
+    session.undo()
+    assert session.node(BEAM).x1 == "length"
+    with pytest.raises(ValueError):
+        session.handles.type_in(BEAM, "x1 y1", [45])
+
+
+def test_removing_a_vertex_is_one_edit(session):
+    session.nodes.add(
+        PolygonShape(name="plate", layer="device", points=[(0, 20), (10, 20), (10, 30), (0, 30)])
+    )
+    plate = ((0, 2),)
+    session.handles.remove(plate, "point.2")
+    assert session.node(plate).points == [(0, 20), (10, 20), (0, 30)]
+    with pytest.raises(ValueError, match="at least 3"):
+        session.handles.remove(plate, "point.0")
+    session.undo()  # the one removal
+    assert len(session.node(plate).points) == 4
+
+
+def test_the_label_says_a_point_was_added(session):
+    session.nodes.add(
+        PolygonShape(name="plate", layer="device", points=[(0, 20), (10, 20), (5, 30)])
+    )
+    drag = session.handles.start(((0, 2),), "insert.0")
+    moved = session.handles.dragged(drag, 5, 15)
+    assert session.handles.describe(drag, moved) == "new point 2  (5, 15)"

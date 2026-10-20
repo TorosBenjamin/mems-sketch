@@ -23,7 +23,7 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import NodePath, Shape, container_of, frame_of, node_at
-from mems_sketch.core.shapes.handles import Handle
+from mems_sketch.core.shapes.handles import Handle, handle_label, typed_point
 from mems_sketch.core.shapes.points import BBOX_POINTS
 from mems_sketch.core.transform import Transform
 from mems_sketch.editing.commands import Commands
@@ -83,7 +83,15 @@ class HandleEdits(Commands):
 
     def dragged(self, drag: HandleDrag, x: float, y: float) -> Shape:
         """The node with the handle at ``(x, y)`` (the component's frame)."""
-        to = drag.frame.inverted().apply(x, y)
+        return self._moved_to(drag, drag.frame.inverted().apply(x, y))
+
+    def typed(self, drag: HandleDrag, values: list[float]) -> Shape:
+        """The node with the handle where typed ``values`` put it: a side's coordinate,
+        a vertex's x and y, a radius, an angle or a width, in the node's own frame
+        (see :func:`~mems_sketch.core.shapes.handles.typed_point`)."""
+        return self._moved_to(drag, typed_point(drag.handle, values))
+
+    def _moved_to(self, drag: HandleDrag, to: tuple[float, float]) -> Shape:
         node = drag.node
         changed = node.handle_moved(drag.handle.key, to, drag.value)
         moved = type(node).model_validate({**node.model_dump(), **changed})
@@ -110,12 +118,7 @@ class HandleEdits(Commands):
             if before == after:
                 continue
             if field == "points":
-                index = next(
-                    i for i, (a, b) in enumerate(zip(before, after, strict=True)) if a != b
-                )
-                a = ", ".join(f"{drag.value(c):g}" for c in before[index])
-                b = ", ".join(f"{drag.value(c):g}" for c in after[index])
-                parts.append(f"point {index + 1}  ({a}) → ({b})")
+                parts.append(_points_change(before, after, drag))
             elif field == "align":  # (last: the drag's own change first)
                 for axis in ("dx", "dy"):
                     a, b = getattr(before, axis), getattr(after, axis)
@@ -128,19 +131,41 @@ class HandleEdits(Commands):
 
     def drag(self, path: NodePath, key: str, x: float, y: float) -> None:
         """Drag handle ``key`` of the node at ``path`` to ``(x, y)``: one edit."""
+        drag = self._started(path, key)
+        self._replace(path, drag.node, self.dragged(drag, x, y), "Resize")
+
+    def type_in(self, path: NodePath, key: str, values: list[float]) -> None:
+        """Put handle ``key`` where typed ``values`` say (see :meth:`typed`): one edit."""
+        drag = self._started(path, key)
+        self._replace(path, drag.node, self.typed(drag, values), "Resize")
+
+    def remove(self, path: NodePath, key: str) -> None:
+        """Remove the vertex handle ``key`` names (the others stay put): one edit.
+        Raises ValueError when it cannot go: a polygon keeps three points, a path two."""
+        drag = self._started(path, key)
+        node = drag.node
+        changed = node.handle_removed(key)
+        if changed is None:
+            fewest = len(getattr(node, "points", ())) or "its"
+            raise ValueError(f"{node.name or node.kind} keeps at least {fewest} points")
+        moved = type(node).model_validate({**node.model_dump(), **changed})
+        self._replace(path, node, _keep_alignment(drag, moved), f"Remove {handle_label(key)} of")
+
+    def _started(self, path: NodePath, key: str) -> HandleDrag:
         drag = self.start(path, key)
         if drag is None:
             raise ValueError(f"no handle '{key}' here")
-        moved = self.dragged(drag, x, y)
-        if moved == drag.node:
+        return drag
+
+    def _replace(self, path: NodePath, old: Shape, new: Shape, verb: str) -> None:
+        if new == old:
             return
-        name = moved.name or moved.kind
 
         def change(project: Project) -> None:
             container, index = container_of(self.session.shapes_in(project), path)
-            container[index] = moved
+            container[index] = new
 
-        self.session.edit(f"Resize {name}", change)
+        self.session.edit(f"{verb} {new.name or new.kind}", change)
 
     def _frame(self, path: NodePath) -> tuple[Shape, Transform, dict[str, float]] | None:
         record = self.session.results.inspection()
@@ -236,6 +261,23 @@ def _keep_alignment(drag: HandleDrag, moved: Shape) -> Shape:
         "dy": shifted(align.dy, round(y1 - y0, 6)),
     }
     return moved.model_copy(update={"align": align.model_copy(update=offset)})
+
+
+def _points_change(before, after, drag: HandleDrag) -> str:
+    """``point 3  (2, 30) → (10, 30)``, ``new point 3  (5, 5)`` or ``point 3 removed``."""
+
+    def at(point) -> str:
+        return ", ".join(f"{drag.value(c):g}" for c in point)
+
+    index = next(
+        (i for i, (a, b) in enumerate(zip(before, after, strict=False)) if a != b),
+        min(len(before), len(after)),
+    )
+    if len(after) > len(before):
+        return f"new point {index + 1}  ({at(after[index])})"
+    if len(after) < len(before):
+        return f"point {index + 1} removed"
+    return f"point {index + 1}  ({at(before[index])}) → ({at(after[index])})"
 
 
 def _shown(value, drag: HandleDrag, unit: str | None = None) -> str:

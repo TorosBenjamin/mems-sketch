@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 # What a handle does (Handle.role): how it is drawn and the cursor over it
 EDGE, CORNER, VERTEX, RADIUS, ANGLE, WIDTH = "edge", "corner", "vertex", "radius", "angle", "width"
+INSERT = "insert"  # the middle of a polygon's or path's side: dragged, it adds a vertex
 
 Evaluate = Callable[[object], float]  # a value (number or expression) as a number
 Point = tuple[float, float]
@@ -25,12 +26,61 @@ Point = tuple[float, float]
 @dataclass(frozen=True)
 class Handle:
     """One handle: ``key`` names it to :meth:`handle_moved`; ``x, y`` is where it
-    is, in the node's frame; ``role`` is one of the constants above."""
+    is, in the node's frame; ``role`` is one of the constants above.
+
+    ``entry`` says where typed values put it (see :func:`typed_point`): ``("xy",)``
+    (the default: its x and y), ``("x",)`` or ``("y",)`` (one coordinate),
+    ``("radial", cx, cy, angle)`` (a distance from a centre), ``("angle", cx, cy,
+    r)`` (a direction about a centre, in degrees) or ``("across", mx, my, nx, ny)``
+    (a width across a line through ``m`` with normal ``n``).
+    """
 
     key: str
     x: float
     y: float
     role: str
+    entry: tuple = ("xy",)
+
+
+def typed_point(handle: Handle, values: list[float]) -> Point:
+    """Where typed ``values`` put ``handle`` (its frame); raises ValueError if they
+    are not as many as it takes (:func:`entry_size`)."""
+    entry = handle.entry
+    if len(values) != entry_size(handle):
+        count = entry_size(handle)
+        raise ValueError(
+            f"type {'one value' if count == 1 else 'x, y'} for {handle_label(handle.key)}"
+        )
+    if entry[0] == "xy":
+        return values[0], values[1]
+    if entry[0] == "x":
+        return values[0], handle.y
+    if entry[0] == "y":
+        return handle.x, values[0]
+    if entry[0] == "radial":
+        _, cx, cy, angle = entry
+        return on_circle((cx, cy), values[0], angle)
+    if entry[0] == "angle":
+        _, cx, cy, r = entry
+        return on_circle((cx, cy), r, values[0])
+    _, mx, my, nx, ny = entry  # across
+    return mx + nx * values[0] / 2, my + ny * values[0] / 2
+
+
+def entry_size(handle: Handle) -> int:
+    """How many values a handle takes when typed: 2 for a point, else 1."""
+    return 2 if handle.entry[0] == "xy" else 1
+
+
+def handle_label(key: str) -> str:
+    """A handle's key as people read it: ``x1``, ``x0, y1``, ``point 3``, ``outer radius``."""
+    index = point_index(key)
+    if index is not None:
+        return f"point {index + 1}"
+    prefix, _, rest = key.partition(".")
+    if prefix == "insert" and rest.isdigit():
+        return f"a new point after point {int(rest) + 1}"
+    return ", ".join(part.replace("_", " ") for part in key.split()).replace(".top", "")
 
 
 def shifted(value, by: float):
@@ -50,8 +100,48 @@ def point_index(key: str) -> int | None:
     return int(index) if prefix == "point" and index.isdigit() else None
 
 
-def vertex_handles(points, v: Evaluate) -> list[Handle]:
-    return [Handle(point_key(i), v(x), v(y), VERTEX) for i, (x, y) in enumerate(points)]
+def vertex_handles(points, v: Evaluate, closed: bool) -> list[Handle]:
+    """A handle on each vertex, then one in the middle of each side (``insert.<i>``:
+    the side from vertex ``i``; a closed outline's last side too)."""
+    at = [(v(x), v(y)) for x, y in points]
+    handles = [Handle(point_key(i), x, y, VERTEX) for i, (x, y) in enumerate(at)]
+    sides = len(at) if closed else len(at) - 1
+    for i in range(sides):
+        (ax, ay), (bx, by) = at[i], at[(i + 1) % len(at)]
+        handles.append(Handle(f"insert.{i}", (ax + bx) / 2, (ay + by) / 2, INSERT))
+    return handles
+
+
+def insert_index(key: str) -> int | None:
+    """The vertex an ``insert.<i>`` key adds a point after, else None."""
+    prefix, _, index = key.partition(".")
+    return int(index) if prefix == "insert" and index.isdigit() else None
+
+
+def vertex_inserted(points, after: int, to: Point) -> list:
+    """``points`` with a new vertex at ``to`` after vertex ``after``."""
+    return [*points[: after + 1], (rounded(to[0]), rounded(to[1])), *points[after + 1 :]]
+
+
+def vertex_removed(points, index: int, fewest: int) -> list | None:
+    """``points`` without vertex ``index``, or None if that would leave fewer than
+    ``fewest``."""
+    if len(points) <= fewest or not 0 <= index < len(points):
+        return None
+    return [p for i, p in enumerate(points) if i != index]
+
+
+def points_moved(points, key: str, to: Point, v: Evaluate, closed: bool) -> list | None:
+    """``points`` after dragging handle ``key`` (a vertex, or a side's middle that
+    adds one) to ``to``; None for another key."""
+    index = point_index(key)
+    if index is not None and index < len(points):
+        return vertex_moved(points, index, to, v)
+    after = insert_index(key)
+    sides = len(points) if closed else len(points) - 1
+    if after is not None and after < sides:
+        return vertex_inserted(points, after, to)
+    return None
 
 
 def vertex_moved(points, index: int, to: Point, v: Evaluate) -> list:

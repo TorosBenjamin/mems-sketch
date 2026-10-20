@@ -48,14 +48,17 @@ class ArcShape(Primitive):
         start, end = v(self.start_angle), v(self.end_angle)
         inner, outer = v(self.inner_radius), v(self.outer_radius)
         middle = (start + end) / 2
-        handles = [Handle("outer_radius", *on_circle(center, outer, middle), RADIUS)]
+        radial = ("radial", *center, middle)
+        handles = [Handle("outer_radius", *on_circle(center, outer, middle), RADIUS, radial)]
         if inner > 0:
-            handles.append(Handle("inner_radius", *on_circle(center, inner, middle), RADIUS))
+            at = on_circle(center, inner, middle)
+            handles.append(Handle("inner_radius", *at, RADIUS, radial))
         if abs(end - start) < 360:
             across = (inner + outer) / 2
+            turning = ("angle", *center, across)
             handles += [
-                Handle("start_angle", *on_circle(center, across, start), ANGLE),
-                Handle("end_angle", *on_circle(center, across, end), ANGLE),
+                Handle("start_angle", *on_circle(center, across, start), ANGLE, turning),
+                Handle("end_angle", *on_circle(center, across, end), ANGLE, turning),
             ]
         return handles
 

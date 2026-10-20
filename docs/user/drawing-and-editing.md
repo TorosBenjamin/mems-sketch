@@ -59,8 +59,9 @@ shape shows its handles:
 
 - a **rectangle** a square on each side and corner: a side moves one edge, a
   corner two;
-- a **polygon** or **path** a dot on each vertex, and a path a square for its
-  width on the first segment's side;
+- a **polygon** or **path** a dot on each vertex and a **+** in the middle of
+  each side (drag it to add a vertex there), and a path a square for its width
+  on the first segment's side;
 - a **circle** its radius on the rim; an **arc** its outer and inner radius,
   and a dot on each end for its angles.
 
@@ -72,6 +73,14 @@ Esc drops the drag, and one Undo takes it back. Like moving, a drag **keeps
 expressions**: it adds an offset. An **aligned** shape stays aligned: dragging
 the side its alignment holds (its left, for one aligned by `left`) changes the
 alignment's offset instead, so the other sides stay where they are.
+
+**Click a handle** (without dragging) to choose it; it is drawn filled.
+**Delete** then removes a chosen vertex (a polygon keeps three, a path two)
+instead of the shape. **Type a value** for the chosen handle, or while
+dragging one, and press **Enter**: a side's coordinate (`45`), a vertex's or a
+corner's x and y (`10, 30`), a radius, an angle in degrees, or a path's width.
+Typed values keep expressions too (`length` typed 45 becomes `length + 5`).
+Esc drops what you typed, and pressed again lets go of the handle.
 
 **Cut, copy and paste** (Ctrl+X, Ctrl+C, Ctrl+V; in the Edit menu and the
 right-click menus of the canvas and the Shapes tree) work on the selected

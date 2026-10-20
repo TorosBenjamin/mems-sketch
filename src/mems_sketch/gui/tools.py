@@ -54,6 +54,7 @@ from mems_sketch.core.shapes import (
     RouteShape,
     Shape,
 )
+from mems_sketch.core.shapes.handles import INSERT, VERTEX, entry_size, handle_label
 from mems_sketch.engine import build_shapes
 from mems_sketch.gui.canvas import angle_between
 
@@ -171,6 +172,11 @@ class Tool:
 
     def key(self, key: Qt.Key) -> bool:
         """Enter or Backspace on the canvas; True if the tool used it."""
+        return False
+
+    def typed(self, text: str) -> bool:
+        """A digit, sign, point, comma or space typed on the canvas; True if the tool
+        took it (e.g. as a value for a handle)."""
         return False
 
     def hover_label(self, x: float, y: float) -> str | None:
@@ -308,7 +314,10 @@ class SelectTool(Tool):
     hovers, icon = True, "select"
     shows_handles = True  # the window shows the selected shape's handles
 
+    chosen: tuple[NodePath, str] | None = None  # a handle clicked: (shape path, key)
+
     def reset(self) -> None:
+        self.entry: str | None = None  # a value being typed for a handle
         self._handle = None  # a HandleDrag in progress
         self._handle_to: tuple[float, float] | None = None
         self._handle_targets: list[Candidate] | None = None
@@ -320,7 +329,10 @@ class SelectTool(Tool):
         self._snap = None
 
     def hint(self) -> str:
-        return "Click to select, drag to move, drag on empty space to select with a box"
+        return (
+            self._chosen_hint()
+            or "Click to select, drag to move, drag on empty space to select with a box"
+        )
 
     def press(self, x, y, modifiers) -> None:
         self.reset()
@@ -328,6 +340,7 @@ class SelectTool(Tool):
             return
         if self._press_handle(x, y):
             return
+        self.chosen = None
         additive = bool(modifiers & (CTRL | SHIFT))
         hit = self.window.hit(x, y)
         self._press, self._press_hit = (x, y), hit
@@ -509,11 +522,106 @@ class SelectTool(Tool):
 
     def _release_handle(self, x, y, modifiers) -> None:
         drag, to = self._handle, self._handle_to
-        self.cancel()
-        if to is not None:
-            self.window.run(lambda: self.document.handles.drag(drag.path, drag.handle.key, *to))
+        self._stop()
+        handle = drag.handle
+        if to is None:  # a click: choose it (to delete, or type a value for it)
+            self.chosen = None if handle.role == INSERT else (drag.path, handle.key)
+        else:
+            self.chosen = (drag.path, handle.key) if handle.role == VERTEX else None
+            self.window.run(lambda: self.document.handles.drag(drag.path, handle.key, *to))
         self.window.update_overlay()
         self.window.prompt(self.hint())
+
+    def _chosen_hint(self) -> str | None:
+        handle = self._chosen_handle()
+        if handle is not None:
+            what = "x, y" if entry_size(handle) == 2 else "a value"
+            delete = "Delete removes it, " if handle.role == VERTEX else ""
+            return (
+                f"{handle_label(handle.key).capitalize()} chosen: {delete}type {what} "
+                "and Enter to set it, Esc lets go"
+            )
+        return None
+
+    def _chosen_handle(self):
+        """The chosen handle, while its shape is the one selected (else None)."""
+        if self.chosen is None or self.window.selection != [self.chosen[0]]:
+            return None
+        return next((h for h, _, _ in self.window.edit_handles if h.key == self.chosen[1]), None)
+
+    def active_handle(self) -> str | None:
+        """The key of the handle drawn filled: the one dragged, else the chosen one."""
+        if self._handle is not None:
+            return self._handle.handle.key
+        handle = self._chosen_handle()
+        return handle.key if handle is not None else None
+
+    # -- typing a value for a handle ------------------------------------------
+
+    def _entry_handle(self):
+        """The handle typed values go to: the one dragged, else the chosen one."""
+        return self._handle.handle if self._handle is not None else self._chosen_handle()
+
+    def typed(self, text: str) -> bool:
+        handle = self._entry_handle()
+        if handle is None or (self.entry is None and text.isspace()):
+            return False  # (a space before anything typed pans, as always)
+        self.entry = (self.entry or "") + text
+        self._show_entry(handle)
+        return True
+
+    def _show_entry(self, handle) -> None:
+        what = "x, y" if entry_size(handle) == 2 else "a value"
+        label = f"{handle_label(handle.key)} = {self.entry}▏"
+        self.window.live(
+            f"Type {what} for {handle_label(handle.key)}: Enter sets it, Esc cancels", label
+        )
+
+    def key(self, key) -> bool:
+        if self.entry is None:
+            return False
+        handle = self._entry_handle()
+        if key == Qt.Key.Key_Backspace:
+            self.entry = self.entry[:-1]
+            if handle is not None:
+                self._show_entry(handle)
+            return True
+        text = self.entry
+        path = (
+            self._handle.path
+            if self._handle is not None
+            else self.chosen[0]
+            if self.chosen
+            else None
+        )
+        self._stop()
+        if handle is not None and path is not None and text.strip():
+            self._type_in(path, handle, text)
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+        return True
+
+    def _type_in(self, path, handle, text: str) -> None:
+        try:
+            values = [float(part) for part in text.replace(",", " ").split()]
+        except ValueError:
+            self.window.report_error(f"'{text}' is not a number")
+            return
+        self.window.run(lambda: self.document.handles.type_in(path, handle.key, values))
+
+    def delete_chosen(self) -> bool:
+        """Delete with a vertex chosen: remove that vertex (True), not the shape."""
+        if self.entry is not None:
+            return True  # while a value is typed, Delete removes nothing
+        handle = self._chosen_handle()
+        if handle is None or handle.role != VERTEX or self.busy:
+            return False
+        path = self.chosen[0]
+        self.chosen = None
+        self.window.run(lambda: self.document.handles.remove(path, handle.key))
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
+        return True
 
     def _hover_handle(self, x, y) -> None:
         """The cursor over a handle shows which way it drags."""
@@ -525,13 +633,28 @@ class SelectTool(Tool):
 
     @property
     def busy(self) -> bool:
-        return self._mode in ("move", "box") or self.gizmo_dragging or self._handle is not None
+        return (
+            self._mode in ("move", "box")
+            or self.gizmo_dragging
+            or self._handle is not None
+            or self.entry is not None
+        )
 
     def cancel(self) -> bool:
+        """Stop what it is doing; when idle, let go of the chosen handle."""
+        busy = self._stop()
+        if not busy:
+            self.chosen = None
+        return busy
+
+    def design_changed(self) -> None:
+        self._stop()  # (the chosen handle stays: e.g. after typing a value for it)
+
+    def _stop(self) -> bool:
         busy = self.busy
         dragging_handle = self._handle is not None
         self.gizmo_cancel()
-        super().cancel()
+        Tool.cancel(self)
         self.canvas.show_points("snap", [])
         if dragging_handle:
             self.window.update_overlay()  # the handles back where they are

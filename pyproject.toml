@@ -49,6 +49,9 @@ sdist.exclude = ["build/", ".github/", "docs/images/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A test running this long prints every thread's traceback (it keeps running):
+# where a hung test is stuck shows in the log.
+faulthandler_timeout = 120
 
 [tool.ruff]
 line-length = 100

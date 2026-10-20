@@ -11,6 +11,7 @@ Result apply_array(const Json& modifier, const Produce& produce, const Variables
     const Context ctx{m.builder, m.component, variables, m.scope};
     const int columns = copy_count(ctx, modifier, "columns", 1.0, "array columns");
     const int rows = copy_count(ctx, modifier, "rows", 1.0, "array rows");
+    check_copies(static_cast<long long>(columns) * rows, "array columns × rows");
     const double dx = ctx.number(modifier, "dx", 0.0), dy = ctx.number(modifier, "dy", 0.0);
     LayerSet layers;
     Result result;

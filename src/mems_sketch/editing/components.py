@@ -393,14 +393,16 @@ def _as_expression(value: Value) -> str:
 
 def parameters_used(definition: ComponentDef, nodes: list[Shape]) -> list[ParamDef]:
     """The parameters of ``definition`` that ``nodes`` use, with those their
-    defaults use in turn, in the definition's order."""
+    defaults and limits use in turn, in the definition's order."""
     by_name = {p.name: p for p in definition.parameters}
     used = _names_used(nodes) & by_name.keys()
     pending = list(used)
-    while pending:  # defaults may depend on further parameters
-        default = by_name[pending.pop()].default
-        if isinstance(default, str):
-            for dep in names_in(default) & by_name.keys():
+    while pending:  # defaults and limits may depend on further parameters
+        parameter = by_name[pending.pop()]
+        for value in (parameter.default, parameter.min, parameter.max):
+            if not isinstance(value, str):
+                continue
+            for dep in names_in(value) & by_name.keys():
                 if dep not in used:
                     used.add(dep)
                     pending.append(dep)

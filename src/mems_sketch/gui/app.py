@@ -1404,6 +1404,8 @@ class MainWindow(QMainWindow):
             self.canvas.pulse(*(regions[p] for p in picked if p in regions))
         self.properties.show_node(paths[0] if len(paths) == 1 else None)
         self.update_overlay()
+        if not self.tool.busy:  # its hint may depend on what is selected (#251)
+            self.prompt(self.tool.hint())
         self.state_changed()
 
     def _pick_alignment(self, field: str, point: str, to: str) -> None:
@@ -1874,7 +1876,9 @@ class MainWindow(QMainWindow):
             return  # the chosen vertex of the selected shape, not the shape
         if self.selection:
             paths, self.selection = self.selection, []
-            self._run(lambda: self.document.nodes.remove(paths))
+            ok, _ = self._run(lambda: self.document.nodes.remove(paths))
+            if not ok:  # refused: what was selected still is (#251)
+                self._select_quietly(paths)
 
     def copy(self) -> None:
         """The selected shapes onto the clipboard, as text (other windows can paste them)."""
@@ -1891,6 +1895,8 @@ class MainWindow(QMainWindow):
             ok, text = self._run(lambda: self.document.clipboard.cut(paths))
             if ok:
                 QApplication.clipboard().setText(text)
+            else:
+                self._select_quietly(paths)
 
     def can_paste(self) -> bool:
         return is_shapes(QApplication.clipboard().text())

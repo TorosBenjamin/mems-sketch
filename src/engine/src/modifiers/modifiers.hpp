@@ -38,6 +38,13 @@ Result apply_perforate(const Json& modifier, const Produce& produce, const Varia
 // A copy count: a non-negative integer (what: "array columns").
 int copy_count(const Context& ctx, const Json& modifier, const char* key, double fallback, const char* what);
 
+// The most copies one modifier makes: more would build for minutes and stop the
+// editor with it (#250), so it is refused with the reason instead.
+constexpr long long MAX_COPIES = 10000;
+
+// Refuses ``copies`` above MAX_COPIES, saying what made them.
+void check_copies(long long copies, const char* what);
+
 // The points and sizes of what a modifier is given: ``self``.
 Points self_points(const Result& own);
 

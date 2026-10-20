@@ -54,6 +54,7 @@ from PySide6.QtGui import (
     QTransform,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPathItem,
@@ -1744,6 +1745,9 @@ class LayoutCanvas(QGraphicsView):
 
     def leaveEvent(self, event) -> None:
         self.set_hover_label(None)  # a drag's label stays: the drag may come back
+        if QApplication.mouseButtons() == Qt.MouseButton.NoButton:  # not dragging out
+            self.show_snap_marker(None)  # where a click would snap: no click there (#251)
+            self.show_points("snap", [])
         super().leaveEvent(event)
 
     def set_cursor_label(self, text: str | None) -> None:

@@ -25,7 +25,14 @@ int copy_count(const Context& ctx, const Json& modifier, const char* key, double
         std::snprintf(buffer, sizeof buffer, "%g", number);
         throw BuildError(std::string(what) + " must be a non-negative integer, got " + buffer);
     }
+    check_copies(number > static_cast<double>(MAX_COPIES) ? MAX_COPIES + 1 : static_cast<long long>(number), what);
     return static_cast<int>(number);
+}
+
+void check_copies(long long copies, const char* what) {
+    if (copies <= MAX_COPIES) return;
+    throw BuildError(std::string(what) + ": more than " + std::to_string(MAX_COPIES) +
+                     " copies, the most one modifier makes");
 }
 
 namespace {

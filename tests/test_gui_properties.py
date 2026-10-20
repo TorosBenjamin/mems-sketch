@@ -5,15 +5,17 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QGroupBox,
     QInputDialog,
     QLabel,
     QMessageBox,
+    QPlainTextEdit,
     QToolButton,
 )
 
-from mems_sketch import ArrayModifier, RectShape
+from mems_sketch import ArrayModifier, PolygonShape, RectShape
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.properties import ElidedLabel
 from mems_sketch.gui.value_edit import ValueEdit
@@ -255,7 +257,6 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication
 
 from mems_sketch.gui.value_edit import dragged_value
 
@@ -503,3 +504,61 @@ def test_leaving_a_field_that_cannot_be_evaluated_says_why(window, qtbot):
     _focus(qtbot, window.canvas)
     qtbot.wait(20)
     assert messages and window.document.shapes[0].x1 == "pitch * 2"
+
+
+def test_a_refused_value_goes_back_and_does_not_block_the_next_edit(window, qtbot):
+    """#247: the refused text is replaced by the value stored, so the next edit
+    (another field, the name) applies."""
+    messages = []
+    window.properties.error.connect(messages.append)
+    edits = fields(window)
+    _focus(qtbot, edits["To x"])
+    edits["To x"].setText("nonexistent + 1")
+    qtbot.keyClick(edits["To x"], Qt.Key.Key_Return)
+    assert messages and fields(window)["To x"].text() == "pitch * 2"
+    to_y = fields(window)["To y"]
+    to_y.setText("9")
+    qtbot.keyClick(to_y, Qt.Key.Key_Return)
+    assert window.document.shapes[0].y1 == 9 and len(messages) == 1
+
+
+def test_enter_keeps_the_focus_on_the_field(window, qtbot):
+    edits = fields(window)
+    _focus(qtbot, edits["To y"])
+    edits["To y"].setText("7")
+    qtbot.keyClick(edits["To y"], Qt.Key.Key_Return)
+    assert window.document.shapes[0].y1 == 7
+    assert QApplication.focusWidget() is fields(window)["To y"]  # not another panel's button
+
+
+def test_ticking_align_without_a_point_does_not_block_edits(window, qtbot):
+    section = next(
+        b for b in window.properties.findChildren(QGroupBox) if b.title().startswith("Align")
+    )
+    section.setChecked(True)
+    to_y = fields(window)["To y"]
+    to_y.setText("6")
+    qtbot.keyClick(to_y, Qt.Key.Key_Return)
+    assert window.document.shapes[0].y1 == 6 and window.document.shapes[0].align is None
+
+
+def test_nan_and_inf_are_refused_with_a_reason(window, qtbot):
+    messages = []
+    window.properties.error.connect(messages.append)
+    for text in ("nan", "inf", "1e999"):
+        to_y = fields(window)["To y"]
+        to_y.setText(text)
+        qtbot.keyClick(to_y, Qt.Key.Key_Return)
+        assert "not a finite number" in messages[-1]
+    assert window.document.shapes[0].y1 == 4
+
+
+def test_leaving_a_list_of_points_applies_it(window, qtbot):
+    triangle = PolygonShape(name="tri", layer="device", points=[(0, 0), (9, 0), (0, 9)])
+    window.tree.select_paths([window.document.nodes.add(triangle)])
+    box = window.properties.findChild(QPlainTextEdit)
+    assert box.tabChangesFocus()
+    _focus(qtbot, box)
+    box.setPlainText("0, 0\n20, 0\n0, 20")
+    _focus(qtbot, window.canvas)
+    qtbot.waitUntil(lambda: window.document.shapes[1].points[1] == (20, 0))

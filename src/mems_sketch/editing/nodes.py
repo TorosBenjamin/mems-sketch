@@ -149,9 +149,10 @@ class NodeEdits(Commands):
     def connect(self, paths: list[NodePath], **fields) -> NodePath:
         """A connection joining sibling shapes' ends, placed after the last of them.
 
-        For each shape the end is its port facing the others: of those pointing
-        towards the centre of all their ports, the nearest to it (an array's copies
-        by index are left out: name one in the connection's ends instead).
+        For each shape the end is its port nearest another shape's ports, if it
+        points towards the middle of those ends, else the nearest of its ports
+        that does (an array's copies by index are left out: name one in the
+        connection's ends instead).
         """
         if len(paths) < 2:
             raise ValueError("select two or more shapes with ports to connect")
@@ -163,20 +164,29 @@ class NodeEdits(Commands):
             if not own:
                 raise ValueError(f"{node.name or node.kind} has no ports to connect")
             ports.append(own)
-        every = [p for own in ports for p in own.values()]
-        cx = sum(p.x for p in every) / len(every)
-        cy = sum(p.y for p in every) / len(every)
+
+        def gap(port, index: int) -> float:  # to the nearest port of another shape
+            others = [q for i, own in enumerate(ports) if i != index for q in own.values()]
+            return min(math.hypot(q.x - port.x, q.y - port.y) for q in others)
+
+        # Each shape's port nearest the others' is its end; where they meet is
+        # the middle of those ends (not of every port: the far ends of long arms
+        # would pull it off, past a T junction's stem).
+        chosen = [min(own, key=lambda n, i=i, o=own: gap(o[n], i)) for i, own in enumerate(ports)]
+        cx = sum(own[n].x for own, n in zip(ports, chosen, strict=True)) / len(chosen)
+        cy = sum(own[n].y for own, n in zip(ports, chosen, strict=True)) / len(chosen)
 
         def facing(port) -> bool:
             a = math.radians(port.angle)
             return math.cos(a) * (cx - port.x) + math.sin(a) * (cy - port.y) > 0
 
         ends = []
-        for node, own in zip(nodes, ports, strict=True):
-            towards = {n: p for n, p in own.items() if facing(p)}
-            if not towards:
-                raise ValueError(f"no port of {node.name} faces the others")
-            name = min(towards, key=lambda n: math.hypot(towards[n].x - cx, towards[n].y - cy))
+        for node, own, name in zip(nodes, ports, chosen, strict=True):
+            if not facing(own[name]):  # the nearest points away: one facing the middle
+                towards = {n: p for n, p in own.items() if facing(p)}
+                if not towards:
+                    raise ValueError(f"no port of {node.name} faces the others")
+                name = min(towards, key=lambda n: math.hypot(towards[n].x - cx, towards[n].y - cy))
             ends.append(f"{node.name}.port.{name}")
         shape = ConnectionShape(name=self.session.unique_name("connection"), ends=ends, **fields)
         last = ordered[-1]

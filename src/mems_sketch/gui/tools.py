@@ -149,8 +149,10 @@ class Tool:
         return busy
 
     def design_changed(self) -> None:
-        """After any edit or undo: by default, drop what the tool was doing."""
-        self.cancel()
+        """After any edit or undo: by default, drop what the tool was doing, and
+        say again what to do first (not what it was doing: #251)."""
+        if self.cancel():
+            self.window.prompt(self.hint())
 
     def hint(self) -> str:
         return ""
@@ -704,6 +706,7 @@ class MoveTool(Tool):
         self._plan: DragPlan | None = None
         self._snap: Candidate | None = None
         self._candidates: list[Candidate] | None = None
+        self._down: tuple[float, float] | None = None  # where the base point was pressed
 
     @property
     def busy(self) -> bool:
@@ -713,8 +716,13 @@ class MoveTool(Tool):
         if not self.window.selection:
             return "Move: click a shape to move"
         if self._base is None:
+            gizmo = (
+                "drag an arrow of the gizmo, or "
+                if self.window.settings.get("canvas/show_gizmos")
+                else ""
+            )
             return (
-                "Move: drag an arrow of the gizmo, or click a base point (snaps to shape "
+                f"Move: {gizmo}click a base point, or drag from it (snaps to shape "
                 "points; Ctrl: no snapping)"
             )
         return "Move: click where the base point goes (Esc cancels)"
@@ -738,11 +746,14 @@ class MoveTool(Tool):
             self._plan = self.document.moves.plan_drag(self.window.selection)
             if not self._plan.roots:
                 return
-            self._base = (bx, by, label)
+            self._base, self._down = (bx, by, label), (x, y)
             self.canvas.show_drag_preview(self._plan.preview, self.window.layers.colors)
             self.window.update_overlay()
             self.window.prompt(self.hint())
             return
+        self._place(x, y, modifiers)
+
+    def _place(self, x, y, modifiers) -> None:
         dx, dy = self._destination(x, y, modifiers)
         roots = self._plan.roots
         self.cancel()
@@ -777,6 +788,13 @@ class MoveTool(Tool):
     def release(self, x, y, modifiers) -> None:
         if self.gizmo_dragging:
             self.gizmo_release(x, y, modifiers)
+            return
+        down, self._down = self._down, None
+        if self._base is None or down is None:
+            return
+        moved = math.hypot(x - down[0], y - down[1]) * self.canvas.pixels_per_um()
+        if moved >= DRAG_THRESHOLD_PX:  # dragged from the base point: drop it here (#251)
+            self._place(x, y, modifiers)
 
     def markers(self) -> dict[str, list[Candidate]]:
         return {"anchor": [("base", self._base[0], self._base[1])]} if self._base else {}
@@ -1545,6 +1563,7 @@ class DrawTool(Tool):
         self.cancel()
         if shape is None:
             self.window.report_error(problem)
+            self.window.prompt(self.hint())  # back to the first step
             return
         self.window.add_drawn(shape)
         if self.once:

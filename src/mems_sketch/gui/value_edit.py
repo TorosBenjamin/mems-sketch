@@ -64,6 +64,17 @@ def is_number(text: str) -> bool:
         return False
 
 
+def number_or_expression(text: str) -> float | str:
+    """A number if ``text`` is one, else the text as an expression; ``nan``,
+    ``inf`` and numbers too big for a float (``1e999``) are refused."""
+    if not is_number(text):
+        return text
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"'{text}' is not a finite number")
+    return value
+
+
 class ElidedLineEdit(QLineEdit):
     """A line edit that, when not being edited, shows a text too long for it from
     its start, cut with "…" (the whole text is in the tooltip and back while
@@ -229,7 +240,7 @@ class ValueEdit(QLineEdit):
             if self.optional:
                 return None
             raise ValueError("a value is required")
-        return float(text) if is_number(text) else text
+        return number_or_expression(text)
 
     # -- looks ------------------------------------------------------------------
 
@@ -349,7 +360,7 @@ class ValueEdit(QLineEdit):
         if self.isReadOnly() or not self.isEnabled():
             return None
         text = self.text().strip() or self.placeholderText().strip()
-        return float(text) if is_number(text) else None
+        return float(text) if is_number(text) and math.isfinite(float(text)) else None
 
     def _dragged(self, dx: float, modifiers) -> float:
         return dragged_value(

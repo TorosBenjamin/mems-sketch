@@ -450,7 +450,9 @@ behaviours every frontend must keep.
   side changes the offset). Polygons and paths get vertices added (a side's
   middle) and removed (Delete on a chosen one); a value typed for a handle
   sets it exactly. Rounded corners follow the vertices they round. With Alt,
-  a drag changes the parameter a coordinate names instead. Exists for
+  a drag changes the parameter a coordinate names instead. The selected
+  shape's values that use parameters are drawn as dimensions, and pointing at
+  one outlines what its parameter affects ([#266](https://github.com/TorosBenjamin/mems-sketch/issues/266)). Exists for
   rectangles, circles, arcs, polygons, paths, guides and routes' via points.
 
 ### Rule checks

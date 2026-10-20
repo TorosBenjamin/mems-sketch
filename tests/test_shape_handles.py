@@ -360,3 +360,47 @@ def test_alt_drag_leaves_a_parameter_with_a_trial_value(session):
     drag = session.handles.start(BEAM, "x1")
     node, tuned = session.handles.retuned(drag, 43, 2)
     assert tuned == {} and node.x1 == "length + 2"  # an offset, as without Alt
+
+
+# -- parameters on the canvas (#266): dimensions, and what a parameter affects -----------------
+
+
+def test_a_rectangle_dimensions_its_expressions():
+    beam = RectShape(layer="device", x0=0, y0=0, x1="length", y1=4)
+    (d,) = beam.dimensions(v)
+    assert (d.field, d.expression, d.value) == ("x1", "length", 40)
+    assert (d.a, d.b, d.side) == ((0, 4), (40, 4), (0, 1))  # along its top, from the axis
+    assert RectShape(layer="device", x0=0, y0=0, x1=10, y1=4).dimensions(v) == []
+
+
+def test_radii_widths_and_vertices_have_dimensions():
+    (r,) = CircleShape(layer="device", radius="2*w").dimensions(v)
+    assert (r.style, r.value, r.a) == ("radial", 8, (0, 0))
+    arc = ArcShape(layer="device", inner_radius="w", outer_radius="length", end_angle=180)
+    assert [d.field for d in arc.dimensions(v)] == ["outer_radius", "inner_radius"]
+    path = PathShape(layer="device", points=[(0, 0), ("length", 0)], width="w")
+    point, width = path.dimensions(v)
+    assert (point.field, point.a, point.b) == ("point.1.x", (0, 0), (40, 0))
+    assert (width.style, width.value, width.a, width.b) == ("across", 4, (20, -2), (20, 2))
+    poly = PolygonShape(layer="device", points=[(0, 0), (10, "w"), (5, 9)])
+    assert [d.field for d in poly.dimensions(v)] == ["point.1.y"]
+
+
+def test_the_selected_shapes_dimensions_are_placed(session):
+    (d,) = session.dimensions.of(BEAM)
+    assert (d.label, d.names, d.a, d.b) == ("length = 40", ("length",), (0, 4), (40, 4))
+    assert session.dimensions.of(PAD) == []  # numbers only
+    session.nodes.add(RectShape(name="tag", layer="device", x0=0, y0=0, x1="beam.right.x", y1=1))
+    assert session.dimensions.of(((0, 2),)) == []  # a point, not a parameter
+
+
+def test_what_a_parameter_affects(session):
+    session.parameters.set("reach", "length + 16")
+    session.nodes.add(RectShape(name="rail", layer="device", x0=0, y0=-16, x1="reach", y1=-12))
+    affected = session.dimensions.affected(["length"])
+    assert affected.users == (BEAM, ((0, 2),))  # rail through reach
+    assert affected.aligned == (PAD,)
+    assert (
+        session.dimensions.describe(["length"])
+        == "length  used by beam, rail · moves pad (aligned)"
+    )

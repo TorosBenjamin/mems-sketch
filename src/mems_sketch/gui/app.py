@@ -238,6 +238,8 @@ class MainWindow(QMainWindow):
         self.points.focused.connect(self._point_focused)
         self._hovered_point = None
         self.edit_handles: list = []  # the selected shape's handles: (Handle, x, y) in µm
+        self.edit_dimensions: list = []  # its values that use parameters (PlacedDimension)
+        self._dimension_hovered: int | None = None  # the dimension under the cursor
         self.messages = MessagesPanel()
         self.commit_panel = CommitPanel(self.document)
         self.git = GitPanel(self.document)
@@ -1373,6 +1375,21 @@ class MainWindow(QMainWindow):
         markers = [(x, y, h.role) for h, x, y in self.edit_handles]
         for other in self.area.views():
             other.canvas.show_edit_handles(markers if other is view else [], active)
+        self._place_dimensions(shown and not tool.busy)
+
+    def _place_dimensions(self, shown: bool) -> None:
+        """The selected shape's values that use parameters, as dimensions (#266)."""
+        view = self.view
+        dimensions = self.document.dimensions.of(view.selection[0]) if shown else []
+        if dimensions != self.edit_dimensions:
+            self.edit_dimensions = dimensions
+            if self._dimension_hovered is not None:  # it is gone: so is what it showed
+                self._dimension_hovered = None
+                self.canvas.show_hover(None)
+                self.canvas.set_hover_label(None)
+        for other in self.area.views():
+            hovered = self._dimension_hovered if other is view else None
+            other.canvas.show_dimensions(dimensions if other is view else [], hovered)
 
     _update_overlay = update_overlay
 
@@ -1471,7 +1488,10 @@ class MainWindow(QMainWindow):
 
     def _hover(self, x: float, y: float) -> None:
         """Outline the shape under the cursor (what a click would select); after a
-        pause, say what it is; over the selection, show that a drag moves it."""
+        pause, say what it is; over the selection, show that a drag moves it. Over a
+        dimension, outline what its parameters move instead."""
+        if self._hover_dimension(x, y):
+            return
         tool = self.tool
         free = tool.hovers and not tool.busy and self.canvas.gizmo_hit(x, y) is None
         under = self.hit(x, y) if free else None
@@ -1492,6 +1512,29 @@ class MainWindow(QMainWindow):
         self.canvas.set_over_selection(
             free and tool.name == "select" and under is not None and under in self.selection
         )
+
+    def _hover_dimension(self, x: float, y: float) -> bool:
+        """Over a dimension's label: outline everything its parameters move and say
+        what (True); else False, having let go of one hovered before."""
+        tool = self.tool
+        free = self.edit_dimensions and not tool.busy
+        index = self.canvas.dimension_at(x, y) if free else None
+        if index == self._dimension_hovered:
+            return index is not None
+        self._dimension_hovered = index
+        self.canvas.show_dimensions(self.edit_dimensions, index)
+        self._hovered = self._tip_for = None  # (the shape under the cursor: found again)
+        self._tip_timer.stop()
+        if index is None:
+            self.canvas.show_hover(None)
+            self.canvas.set_hover_label(None)
+            return False
+        names = self.edit_dimensions[index].names
+        dimensions = self.document.dimensions
+        self.canvas.show_hover(self.document.results.highlight(dimensions.affected(names).paths))
+        self.canvas.set_hover_label(dimensions.describe(names))
+        self.canvas.set_over_selection(False)
+        return True
 
     def _show_tip(self) -> None:
         if self._tip_for is None or self.canvas.cursor_label or self.tool.busy:

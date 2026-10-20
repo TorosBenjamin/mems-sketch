@@ -241,3 +241,61 @@ def test_alt_drag_changes_the_parameter_the_side_names(window):
     assert window.document.node(BASE).x1 == "size"
     assert window.document.active_definition.parameters[0].default == 120
     assert handle(window, "x1") == (120, 10)
+
+
+# -- parameters on the canvas (#266) ----------------------------------------------------------
+
+
+def sized_base(window):
+    from mems_sketch.core.shapes import Align, RectShape
+
+    window.document.parameters.set("size", 100)
+    window.document.nodes.add(RectShape(name="base", layer="device", x0=0, y0=0, x1="size", y1=20))
+    window.document.nodes.add(
+        RectShape(
+            name="cap",
+            layer="device",
+            x0=0,
+            y0=0,
+            x1=10,
+            y1=20,
+            align=Align(point="left", to="base.right", dx=5),
+        )
+    )
+    window.canvas.zoom_to(window.canvas.content_rect())
+
+
+def label_at(window, index=0):
+    """Where dimension ``index``'s label is, in µm."""
+    box = window.canvas._dimension_boxes[index]
+    at = window.canvas.mapToScene(box.center().toPoint())
+    return at.x(), at.y()
+
+
+def test_the_selected_shape_shows_its_parameters_as_dimensions(window, qtbot):
+    sized_base(window)
+    window.select_click(BASE, False)
+    assert [d.label for d in window.canvas.dimensions] == ["size = 100"]
+    qtbot.wait(20)  # (drawn: where its label is)
+    assert window.canvas._dimension_boxes
+    window.select_click(((0, 1),), False)  # numbers only: none
+    assert window.canvas.dimensions == []
+    window.select_click(BASE, False)
+    window.set_tool("move")  # only with the Select tool, like the handles
+    assert window.canvas.dimensions == []
+
+
+def test_hovering_a_dimension_outlines_what_its_parameter_moves(window, qtbot):
+    sized_base(window)
+    window.select_click(BASE, False)
+    window.canvas.viewport().repaint()
+    x, y = label_at(window)
+    hover(window, x, y)
+    qtbot.wait(40)
+    canvas = window.canvas
+    assert canvas._hovered_dimension == 0
+    assert canvas.hover_label == "size  used by base · moves cap (aligned)"
+    assert canvas._hover_item is not None
+    hover(window, 50, -200)  # away: back to normal
+    qtbot.wait(40)
+    assert canvas._hovered_dimension is None and canvas.hover_label is None

@@ -7,7 +7,15 @@ from typing import ClassVar, Literal
 
 from mems_sketch.core.levels import LEVEL
 from mems_sketch.core.shapes.base import Primitive, Value
-from mems_sketch.core.shapes.handles import RADIUS, Handle, rounded, shifted
+from mems_sketch.core.shapes.handles import (
+    RADIAL,
+    RADIUS,
+    Dimension,
+    Handle,
+    on_circle,
+    rounded,
+    shifted,
+)
 
 
 class CircleShape(Primitive):
@@ -34,6 +42,14 @@ class CircleShape(Primitive):
             Handle("radius", x + r, y, RADIUS, ("radial", x, y, 0.0)),
             Handle("radius.top", x, y + r, RADIUS, ("radial", x, y, 90.0)),
         ]
+
+    def dimensions(self, v) -> list[Dimension]:
+        """The radius, from the centre up and to the right."""
+        if not isinstance(self.radius, str):
+            return []
+        center, r = (v(self.x), v(self.y)), v(self.radius)
+        rim = on_circle(center, r, 45.0)
+        return [Dimension("radius", self.radius, r, center, rim, style=RADIAL)]
 
     def handle_moved(self, key, to, v) -> dict:
         if key not in ("radius", "radius.top"):

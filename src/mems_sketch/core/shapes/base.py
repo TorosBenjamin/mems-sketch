@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from mems_sketch.core.shapes.modifiers import AnyModifier, ArrayModifier
 
 if TYPE_CHECKING:
-    from mems_sketch.core.shapes.handles import Handle
+    from mems_sketch.core.shapes.handles import Dimension, Handle
     from mems_sketch.core.shapes.registry import Shape
     from mems_sketch.core.transform import Transform
 
@@ -169,6 +169,11 @@ class Node(BaseModel):
     ) -> dict[str, Any]:
         """The fields that change when handle ``key`` is dragged to ``to`` (its own frame)."""
         raise KeyError(f"'{self.kind}' has no handle '{key}'")
+
+    def dimensions(self, v: Callable[[Value], float]) -> list[Dimension]:
+        """Its values that are expressions, as dimensions to draw on the canvas (see
+        :class:`~mems_sketch.core.shapes.handles.Dimension`), in its own frame."""
+        return []
 
     def drag_sketch(self, v: Callable[[Value], float]) -> tuple[list, bool] | None:
         """A line to draw while a handle is dragged, for a node that cannot be built

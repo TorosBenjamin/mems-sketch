@@ -42,6 +42,44 @@ class Handle:
     entry: tuple = ("xy",)
 
 
+# How a dimension is drawn (Dimension.style)
+LINEAR = "linear"  # from a to b, its line set off to ``side``
+RADIAL = "radial"  # from a centre (a) to the rim (b)
+ACROSS = "across"  # a width: from one side (a) to the other (b), arrows from outside
+
+
+@dataclass(frozen=True)
+class Dimension:
+    """A value of a node that is an expression, drawn as a dimension on the canvas:
+    ``field`` (``x1``, ``radius``, ``point.2.x``) is ``expression``, worth ``value``;
+    the dimension runs from ``a`` to ``b`` in the node's frame. A linear one is set
+    off from that line towards ``side`` (a unit vector; zero: drawn on the line).
+
+    A coordinate is measured from the frame's origin, so the dimension says what
+    the value is: ``x1 = length`` runs from x = 0 to the side at x1."""
+
+    field: str
+    expression: str
+    value: float
+    a: Point
+    b: Point
+    side: Point = (0.0, 0.0)
+    style: str = LINEAR
+
+
+def coordinate_dimensions(points, v: Evaluate) -> list[Dimension]:
+    """A dimension for each vertex coordinate that is an expression, from the axis to
+    the vertex (``point.<i>.x`` / ``.y``)."""
+    found = []
+    for i, (x, y) in enumerate(points):
+        px, py = v(x), v(y)
+        if isinstance(x, str):
+            found.append(Dimension(f"point.{i}.x", x, px, (0.0, py), (px, py)))
+        if isinstance(y, str):
+            found.append(Dimension(f"point.{i}.y", y, py, (px, 0.0), (px, py)))
+    return found
+
+
 def typed_point(handle: Handle, values: list[float]) -> Point:
     """Where typed ``values`` put ``handle`` (its frame); raises ValueError if they
     are not as many as it takes (:func:`entry_size`)."""

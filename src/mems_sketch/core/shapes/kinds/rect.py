@@ -10,7 +10,7 @@ from typing import ClassVar, Literal
 
 from mems_sketch.core.levels import LEVEL
 from mems_sketch.core.shapes.base import Primitive, Value
-from mems_sketch.core.shapes.handles import CORNER, EDGE, Handle, shifted
+from mems_sketch.core.shapes.handles import CORNER, EDGE, Dimension, Handle, shifted
 
 
 class RectShape(Primitive):
@@ -45,6 +45,20 @@ class RectShape(Primitive):
                 for ky, y in (("y0", y0), ("y1", y1))
             ),
         ]
+
+    def dimensions(self, v) -> list[Dimension]:
+        """``x1`` above it and ``x0`` below, ``y1`` on its left and ``y0`` on its right,
+        each from the axis to its side."""
+        x0, y0, x1, y1 = v(self.x0), v(self.y0), v(self.x1), v(self.y1)
+        top, bottom, left, right = max(y0, y1), min(y0, y1), min(x0, x1), max(x0, x1)
+        found = []
+        for field, x, at, side in (("x1", x1, top, (0.0, 1.0)), ("x0", x0, bottom, (0.0, -1.0))):
+            if isinstance(getattr(self, field), str):
+                found.append(Dimension(field, getattr(self, field), x, (0.0, at), (x, at), side))
+        for field, y, at, side in (("y1", y1, left, (-1.0, 0.0)), ("y0", y0, right, (1.0, 0.0))):
+            if isinstance(getattr(self, field), str):
+                found.append(Dimension(field, getattr(self, field), y, (at, 0.0), (at, y), side))
+        return found
 
     def corner_vertices(self, v) -> list[tuple[float, float]]:
         x0, y0, x1, y1 = v(self.x0), v(self.y0), v(self.x1), v(self.y1)

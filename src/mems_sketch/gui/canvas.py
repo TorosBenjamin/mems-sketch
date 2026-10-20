@@ -79,6 +79,8 @@ CORNER_HANDLE_PX = 4.5  # a rounded corner's handle (radius)
 CORNER_ERROR_PX = 9  # the ring round a corner whose radius does not fit
 EDIT_HANDLE_PX = 4  # half the size of a shape's handle (a side, a vertex)
 TYPED_CHARACTERS = frozenset("0123456789.-+, ")  # a value typed for a handle
+DIMENSION_GAP_PX = 22  # how far a dimension's line is set off from what it measures
+DIMENSION_ARROW_PX = 7  # an arrowhead's length
 ROUND_HANDLES = ("vertex", "angle")  # drawn as dots; the others as squares
 
 
@@ -590,6 +592,11 @@ class LayoutCanvas(QGraphicsView):
         self._corner_handles: list[CornerHandle] = []  # the Corners tool's handles
         self._edit_handles: list[tuple[float, float, str]] = []  # the selected shape's
         self._active_handle: int | None = None  # the one being dragged
+        # The selected shape's values that use parameters (see show_dimensions), the
+        # one under the cursor, and where their labels are (viewport pixels).
+        self._dimensions: list = []
+        self._hovered_dimension: int | None = None
+        self._dimension_boxes: list[QRectF] = []
         self._corner_preview: list[tuple[float, float]] = []  # a rounding being dragged
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
@@ -1687,6 +1694,117 @@ class LayoutCanvas(QGraphicsView):
     def edit_handles(self) -> list[tuple[float, float, str]]:
         return list(self._edit_handles)
 
+    def show_dimensions(self, dimensions: list, hovered: int | None = None) -> None:
+        """The selected shape's values that use parameters, as dimensions (each a
+        :class:`~mems_sketch.editing.dimensions.PlacedDimension`, in µm);
+        ``hovered``: the one under the cursor, drawn highlighted."""
+        dimensions = list(dimensions)
+        if dimensions != self._dimensions or hovered != self._hovered_dimension:
+            self._dimensions, self._hovered_dimension = dimensions, hovered
+            if not dimensions:
+                self._dimension_boxes = []
+            self.viewport().update()
+
+    @property
+    def dimensions(self) -> list:
+        return list(self._dimensions)
+
+    def dimension_at(self, x: float, y: float) -> int | None:
+        """The dimension whose label is under ``(x, y)`` µm, or None."""
+        if not self._dimension_boxes:
+            return None
+        at = self.mapFromScene(QPointF(x, y)).toPointF()
+        for index, box in enumerate(self._dimension_boxes):
+            if box.adjusted(-2, -2, 2, 2).contains(at):
+                return index
+        return None
+
+    def _draw_dimensions(self, painter: QPainter) -> None:
+        """Each dimension: its line with arrows, and its label (see show_dimensions)."""
+
+        def px(point) -> QPointF:
+            return self.mapFromScene(QPointF(*point)).toPointF()
+
+        accent = QColor(self.theme["highlight"])
+        plain = QColor(self.theme["overlay"])
+        plain.setAlpha(170)
+        boxes = []
+        for index, d in enumerate(self._dimensions):
+            hovered = index == self._hovered_dimension
+            color = accent if hovered else plain
+            a, b = px(d.a), px(d.b)
+            if d.style == "radial":
+                painter.setPen(QPen(color, 1.3))
+                painter.drawLine(a, b)
+                _arrow(painter, b, a, color)
+                painter.setBrush(color)
+                painter.drawEllipse(a, 2, 2)
+                along = _unit(b - a)
+                center = b + along * (DIMENSION_GAP_PX * 0.6)
+                boxes.append(self._dimension_label(painter, center, d.label, hovered, along))
+                continue
+            if d.style == "across":
+                along = _unit(b - a)
+                outside = DIMENSION_ARROW_PX * 2
+                painter.setPen(QPen(color, 1.3))
+                painter.drawLine(a - along * outside, b + along * outside)
+                _arrow(painter, a, a - along, color)
+                _arrow(painter, b, b + along, color)
+                center = b + along * (outside + 10)
+                boxes.append(self._dimension_label(painter, center, d.label, hovered, along))
+                continue
+            side = QPointF(d.side[0], -d.side[1])  # (the view's y runs down)
+            gap = side * DIMENSION_GAP_PX
+            pen = QPen(color, 1)
+            painter.setPen(pen)
+            if not side.isNull():  # extension lines from what it measures
+                for end in (a, b):
+                    painter.drawLine(end + side * 3, end + gap + side * 4)
+            a, b = a + gap, b + gap
+            painter.setPen(QPen(color, 1.3))
+            painter.drawLine(a, b)
+            if (b - a).manhattanLength() > 2 * DIMENSION_ARROW_PX:
+                _arrow(painter, a, b, color)
+                _arrow(painter, b, a, color)
+            # Beside an upright line, not over it (and what it measures)
+            past = side if abs(side.x()) > 0.5 else None
+            boxes.append(self._dimension_label(painter, (a + b) / 2, d.label, hovered, past))
+        self._dimension_boxes = boxes
+
+    def _dimension_label(
+        self, painter: QPainter, center: QPointF, text: str, hovered: bool, past=None
+    ) -> QRectF:
+        """``text`` in a box centred on ``center`` (or, with ``past``, a unit vector,
+        just beyond it that way); the expression bold, its value plain."""
+        font = QFont(self.font())
+        bold = QFont(font)
+        bold.setBold(True)
+        expression, _, value = text.rpartition(" = ")
+        value = f" = {value}"
+        width = QFontMetricsF(bold).horizontalAdvance(expression)
+        width += QFontMetricsF(font).horizontalAdvance(value) + 14
+        height = QFontMetricsF(font).height() + 6
+        if past is not None:  # beyond the point, not over it
+            center = center + QPointF(past.x() * width / 2, past.y() * height / 2)
+        box = QRectF(center.x() - width / 2, center.y() - height / 2, width, height)
+        accent = QColor(self.theme["highlight"])
+        background = QColor(self.theme["background"])
+        background.setAlpha(235)
+        edge = QColor(self.theme["overlay"])
+        edge.setAlpha(120)
+        painter.setPen(QPen(accent if hovered else edge, 1))
+        painter.setBrush(accent if hovered else background)
+        painter.drawRoundedRect(box, 4, 4)
+        ink = QColor("white") if hovered else QColor(self.theme["overlay"])
+        painter.setPen(ink)
+        painter.setFont(bold)
+        name_width = QFontMetricsF(bold).horizontalAdvance(expression)
+        inner = box.adjusted(7, 0, -7, 0)
+        painter.drawText(inner, Qt.AlignmentFlag.AlignVCenter, expression)
+        painter.setFont(font)
+        painter.drawText(inner.adjusted(name_width, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter, value)
+        return box
+
     def _draw_edit_handles(self, painter: QPainter) -> None:
         edge = QColor(self.theme["highlight"])
         plain = QColor(self.theme["background"])
@@ -1880,6 +1998,8 @@ class LayoutCanvas(QGraphicsView):
             self._draw_gizmo(painter)
         if self._corner_handles or self._corner_preview:
             self._draw_corners(painter)
+        if self._dimensions:
+            self._draw_dimensions(painter)
         if self._edit_handles:
             self._draw_edit_handles(painter)
         if self._marks:
@@ -2276,3 +2396,20 @@ def _outline(geometries) -> QPainterPath:
         for leaf, at in geometry.leaves():
             outline.addPath(qtransform(at).map(own_path(leaf, "")))
     return outline
+
+
+def _unit(vector: QPointF) -> QPointF:
+    length = math.hypot(vector.x(), vector.y()) or 1.0
+    return QPointF(vector.x() / length, vector.y() / length)
+
+
+def _arrow(painter: QPainter, tip: QPointF, toward: QPointF, color: QColor) -> None:
+    """An arrowhead at ``tip``, its body towards ``toward`` (viewport pixels)."""
+    along = _unit(toward - tip)
+    across = QPointF(-along.y(), along.x()) * 3.2
+    base = tip + along * DIMENSION_ARROW_PX
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(QPolygonF([tip, base + across, base - across]))
+    painter.restore()

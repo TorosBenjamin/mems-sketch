@@ -386,8 +386,13 @@ class MainWindow(QMainWindow):
     def _render(self, view: ComponentView) -> ComponentView:
         if not getattr(view, "rendered", False):
             view.rendered = True
-            view.refresh(self.layers.colors, self.layers.visible)
             canvas = view.canvas
+            # Before anything is drawn: refreshing paints the canvas at once (see
+            # ComponentView._check), and a new canvas starts with light colours.
+            canvas.set_theme(self.canvas_theme)
+            canvas.corner_color = self._frame_color()
+            canvas.configure(**self._canvas_options())
+            view.refresh(self.layers.colors, self.layers.visible)
             canvas.pressed.connect(lambda x, y, m, v=view: self._pressed(v, x, y, m))
             canvas.moved.connect(lambda x, y, m, left, v=view: self._moved(v, x, y, m, left))
             canvas.released.connect(lambda x, y, m, v=view: self._released(v, x, y, m))
@@ -405,9 +410,6 @@ class MainWindow(QMainWindow):
             canvas.component_dropped.connect(
                 lambda name, x, y, v=view: self._component_dropped(v, name, x, y)
             )
-            canvas.set_theme(self.canvas_theme)
-            canvas.corner_color = self._frame_color()
-            canvas.configure(**self._canvas_options())
             self._caption(view)
             canvas.left_pans = self.tool.name == "hand"
             canvas.set_tool_cursor(self.tool.cursor)

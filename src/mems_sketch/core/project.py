@@ -364,6 +364,15 @@ class Project:
                 if target == component and shape.align and shape.align.point == old:
                     shape.align.point = new
 
+    def rename_parameter(self, component: str, old: str, new: str) -> None:
+        """Rename a parameter of a local component, the expressions in it that use
+        it, and the value each placement of it passes (``params: {old: 5}``)."""
+        self.components[component].rename_parameter(old, new)
+        for user in self.users(component):
+            for shape, target in self.references_of(user):
+                if target == component and old in shape.params:
+                    shape.params = {new if k == old else k: v for k, v in shape.params.items()}
+
     def rename_port(self, component: str, old: str, new: str) -> None:
         """Rename a port of a local component, and update the components that place
         it: what uses its point (``comb1.port.old``, a copy's ``port.old[2]``)."""

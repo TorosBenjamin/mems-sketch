@@ -36,7 +36,12 @@ from mems_sketch.core.shapes import NodePath, RefShape, Shape, child_lists
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.canvas import COMPONENT_MIME
-from mems_sketch.gui.value_edit import DRAG_START_PX, dragged_value, is_number
+from mems_sketch.gui.value_edit import (
+    DRAG_START_PX,
+    dragged_value,
+    is_number,
+    number_or_expression,
+)
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message
@@ -73,12 +78,9 @@ def modifier_stack(shape: Shape) -> str:
 def parse_value(text: str) -> float | str:
     """A number if the text is one, otherwise the text as an expression."""
     text = text.strip()
-    try:
-        return float(text)
-    except ValueError:
-        if not text:
-            raise ValueError("a value is required") from None
-        return text
+    if not text:
+        raise ValueError("a value is required")
+    return number_or_expression(text)
 
 
 def _format(value) -> str:

@@ -513,21 +513,17 @@ def test_a_read_only_component_shows_its_interface(resonator):
     assert "margin" in resonator.parameters._names
 
 
-def test_placed_library_components_do_not_open_up_in_the_shape_list(resonator):
+def test_placed_library_components_do_not_open_up_in_the_shape_list(resonator, qtbot):
+    def mass():  # mems.perforated_plate
+        tree = resonator.tree
+        items = (tree.topLevelItem(i) for i in range(tree.topLevelItemCount()))
+        return next((item for item in items if item.text(0) == "mass"), None)
+
     resonator.open_component("top")
-    mass = next(
-        resonator.tree.topLevelItem(i)
-        for i in range(resonator.tree.topLevelItemCount())
-        if resonator.tree.topLevelItem(i).text(0) == "mass"  # mems.perforated_plate
-    )
-    assert mass.childCount() == 0
+    qtbot.waitUntil(lambda: mass() is not None)  # built in the background when slow
+    assert mass().childCount() == 0
     resonator.settings.set("editor/show_implementation", True)
-    mass = next(
-        resonator.tree.topLevelItem(i)
-        for i in range(resonator.tree.topLevelItemCount())
-        if resonator.tree.topLevelItem(i).text(0) == "mass"
-    )
-    assert mass.childCount() == 1  # expands into its shapes when opened
+    qtbot.waitUntil(lambda: mass() is not None and mass().childCount() == 1)  # its shapes
 
 
 def test_a_shape_cut_in_two_says_so_and_shows_its_box(window):

@@ -46,6 +46,25 @@ def test_array_places_copies_on_a_grid_with_indices(doc):
     assert pieces(doc) == [(10, 0, 11, 4), (20, 0, 22, 4), (30, 0, 33, 4)]
 
 
+def test_too_many_copies_are_refused_at_once(doc):
+    """#250: an array of 100 000 copies is refused with the reason, not built for
+    minutes with the editor stopped."""
+    import time
+
+    path = doc.nodes.add(rect(modifiers=[ArrayModifier(columns=3, dx=10)]))
+    for modifier in (
+        ArrayModifier(columns=100_000, dx=10),
+        ArrayModifier(columns=200, rows=200, dx=10, dy=10),
+        PolarArrayModifier(count=1e12),
+    ):
+        start = time.perf_counter()
+        with pytest.raises(ValueError, match="more than 10000 copies"):
+            doc.nodes.replace(path, rect(modifiers=[modifier]))
+        assert time.perf_counter() - start < 2
+    assert len(pieces(doc)) == 3
+    doc.nodes.replace(path, rect(modifiers=[ArrayModifier(columns=100, rows=100, dx=10, dy=10)]))
+
+
 def test_mirror_across_a_vertical_or_horizontal_line_or_both(doc):
     path = doc.nodes.add(rect(modifiers=[MirrorModifier(axis="x", x=5)]))
     assert pieces(doc) == [(-2, 0, 0, 4), (10, 0, 12, 4)]

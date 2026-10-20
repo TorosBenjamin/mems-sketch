@@ -10,7 +10,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
-from mems_sketch.core.shapes import RectShape, RefShape, TransformShape
+from mems_sketch.core.shapes import Align, RectShape, RefShape, TransformShape
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.editor_state import state_path
 
@@ -486,3 +486,78 @@ def test_switching_tabs_drops_a_shape_being_drawn(window):
     window.open_component("mems.comb_drive")
     assert first.canvas._sketch_item is None and not first.canvas._drag_items
     assert not window.tool.busy
+
+
+# -- state that goes stale (#251) ------------------------------------------------
+
+
+def status(window) -> str:
+    return window.statusBar().currentMessage()
+
+
+def test_undo_while_drawing_says_what_to_do_again(window):
+    two_rects(window)
+    window.set_tool("polygon")
+    first = status(window)
+    click(window, 0, 0)
+    click(window, 30, 0)
+    assert window.tool.busy and status(window) != first
+    window.undo()
+    assert not window.tool.busy and status(window) == first
+
+
+def test_a_refused_shape_says_what_to_do_again(window):
+    two_rects(window)
+    window.set_tool("rect")
+    first = status(window)
+    click(window, 10, 10)
+    click(window, 10, 40)  # no area: refused
+    assert status(window) == first
+
+
+def test_a_refused_delete_keeps_the_selection(window):
+    window.document.nodes.add(rect("mass", 0, 0, 50, 50))
+    post = RectShape(
+        name="post",
+        layer="device",
+        x0=0,
+        y0=0,
+        x1=5,
+        y1=5,
+        align=Align(point="bottom_left", to="mass.top_left"),
+    )
+    window.document.nodes.add(post)
+    window.tree.select_paths([((0, 0),)])
+    window.delete()  # post is aligned to it: refused
+    assert window.selection == [((0, 0),)] and len(window.document.shapes) == 2
+    window.rotate_selection(90)  # the selection is still there to act on
+    assert window.document.can_undo()
+
+
+def test_a_drag_from_the_base_point_moves_the_selection(window):
+    two_rects(window)
+    window.tree.select_paths([((0, 1),)])
+    window.set_tool("move")
+    drag(window, (150, 50), (170, 80))
+    post = window.document.shapes[1]
+    assert (post.x0, post.y0) == (170, 80) and not window.tool.busy
+
+
+def test_the_move_hint_follows_the_selection_and_the_gizmos(window):
+    two_rects(window)
+    window.set_tool("move")
+    assert status(window) == "Move: click a shape to move"
+    window.tree.select_paths([((0, 1),)])  # chosen in the Shapes panel
+    assert "click a base point" in status(window) and "gizmo" in status(window)
+    window.settings.set("canvas/show_gizmos", False)
+    window.tree.select_paths([((0, 0),)])
+    assert "gizmo" not in status(window)
+
+
+def test_snap_markers_go_when_the_cursor_leaves_the_canvas(window):
+    two_rects(window)
+    window.canvas.show_snap_marker((100, 20))
+    window.canvas.show_points("snap", [("base.top_right", 100, 20)])
+    QApplication.sendEvent(window.canvas, QEvent(QEvent.Type.Leave))
+    assert not window.canvas._snap_marker.isVisible()
+    assert not window.canvas._points.get("snap")

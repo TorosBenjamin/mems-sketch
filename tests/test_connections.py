@@ -318,6 +318,21 @@ def test_connect_joins_the_selected_shapes_by_their_facing_ports():
     assert doc.results.geometry().layers["device"].count() == 1
 
 
+def test_connect_finds_a_t_junction_with_long_arms():
+    """#249: the far ends of long arms do not pull the middle past the stem."""
+    doc = EditSession()
+    arms = {
+        "left": [(-100, 0), (-10, 0)],
+        "right": [(100, 0), (10, 0)],
+        "stem": [(0, -100), (0, -10)],
+    }
+    for name, points in arms.items():
+        doc.nodes.add(PathShape(name=name, layer="device", width=4, points=points))
+    path = doc.nodes.connect([((0, 0),), ((0, 1),), ((0, 2),)])
+    assert doc.node(path).ends == ["left.port.end", "right.port.end", "stem.port.end"]
+    assert doc.results.geometry().layers["device"].count() == 1
+
+
 def test_what_connect_refuses():
     doc = EditSession()
     for shape in T:

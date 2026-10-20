@@ -230,3 +230,87 @@ def test_the_label_says_a_point_was_added(session):
     drag = session.handles.start(((0, 2),), "insert.0")
     moved = session.handles.dragged(drag, 5, 15)
     assert session.handles.describe(drag, moved) == "new point 2  (5, 15)"
+
+
+# -- phase 3: rounded corners follow, guides, routes' via points ---------------------------
+
+
+def corners(*items):
+    from mems_sketch.core.shapes.modifiers import CornersModifier
+
+    return [CornersModifier(corners=list(items))]
+
+
+def test_a_rounded_corner_follows_the_vertex_a_drag_moves(session):
+    from mems_sketch.core.shapes.modifiers import Corner
+
+    rounded = [Corner(x=10, y=30, radius=2), Corner(at="self.bottom_left", radius=1)]
+    session.nodes.add(
+        RectShape(
+            name="pad2", layer="device", x0=0, y0=20, x1=10, y1=30, modifiers=corners(*rounded)
+        )
+    )
+    pad2 = ((0, 2),)
+    session.handles.drag(pad2, "x1 y1", 15, 35)
+    kept = session.node(pad2).modifiers[0].corners
+    assert (kept[0].x, kept[0].y) == (15, 35)  # moved with its vertex
+    assert kept[1].at == "self.bottom_left"  # a named point follows by itself
+    session.handles.drag(pad2, "x0", -5, 32)  # another side: the corner stays
+    assert (session.node(pad2).modifiers[0].corners[0].x) == 15
+
+
+def test_a_corner_on_a_removed_vertex_goes_too(session):
+    from mems_sketch.core.shapes.modifiers import Corner
+
+    session.nodes.add(
+        PolygonShape(
+            name="plate",
+            layer="device",
+            points=[(0, 20), (10, 20), (10, 30), (0, 30)],
+            modifiers=corners(Corner(x=10, y=30, radius=2), Corner(x=0, y=20, radius=1)),
+        )
+    )
+    plate = ((0, 2),)
+    session.handles.remove(plate, "point.2")
+    left = session.node(plate).modifiers[0].corners
+    assert [(c.x, c.y) for c in left] == [(0, 20)]
+    session.handles.drag(plate, "insert.0", 5, 15)  # added elsewhere: the corner stays
+    assert [(c.x, c.y) for c in session.node(plate).modifiers[0].corners] == [(0, 20)]
+
+
+def test_a_guides_ends_are_dragged(session):
+    from mems_sketch.core.shapes import GuideShape
+
+    session.nodes.add(GuideShape(name="axis", x0=0, y0=-10, x1=0, y1="length"))
+    axis = ((0, 2),)
+    assert [h.key for h, _, _ in session.handles.handles(axis)] == ["x0 y0", "x1 y1"]
+    drag = session.handles.start(axis, "x1 y1")
+    moved = session.handles.dragged(drag, 5, 45)
+    assert (moved.x1, moved.y1) == (5, "length + 5")
+    assert session.handles.sketch(drag, moved) == ([(0, -10), (5, 45)], False)
+
+
+def test_a_routes_via_points_are_handles():
+    from mems_sketch.core.shapes import RouteShape
+
+    wire = RouteShape(start="a.port.p", end="b.port.p", style="straight", via=[(10, 0), ("w", 5)])
+    assert [h.key for h in wire.edit_handles(v)] == ["via.0", "via.1"]
+    assert wire.handle_moved("via.1", (6, 5), v) == {"via": [(10, 0), ("w + 2", 5)]}
+    assert wire.handle_removed("via.0") == {"via": [("w", 5)]}
+    assert wire.handle_removed("point.0") is None
+    assert wire.drag_sketch(v) == ([(10, 0), (4, 5)], False)
+
+
+def test_a_routes_sketch_runs_from_port_to_port(session, monkeypatch):
+    from mems_sketch.core.shapes import RouteShape
+    from mems_sketch.core.shapes.records import Port
+    from mems_sketch.core.transform import IDENTITY
+    from mems_sketch.editing.handles import HandleDrag
+
+    wire = RouteShape(name="wire", start="beam.port.a", end="pad.port.b", via=[(5, 5)])
+    ends = {"start": Port(0, 0, 0, 1, "device"), "end": Port(20, 10, 180, 1, "device")}
+    monkeypatch.setattr(session.results, "node_ports", lambda path, component=None: ends)
+    drag = HandleDrag(((0, 9),), wire, wire.edit_handles(v)[0], IDENTITY, {}, None)
+    moved = session.handles.dragged(drag, 8, 5)
+    assert session.handles.sketch(drag, moved) == ([(0, 0), (8, 5), (20, 10)], False)
+    assert session.handles.describe(drag, moved) == "via point 1  (5, 5) → (8, 5)"

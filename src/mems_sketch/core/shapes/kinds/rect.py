@@ -46,6 +46,10 @@ class RectShape(Primitive):
             ),
         ]
 
+    def corner_vertices(self, v) -> list[tuple[float, float]]:
+        x0, y0, x1, y1 = v(self.x0), v(self.y0), v(self.x1), v(self.y1)
+        return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
     def handle_moved(self, key, to, v) -> dict:
         changed = {}
         for field in key.split():

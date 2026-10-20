@@ -449,7 +449,8 @@ behaviours every frontend must keep.
   A drag keeps expressions (it adds an offset) and alignments (the aligned
   side changes the offset). Polygons and paths get vertices added (a side's
   middle) and removed (Delete on a chosen one); a value typed for a handle
-  sets it exactly. Exists for rectangles, circles, arcs, polygons and paths.
+  sets it exactly. Rounded corners follow the vertices they round. Exists for
+  rectangles, circles, arcs, polygons, paths, guides and routes' via points.
 
 ### Rule checks
 

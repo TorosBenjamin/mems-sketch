@@ -35,6 +35,9 @@ class PolygonShape(Primitive):
         """A handle on each vertex (``point.0``, ...) and in the middle of each side."""
         return vertex_handles(self.points, v, closed=True)
 
+    def corner_vertices(self, v) -> list[tuple[float, float]]:
+        return [(v(x), v(y)) for x, y in self.points]
+
     def handle_moved(self, key, to, v) -> dict:
         points = points_moved(self.points, key, to, v, closed=True)
         if points is None:

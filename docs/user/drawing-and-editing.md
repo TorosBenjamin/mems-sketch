@@ -81,6 +81,14 @@ expressions**: it adds an offset. An **aligned** shape stays aligned: dragging
 the side its alignment holds (its left, for one aligned by `left`) changes the
 alignment's offset instead, so the other sides stay where they are.
 
+**Hold Alt while dragging** to change the **parameter** instead: a side at
+`x1 = length` dragged 3 µm sets `length` from 40 to 43, and every shape that
+uses `length` (or is aligned to this one) follows; the cursor shows it
+(`length  40 → 43   also moves: pad`). A parameter used through a derived one
+(`reach = 2 * length + 1`) is found too, and stays within its limits (a whole
+number for an integer one). A coordinate that names no parameter, or only one
+with a trial value, gets an offset as without Alt.
+
 **Click a handle** (without dragging) to choose it; it is drawn filled.
 **Delete** then removes a chosen vertex (a polygon keeps three, a path two)
 instead of the shape. **Type a value** for the chosen handle, or while

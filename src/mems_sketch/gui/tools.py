@@ -307,7 +307,8 @@ class Tool:
 class SelectTool(Tool):
     """Also drags the selected shape's handles (its sides, vertices, radii; see
     :mod:`mems_sketch.editing.handles`): they snap as moving does, Shift keeps a
-    vertex or corner on a straight line from where it was, Ctrl turns snapping off."""
+    vertex or corner on a straight line from where it was, Ctrl turns snapping off,
+    Alt changes the parameter a dragged coordinate names instead of the coordinate."""
 
     name, label, shortcut = "select", "Select", "V"
     edits = False
@@ -320,6 +321,7 @@ class SelectTool(Tool):
         self.entry: str | None = None  # a value being typed for a handle
         self._handle = None  # a HandleDrag in progress
         self._handle_to: tuple[float, float] | None = None
+        self._handle_alt = False  # the drag changes parameters (Alt held)
         self._handle_targets: list[Candidate] | None = None
         self._press: tuple[float, float] | None = None
         self._press_hit: NodePath | None = None
@@ -495,11 +497,16 @@ class SelectTool(Tool):
         to = self._handle_target(x, y, modifiers)
         self._handle_to = to
         edits = self.document.handles
+        alt = bool(modifiers & ALT)
         try:
-            node = edits.dragged(self._handle, *to)
+            if alt:
+                node, tuned = edits.retuned(self._handle, *to)
+            else:
+                node, tuned = edits.dragged(self._handle, *to), {}
         except (ValueError, KeyError):  # e.g. a radius dragged through the centre
             return
-        preview = edits.preview(self._handle, node)
+        self._handle_alt = alt
+        preview = edits.preview(self._handle, node, tuned)
         if preview is None:
             self.canvas.clear_drag_preview()
         else:
@@ -516,21 +523,24 @@ class SelectTool(Tool):
         if index is not None:
             shown[index] = (*to, shown[index][2])
             self.canvas.show_edit_handles(shown, index)
-        text = edits.describe(self._handle, node) or "no change"
-        status = f"{text}   (Shift: straight, Ctrl: no snapping, Esc cancels)"
+        text = edits.describe(self._handle, node, tuned) or "no change"
+        keys = "Shift: straight, Ctrl: no snapping, Alt: the parameter, Esc cancels"
+        status = f"{text}   ({keys})"
         if snap:
             status += f"   on {snap[0]}"
         self.window.live(status, text)
 
     def _release_handle(self, x, y, modifiers) -> None:
-        drag, to = self._handle, self._handle_to
+        drag, to, alt = self._handle, self._handle_to, self._handle_alt
         self._stop()
         handle = drag.handle
         if to is None:  # a click: choose it (to delete, or type a value for it)
             self.chosen = None if handle.role == INSERT else (drag.path, handle.key)
         else:
             self.chosen = (drag.path, handle.key) if handle.role == VERTEX else None
-            self.window.run(lambda: self.document.handles.drag(drag.path, handle.key, *to))
+            edits = self.document.handles
+            apply = edits.drag_parameters if alt else edits.drag
+            self.window.run(lambda: apply(drag.path, handle.key, *to))
         self.window.update_overlay()
         self.window.prompt(self.hint())
 

@@ -314,3 +314,49 @@ def test_a_routes_sketch_runs_from_port_to_port(session, monkeypatch):
     moved = session.handles.dragged(drag, 8, 5)
     assert session.handles.sketch(drag, moved) == ([(0, 0), (8, 5), (20, 10)], False)
     assert session.handles.describe(drag, moved) == "via point 1  (5, 5) → (8, 5)"
+
+
+# -- phase 4: Alt-dragging changes the parameter ------------------------------------------------
+
+
+def test_alt_drag_changes_the_parameter_a_side_names(session):
+    drag = session.handles.start(BEAM, "x1")
+    node, tuned = session.handles.retuned(drag, 43, 2)
+    assert node == drag.node and tuned == {"length": 43}  # the expression stays
+    assert session.handles.preview(drag, node, tuned).bbox() == (0, 0, 43, 4)
+    assert session.handles.describe(drag, node, tuned) == "length  40 → 43   also moves: pad"
+    session.handles.drag_parameters(BEAM, "x1", 43, 2)
+    assert session.node(BEAM).x1 == "length"
+    assert session.active_definition.parameters[0].default == 43
+    assert box(session, PAD)[0] == 45  # what uses it follows
+    session.undo()  # one step
+    assert session.active_definition.parameters[0].default == 40
+
+
+def test_alt_drag_through_a_derived_parameter(session):
+    session.parameters.set("reach", "2 * length + 1")
+    session.nodes.add(RectShape(name="arm", layer="device", x0=0, y0=10, x1="reach", y1=12))
+    arm = ((0, 2),)
+    drag = session.handles.start(arm, "x1")
+    assert session.handles.retuned(drag, 91, 11)[1] == {"length": 45}
+
+
+def test_alt_drag_of_a_number_is_an_offset_as_before(session):
+    drag = session.handles.start(PAD, "x1")
+    assert session.handles.retuned(drag, 60, 2) == (session.handles.dragged(drag, 60, 2), {})
+    session.handles.drag_parameters(PAD, "x1", 60, 2)
+    assert session.node(PAD).x1 == 18
+
+
+def test_alt_drag_keeps_the_parameter_in_its_limits(session):
+    session.parameters.update("length", max=42, integer=True)
+    drag = session.handles.start(BEAM, "x1")
+    assert session.handles.retuned(drag, 50, 2)[1] == {"length": 42}
+    assert session.handles.retuned(drag, 38.4, 2)[1] == {"length": 38}
+
+
+def test_alt_drag_leaves_a_parameter_with_a_trial_value(session):
+    session.set_trial("length", 41)
+    drag = session.handles.start(BEAM, "x1")
+    node, tuned = session.handles.retuned(drag, 43, 2)
+    assert tuned == {} and node.x1 == "length + 2"  # an offset, as without Alt

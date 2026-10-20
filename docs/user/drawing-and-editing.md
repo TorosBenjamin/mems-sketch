@@ -100,6 +100,17 @@ a derived parameter) and every shape aligned to one of those is outlined, and
 the label by the cursor says which (`length  used by beam, rail · moves pad
 (aligned)`).
 
+**Click a dimension's label to change it.** Type a value and press Enter; the
+shape is previewed meanwhile, with what else moves (`length  40 → 45   moves
+beam, pad`). A value for `length` sets the parameter `length`; a number for
+`w / 2` sets `w` so the radius is that number; an expression for `length`
+becomes its default (`2 * w`), and one for `length + 3` replaces the value.
+Type **`name = value`** to make a new parameter and use it there (`span =
+60`). The same works for a handle you chose by clicking it: type `gap = 3` and
+Enter, and that side, radius or width uses the new parameter `gap`. While you
+type, letters go to the value, not to the tools' shortcuts; Esc or a click
+elsewhere drops what you typed.
+
 **Click a handle** (without dragging) to choose it; it is drawn filled.
 **Delete** then removes a chosen vertex (a polygon keeps three, a path two)
 instead of the shape. **Type a value** for the chosen handle, or while

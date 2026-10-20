@@ -299,3 +299,87 @@ def test_hovering_a_dimension_outlines_what_its_parameter_moves(window, qtbot):
     hover(window, 50, -200)  # away: back to normal
     qtbot.wait(40)
     assert canvas._hovered_dimension is None and canvas.hover_label is None
+
+
+def text_in(window, text):
+    """Type ``text`` (letters too) on the canvas; ``\n`` is Enter."""
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+
+    for ch in text:
+        if ch == "\n":
+            event = QKeyEvent(
+                QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier
+            )
+        else:
+            event = QKeyEvent(
+                QEvent.Type.KeyPress, Qt.Key.Key_unknown, Qt.KeyboardModifier.NoModifier, ch
+            )
+        QApplication.sendEvent(window.canvas, event)
+
+
+def click_label(window, index=0):
+    window.canvas.viewport().repaint()
+    click_at(window, *label_at(window, index))
+
+
+def size_of(window):
+    return next(p.default for p in window.document.active_definition.parameters if p.name == "size")
+
+
+def test_clicking_a_dimension_and_typing_sets_its_parameter(window):
+    sized_base(window)
+    window.select_click(BASE, False)
+    click_label(window)
+    assert window.tool.dimension == (BASE, "x1", 0)
+    assert window.selection == [BASE]  # the click chose the dimension, not a shape
+    text_in(window, "120")
+    assert window.canvas._editing_dimension == (0, "120")
+    assert window.canvas.cursor_label == "size  100 → 120   moves base, cap"
+    assert window.canvas._drag_items  # previewed
+    text_in(window, "\n")
+    assert size_of(window) == 120 and window.document.node(BASE).x1 == "size"
+    assert window.tool.dimension is None and not window.canvas._drag_items
+
+
+def test_esc_or_a_click_elsewhere_drops_what_is_typed_for_a_dimension(window):
+    sized_base(window)
+    window.select_click(BASE, False)
+    click_label(window)
+    text_in(window, "7")
+    window.escape()
+    assert window.tool.dimension is None and size_of(window) == 100
+    assert window.canvas._editing_dimension is None
+    click_label(window)
+    text_in(window, "7")
+    click_at(window, 50, 10)  # on the shape
+    assert window.tool.dimension is None and size_of(window) == 100
+
+
+def test_letters_typed_for_a_dimension_are_not_shortcuts(window):
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+
+    sized_base(window)
+    window.select_click(BASE, False)
+    click_label(window)
+    override = QKeyEvent(
+        QEvent.Type.ShortcutOverride, Qt.Key.Key_M, Qt.KeyboardModifier.NoModifier, "m"
+    )
+    QApplication.sendEvent(window.canvas, override)
+    assert override.isAccepted()  # (so the Move tool's M does not fire)
+    text_in(window, "span = 90\n")
+    assert window.document.node(BASE).x1 == "span"
+    assert window.tool.name == "select"
+
+
+def test_name_equals_value_typed_for_a_chosen_handle_makes_a_parameter(window):
+    two_rects(window)
+    window.select_click(BASE, False)
+    click_at(window, 100, 10)  # the right side, chosen
+    assert window.tool.takes_text()
+    text_in(window, "len = 110\n")
+    assert window.document.node(BASE).x1 == "len"
+    assert any(
+        p.name == "len" and p.default == 110 for p in window.document.active_definition.parameters
+    )

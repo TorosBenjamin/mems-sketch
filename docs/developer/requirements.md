@@ -452,7 +452,8 @@ behaviours every frontend must keep.
   sets it exactly. Rounded corners follow the vertices they round. With Alt,
   a drag changes the parameter a coordinate names instead. The selected
   shape's values that use parameters are drawn as dimensions, and pointing at
-  one outlines what its parameter affects ([#266](https://github.com/TorosBenjamin/mems-sketch/issues/266)). Exists for
+  one outlines what its parameter affects; clicking one and typing sets the
+  parameter, and `name = value` makes a new one ([#266](https://github.com/TorosBenjamin/mems-sketch/issues/266)). Exists for
   rectangles, circles, arcs, polygons, paths, guides and routes' via points.
 
 ### Rule checks

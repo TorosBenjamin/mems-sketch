@@ -7,6 +7,13 @@ keeping those that name a parameter or a process constant.
 :meth:`Dimensions.affected` finds what changing parameters would move: the
 nodes that use them, directly or through a derived parameter, and the nodes
 aligned to those (and to those, and so on).
+
+Typing for a dimension (:meth:`Dimensions.set`) changes the parameter: a value
+for ``length`` sets ``length``; a number for ``w / 2`` sets ``w`` so that it is
+worth that (as Alt-drag does); an expression for ``length`` becomes its default,
+and one for ``length + 3`` replaces the value. ``name = value`` makes a
+parameter and puts it in the value, here and for a chosen handle
+(:meth:`Dimensions.make_for_handle`).
 """
 
 from __future__ import annotations
@@ -15,10 +22,15 @@ import math
 import re
 from dataclasses import dataclass
 
+from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import names_in
-from mems_sketch.core.shapes import NodePath, Shape, paths
-from mems_sketch.core.shapes.handles import Dimension
+from mems_sketch.core.project import Project
+from mems_sketch.core.shapes import NodePath, Shape, container_of, node_at, paths
+from mems_sketch.core.shapes.handles import Dimension, entry_size, handle_label, typed_point
+from mems_sketch.core.user_component import RESERVED_PARAM_NAMES
 from mems_sketch.editing.commands import Commands
+
+NEW_PARAMETER = re.compile(r"^\s*([A-Za-z_]\w*)\s*=\s*(\S.*?)\s*$")  # ``gap = 3``
 
 Point = tuple[float, float]
 
@@ -42,6 +54,16 @@ class PlacedDimension:
     def label(self) -> str:
         """``length = 40``; ``length + 3 = 43``."""
         return f"{self.expression} = {self.value:g}"
+
+
+@dataclass(frozen=True)
+class Change:
+    """What a typed value does: ``node`` as it becomes, ``parameters`` set (name:
+    new default) and ``created`` (name: default)."""
+
+    node: Shape
+    parameters: dict
+    created: dict
 
 
 @dataclass(frozen=True)
@@ -115,9 +137,135 @@ class Dimensions(Commands):
             text += f" · moves {_listed(self._names_of(affected.aligned))} (aligned)"
         return text
 
-    def _names_of(self, found) -> list[str]:
-        from mems_sketch.core.shapes import node_at
+    # -- typing for a dimension, or name = value for a handle ------------------------
 
+    def plan(self, path: NodePath, field: str, text: str) -> Change:
+        """What typing ``text`` for the dimension of ``field`` (of the node at ``path``)
+        does (see the module docstring); raises ValueError if it cannot."""
+        node = node_at(self.session.shapes, path)
+        current = field_value(node, field)
+        made = NEW_PARAMETER.match(text)
+        if made:
+            name, default = made.group(1), _value(made.group(2))
+            self._check_new(name)
+            return Change(with_field(node, field, name), {}, {name: default})
+        value = _value(text)
+        definitions = {p.name: p for p in self.session.active_definition.parameters}
+        bare = current.strip() if isinstance(current, str) else None
+        if bare in definitions and not (
+            isinstance(value, float) and isinstance(definitions[bare].default, str)
+        ):  # (a number for a derived one: solved for what it is derived from)
+            return Change(node, {bare: value}, {})
+        if isinstance(value, str):
+            return Change(with_field(node, field, value), {}, {})
+        tuned = self._solved(path, current, value)
+        if not tuned:
+            raise ValueError(f"no parameter of {current} can make it {value:g}")
+        return Change(node, tuned, {})
+
+    def set(self, path: NodePath, field: str, text: str) -> None:
+        """Type ``text`` for the dimension of ``field``: one edit (see :meth:`plan`)."""
+        self._apply(path, self.plan(path, field, text), field)
+
+    def preview(self, path: NodePath, field: str, text: str) -> tuple[Geometry | None, str]:
+        """The node as typing ``text`` would make it (built on its own, in the
+        component's frame) and what it changes, e.g. ``length  40 → 45   moves beam,
+        pad``; raises ValueError if it cannot be typed."""
+        change = self.plan(path, field, text)
+        return self._built(path, change), self._said(path, field, change)
+
+    def make_for_handle(self, path: NodePath, key: str, text: str) -> None:
+        """``name = value`` typed for handle ``key``: make the parameter and put it in
+        the value the handle sets (one that takes one value: a side, a radius, a
+        width, an angle): one edit."""
+        made = NEW_PARAMETER.match(text)
+        if made is None:
+            raise ValueError("type name = value to make a parameter")
+        name, default = made.group(1), _value(made.group(2))
+        self._check_new(name)
+        handles = self.session.handles
+        drag = handles._started(path, key)
+        if entry_size(drag.handle) != 1:
+            raise ValueError(f"name = value sets one value; {handle_label(key)} takes two (x, y)")
+        value = drag.value(default)
+        fields = drag.node.handle_moved(key, typed_point(drag.handle, [value]), drag.value)
+        if len(fields) != 1:
+            raise ValueError(f"{handle_label(key)} changes more than one value")
+        (field,) = fields
+        node = with_field(handles.typed(drag, [value]), field, name)
+        self._apply(path, Change(node, {}, {name: default}), field)
+
+    def _check_new(self, name: str) -> None:
+        if name in RESERVED_PARAM_NAMES:
+            raise ValueError(f"'{name}' is a reserved name")
+        if name in self._parameter_names():
+            raise ValueError(f"there is already a parameter '{name}'")
+
+    def _solved(self, path: NodePath, expression, value: float) -> dict[str, float]:
+        """The parameters to change so ``expression`` is worth ``value`` (as Alt-drag)."""
+        from mems_sketch.editing.handles import HandleDrag
+
+        found = self.session.handles._frame(path)
+        if found is None or not isinstance(expression, str):
+            return {}
+        node, frame, scope = found
+        drag = HandleDrag(path, node, None, frame, scope, None)
+        tuned: dict[str, float] = {}
+        self.session.handles._tune(drag, expression, value, tuned)
+        return tuned
+
+    def _apply(self, path: NodePath, change: Change, field: str) -> None:
+        original = node_at(self.session.shapes, path)
+        active = self.session.active
+
+        def edit(project: Project) -> None:
+            self.session.local(project)
+            for name, default in {**change.created, **change.parameters}.items():
+                project.set_parameter(name, default, active)
+            if change.node != original:
+                container, index = container_of(self.session.shapes_in(project), path)
+                container[index] = change.node
+
+        if change.created:
+            what = f"Make parameter {', '.join(change.created)}"
+        elif change.parameters:
+            what = f"Set {', '.join(change.parameters)}"
+        else:
+            what = f"Set {field} of {_name(original)}"
+        self.session.edit(what, edit)
+
+    def _built(self, path: NodePath, change: Change) -> Geometry | None:
+        from mems_sketch.editing.handles import HandleDrag
+
+        found = self.session.handles._frame(path)
+        if found is None:
+            return None
+        node, frame, scope = found
+        drag = HandleDrag(path, node, None, frame, scope, None)
+        handles = self.session.handles
+        try:
+            values = {**change.created, **change.parameters}
+            drag = HandleDrag(path, node, None, frame, handles._scope_with(drag, values), None)
+        except Exception:  # noqa: BLE001 - e.g. an expression that does not resolve
+            return None
+        return handles.preview(drag, change.node)
+
+    def _said(self, path: NodePath, field: str, change: Change) -> str:
+        definitions = {p.name: p for p in self.session.active_definition.parameters}
+        if change.created:
+            ((name, default),) = change.created.items()
+            return f"new parameter {name} = {_shown(default)}; {field} becomes {name}"
+        if change.parameters:
+            parts = [
+                f"{name}  {_shown(definitions[name].default)} → {_shown(value)}"
+                for name, value in change.parameters.items()
+            ]
+            moved = _listed(self._names_of(self.affected(change.parameters).paths))
+            return "   ".join(parts) + (f"   moves {moved}" if moved else "")
+        before = field_value(node_at(self.session.shapes, path), field)
+        return f"{field}  {_shown(before)} → {_shown(field_value(change.node, field))}"
+
+    def _names_of(self, found) -> list[str]:
         shapes = self.session.shapes
         return [_name(node_at(shapes, p)) for p in found]
 
@@ -147,6 +295,47 @@ def _placed(d: Dimension, frame, names: tuple[str, ...]) -> PlacedDimension:
         length = math.hypot(dx, dy) or 1.0
         side = (dx / length, dy / length)
     return PlacedDimension(d.field, d.expression, d.value, a, b, side, d.style, names)
+
+
+def field_value(node: Shape, field: str):
+    """The value a dimension's ``field`` names: ``x1``, or ``point.2.x``."""
+    prefix, _, rest = field.partition(".")
+    if prefix == "point" and rest:
+        index, _, axis = rest.partition(".")
+        return node.points[int(index)][0 if axis == "x" else 1]
+    return getattr(node, field)
+
+
+def with_field(node: Shape, field: str, value) -> Shape:
+    """``node`` with ``field`` (as :func:`field_value` names it) set to ``value``."""
+    prefix, _, rest = field.partition(".")
+    if prefix == "point" and rest:
+        index, _, axis = rest.partition(".")
+        points = list(node.points)
+        x, y = points[int(index)]
+        points[int(index)] = (value, y) if axis == "x" else (x, value)
+        return node.model_copy(update={"points": points})
+    return type(node).model_validate({**node.model_dump(), field: value})
+
+
+def _value(text: str) -> float | str:
+    """A typed value: a number, or an expression (checked)."""
+    text = text.strip()
+    if not text:
+        raise ValueError("type a value")
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    try:
+        names_in(text)
+    except (ValueError, SyntaxError):
+        raise ValueError(f"'{text}' is not a value or an expression") from None
+    return text
+
+
+def _shown(value) -> str:
+    return f"{value:g}" if isinstance(value, int | float) else str(value)
 
 
 def _evaluate(value, scope) -> float:

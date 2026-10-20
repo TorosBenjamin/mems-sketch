@@ -1359,12 +1359,12 @@ class MainWindow(QMainWindow):
         current tab; none on a read-only one or for several shapes."""
         view = self.view
         tool = self.tool
-        shown = (
+        one = (
             getattr(tool, "shows_handles", False)
             and len(view.selection) == 1
             and not self.document.read_only
-            and not (tool.busy and getattr(tool, "_handle", None) is None)
         )
+        shown = one and not (tool.busy and getattr(tool, "_handle", None) is None)
         if not shown:
             self.edit_handles = []
         elif getattr(tool, "_handle", None) is None:  # (kept as they were while dragging)
@@ -1378,11 +1378,12 @@ class MainWindow(QMainWindow):
         for other in self.area.views():
             other.canvas.show_edit_handles(markers if other is view else [], active)
         editing = tool.dimension_editing() if hasattr(tool, "dimension_editing") else None
-        self._place_dimensions(shown and (not tool.busy or editing is not None), editing)
+        self._place_dimensions(one and (not tool.busy or editing is not None), editing)
 
-    def _place_dimensions(self, shown: bool, editing: tuple[int, str] | None = None) -> None:
+    def _place_dimensions(self, shown: bool, editing: tuple | None = None) -> None:
         """The selected shape's values that use parameters, as dimensions (#266);
-        ``editing``: the one a value is typed for, and the text."""
+        ``editing``: the one a value is typed for or dragged (see
+        :meth:`SelectTool.dimension_editing`)."""
         view = self.view
         dimensions = self.document.dimensions.of(view.selection[0]) if shown else []
         if dimensions != self.edit_dimensions:

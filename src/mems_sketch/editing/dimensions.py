@@ -34,7 +34,7 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import names_in
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import NodePath, Shape, container_of, frame_of, node_at, paths
-from mems_sketch.core.shapes.handles import Dimension, entry_size, handle_label, typed_point
+from mems_sketch.core.shapes.handles import ACROSS, Dimension, entry_size, handle_label, typed_point
 from mems_sketch.core.user_component import RESERVED_PARAM_NAMES
 from mems_sketch.editing.commands import Commands
 
@@ -351,7 +351,40 @@ class Dimensions(Commands):
             drag = HandleDrag(path, node, None, frame, handles._scope_with(drag, values), None)
         except Exception:  # noqa: BLE001 - e.g. an expression that does not resolve
             return None
-        return handles.preview(drag, change.node)
+        alone = handles.preview(drag, change.node)
+        return alone if alone is not None else self._built_in_place(path, change)
+
+    def _built_in_place(self, path: NodePath, change: Change) -> Geometry | None:
+        """The node built where it is, in the component as it would be: for one that
+        does not build on its own (a placement)."""
+        if change.created:
+            return None  # (a parameter the component does not have yet)
+        session = self.session
+        active = session.active
+        try:
+            engine = session.engine.trial(session.results._trial(path, change.node))
+            values = {**session.trials_for(active), **change.parameters}
+            record = engine.build(active, values).records()
+            if path not in record:
+                return None
+            return record[path].geometry.transformed(frame_of(record, path))
+        except Exception:  # noqa: BLE001 - it does not build: no preview
+            return None
+
+    @staticmethod
+    def dragged_value(dimension: PlacedDimension, x: float, y: float) -> float:
+        """The value a dimension would have with its end (``b``) dragged to ``(x, y)``
+        (the component's frame): its value scaled by how far along it that is, from
+        its start (a width: from its middle)."""
+        (ax, ay), (bx, by) = dimension.a, dimension.b
+        if dimension.style == ACROSS:
+            ax, ay = (ax + bx) / 2, (ay + by) / 2
+        dx, dy = bx - ax, by - ay
+        length = dx * dx + dy * dy
+        if length < 1e-12:
+            return dimension.value
+        along = ((x - ax) * dx + (y - ay) * dy) / length
+        return round(dimension.value * along, 6) + 0.0
 
     def _said(self, path: NodePath, field: str, change: Change) -> str:
         definitions = {p.name: p for p in self.session.active_definition.parameters}

@@ -324,6 +324,8 @@ class SelectTool(Tool):
         self.entry: str | None = None  # a value being typed for a handle or a dimension
         self.dimension: tuple[NodePath, str, int] | None = None  # the one being typed for:
         # (shape path, field, index among the window's edit_dimensions)
+        self._dimension_drag: tuple[NodePath, str, int] | None = None  # its end dragged
+        self._dimension_value: float | None = None  # the value it is dragged to
         self._handle = None  # a HandleDrag in progress
         self._handle_to: tuple[float, float] | None = None
         self._handle_alt = False  # the drag changes parameters (Alt held)
@@ -351,6 +353,8 @@ class SelectTool(Tool):
             return
         if self._press_handle(x, y):
             return
+        if self._press_dimension_end(x, y):
+            return
         self.chosen = None
         additive = bool(modifiers & (CTRL | SHIFT))
         hit = self.window.hit(x, y)
@@ -368,6 +372,10 @@ class SelectTool(Tool):
         if self._handle is not None:
             if left:
                 self._drag_handle(x, y, modifiers)
+            return
+        if self._dimension_drag is not None:
+            if left:
+                self._drag_dimension(x, y, modifiers)
             return
         if not left:
             self._hover_handle(x, y)
@@ -433,6 +441,9 @@ class SelectTool(Tool):
             self._release_handle(x, y, modifiers)
             return
         if self.dimension is not None:  # its label was clicked: a value is typed now
+            return
+        if self._dimension_drag is not None:
+            self._release_dimension()
             return
         mode, press, pending, plan = self._mode, self._press, self._pending, self._plan
         self.cancel()
@@ -667,11 +678,62 @@ class SelectTool(Tool):
         self._show_dimension_entry()
         return True
 
-    def dimension_editing(self) -> tuple[int, str] | None:
-        """The dimension being typed for and what is typed: (index, text), or None."""
+    def dimension_editing(self) -> tuple | None:
+        """The dimension being typed for and what is typed: (index, text); one being
+        dragged and its value: (index, value, False); else None."""
+        if self._dimension_drag is not None:
+            value = self._dimension_value
+            shown = (
+                f"{value:g}"
+                if value is not None
+                else self.window.edit_dimensions[self._dimension_drag[2]].label.rpartition(" = ")[2]
+            )
+            return self._dimension_drag[2], shown, False
         if self.dimension is None:
             return None
         return self.dimension[2], self.entry or ""
+
+    def _press_dimension_end(self, x, y) -> bool:
+        """A press on a dimension's end: drag it to change the value."""
+        index = self.canvas.dimension_end_at(x, y) if self.window.edit_dimensions else None
+        if index is None or len(self.window.selection) != 1:
+            return False
+        if not self.editable():
+            return True
+        dimension = self.window.edit_dimensions[index]
+        self._dimension_drag = (self.window.selection[0], dimension.field, index)
+        self._dimension_value = None
+        self.chosen = None
+        self.window.update_overlay()
+        return True
+
+    def _drag_dimension(self, x, y, modifiers) -> None:
+        path, field, index = self._dimension_drag
+        dimension = self.window.edit_dimensions[index]
+        value = self.document.dimensions.dragged_value(dimension, x, y)
+        if not modifiers & CTRL and self.setting("snapping/grid", True):
+            step = self.canvas.grid_step()
+            value = _um(round(value / step) * step)
+        self._dimension_value = value
+        self.canvas.show_dimensions(self.window.edit_dimensions, None, (index, f"{value:g}", False))
+        try:
+            geometry, said = self.document.dimensions.preview(path, field, f"{value:g}")
+        except (ValueError, KeyError) as error:
+            geometry, said = None, str(error).strip("'\"")
+        if geometry is None:
+            self.canvas.clear_drag_preview()
+        else:
+            self.canvas.show_drag_preview(geometry, self.window.layers.colors)
+        self.window.live(f"{said}   (Ctrl: no snapping, Esc cancels)", said)
+
+    def _release_dimension(self) -> None:
+        (path, field, _), value = self._dimension_drag, self._dimension_value
+        self._stop()
+        if value is not None:
+            text = f"{value:g}"
+            self.window.run(lambda: self.document.dimensions.set(path, field, text))
+        self.window.update_overlay()
+        self.window.prompt(self.hint())
 
     def _show_dimension_entry(self) -> None:
         path, field, index = self.dimension
@@ -724,6 +786,10 @@ class SelectTool(Tool):
     def _hover_handle(self, x, y) -> None:
         """The cursor over a handle shows which way it drags."""
         handle = self.handle_at(x, y) if self.window.edit_handles else None
+        on_end = handle is None and self.window.edit_dimensions
+        if on_end and self.canvas.dimension_end_at(x, y) is not None:  # a dimension's end
+            self.canvas.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+            return
         if handle is None:
             self.canvas.viewport().unsetCursor()
         else:
@@ -737,6 +803,7 @@ class SelectTool(Tool):
             or self._handle is not None
             or self.entry is not None
             or self.dimension is not None
+            or self._dimension_drag is not None
         )
 
     def cancel(self) -> bool:
@@ -751,7 +818,11 @@ class SelectTool(Tool):
 
     def _stop(self) -> bool:
         busy = self.busy
-        dragging_handle = self._handle is not None or self.dimension is not None
+        dragging_handle = (
+            self._handle is not None
+            or self.dimension is not None
+            or self._dimension_drag is not None
+        )
         self.gizmo_cancel()
         Tool.cancel(self)
         self.canvas.show_points("snap", [])

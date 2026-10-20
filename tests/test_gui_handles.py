@@ -383,3 +383,28 @@ def test_name_equals_value_typed_for_a_chosen_handle_makes_a_parameter(window):
     assert any(
         p.name == "len" and p.default == 110 for p in window.document.active_definition.parameters
     )
+
+
+def test_a_placements_values_are_labels_to_click_and_type_in(window, qtbot):
+    from mems_sketch import ComponentDef, Instance, ParamDef
+    from mems_sketch.core.shapes import RectShape
+
+    project = window.document.project
+    project.define_component(
+        ComponentDef(
+            name="comb",
+            parameters=[ParamDef(name="length", default=50), ParamDef(name="fingers", default=3)],
+            shapes=[RectShape(name="spine", layer="device", x0=0, y0=0, x1="length", y1=4)],
+        )
+    )
+    window.document.nodes.add(Instance("c1", "comb", {"length": 80}))
+    window.canvas.zoom_to(window.canvas.content_rect())
+    window.select_click(BASE, False)
+    assert [d.label for d in window.canvas.dimensions] == ["length = 80", "fingers = 3"]
+    window.canvas.viewport().repaint()
+    hover(window, *label_at(window, 1))
+    qtbot.wait(40)
+    assert window.canvas.hover_label == "fingers of c1 (comb)"
+    click_label(window, 1)
+    text_in(window, "8\n")
+    assert window.document.node(BASE).params == {"length": 80, "fingers": 8}

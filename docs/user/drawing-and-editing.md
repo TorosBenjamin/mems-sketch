@@ -111,6 +111,17 @@ Enter, and that side, radius or width uses the new parameter `gap`. While you
 type, letters go to the value, not to the tools' shortcuts; Esc or a click
 elsewhere drops what you typed.
 
+**A placed component shows its parameters too.** Each one a shape inside the
+component uses as a value (a side at `x1 = length`) is drawn as that shape's
+dimension, placed and turned with the placement; the others (a count, a gap
+used in a sum) are labels in a row under it. They say this placement's values:
+`length = 80`, or `length = L (60)` when the placement gives an expression.
+Click one and type to change this placement's value (the component and its
+other placements keep theirs); when the value is an expression that names a
+parameter (`L`), a number sets that parameter instead. A component made in
+Python (a library one) has no shapes to look inside, so all of its parameters
+are labels.
+
 **Click a handle** (without dragging) to choose it; it is drawn filled.
 **Delete** then removes a chosen vertex (a polygon keeps three, a path two)
 instead of the shape. **Type a value** for the chosen handle, or while

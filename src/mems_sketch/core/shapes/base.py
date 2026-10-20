@@ -170,6 +170,11 @@ class Node(BaseModel):
         """The fields that change when handle ``key`` is dragged to ``to`` (its own frame)."""
         raise KeyError(f"'{self.kind}' has no handle '{key}'")
 
+    def placed_component(self) -> tuple[str, dict[str, Value]] | None:
+        """For a placement of a component: its name and the parameter values it
+        gives; None for the other nodes."""
+        return None
+
     def dimensions(self, v: Callable[[Value], float]) -> list[Dimension]:
         """Its values that are expressions, as dimensions to draw on the canvas (see
         :class:`~mems_sketch.core.shapes.handles.Dimension`), in its own frame."""

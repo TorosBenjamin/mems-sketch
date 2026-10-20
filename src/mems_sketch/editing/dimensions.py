@@ -8,6 +8,13 @@ keeping those that name a parameter or a process constant.
 nodes that use them, directly or through a derived parameter, and the nodes
 aligned to those (and to those, and so on).
 
+A placed component shows its parameters: each where a shape inside it uses the
+parameter as a value (``x1 = length`` in the component: the dimension of its
+side, placed and turned with the placement), the others as a row of labels
+under it. The label says this placement's value (``length = 120``, or
+``length = L (120)`` when the placement gives an expression); typing for it sets
+the placement's value, or the parameter that expression names.
+
 Typing for a dimension (:meth:`Dimensions.set`) changes the parameter: a value
 for ``length`` sets ``length``; a number for ``w / 2`` sets ``w`` so that it is
 worth that (as Alt-drag does); an expression for ``length`` becomes its default,
@@ -20,16 +27,18 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+import typing
+from dataclasses import dataclass, replace
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.expressions import names_in
 from mems_sketch.core.project import Project
-from mems_sketch.core.shapes import NodePath, Shape, container_of, node_at, paths
+from mems_sketch.core.shapes import NodePath, Shape, container_of, frame_of, node_at, paths
 from mems_sketch.core.shapes.handles import Dimension, entry_size, handle_label, typed_point
 from mems_sketch.core.user_component import RESERVED_PARAM_NAMES
 from mems_sketch.editing.commands import Commands
 
+CHIP = "chip"  # a placement's parameter with no dimension: a label in a row under it
 NEW_PARAMETER = re.compile(r"^\s*([A-Za-z_]\w*)\s*=\s*(\S.*?)\s*$")  # ``gap = 3``
 
 Point = tuple[float, float]
@@ -49,11 +58,14 @@ class PlacedDimension:
     side: Point
     style: str
     names: tuple[str, ...]
+    text: str | None = None  # the label, when not ``expression = value``
+    owner: NodePath | None = None  # a placement's: the placement
+    about: str | None = None  # a placement's: what it is, for the label by the cursor
 
     @property
     def label(self) -> str:
         """``length = 40``; ``length + 3 = 43``."""
-        return f"{self.expression} = {self.value:g}"
+        return self.text or f"{self.expression} = {self.value:g}"
 
 
 @dataclass(frozen=True)
@@ -89,6 +101,9 @@ class Dimensions(Commands):
         if found is None:
             return []
         node, frame, scope = found
+        placed_component = node.placed_component()
+        if placed_component is not None:
+            return self._of_placement(path, node, frame, scope, *placed_component)
 
         def v(value) -> float:
             return float(value) if isinstance(value, int | float) else _evaluate(value, scope)
@@ -106,6 +121,94 @@ class Dimensions(Commands):
             if names:
                 placed.append(_placed(d, frame, names))
         return placed
+
+    def _of_placement(self, path, node, frame, scope, name, given) -> list[PlacedDimension]:
+        """A placed component's numeric parameters (see the module docstring)."""
+        engine, active = self.session.engine, self.session.active
+        try:
+            component = engine.component(name, active)
+            qualified = engine.project.qualify(name, active)
+            numeric = [
+                n for n, f in component.Params.model_fields.items() if _numeric(f.annotation)
+            ]
+            values = {k: _number(v, scope) for k, v in given.items() if k in numeric}
+            inner = engine.variables(qualified, values)
+            inside = frame * node.placement(scope)
+        except Exception:  # noqa: BLE001 - it does not evaluate: nothing to show
+            return []
+        found = self._inside(qualified, values, inner, set(numeric))
+        anchor = self._under(path)
+        known = self._parameter_names()
+        title = f"{node.name} ({name})" if node.name else name
+        placed = []
+        for parameter in numeric:
+            if parameter not in inner:
+                continue
+            value, raw = inner[parameter], given.get(parameter)
+            if isinstance(raw, str):
+                text = f"{parameter} = {raw} ({value:g})"
+                names = tuple(
+                    n for n in ordered_names(raw) if n in known or n.startswith("process.")
+                )
+            else:
+                text, names = f"{parameter} = {value:g}", ()
+            extra = {
+                "field": f"params.{parameter}",
+                "expression": parameter,
+                "value": value,
+                "names": names,
+                "text": text,
+                "owner": path,
+                "about": f"{parameter} of {title}",
+            }
+            if parameter in found:
+                dimension, within = found[parameter]
+                placed.append(replace(_placed(dimension, inside * within, ()), **extra))
+            elif anchor is not None:
+                placed.append(
+                    PlacedDimension(a=anchor, b=anchor, side=(0.0, 0.0), style=CHIP, **extra)
+                )
+        return placed
+
+    def _inside(self, component: str, values, scope, wanted: set[str]) -> dict:
+        """For each of ``wanted`` (parameters of ``component``), the first dimension
+        inside it that is just that parameter, and the frame it is in (the
+        component's own); none for a component without shapes of its own."""
+        engine = self.session.engine
+        definition = engine.project.definition(component)
+        if definition is None:
+            return {}
+        try:
+            record = engine.build(component, values).records()
+        except Exception:  # noqa: BLE001 - it does not build: labels only
+            return {}
+
+        def v(value) -> float:
+            return float(value) if isinstance(value, int | float) else _evaluate(value, scope)
+
+        found: dict = {}
+        for inner_path, inner in paths(definition[0].shapes):
+            if inner_path not in record:
+                continue
+            try:
+                dimensions = inner.dimensions(v)
+            except (ValueError, KeyError, ZeroDivisionError):
+                continue
+            for d in dimensions:
+                key = d.expression.strip()
+                if key in wanted and key not in found:
+                    found[key] = (d, frame_of(record, inner_path) * record[inner_path].shift)
+        return found
+
+    def _under(self, path: NodePath) -> Point | None:
+        """The bottom-left corner of the node at ``path`` (the component's frame)."""
+        record = self.session.results.inspection()
+        if path not in record:
+            return None
+        box = record[path].geometry.bbox()
+        if box is None:
+            return None
+        return frame_of(record, path).apply(box[0], box[1])
 
     def affected(self, names) -> Affected:
         """The nodes that changing the parameters ``names`` moves (see :class:`Affected`)."""
@@ -156,7 +259,7 @@ class Dimensions(Commands):
             isinstance(value, float) and isinstance(definitions[bare].default, str)
         ):  # (a number for a derived one: solved for what it is derived from)
             return Change(node, {bare: value}, {})
-        if isinstance(value, str):
+        if isinstance(value, str) or not isinstance(current, str):  # (a placement's number)
             return Change(with_field(node, field, value), {}, {})
         tuned = self._solved(path, current, value)
         if not tuned:
@@ -263,7 +366,9 @@ class Dimensions(Commands):
             moved = _listed(self._names_of(self.affected(change.parameters).paths))
             return "   ".join(parts) + (f"   moves {moved}" if moved else "")
         before = field_value(node_at(self.session.shapes, path), field)
-        return f"{field}  {_shown(before)} → {_shown(field_value(change.node, field))}"
+        before = "default" if before is None else _shown(before)
+        shown = field.removeprefix("params.")
+        return f"{shown}  {before} → {_shown(field_value(change.node, field))}"
 
     def _names_of(self, found) -> list[str]:
         shapes = self.session.shapes
@@ -298,8 +403,11 @@ def _placed(d: Dimension, frame, names: tuple[str, ...]) -> PlacedDimension:
 
 
 def field_value(node: Shape, field: str):
-    """The value a dimension's ``field`` names: ``x1``, or ``point.2.x``."""
+    """The value a dimension's ``field`` names: ``x1``, ``point.2.x``, or a placement's
+    ``params.length`` (None when the placement leaves it to its default)."""
     prefix, _, rest = field.partition(".")
+    if prefix == "params" and rest:
+        return node.params.get(rest)
     if prefix == "point" and rest:
         index, _, axis = rest.partition(".")
         return node.points[int(index)][0 if axis == "x" else 1]
@@ -309,6 +417,8 @@ def field_value(node: Shape, field: str):
 def with_field(node: Shape, field: str, value) -> Shape:
     """``node`` with ``field`` (as :func:`field_value` names it) set to ``value``."""
     prefix, _, rest = field.partition(".")
+    if prefix == "params" and rest:
+        return node.model_copy(update={"params": {**node.params, rest: value}})
     if prefix == "point" and rest:
         index, _, axis = rest.partition(".")
         points = list(node.points)
@@ -316,6 +426,16 @@ def with_field(node: Shape, field: str, value) -> Shape:
         points[int(index)] = (value, y) if axis == "x" else (x, value)
         return node.model_copy(update={"points": points})
     return type(node).model_validate({**node.model_dump(), field: value})
+
+
+def _numeric(annotation) -> bool:
+    """Whether a component parameter's type is a number (not a switch or a name)."""
+    found = {annotation, *typing.get_args(annotation)}
+    return bool(found & {float, int}) and bool not in found and str not in found
+
+
+def _number(value, scope) -> float:
+    return float(value) if isinstance(value, int | float) else _evaluate(value, scope)
 
 
 def _value(text: str) -> float | str:

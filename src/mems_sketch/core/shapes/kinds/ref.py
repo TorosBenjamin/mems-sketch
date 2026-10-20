@@ -47,5 +47,8 @@ class RefShape(Node):
             self.mirror_x,
         )
 
+    def placed_component(self) -> tuple[str, dict[str, Value]]:
+        return self.component, dict(self.params)
+
     def summary(self) -> str:
         return self.component

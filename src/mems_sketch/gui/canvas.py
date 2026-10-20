@@ -1737,6 +1737,7 @@ class LayoutCanvas(QGraphicsView):
         plain = QColor(self.theme["overlay"])
         plain.setAlpha(170)
         boxes = []
+        rows: dict[tuple[int, int], float] = {}  # how far each row of labels reaches
         editing = self._editing_dimension
         for index, d in enumerate(self._dimensions):
             typing = editing is not None and editing[0] == index
@@ -1747,6 +1748,14 @@ class LayoutCanvas(QGraphicsView):
                 text = editing[1]
                 label = f"{text}▏" if "=" in text else f"{d.expression} = {text}▏"
             a, b = px(d.a), px(d.b)
+            if d.style == "chip":  # a placement's value with no size: in a row under it
+                key = (round(a.x()), round(a.y()))
+                left = rows.get(key, 0.0)
+                width = self._label_width(label)
+                center = a + QPointF(left + width / 2, DIMENSION_GAP_PX * 0.75)
+                rows[key] = left + width + 6
+                boxes.append(self._dimension_label(painter, center, label, hovered, None, typing))
+                continue
             if d.style == "radial":
                 painter.setPen(QPen(color, 1.3))
                 painter.drawLine(a, b)
@@ -1784,6 +1793,15 @@ class LayoutCanvas(QGraphicsView):
             past = side if abs(side.x()) > 0.5 else None
             boxes.append(self._dimension_label(painter, (a + b) / 2, label, hovered, past, typing))
         self._dimension_boxes = boxes
+
+    def _label_width(self, text: str) -> float:
+        """How wide :meth:`_dimension_label` draws ``text``."""
+        font = QFont(self.font())
+        bold = QFont(font)
+        bold.setBold(True)
+        expression, _, value = text.rpartition(" = ")
+        width = QFontMetricsF(bold).horizontalAdvance(expression)
+        return width + QFontMetricsF(font).horizontalAdvance(f" = {value}") + 14
 
     def _dimension_label(
         self,

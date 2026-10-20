@@ -404,3 +404,52 @@ def test_what_a_parameter_affects(session):
         session.dimensions.describe(["length"])
         == "length  used by beam, rail · moves pad (aligned)"
     )
+
+
+# -- phase 2: typing for a dimension, name = value -------------------------------------------
+
+
+def default_of(session, name):
+    return next(p.default for p in session.active_definition.parameters if p.name == name)
+
+
+def test_a_value_typed_for_a_dimension_sets_its_parameter(session):
+    geometry, said = session.dimensions.preview(BEAM, "x1", "45")
+    assert geometry.bbox() == (0, 0, 45, 4)
+    assert said == "length  40 → 45   moves beam, pad"
+    session.dimensions.set(BEAM, "x1", "45")
+    assert default_of(session, "length") == 45 and session.node(BEAM).x1 == "length"
+    session.dimensions.set(BEAM, "x1", "2 * 25")  # an expression: its default
+    assert default_of(session, "length") == "2 * 25"
+    session.undo()
+    assert default_of(session, "length") == 45
+
+
+def test_a_number_for_a_compound_value_solves_for_its_parameter(session):
+    session.nodes.add(CircleShape(name="hole", layer="device", x=0, y=20, radius="length / 4"))
+    hole = ((0, 2),)
+    session.dimensions.set(hole, "radius", "12")
+    assert default_of(session, "length") == 48 and session.node(hole).radius == "length / 4"
+    session.dimensions.set(hole, "radius", "length / 8")  # an expression: the value itself
+    assert session.node(hole).radius == "length / 8"
+
+
+def test_name_equals_value_makes_a_parameter(session):
+    session.dimensions.set(BEAM, "x1", "span = 60")
+    assert default_of(session, "span") == 60 and session.node(BEAM).x1 == "span"
+    session.undo()  # one step: both go
+    assert session.node(BEAM).x1 == "length"
+    assert "span" not in {p.name for p in session.active_definition.parameters}
+    with pytest.raises(ValueError, match="already a parameter"):
+        session.dimensions.plan(BEAM, "x1", "length = 3")
+    with pytest.raises(ValueError, match="not a value"):
+        session.dimensions.plan(BEAM, "x1", "4 +")
+
+
+def test_name_equals_value_for_a_chosen_handle(session):
+    session.dimensions.make_for_handle(PAD, "x1", "pad_w = 20")
+    pad = session.node(PAD)
+    assert pad.x1 == "pad_w" and default_of(session, "pad_w") == 20
+    assert box(session, PAD)[::2] == (42, 62)
+    with pytest.raises(ValueError, match="takes two"):
+        session.dimensions.make_for_handle(PAD, "x1 y1", "c = 3")

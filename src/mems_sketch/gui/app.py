@@ -408,6 +408,7 @@ class MainWindow(QMainWindow):
             canvas.nudged.connect(self.nudge)
             canvas.key_pressed.connect(lambda key: self.tool.key(key))
             canvas.typed = lambda text: self.tool.typed(text)
+            canvas.takes_text = lambda: getattr(self.tool, "takes_text", lambda: False)()
             canvas.view_changed.connect(self.state_changed)
             canvas.view_changed.connect(self._show_zoom)
             canvas.context_requested.connect(
@@ -1375,10 +1376,12 @@ class MainWindow(QMainWindow):
         markers = [(x, y, h.role) for h, x, y in self.edit_handles]
         for other in self.area.views():
             other.canvas.show_edit_handles(markers if other is view else [], active)
-        self._place_dimensions(shown and not tool.busy)
+        editing = tool.dimension_editing() if hasattr(tool, "dimension_editing") else None
+        self._place_dimensions(shown and (not tool.busy or editing is not None), editing)
 
-    def _place_dimensions(self, shown: bool) -> None:
-        """The selected shape's values that use parameters, as dimensions (#266)."""
+    def _place_dimensions(self, shown: bool, editing: tuple[int, str] | None = None) -> None:
+        """The selected shape's values that use parameters, as dimensions (#266);
+        ``editing``: the one a value is typed for, and the text."""
         view = self.view
         dimensions = self.document.dimensions.of(view.selection[0]) if shown else []
         if dimensions != self.edit_dimensions:
@@ -1389,7 +1392,9 @@ class MainWindow(QMainWindow):
                 self.canvas.set_hover_label(None)
         for other in self.area.views():
             hovered = self._dimension_hovered if other is view else None
-            other.canvas.show_dimensions(dimensions if other is view else [], hovered)
+            other.canvas.show_dimensions(
+                dimensions if other is view else [], hovered, editing if other is view else None
+            )
 
     _update_overlay = update_overlay
 

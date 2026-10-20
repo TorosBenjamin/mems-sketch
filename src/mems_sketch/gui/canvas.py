@@ -534,6 +534,8 @@ class LayoutCanvas(QGraphicsView):
     key_pressed = Signal(object)  # Enter or Backspace, for the active tool
     # Typed digits, sign, point, comma, space: the active tool takes them (True) or not
     typed: Callable[[str], bool] | None = None
+    # Whether any text typed is a value (letters too, not shortcuts): see SelectTool
+    takes_text: Callable[[], bool] | None = None
     cursor_moved = Signal(float, float)
     view_changed = Signal()  # zoomed or panned
     context_requested = Signal(float, float, QPoint)  # right click: µm, global position
@@ -596,6 +598,7 @@ class LayoutCanvas(QGraphicsView):
         # one under the cursor, and where their labels are (viewport pixels).
         self._dimensions: list = []
         self._hovered_dimension: int | None = None
+        self._editing_dimension: tuple[int, str] | None = None
         self._dimension_boxes: list[QRectF] = []
         self._corner_preview: list[tuple[float, float]] = []  # a rounding being dragged
         self.options = dict(DEFAULT_OPTIONS)
@@ -1694,13 +1697,18 @@ class LayoutCanvas(QGraphicsView):
     def edit_handles(self) -> list[tuple[float, float, str]]:
         return list(self._edit_handles)
 
-    def show_dimensions(self, dimensions: list, hovered: int | None = None) -> None:
+    def show_dimensions(
+        self, dimensions: list, hovered: int | None = None, editing: tuple[int, str] | None = None
+    ) -> None:
         """The selected shape's values that use parameters, as dimensions (each a
         :class:`~mems_sketch.editing.dimensions.PlacedDimension`, in µm);
-        ``hovered``: the one under the cursor, drawn highlighted."""
+        ``hovered``: the one under the cursor, drawn highlighted; ``editing``: the
+        one a value is typed for, and what is typed (index, text)."""
         dimensions = list(dimensions)
-        if dimensions != self._dimensions or hovered != self._hovered_dimension:
+        state = (dimensions, hovered, editing)
+        if state != (self._dimensions, self._hovered_dimension, self._editing_dimension):
             self._dimensions, self._hovered_dimension = dimensions, hovered
+            self._editing_dimension = editing
             if not dimensions:
                 self._dimension_boxes = []
             self.viewport().update()
@@ -1729,9 +1737,15 @@ class LayoutCanvas(QGraphicsView):
         plain = QColor(self.theme["overlay"])
         plain.setAlpha(170)
         boxes = []
+        editing = self._editing_dimension
         for index, d in enumerate(self._dimensions):
-            hovered = index == self._hovered_dimension
+            typing = editing is not None and editing[0] == index
+            hovered = index == self._hovered_dimension or typing
             color = accent if hovered else plain
+            label = d.label
+            if typing:  # (name = value: a new parameter, shown as typed)
+                text = editing[1]
+                label = f"{text}▏" if "=" in text else f"{d.expression} = {text}▏"
             a, b = px(d.a), px(d.b)
             if d.style == "radial":
                 painter.setPen(QPen(color, 1.3))
@@ -1741,7 +1755,7 @@ class LayoutCanvas(QGraphicsView):
                 painter.drawEllipse(a, 2, 2)
                 along = _unit(b - a)
                 center = b + along * (DIMENSION_GAP_PX * 0.6)
-                boxes.append(self._dimension_label(painter, center, d.label, hovered, along))
+                boxes.append(self._dimension_label(painter, center, label, hovered, along, typing))
                 continue
             if d.style == "across":
                 along = _unit(b - a)
@@ -1751,7 +1765,7 @@ class LayoutCanvas(QGraphicsView):
                 _arrow(painter, a, a - along, color)
                 _arrow(painter, b, b + along, color)
                 center = b + along * (outside + 10)
-                boxes.append(self._dimension_label(painter, center, d.label, hovered, along))
+                boxes.append(self._dimension_label(painter, center, label, hovered, along, typing))
                 continue
             side = QPointF(d.side[0], -d.side[1])  # (the view's y runs down)
             gap = side * DIMENSION_GAP_PX
@@ -1768,14 +1782,21 @@ class LayoutCanvas(QGraphicsView):
                 _arrow(painter, b, a, color)
             # Beside an upright line, not over it (and what it measures)
             past = side if abs(side.x()) > 0.5 else None
-            boxes.append(self._dimension_label(painter, (a + b) / 2, d.label, hovered, past))
+            boxes.append(self._dimension_label(painter, (a + b) / 2, label, hovered, past, typing))
         self._dimension_boxes = boxes
 
     def _dimension_label(
-        self, painter: QPainter, center: QPointF, text: str, hovered: bool, past=None
+        self,
+        painter: QPainter,
+        center: QPointF,
+        text: str,
+        hovered: bool,
+        past=None,
+        typing: bool = False,
     ) -> QRectF:
         """``text`` in a box centred on ``center`` (or, with ``past``, a unit vector,
-        just beyond it that way); the expression bold, its value plain."""
+        just beyond it that way); the expression bold, its value plain. ``typing``:
+        a value is being typed in it (an outlined box, not a filled one)."""
         font = QFont(self.font())
         bold = QFont(font)
         bold.setBold(True)
@@ -1792,10 +1813,11 @@ class LayoutCanvas(QGraphicsView):
         background.setAlpha(235)
         edge = QColor(self.theme["overlay"])
         edge.setAlpha(120)
-        painter.setPen(QPen(accent if hovered else edge, 1))
-        painter.setBrush(accent if hovered else background)
+        filled = hovered and not typing
+        painter.setPen(QPen(accent if hovered else edge, 1.5 if typing else 1))
+        painter.setBrush(accent if filled else background)
         painter.drawRoundedRect(box, 4, 4)
-        ink = QColor("white") if hovered else QColor(self.theme["overlay"])
+        ink = QColor("white") if filled else QColor(self.theme["overlay"])
         painter.setPen(ink)
         painter.setFont(bold)
         name_width = QFontMetricsF(bold).horizontalAdvance(expression)
@@ -1908,6 +1930,18 @@ class LayoutCanvas(QGraphicsView):
         else:
             self.setCursor(getattr(self, "_tool_cursor", Qt.CursorShape.ArrowCursor))
 
+    def _takes_text(self) -> bool:
+        return bool(self.takes_text and self.takes_text())
+
+    def event(self, event) -> bool:
+        """While a value is typed, letters reach it rather than the tools' shortcuts."""
+        if event.type() == QEvent.Type.ShortcutOverride and self._takes_text():
+            ctrl_alt = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+            if event.text().isprintable() and event.text() and not event.modifiers() & ctrl_alt:
+                event.accept()
+                return True
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F:
             self.fit(animated=True)
@@ -1919,7 +1953,8 @@ class LayoutCanvas(QGraphicsView):
         plain = not event.modifiers() & (
             Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
         )
-        if text and plain and text in TYPED_CHARACTERS and self.typed and self.typed(text):
+        wanted = text in TYPED_CHARACTERS or (self._takes_text() and text.isprintable())
+        if text and plain and wanted and self.typed and self.typed(text):
             return
         if event.key() == Qt.Key.Key_Space:
             if not event.isAutoRepeat():

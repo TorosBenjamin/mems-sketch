@@ -318,9 +318,12 @@ class SelectTool(Tool):
     shows_handles = True  # the window shows the selected shape's handles
 
     chosen: tuple[NodePath, str] | None = None  # a handle clicked: (shape path, key)
+    chosen_by_click = False  # (then letters go to its value: name = value)
 
     def reset(self) -> None:
-        self.entry: str | None = None  # a value being typed for a handle
+        self.entry: str | None = None  # a value being typed for a handle or a dimension
+        self.dimension: tuple[NodePath, str, int] | None = None  # the one being typed for:
+        # (shape path, field, index among the window's edit_dimensions)
         self._handle = None  # a HandleDrag in progress
         self._handle_to: tuple[float, float] | None = None
         self._handle_alt = False  # the drag changes parameters (Alt held)
@@ -339,8 +342,12 @@ class SelectTool(Tool):
         )
 
     def press(self, x, y, modifiers) -> None:
+        if self.dimension is not None:
+            self._stop()  # (what was typed for it is dropped)
         self.reset()
         if self.gizmo_press(x, y):
+            return
+        if self._press_dimension(x, y):
             return
         if self._press_handle(x, y):
             return
@@ -424,6 +431,8 @@ class SelectTool(Tool):
             return
         if self._handle is not None:
             self._release_handle(x, y, modifiers)
+            return
+        if self.dimension is not None:  # its label was clicked: a value is typed now
             return
         mode, press, pending, plan = self._mode, self._press, self._pending, self._plan
         self.cancel()
@@ -538,8 +547,10 @@ class SelectTool(Tool):
         handle = drag.handle
         if to is None:  # a click: choose it (to delete, or type a value for it)
             self.chosen = None if handle.role == INSERT else (drag.path, handle.key)
+            self.chosen_by_click = self.chosen is not None
         else:
             self.chosen = (drag.path, handle.key) if handle.role == VERTEX else None
+            self.chosen_by_click = False
             edits = self.document.handles
             apply = edits.drag_parameters if alt else edits.drag
             self.window.run(lambda: apply(drag.path, handle.key, *to))
@@ -549,7 +560,7 @@ class SelectTool(Tool):
     def _chosen_hint(self) -> str | None:
         handle = self._chosen_handle()
         if handle is not None:
-            what = "x, y" if entry_size(handle) == 2 else "a value"
+            what = "x, y" if entry_size(handle) == 2 else "a value (or name = value)"
             delete = "Delete removes it, " if handle.role == VERTEX else ""
             return (
                 f"{handle_label(handle.key).capitalize()} chosen: {delete}type {what} "
@@ -576,7 +587,18 @@ class SelectTool(Tool):
         """The handle typed values go to: the one dragged, else the chosen one."""
         return self._handle.handle if self._handle is not None else self._chosen_handle()
 
+    def takes_text(self) -> bool:
+        """Whether letters (and = * / ...) typed on the canvas are a value being typed,
+        not shortcuts: for a dimension, or for a handle chosen by a click."""
+        if self.dimension is not None or self.entry is not None and self._handle is None:
+            return True
+        return self.chosen_by_click and self._chosen_handle() is not None
+
     def typed(self, text: str) -> bool:
+        if self.dimension is not None:
+            self.entry = (self.entry or "") + text
+            self._show_dimension_entry()
+            return True
         handle = self._entry_handle()
         if handle is None or (self.entry is None and text.isspace()):
             return False  # (a space before anything typed pans, as always)
@@ -592,6 +614,8 @@ class SelectTool(Tool):
         )
 
     def key(self, key) -> bool:
+        if self.dimension is not None:
+            return self._dimension_key(key)
         if self.entry is None:
             return False
         handle = self._entry_handle()
@@ -616,12 +640,72 @@ class SelectTool(Tool):
         return True
 
     def _type_in(self, path, handle, text: str) -> None:
+        if "=" in text:  # name = value: a new parameter
+            make = self.document.dimensions.make_for_handle
+            self.window.run(lambda: make(path, handle.key, text))
+            return
         try:
             values = [float(part) for part in text.replace(",", " ").split()]
         except ValueError:
             self.window.report_error(f"'{text}' is not a number")
             return
         self.window.run(lambda: self.document.handles.type_in(path, handle.key, values))
+
+    # -- typing for a dimension (parameters on the canvas, #266) -----------------
+
+    def _press_dimension(self, x, y) -> bool:
+        """A press on a dimension's label: type a value for it."""
+        index = self.canvas.dimension_at(x, y) if self.window.edit_dimensions else None
+        if index is None or len(self.window.selection) != 1:
+            return False
+        if not self.editable():
+            return True
+        dimension = self.window.edit_dimensions[index]
+        self.dimension = (self.window.selection[0], dimension.field, index)
+        self.entry = ""
+        self.chosen = None
+        self._show_dimension_entry()
+        return True
+
+    def dimension_editing(self) -> tuple[int, str] | None:
+        """The dimension being typed for and what is typed: (index, text), or None."""
+        if self.dimension is None:
+            return None
+        return self.dimension[2], self.entry or ""
+
+    def _show_dimension_entry(self) -> None:
+        path, field, index = self.dimension
+        dimension = self.window.edit_dimensions[index]
+        self.canvas.show_dimensions(self.window.edit_dimensions, None, (index, self.entry))
+        status = (
+            f"Type a value or expression for {dimension.expression} (or name = value for a "
+            "new parameter): Enter sets it, Esc cancels"
+        )
+        said = None
+        if self.entry.strip():
+            try:
+                geometry, said = self.document.dimensions.preview(path, field, self.entry)
+            except (ValueError, KeyError) as error:
+                geometry, said = None, str(error).strip("'\"")
+            if geometry is None:
+                self.canvas.clear_drag_preview()
+            else:
+                self.canvas.show_drag_preview(geometry, self.window.layers.colors)
+        else:
+            self.canvas.clear_drag_preview()
+        self.window.live(status, said)
+
+    def _dimension_key(self, key) -> bool:
+        if key == Qt.Key.Key_Backspace:
+            self.entry = (self.entry or "")[:-1]
+            self._show_dimension_entry()
+            return True
+        (path, field, _), text = self.dimension, self.entry or ""
+        self._stop()
+        if text.strip():
+            self.window.run(lambda: self.document.dimensions.set(path, field, text))
+        self.window.prompt(self.hint())
+        return True
 
     def delete_chosen(self) -> bool:
         """Delete with a vertex chosen: remove that vertex (True), not the shape."""
@@ -652,6 +736,7 @@ class SelectTool(Tool):
             or self.gizmo_dragging
             or self._handle is not None
             or self.entry is not None
+            or self.dimension is not None
         )
 
     def cancel(self) -> bool:
@@ -666,7 +751,7 @@ class SelectTool(Tool):
 
     def _stop(self) -> bool:
         busy = self.busy
-        dragging_handle = self._handle is not None
+        dragging_handle = self._handle is not None or self.dimension is not None
         self.gizmo_cancel()
         Tool.cancel(self)
         self.canvas.show_points("snap", [])

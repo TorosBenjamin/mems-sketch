@@ -454,7 +454,7 @@ behaviours every frontend must keep.
   shape's values that use parameters are drawn as dimensions, and pointing at
   one outlines what its parameter affects; clicking one and typing sets the
   parameter, and `name = value` makes a new one; a placed component shows
-  its parameters the same way ([#266](https://github.com/TorosBenjamin/mems-sketch/issues/266)). Exists for
+  its parameters the same way, and a dimension's end drags its value ([#266](https://github.com/TorosBenjamin/mems-sketch/issues/266)). Exists for
   rectangles, circles, arcs, polygons, paths, guides and routes' via points.
 
 ### Rule checks

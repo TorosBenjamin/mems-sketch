@@ -502,3 +502,14 @@ def test_typing_for_a_placement_sets_its_value_or_the_parameter_it_names(placed)
     assert placed.node(B2).params == {"length": "L"}
     assert placed.active_definition.parameters[0].default == 70
     assert placed.dimensions.preview(B1, "params.length", "90")[1] == "length  80 → 90"
+
+
+# -- phase 4: dragging a dimension's end ------------------------------------------------------
+
+
+def test_a_dimension_dragged_to_a_point_takes_the_value_there(placed):
+    length, _ = placed.dimensions.of(B1)  # from (8, 0) to (8, 80): turned upright
+    assert placed.dimensions.dragged_value(length, 50, 100) == 100  # (across it: ignored)
+    geometry, said = placed.dimensions.preview(B1, "params.length", "100")
+    assert said == "length  80 → 100"
+    assert geometry is not None and geometry.bbox()[3] == pytest.approx(100)  # built in place

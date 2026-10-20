@@ -81,6 +81,7 @@ EDIT_HANDLE_PX = 4  # half the size of a shape's handle (a side, a vertex)
 TYPED_CHARACTERS = frozenset("0123456789.-+, ")  # a value typed for a handle
 DIMENSION_GAP_PX = 22  # how far a dimension's line is set off from what it measures
 DIMENSION_ARROW_PX = 7  # an arrowhead's length
+DIMENSION_END_REACH_PX = 7  # a press this close to a dimension's end drags it
 ROUND_HANDLES = ("vertex", "angle")  # drawn as dots; the others as squares
 
 
@@ -600,6 +601,7 @@ class LayoutCanvas(QGraphicsView):
         self._hovered_dimension: int | None = None
         self._editing_dimension: tuple[int, str] | None = None
         self._dimension_boxes: list[QRectF] = []
+        self._dimension_ends: list[QPointF | None] = []  # where each can be dragged from
         self._corner_preview: list[tuple[float, float]] = []  # a rounding being dragged
         self.options = dict(DEFAULT_OPTIONS)
         self._shown: tuple | None = None  # the last geometry shown, to redraw with new options
@@ -1698,19 +1700,20 @@ class LayoutCanvas(QGraphicsView):
         return list(self._edit_handles)
 
     def show_dimensions(
-        self, dimensions: list, hovered: int | None = None, editing: tuple[int, str] | None = None
+        self, dimensions: list, hovered: int | None = None, editing: tuple | None = None
     ) -> None:
         """The selected shape's values that use parameters, as dimensions (each a
         :class:`~mems_sketch.editing.dimensions.PlacedDimension`, in µm);
         ``hovered``: the one under the cursor, drawn highlighted; ``editing``: the
-        one a value is typed for, and what is typed (index, text)."""
+        one a value is typed for, and what is typed (index, text), or one being
+        dragged (index, value, False: no caret)."""
         dimensions = list(dimensions)
         state = (dimensions, hovered, editing)
         if state != (self._dimensions, self._hovered_dimension, self._editing_dimension):
             self._dimensions, self._hovered_dimension = dimensions, hovered
             self._editing_dimension = editing
             if not dimensions:
-                self._dimension_boxes = []
+                self._dimension_boxes, self._dimension_ends = [], []
             self.viewport().update()
 
     @property
@@ -1727,6 +1730,23 @@ class LayoutCanvas(QGraphicsView):
                 return index
         return None
 
+    def dimension_end_at(self, x: float, y: float) -> int | None:
+        """The dimension whose end (the dot it is dragged by) is near ``(x, y)`` µm."""
+        at = self.mapFromScene(QPointF(x, y)).toPointF()
+        best, found = DIMENSION_END_REACH_PX, None
+        for index, end in enumerate(self._dimension_ends):
+            if end is not None:
+                distance = math.hypot(end.x() - at.x(), end.y() - at.y())
+                if distance <= best:
+                    best, found = distance, index
+        return found
+
+    def _draw_dimension_end(self, painter: QPainter, at: QPointF, color: QColor) -> QPointF:
+        painter.setPen(QPen(color, 1.3))
+        painter.setBrush(QColor(self.theme["background"]))
+        painter.drawEllipse(at, 3.5, 3.5)
+        return at
+
     def _draw_dimensions(self, painter: QPainter) -> None:
         """Each dimension: its line with arrows, and its label (see show_dimensions)."""
 
@@ -1736,7 +1756,7 @@ class LayoutCanvas(QGraphicsView):
         accent = QColor(self.theme["highlight"])
         plain = QColor(self.theme["overlay"])
         plain.setAlpha(170)
-        boxes = []
+        boxes, ends = [], []
         rows: dict[tuple[int, int], float] = {}  # how far each row of labels reaches
         editing = self._editing_dimension
         for index, d in enumerate(self._dimensions):
@@ -1746,7 +1766,8 @@ class LayoutCanvas(QGraphicsView):
             label = d.label
             if typing:  # (name = value: a new parameter, shown as typed)
                 text = editing[1]
-                label = f"{text}▏" if "=" in text else f"{d.expression} = {text}▏"
+                caret = "▏" if len(editing) < 3 or editing[2] else ""  # (not while dragged)
+                label = f"{text}{caret}" if "=" in text else f"{d.expression} = {text}{caret}"
             a, b = px(d.a), px(d.b)
             if d.style == "chip":  # a placement's value with no size: in a row under it
                 key = (round(a.x()), round(a.y()))
@@ -1754,6 +1775,7 @@ class LayoutCanvas(QGraphicsView):
                 width = self._label_width(label)
                 center = a + QPointF(left + width / 2, DIMENSION_GAP_PX * 0.75)
                 rows[key] = left + width + 6
+                ends.append(None)
                 boxes.append(self._dimension_label(painter, center, label, hovered, None, typing))
                 continue
             if d.style == "radial":
@@ -1762,6 +1784,7 @@ class LayoutCanvas(QGraphicsView):
                 _arrow(painter, b, a, color)
                 painter.setBrush(color)
                 painter.drawEllipse(a, 2, 2)
+                ends.append(self._draw_dimension_end(painter, b, color))
                 along = _unit(b - a)
                 center = b + along * (DIMENSION_GAP_PX * 0.6)
                 boxes.append(self._dimension_label(painter, center, label, hovered, along, typing))
@@ -1773,6 +1796,7 @@ class LayoutCanvas(QGraphicsView):
                 painter.drawLine(a - along * outside, b + along * outside)
                 _arrow(painter, a, a - along, color)
                 _arrow(painter, b, b + along, color)
+                ends.append(None)  # (its end is the width's handle)
                 center = b + along * (outside + 10)
                 boxes.append(self._dimension_label(painter, center, label, hovered, along, typing))
                 continue
@@ -1789,10 +1813,11 @@ class LayoutCanvas(QGraphicsView):
             if (b - a).manhattanLength() > 2 * DIMENSION_ARROW_PX:
                 _arrow(painter, a, b, color)
                 _arrow(painter, b, a, color)
+            ends.append(self._draw_dimension_end(painter, b, color))
             # Beside an upright line, not over it (and what it measures)
             past = side if abs(side.x()) > 0.5 else None
             boxes.append(self._dimension_label(painter, (a + b) / 2, label, hovered, past, typing))
-        self._dimension_boxes = boxes
+        self._dimension_boxes, self._dimension_ends = boxes, ends
 
     def _label_width(self, text: str) -> float:
         """How wide :meth:`_dimension_label` draws ``text``."""

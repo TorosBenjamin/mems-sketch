@@ -408,3 +408,25 @@ def test_a_placements_values_are_labels_to_click_and_type_in(window, qtbot):
     click_label(window, 1)
     text_in(window, "8\n")
     assert window.document.node(BASE).params == {"length": 80, "fingers": 8}
+
+
+def end_at(window, index=0):
+    window.canvas.viewport().repaint()
+    end = window.canvas._dimension_ends[index]
+    at = window.canvas.mapToScene(end.toPoint())
+    return at.x(), at.y()
+
+
+def test_dragging_a_dimensions_end_sets_its_parameter(window, qtbot):
+    sized_base(window)
+    window.select_click(BASE, False)
+    x, y = end_at(window)
+    canvas = window.canvas
+    mouse(canvas, QEvent.Type.MouseButtonPress, x, y)
+    mouse(canvas, QEvent.Type.MouseMove, x + 20, y)
+    assert window.tool.dimension_editing() == (0, "120", False)
+    assert canvas.cursor_label == "size  100 → 120   moves base, cap"
+    mouse(canvas, QEvent.Type.MouseButtonRelease, x + 20, y)
+    assert size_of(window) == 120 and window.document.node(BASE).x1 == "size"
+    window.document.undo()
+    assert size_of(window) == 100

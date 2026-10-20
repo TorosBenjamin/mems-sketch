@@ -122,6 +122,12 @@ parameter (`L`), a number sets that parameter instead. A component made in
 Python (a library one) has no shapes to look inside, so all of its parameters
 are labels.
 
+**Drag a dimension's end** (the small circle at its arrow) to change its value
+by hand: for a shape it does what Alt-drag on the handle does (the parameter
+changes), for a placement it changes this placement's value (or the parameter
+its expression names). The value snaps to the grid (Ctrl: no snapping), the
+result is previewed, and Esc drops the drag.
+
 **Click a handle** (without dragging) to choose it; it is drawn filled.
 **Delete** then removes a chosen vertex (a polygon keeps three, a path two)
 instead of the shape. **Type a value** for the chosen handle, or while

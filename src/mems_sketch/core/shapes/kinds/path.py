@@ -10,8 +10,11 @@ from pydantic import Field
 from mems_sketch.core.levels import LEVEL
 from mems_sketch.core.shapes.base import Primitive, Value
 from mems_sketch.core.shapes.handles import (
+    ACROSS,
     WIDTH,
+    Dimension,
     Handle,
+    coordinate_dimensions,
     point_index,
     points_moved,
     rounded,
@@ -49,6 +52,17 @@ class PathShape(Primitive):
             across = ("across", mx, my, nx, ny)
             handles.append(Handle("width", mx + nx * half, my + ny * half, WIDTH, across))
         return handles
+
+    def dimensions(self, v) -> list[Dimension]:
+        """Its vertices' coordinates, and its width across the first segment."""
+        found = coordinate_dimensions(self.points, v)
+        side = self._side(v)
+        if isinstance(self.width, str) and side is not None:
+            (mx, my), (nx, ny) = side
+            w = v(self.width)
+            a, b = (mx - nx * w / 2, my - ny * w / 2), (mx + nx * w / 2, my + ny * w / 2)
+            found.append(Dimension("width", self.width, w, a, b, (nx, ny), ACROSS))
+        return found
 
     def handle_moved(self, key, to, v) -> dict:
         if key == "width":

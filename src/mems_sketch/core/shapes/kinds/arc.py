@@ -9,7 +9,9 @@ from mems_sketch.core.levels import LEVEL
 from mems_sketch.core.shapes.base import Primitive, Value
 from mems_sketch.core.shapes.handles import (
     ANGLE,
+    RADIAL,
     RADIUS,
+    Dimension,
     Handle,
     angle_of,
     on_circle,
@@ -61,6 +63,24 @@ class ArcShape(Primitive):
                 Handle("end_angle", *on_circle(center, across, end), ANGLE, turning),
             ]
         return handles
+
+    def dimensions(self, v) -> list[Dimension]:
+        """The radii, from the centre: the outer one half way round, the inner one a
+        quarter of the way."""
+        center = v(self.x), v(self.y)
+        start, end = v(self.start_angle), v(self.end_angle)
+        full = abs(end - start) >= 360
+        found = []
+        for field, angle in (
+            ("outer_radius", 45.0 if full else (start + end) / 2),
+            ("inner_radius", 135.0 if full else start + (end - start) / 4),
+        ):
+            value = getattr(self, field)
+            if isinstance(value, str):
+                r = v(value)
+                rim = on_circle(center, r, angle)
+                found.append(Dimension(field, value, r, center, rim, style=RADIAL))
+        return found
 
     def handle_moved(self, key, to, v) -> dict:
         center = v(self.x), v(self.y)

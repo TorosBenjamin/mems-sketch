@@ -89,6 +89,17 @@ uses `length` (or is aligned to this one) follows; the cursor shows it
 number for an integer one). A coordinate that names no parameter, or only one
 with a trial value, gets an offset as without Alt.
 
+**Parameters show on the selected shape.** With the Select tool, each of the
+selected shape's values that uses a parameter (or a process constant) is drawn
+as a dimension: `length = 40` along a beam, `w / 2 = 4` on a circle's radius,
+`trace = 3` across a path. A coordinate is measured from the axis, so the
+dimension says what the value is (`x1 = length` runs from x = 0 to the side).
+Values that are plain numbers show nothing. **Point at a dimension's label** to
+see what its parameter affects: every shape that uses it (directly or through
+a derived parameter) and every shape aligned to one of those is outlined, and
+the label by the cursor says which (`length  used by beam, rail · moves pad
+(aligned)`).
+
 **Click a handle** (without dragging) to choose it; it is drawn filled.
 **Delete** then removes a chosen vertex (a polygon keeps three, a path two)
 instead of the shape. **Type a value** for the chosen handle, or while

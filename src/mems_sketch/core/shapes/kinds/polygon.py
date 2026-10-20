@@ -9,7 +9,9 @@ from pydantic import Field
 from mems_sketch.core.levels import LEVEL
 from mems_sketch.core.shapes.base import Primitive, Value
 from mems_sketch.core.shapes.handles import (
+    Dimension,
     Handle,
+    coordinate_dimensions,
     point_index,
     points_moved,
     vertex_handles,
@@ -34,6 +36,10 @@ class PolygonShape(Primitive):
     def edit_handles(self, v) -> list[Handle]:
         """A handle on each vertex (``point.0``, ...) and in the middle of each side."""
         return vertex_handles(self.points, v, closed=True)
+
+    def dimensions(self, v) -> list[Dimension]:
+        """Its vertices' coordinates (see :func:`coordinate_dimensions`)."""
+        return coordinate_dimensions(self.points, v)
 
     def corner_vertices(self, v) -> list[tuple[float, float]]:
         return [(v(x), v(y)) for x, y in self.points]

@@ -21,19 +21,19 @@ without building the whole component.
 
 from __future__ import annotations
 
-import re
 import typing
 from dataclasses import dataclass
 from typing import Any
 
 from mems_sketch.core.component import Geometry
-from mems_sketch.core.expressions import evaluate, names_in, resolve_variables
+from mems_sketch.core.expressions import evaluate, resolve_variables
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import NodePath, Shape, container_of, frame_of, node_at
 from mems_sketch.core.shapes.handles import Handle, handle_label, rounded, typed_point
 from mems_sketch.core.shapes.points import BBOX_POINTS
 from mems_sketch.core.transform import Transform
 from mems_sketch.editing.commands import Commands
+from mems_sketch.editing.dimensions import ordered_names
 
 
 @dataclass
@@ -160,7 +160,7 @@ class HandleEdits(Commands):
         found: list[str] = []
 
         def visit(text: str, seen: set[str]) -> None:
-            for name in _ordered(text, _named(text)):
+            for name in ordered_names(text):
                 if name not in definitions or name in seen or name in trials:
                     continue
                 seen.add(name)
@@ -228,30 +228,15 @@ class HandleEdits(Commands):
         return {**drag.scope, **resolve_variables(values, fixed)}
 
     def followers(self, drag: HandleDrag, tuned: dict[str, float]) -> list[str]:
-        """The other top-level shapes a change of ``tuned`` moves: those that use the
-        parameters (or ones derived from them), and those aligned to the dragged one."""
+        """The other shapes a change of ``tuned`` moves: those that use the parameters
+        (or ones derived from them), and those aligned to one that moves."""
         if not tuned:
             return []
-        definitions = self.session.active_definition.parameters
-        changed = set(tuned)
-        grew = True
-        while grew:  # derived parameters change too
-            grew = False
-            for p in definitions:
-                derived = p.name not in changed and isinstance(p.default, str)
-                if derived and _named(p.default) & changed:
-                    changed.add(p.name)
-                    grew = True
-        own = drag.node.name
-        mine = node_at(self.session.shapes, drag.path[:1])
-        found = []
-        for shape in self.session.shapes:
-            if shape is mine:
-                continue
-            aligned = own and shape.align is not None and shape.align.to.startswith(f"{own}.")
-            if aligned or _uses(shape.model_dump(), changed):
-                found.append(shape.name or shape.kind)
-        return found
+        affected = self.session.dimensions.affected(tuned)
+        mine = drag.path[:1]
+        shapes = self.session.shapes
+        found = [node_at(shapes, p) for p in affected.paths if p[:1] != mine]
+        return [node.name or node.kind for node in found]
 
     def sketch(self, drag: HandleDrag, node: Shape) -> tuple[list, bool] | None:
         """The line to draw for ``node`` while dragging, in the component's frame, for
@@ -429,31 +414,6 @@ def _evaluated(value, scope):
 
 def _number(value, scope: dict[str, float]) -> float:
     return float(value) if isinstance(value, int | float) else float(evaluate(value, scope))
-
-
-def _named(expression: str) -> set[str]:
-    """The names in an expression, or none if it does not parse."""
-    try:
-        return names_in(expression)
-    except (ValueError, SyntaxError):
-        return set()
-
-
-def _ordered(expression: str, names: set[str]) -> list[str]:
-    def where(name: str) -> int:
-        found = re.search(rf"(?<![\w.]){re.escape(name)}(?![\w.])", expression)
-        return found.start() if found else len(expression)
-
-    return sorted(names, key=lambda n: (where(n), n))
-
-
-def _uses(data, names: set[str]) -> bool:
-    """Whether a shape's dumped fields name one of ``names`` in an expression."""
-    if isinstance(data, dict):
-        return any(_uses(v, names) for k, v in data.items() if k not in ("name", "layer", "kind"))
-    if isinstance(data, list | tuple):
-        return any(_uses(v, names) for v in data)
-    return isinstance(data, str) and bool(_named(data) & names)
 
 
 def _box(node: Shape | None) -> tuple[float, float, float, float] | None:

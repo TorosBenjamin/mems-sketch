@@ -200,6 +200,7 @@ class ValueEdit(QLineEdit):
         self.offered = list(offered)  # completed too, though without a value here
         self.parameters = list(parameters or [])  # the component's own, listed first
         self.prefix = prefix
+        self.unit = ""  # drawn muted at the end, e.g. "µm"
         self.optional = optional
         self.integer = False  # whole numbers only (counts), when dragged
         self.minimum: float | None = None
@@ -230,6 +231,12 @@ class ValueEdit(QLineEdit):
         self.textEdited.connect(self._suggest)
         self.textEdited.connect(self._overflowed)
         self._update()
+
+    def set_unit(self, unit: str) -> None:
+        """Show ``unit`` (e.g. "µm") muted at the field's end."""
+        self.unit = unit
+        self._layout()
+        self.update()
 
     # -- reading -------------------------------------------------------------
 
@@ -281,6 +288,8 @@ class ValueEdit(QLineEdit):
             right = self.width()
         elif self._hint and self._fits(with_hint=True):
             right = metrics.horizontalAdvance(self._hint) + 6
+        if self.unit and not self._elided():
+            right += metrics.horizontalAdvance(self.unit) + 6
         if self.textMargins().left() != left or self.textMargins().right() != right:
             self.setTextMargins(left, 0, right, 0)
 
@@ -288,6 +297,8 @@ class ValueEdit(QLineEdit):
         rect = self.contentsRect().adjusted(7, 0, -7, 0)
         if self._bind.isVisible():
             rect.setRight(rect.right() - 20)
+        if self.unit:
+            rect.setRight(rect.right() - self.fontMetrics().horizontalAdvance(self.unit) - 6)
         return rect
 
     def _fits(self, with_hint: bool) -> bool:
@@ -316,6 +327,11 @@ class ValueEdit(QLineEdit):
             painter.setPen(muted)
             painter.drawText(rect, int(middle | Qt.AlignmentFlag.AlignLeft), self.prefix)
             rect.setLeft(rect.left() + metrics.horizontalAdvance(self.prefix) + 6)
+        if self.unit:
+            painter.setPen(muted)
+            width = metrics.horizontalAdvance(self.unit)
+            unit = QRect(rect.right() + 6, rect.top(), width + 1, rect.height())
+            painter.drawText(unit, int(middle | Qt.AlignmentFlag.AlignLeft), self.unit)
         hint = self._hint if self._fits(with_hint=True) else ""
         if hint:
             painter.setPen(muted)

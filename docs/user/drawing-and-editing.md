@@ -225,17 +225,33 @@ its points, stay where they are.
 - **A long expression** (`abs(width - rim_width)`) opens a wider editor over
   its field when you edit it, as wide as the panel, wrapping onto more lines
   (Shift+Enter opens it for any field). Enter applies, Esc keeps the old value.
-- **Leaving a field applies it**, as Enter does: click another field, the
-  canvas or another shape and the edit is kept. Esc in the wider editor is the
-  way to drop an edit.
+- **Every field applies by itself**: Enter, or leaving it (click another
+  field, the canvas or another shape and the edit is kept); a list or a tick
+  box when you choose. A box of several lines (a polygon's points, a layer
+  map) applies when you leave it or press Ctrl+Enter. There is no Apply
+  button. Esc in the wider editor is the way to drop an edit. A value that
+  is refused goes back to the one stored, and its field is outlined in red
+  with why in its tooltip.
+- **The panel stays where it was scrolled to** when a field applies.
+- **An empty optional field shows its default** greyed in it: a perforation's
+  row pitch, hole height and corner radius, a polar array's angle step
+  (360 / copies), *auto* for segments, *centred* for a hole's position.
+- **Lengths show µm** at the end of their field.
+- **Fields that do nothing** with the others as they are set are greyed out:
+  a mirror's line at y when it mirrors left ↔ right, a route's radius with
+  sharp bends.
 - **The layer** is picked from a list with each layer's colour: the layers
   relative to the component's level first, each saying where it lands
   (`level+1 · metal`), then the layers by name.
 - **Drag a number** left or right to change it, as in Blender (Shift: finer,
   Ctrl: round steps; counts go in whole numbers). The canvas follows live and
   the change is one undo step. A click without dragging edits the text.
-- For a placed component, its parameters are listed with their defaults as
-  placeholders.
+- For a placed component, its parameters are listed by name (as expressions
+  write them), with their defaults as placeholders; a **?** by the name shows
+  the parameter's description.
+- **A connection's ends** are ports: type them, or add one from the **+**
+  list. A route's start and end offer every port but its own.
+- With **several shapes selected**, Properties says how many.
 - **Modifiers** are cards (array, polar array, mirror, corners): switch one
   on or off, reorder, apply or remove it. See
   [modifiers](shapes-and-operations.md#modifiers).

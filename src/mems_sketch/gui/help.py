@@ -3,6 +3,7 @@ of text in the way."""
 
 from __future__ import annotations
 
+import re
 from html import escape
 
 from PySide6.QtCore import QPoint, QSize, Qt
@@ -15,10 +16,11 @@ WIDTH_PX = 320  # explanations wrap at this width
 
 def help_html(text: str) -> str:
     """``text`` as a tooltip that wraps: paragraphs are separated by blank lines,
-    and ``*x*`` is written in bold."""
+    ``*x*`` is written in bold and a markdown code span (`` `x` ``) in monospace."""
     paragraphs = []
     for paragraph in text.strip().split("\n\n"):
-        parts = escape(" ".join(paragraph.split())).split("*")
+        written = re.sub(r"`([^`]+)`", r"<code>\1</code>", escape(" ".join(paragraph.split())))
+        parts = written.split("*")
         paragraphs.append(
             "".join(f"<b>{part}</b>" if i % 2 else part for i, part in enumerate(parts))
         )

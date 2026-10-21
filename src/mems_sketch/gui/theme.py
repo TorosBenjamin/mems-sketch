@@ -568,7 +568,7 @@ QTextEdit#expanded-value {{
     background: {editor}; border: 1px solid {accent}; border-radius: {radius_control}px;
     padding: 1px 3px;
 }}
-QLineEdit[invalid="true"] {{ border: 1px solid {error}; }}
+QLineEdit[invalid="true"], QPlainTextEdit[invalid="true"] {{ border: 1px solid {error}; }}
 QLineEdit#title-edit {{
     background: transparent; border: 1px solid transparent; font-size: {font_title}px; font-weight: 600;
     padding: 2px 4px;

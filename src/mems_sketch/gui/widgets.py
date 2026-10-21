@@ -25,10 +25,20 @@ Sizes come from the theme's metrics (:func:`mems_sketch.gui.theme.metric`).
 from __future__ import annotations
 
 import html
+import re
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QModelIndex, QObject, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPalette
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QModelIndex,
+    QObject,
+    QRect,
+    QSize,
+    Qt,
+    Signal,
+)
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -42,6 +52,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -651,3 +662,78 @@ class QualifiedCombo(QComboBox):
         group = QPalette.ColorGroup.Normal if self.isEnabled() else QPalette.ColorGroup.Disabled
         color = self.palette().color(group, QPalette.ColorRole.ButtonText)
         draw_qualified(painter, rect.adjusted(1, 0, 0, 0), text, color, theme.color("muted"))
+
+
+class DescriptionEdit(QPlainTextEdit):
+    """A description: a text box that wraps, grows with its text up to a few lines
+    and then scrolls. Enter is a new line; leaving it or Ctrl+Enter finishes it
+    (``editingFinished``, as a one-line field has)."""
+
+    editingFinished = Signal()
+
+    MIN_LINES, MAX_LINES = 2, 6
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setTabChangesFocus(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            shortcut = QShortcut(QKeySequence(keys), self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(self.editingFinished)
+        self.document().contentsChanged.connect(self._fit)
+        self._fit()
+
+    def text(self) -> str:
+        return self.toPlainText()
+
+    def setText(self, text: str) -> None:
+        self.setPlainText(text)
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.editingFinished.emit()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit()
+
+    def _fit(self) -> None:
+        """As tall as its lines (as wrapped now), between MIN_LINES and MAX_LINES."""
+        line = self.fontMetrics().lineSpacing()
+        layout = self.document().documentLayout()
+        lines = max(1, round(layout.documentSize().height()))  # lines, in a plain text edit
+        shown = min(max(lines, self.MIN_LINES), self.MAX_LINES)
+        margins = self.contentsMargins()
+        frame = 2 * self.document().documentMargin() + margins.top() + margins.bottom()
+        self.setFixedHeight(round(shown * line + frame))
+
+
+_CODE = re.compile(r"`([^`]+)`")
+_STRONG = re.compile(r"\*\*([^*]+)\*\*")
+_EMPHASIS = re.compile(r"(?<![\w*])\*([^*]+)\*(?![\w*])")
+
+
+def markdown_html(text: str) -> str:
+    """A description's markdown (code spans, **bold**, *emphasis*, paragraphs) as the
+    rich text labels and tooltips show: code in the monospace font. Rich text, so a
+    tooltip of it wraps instead of running across the window."""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
+    out = []
+    for paragraph in paragraphs:
+        escaped = html.escape(" ".join(paragraph.split()), quote=False)
+        escaped = _CODE.sub(r"<code>\1</code>", escaped)
+        escaped = _STRONG.sub(r"<b>\1</b>", escaped)
+        escaped = _EMPHASIS.sub(r"<i>\1</i>", escaped)
+        out.append(f"<p>{escaped}</p>")
+    return "<qt>" + "".join(out) + "</qt>"
+
+
+def markdown_label(text: str) -> QLabel:
+    """A label showing a description written in markdown (see :func:`markdown_html`)."""
+    label = QLabel(markdown_html(text))
+    label.setTextFormat(Qt.TextFormat.RichText)
+    label.setWordWrap(True)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    return label

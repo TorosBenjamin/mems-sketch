@@ -8,7 +8,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QMessageBox, QToolButton
+from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox, QToolButton
 
 from mems_sketch.core.shapes import Align, RectShape
 from mems_sketch.gui.app import MainWindow
@@ -86,10 +86,12 @@ def test_a_folded_card_stays_folded_for_that_kind_of_shape(window, qtbot):
     assert not sections(window)["Geometry"].collapsed
 
 
-def test_units_in_labels_are_lighter(window):
+def test_a_placed_components_parameters_show_the_unit_their_description_gives(window):
+    from mems_sketch.gui.value_edit import ValueEdit
+
     window.add_component("mems.anchor")
-    labels = [lab for lab in window.properties.findChildren(QLabel) if "µm</span>" in lab.text()]
-    assert labels and all("µm" in lab.toolTip() or "(" in lab.toolTip() for lab in labels)
+    units = {e.unit for e in window.properties.findChildren(ValueEdit)}
+    assert "µm" in units
 
 
 def test_dragging_an_aligned_shape_shows_its_new_offset(window, qtbot):

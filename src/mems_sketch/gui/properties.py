@@ -760,6 +760,9 @@ class PropertyEditor(QScrollArea):
                 )
             elif info.description:
                 label = _label_with_help(field, info.description)
+                unit = re.search(r"\((µm|nm|mm|°)\)", info.description)
+                if unit and isinstance(widget, ValueEdit):  # "Hole pitch (µm)": in the field
+                    widget.set_unit(unit[1])
             else:
                 label = _label(field)
             form.addRow(label, widget)

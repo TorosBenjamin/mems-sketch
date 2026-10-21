@@ -205,8 +205,10 @@ class ComponentEdits(Commands):
 
     def set_description(self, name: str, text: str) -> None:
         """What a project component is, in a sentence or two: shown where it is
-        placed from (the Place popup, Search Everywhere) and by its parameters."""
-        text = " ".join(text.split())
+        placed from (the Place popup, Search Everywhere) and by its parameters.
+        Paragraphs (split by blank lines) are kept; other runs of space are one."""
+        paragraphs = (" ".join(p.split()) for p in re.split(r"\n\s*\n", text))
+        text = "\n\n".join(p for p in paragraphs if p)
 
         def change(project: Project) -> None:
             project.components[name].description = text

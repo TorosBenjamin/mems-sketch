@@ -1158,7 +1158,8 @@ class MainWindow(QMainWindow):
             return
         for view in self.area.views():
             self._caption(view)
-        self.properties.setEnabled(False)
+        # A read-only component's interface is information, not a form: never greyed.
+        self.properties.setEnabled(self.document.read_only)
         self.points.setEnabled(False)
 
     def _report_build(self, future) -> None:
@@ -1426,7 +1427,10 @@ class MainWindow(QMainWindow):
         if picked and not self._quiet_selection:  # chosen in a panel, search or history
             regions = dict(getattr(self.view, "node_regions", ()))
             self.canvas.pulse(*(regions[p] for p in picked if p in regions))
-        self.properties.show_node(paths[0] if len(paths) == 1 else None)
+        if len(paths) > 1:
+            self.properties.show_several(len(paths))
+        else:
+            self.properties.show_node(paths[0] if paths else None)
         self.update_overlay()
         if not self.tool.busy:  # its hint may depend on what is selected (#251)
             self.prompt(self.tool.hint())

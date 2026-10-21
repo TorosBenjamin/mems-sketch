@@ -73,8 +73,10 @@ defaults, its description, parameters and points. Enter (or **Place**) places
 it, Ctrl+Enter (or **Open**) opens it.
 
 A component's description is the sentence or two you give it: with nothing
-selected, Properties shows the open component's **Description** (the first
-sentence is what the popup shows).
+selected, Properties shows the open component's **Description**, a box that
+grows with its text (the first sentence is what the popup shows). Leaving it
+or Ctrl+Enter applies it; a blank line starts a new paragraph, and
+`` `code` `` and `*emphasis*` are shown as such wherever the description is.
 
 The toolbar is also the window's title bar: minimize, maximize and close are
 at its right end. Drag an empty part of it to move the window, double-click it

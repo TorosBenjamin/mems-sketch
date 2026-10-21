@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QComboBox,
     QGroupBox,
@@ -221,7 +222,6 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
     """Enter in a field, or a click on the eye or a card button, rebuilds the panel
     from inside that widget's own event: the old widgets must outlive the event."""
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QToolButton
 
     from mems_sketch import ArrayModifier
 
@@ -384,17 +384,14 @@ def test_dragging_a_default_with_a_real_mouse(window, qtbot):
     assert window.document.active_definition.parameter("pitch").default != 13
 
 
-def test_apply_sits_beside_add_modifier_and_only_when_needed(window):
-    assert window.properties.apply_button is None  # a rectangle without modifiers
+def test_there_is_no_apply_button_even_with_modifiers(window):
     bar = window.document.shapes[0]
     window.document.nodes.replace(
         ((0, 0),), bar.model_copy(update={"modifiers": [ArrayModifier()]})
     )
     window.tree.select_paths([((0, 0),)])
-    apply = window.properties.apply_button
-    add = next(b for b in window.properties.findChildren(QToolButton) if b.text() == "Add modifier")
-    assert apply is not None and apply.parentWidget() is add.parentWidget()
-    assert abs(apply.geometry().center().y() - add.geometry().center().y()) <= 2
+    texts = {b.text() for b in window.properties.findChildren(QAbstractButton)}
+    assert "Apply" not in texts and "Add modifier" in texts
 
 
 def test_choosing_from_a_list_applies_at_once(window):

@@ -398,7 +398,7 @@ class PointsPanel(_Panel):
         parameters = [p.name for p in self.document.active_definition.parameters]
         x = ValueEdit(point.x, scope, parameters, prefix="x")
         y = ValueEdit(point.y, scope, parameters, prefix="y")
-        description = QLineEdit(point.description)
+        description = widgets.DescriptionEdit(point.description)
         description.setPlaceholderText("What it is for")
 
         def apply(*_) -> None:
@@ -467,7 +467,7 @@ class PointsPanel(_Panel):
         )
         layer.setCurrentText(port.layer or "")
         layer.setToolTip("The layer the wire runs on, like a shape's. Empty: inherited, else level")
-        description = QLineEdit(port.description)
+        description = widgets.DescriptionEdit(port.description)
         description.setPlaceholderText("What it is for")
 
         def number_or_text(text: str):

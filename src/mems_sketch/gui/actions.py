@@ -335,7 +335,9 @@ class Actions:
             for source in self.add.actions():
                 kind = next(k for k, label in PRIMITIVES if label == source.text())
                 slot = (
-                    (lambda _=False, k=kind: w.start_drawing(k, x, y)) if kind in w.tools else None
+                    (lambda _=False, k=kind: w.start_drawing(k, x, y))
+                    if kind in w.tools
+                    else (lambda _=False, k=kind: w.add_primitive(k, at=(x, y)))
                 )
                 item(add, source, slot)
             # The Place popup, by the cursor; the component lands where the click was.

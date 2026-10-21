@@ -1662,9 +1662,8 @@ class LayoutCanvas(QGraphicsView):
             return
         name = bytes(data.data(COMPONENT_MIME)).decode()
         p = self.mapToScene(event.position().toPoint())
-        step = self.grid_step()
         event.acceptProposedAction()
-        self.component_dropped.emit(name, round(p.x() / step) * step, round(p.y() / step) * step)
+        self.component_dropped.emit(name, *self.on_grid(p.x(), p.y()))
 
     def keyReleaseEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
@@ -2358,6 +2357,11 @@ class LayoutCanvas(QGraphicsView):
         painter.drawRoundedRect(box, 4, 4)
         painter.setPen(color or QColor(self.theme["overlay"]))
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+
+    def on_grid(self, x: float, y: float) -> tuple[float, float]:
+        """``(x, y)`` µm rounded to the nearest grid point, without float noise."""
+        step = self.grid_step()
+        return round(round(x / step) * step, 6) + 0.0, round(round(y / step) * step, 6) + 0.0
 
     def grid_step(self) -> float:
         """Grid spacing in µm: the smallest 1-2-5 step with lines at least

@@ -285,7 +285,12 @@ with a reason. It stays listed, greyed and marked *Waived* with the reason,
 but no longer counts as a problem, is not boxed on the canvas, and does not
 fail `check`. The waiver is saved with the component.
 
-A waiver covers that violation as it is: when the geometry around it changes,
-the waiver lapses and the violation shows again, marked *waiver lapsed*. A
-waiver that no longer matches any violation is listed as a warning to remove
-(right-click, **Remove the waiver**).
+A waiver covers that violation as it is, wherever it is: move the waived
+part together with what is around it and the waiver goes with it. Where the
+component is placed, its waivers accept the same violation in every placement
+(turned or mirrored too), listed as *Waived in* the component. When the
+geometry around a violation changes, or something is placed close enough to
+it, it is no longer the one waived: in the component itself the waiver lapses
+and the violation shows again, marked *waiver lapsed*. A waiver that no
+longer matches any violation is listed as a warning to remove (right-click,
+**Remove the waiver**, which works from a component that places it too).

@@ -517,7 +517,9 @@ behaviours every frontend must keep.
   (DRC-4); warnings are listed and do so only with `--strict`.
 - **DRC-13** (Could, exists) **Waivers:** a single violation can be accepted
   with a reason, saved with the component and listed in the check's
-  results. A waiver lapses when the geometry it covers changes.
+  results. It follows the violation when what is around it moves with it,
+  and holds in each placement of the component. A waiver lapses when the
+  geometry it covers changes.
 
 ### Import
 

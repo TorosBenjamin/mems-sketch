@@ -1020,11 +1020,9 @@ class MainWindow(QMainWindow):
             self._run(lambda: self.document.process.waive(violation, reason, self.view.component))
 
     def unwaive(self, violation) -> None:
-        self._run(
-            lambda: self.document.process.unwaive(
-                violation.rule, violation.bbox_um, self.view.component
-            )
-        )
+        """Remove the waiver that accepts a violation, in the component that keeps it."""
+        component, box = violation.waiver or (self.view.component, violation.bbox_um)
+        self._run(lambda: self.document.process.unwaive(violation.rule, box, component))
 
     def _show_problem_count(self, errors: int, violations: int) -> None:
         if errors:
@@ -1229,7 +1227,9 @@ class MainWindow(QMainWindow):
     def _show_messages(self, *extra: str) -> None:
         view = self.view
         errors = [*extra, *view.errors, *(p for p in self._problems if p not in view.errors)]
-        self.messages.show_messages(errors, view.violations, checking=view.checking)
+        self.messages.show_messages(
+            errors, view.violations, checking=view.checking, component=view.component
+        )
 
     def _failing_corners(self) -> list[tuple[float, float]]:
         """Rounded corners of the open component whose radius does not fit (when the

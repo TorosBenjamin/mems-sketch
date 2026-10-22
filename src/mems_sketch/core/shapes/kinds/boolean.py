@@ -32,6 +32,13 @@ class BooleanShape(Operation):
     def summary(self) -> str:
         return self.op
 
+    def operand_labels(self) -> tuple[str, ...]:
+        return {
+            "subtract": ("Keep", "Cut away"),
+            "intersect": ("Shapes", "Only where these are"),
+            "xor": ("Shapes", "Except where these are"),
+        }[self.op]
+
     def icon_name(self) -> str:
         return self.op
 

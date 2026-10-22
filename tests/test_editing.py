@@ -651,3 +651,40 @@ def test_shape_and_port_names_are_checked_when_added_or_renamed(doc):
     with pytest.raises(ValueError, match="port 'out' already exists"):
         doc.ports.add(at="a.top", name="out")
     assert [(p.name, p.at) for p in doc.active_definition.ports] == [("out", "a.right")]
+
+
+def _subtract_of_three(doc):
+    for i, name in enumerate("abc"):
+        doc.nodes.add(RectShape(name=name, layer="device", x0=i * 20, y0=0, x1=i * 20 + 10, y1=10))
+    doc.nodes.wrap([((0, 0),), ((0, 1),)], "subtract")
+
+
+def test_shapes_move_into_and_out_of_operands_in_one_step(doc):
+    """#256: what dragging in the Shapes panel does."""
+    _subtract_of_three(doc)
+    cut = lambda: [s.name for s in doc.shapes[0].b]
+    assert doc.nodes.move([((0, 1),)], ((0, 0),), 1, 1) == [((0, 0), (1, 1))]
+    assert [s.name for s in doc.shapes] == ["subtract1"] and cut() == ["b", "c"]
+    assert doc.nodes.move([((0, 0), (1, 0))], None, 0, 1) == [((0, 1),)]
+    assert [s.name for s in doc.shapes] == ["subtract1", "b"] and cut() == ["c"]
+    doc.nodes.move([((0, 1),)], None, 0, 0)  # reordered
+    assert [s.name for s in doc.shapes] == ["b", "subtract1"]
+    doc.undo()
+    assert [s.name for s in doc.shapes] == ["subtract1", "b"]
+    with pytest.raises(ValueError, match="into itself"):
+        doc.nodes.move([((0, 0),)], ((0, 0),), 0, 0)
+
+
+def test_an_operand_can_be_filled_again_after_it_was_emptied(doc):
+    _subtract_of_three(doc)
+    doc.nodes.remove([((0, 0), (1, 0))])
+    assert doc.shapes[0].b == []
+    doc.nodes.move([((0, 1),)], ((0, 0),), 1, 0)
+    assert [s.name for s in doc.shapes[0].b] == ["c"]
+
+
+def test_a_duplicate_goes_right_after_its_original(doc):
+    _subtract_of_three(doc)
+    path = doc.nodes.duplicate(((0, 0), (0, 0)))  # inside the operand, not at the top
+    assert path == ((0, 0), (0, 1))
+    assert [s.name for s in doc.shapes[0].a] == ["a", "a1"]

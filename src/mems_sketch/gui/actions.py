@@ -95,7 +95,7 @@ class Actions:
         self.redo = act("Redo", w.redo, QKeySequence.StandardKey.Redo, edit, "redo")
         edit.addSeparator()
         self.cut = act("Cut", w.cut, QKeySequence.StandardKey.Cut, edit, "cut")
-        self.copy = act("Copy", w.copy, QKeySequence.StandardKey.Copy, edit, "duplicate")
+        self.copy = act("Copy", w.copy, QKeySequence.StandardKey.Copy, edit, "copy")
         self.paste = act("Paste", w.paste, QKeySequence.StandardKey.Paste, edit, "paste")
         self.duplicate = act("Duplicate", w.duplicate, "Ctrl+D", edit, "duplicate")
         self.delete = act("Delete", w.delete, QKeySequence.StandardKey.Delete, edit, "delete")
@@ -231,8 +231,8 @@ class Actions:
         view.addSeparator()
         act("Open top component", w._edit_top, "Ctrl+T", view, "top")
         act("Process", w.open_process, None, view, "layers")
-        self.split = act("Split view", w.split_view, "Ctrl+\\", view, "split")
-        act("Merge split view", w.area.unsplit, None, view)
+        self.split = act("Split right", w.split_view, "Ctrl+\\", view, "split")
+        act("Merge panes", w.area.unsplit, None, view)
         act("Close tab", w.close_tab, QKeySequence.StandardKey.Close, view, "close")
         self.panels = view.addMenu("Panels")
 
@@ -349,7 +349,16 @@ class Actions:
             item(menu, self.fit).setEnabled(True)
             return menu
 
+        self._selection_items(item, menu, selection)
+        return menu
+
+    def _selection_items(self, item, menu: QMenu, selection: list) -> None:
+        """What can be done to the selected shapes, for a right-click menu (the
+        canvas's and the Shapes panel's)."""
+        w = self.window
+        editable = not w.document.read_only
         one, several = len(selection) == 1, len(selection) > 1
+        node = w.document.node(selection[0]) if one and w._exists(selection[0]) else None
         reference = one and w.document.reference_target(selection[0]) is not None
         combine = menu.addMenu(self.combine.menuAction().icon(), "Combine")
         for op in BOOLEANS:
@@ -360,17 +369,18 @@ class Actions:
         item(menu, self.connect, enabled=several)
         item(menu, self.make)
         item(menu, self.unpack, enabled=reference)
+        item(menu, self.unwrap, enabled=node is not None and any(node.child_lists()))
         orient = menu.addMenu(self.rotate_left.icon(), "Rotate && mirror")
         for source in (self.rotate_left, self.rotate_right, self.mirror_h, self.mirror_v):
             item(orient, source)
         orient.setEnabled(editable)
+        item(menu, self.remove_alignment, enabled=node is not None and node.align is not None)
         menu.addSeparator()
         item(menu, self.zoom_selection).setEnabled(True)
         if one:
             item(menu, self.rename)
         menu.addSeparator()
         self._edit_items(item, menu, True, one)
-        return menu
 
     def _edit_items(self, item, menu: QMenu, some: bool, one: bool) -> None:
         """Cut, copy, paste, duplicate and delete, for a right-click menu."""
@@ -378,7 +388,7 @@ class Actions:
         copy = item(menu, self.copy, enabled=some)
         copy.setEnabled(some)  # copying changes nothing: also in a read-only component
         item(menu, self.paste, enabled=self.window.can_paste())
-        item(menu, self.duplicate, enabled=one)
+        item(menu, self.duplicate, enabled=some)  # several: one step (#253)
         item(menu, self.delete, enabled=some)
 
     def shapes_menu(self) -> QMenu:
@@ -387,8 +397,8 @@ class Actions:
         editable = not w.document.read_only
         menu = QMenu(w)
 
-        def item(target: QMenu, source: QAction, enabled: bool = True) -> QAction:
-            action = make_action(menu, source.text(), source.trigger, menu=target)
+        def item(target: QMenu, source: QAction, slot=None, enabled: bool = True) -> QAction:
+            action = make_action(menu, source.text(), slot or source.trigger, menu=target)
             action.setIcon(source.icon())
             action.setShortcut(source.shortcut())
             action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)  # shown, not active
@@ -396,7 +406,10 @@ class Actions:
             return action
 
         selection = list(w.selection)
-        self._edit_items(item, menu, bool(selection), len(selection) == 1)
+        if selection:  # as on the canvas: what can be done to them
+            self._selection_items(item, menu, selection)
+        else:
+            self._edit_items(item, menu, False, False)
         return menu
 
     def tab_menu(self, view) -> QMenu:

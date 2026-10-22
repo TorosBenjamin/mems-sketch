@@ -272,3 +272,39 @@ def test_the_edit_menu_greys_out_what_does_not_apply(window):
     assert actions.delete.isEnabled() and actions.rename.isEnabled()
     assert not actions.unpack.isEnabled() and not actions.remove_alignment.isEnabled()
     actions.edit.aboutToHide.emit()
+
+
+def test_deleting_the_top_component_asks_first(window, monkeypatch):
+    """#260: it is the whole design; No keeps it."""
+    asked = []
+
+    def answer(*args, **kwargs):
+        asked.append(args[2])
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", answer)
+    window.components._delete("top")
+    assert asked and "top component" in asked[0]
+    assert window.document.project.top == "top"
+
+
+def test_the_place_button_says_why_it_places_nothing(window):
+    errors = []
+    window.components.error.connect(errors.append)
+    window.components.tree.clearSelection()
+    window.components._place()
+    window.components.select_component("top")
+    window.components._place()
+    assert errors == ["select a component to place", "'top' cannot be placed in itself"]
+
+
+def test_undo_says_what_each_step_did(window):
+    doc = window.document
+    doc.nodes.set_enabled(((0, 0),), False)
+    assert doc.undo_text() == "Hide bar"
+    window.tree.select_paths([((0, 1),)])
+    window.cut()
+    assert doc.undo_text() == "Cut pad"
+    doc.nodes.add(RectShape(name="c", layer="device", x0=0, y0=50, x1=5, y1=55))
+    doc.nodes.remove([((0, 0),), ((0, 1),)])
+    assert doc.undo_text() == "Delete 2 shapes"

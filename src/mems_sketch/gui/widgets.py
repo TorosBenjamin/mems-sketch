@@ -109,11 +109,17 @@ def header_actions(*actions: Action) -> Actions:
 
 class ElidedLabel(QLabel):
     """One line of plain text, cut off with "…" (and shown whole as the tooltip)
-    when it does not fit."""
+    when it does not fit: at its end, or (``mode``) in the middle, for a path."""
 
-    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        text: str = "",
+        parent: QWidget | None = None,
+        mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
+    ) -> None:
         super().__init__(parent)
         self._text = ""
+        self._mode = mode
         self.setTextFormat(Qt.TextFormat.PlainText)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setText(text)
@@ -130,7 +136,7 @@ class ElidedLabel(QLabel):
         self._elide()
 
     def _elide(self) -> None:
-        shown = self.fontMetrics().elidedText(self._text, Qt.TextElideMode.ElideRight, self.width())
+        shown = self.fontMetrics().elidedText(self._text, self._mode, self.width())
         super().setText(shown)
         self.setToolTip(self._text if shown != self._text else "")
 

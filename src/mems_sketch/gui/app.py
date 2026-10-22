@@ -268,6 +268,7 @@ class MainWindow(QMainWindow):
             lambda p, e: self._run(lambda: self.document.nodes.set_enabled(p, e))
         )
         self.tree.itemDoubleClicked.connect(self._tree_double_clicked)
+        self.tree.moved.connect(self._tree_moved)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(
             lambda at: self.show_menu(
@@ -1586,6 +1587,12 @@ class MainWindow(QMainWindow):
         hit = self._hit(view, x, y)
         if hit is not None:
             self._open_reference(hit, view.component)
+
+    def _tree_moved(self, paths: list[NodePath], parent, slot: int, index: int) -> None:
+        """Shapes dragged in the Shapes panel: moved there, and still selected."""
+        ok, moved = self._run(lambda: self.document.nodes.move(paths, parent, slot, index))
+        if ok and moved:
+            self._select_quietly(moved)
 
     def _tree_double_clicked(self, item, _column: int) -> None:
         inside = item.data(0, INSIDE_ROLE)

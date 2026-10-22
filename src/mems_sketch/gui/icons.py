@@ -199,8 +199,11 @@ ICONS = {
     "minus": '<path d="M3 8h10"/>',  # and remove the selected ones
     "delete": '<path d="M2.6 4h10.8M6.2 4V2.4h3.6V4M4 4l.7 9.6h6.6L12 4"/><path d="M6.6 6.6v4.6M9.4 '
     '6.6v4.6"/>',
-    "duplicate": '<rect x="5.2" y="5.2" width="8.4" height="8.4" rx="1"/><path d="M10.8 5.2V2.4H2.4'
+    "copy": '<rect x="5.2" y="5.2" width="8.4" height="8.4" rx="1"/><path d="M10.8 5.2V2.4H2.4'
     'v8.4h2.8"/>',
+    # One shape, and a plus: another one like it (Copy shows two sheets).
+    "duplicate": '<rect x="2.4" y="5.2" width="8.4" height="8.4" rx="1"/><path d="M12.6 1.4v5.4'
+    'M9.9 4.1h5.4"/>',
     "cut": '<circle cx="4.4" cy="11.8" r="2"/><circle cx="11.6" cy="11.8" r="2"/><path d="M5.8 10.4'
     'L11.4 2.4M10.2 10.4L4.6 2.4"/>',
     "paste": '<rect x="3" y="3" width="10" height="11" rx="1"/><path d="M6 3V1.8h4V3M5.6 7h4.8M5.6 '

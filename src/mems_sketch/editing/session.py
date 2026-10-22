@@ -83,7 +83,9 @@ class EditSession:
         self.check_builds = True
         self._valid: bool | None = None  # whether the project builds, once known
         # (description, other project state, active before the change, active after it)
-        self._undo: list[tuple[str, Project, str, str]] = []
+        # Each step: what it was, the project before it, the active component
+        # before and after it, and the components it renamed (old: new).
+        self._undo: list[tuple[str, Project, str, str, dict[str, str]]] = []
         self._redo: list[tuple[str, Project, str, str]] = []
         self.trials: dict[str, dict[str, Value]] = {}
         self._saved: dict[str, str] = self._fingerprints()
@@ -115,6 +117,7 @@ class EditSession:
         description: str,
         change: Callable[[Project], object],
         done: Callable[[], None] | None = None,
+        renames: dict[str, str] | None = None,
     ) -> object:
         """Apply ``change``; roll back and re-raise if a valid project would become invalid
         (with :attr:`check_builds`), or if its references would stop resolving or form a
@@ -122,6 +125,8 @@ class EditSession:
         project with problems).
 
         ``done`` runs after a successful change, before views are told.
+        ``renames`` (old: new) are the components it renames: undoing it says they
+        are renamed back, so what shows them (a tab) follows instead of closing.
         """
         before, active = self._snapshot(), self.active
         was_valid = self.check_builds and self._builds(before)
@@ -142,7 +147,7 @@ class EditSession:
         self._valid = True if was_valid else None
         if not self.exists(self.active):
             self.active = self.project.default_component()
-        self._undo.append((description, before, active, self.active))
+        self._undo.append((description, before, active, self.active, dict(renames or {})))
         del self._undo[:-UNDO_LIMIT]
         self._redo.clear()
         if done is not None:
@@ -182,20 +187,22 @@ class EditSession:
     def undo(self) -> None:
         """Undo the last change and make the component it was made in active."""
         if self._undo:
-            description, state, before, after = self._undo.pop()
-            self._redo.append((description, self.project, before, after))
-            self._restore(state, before)
+            description, state, before, after, renames = self._undo.pop()
+            self._redo.append((description, self.project, before, after, renames))
+            self._restore(state, before, {new: old for old, new in renames.items()})
 
     def redo(self) -> None:
         if self._redo:
-            description, state, before, after = self._redo.pop()
-            self._undo.append((description, self.project, before, after))
-            self._restore(state, after)
+            description, state, before, after, renames = self._redo.pop()
+            self._undo.append((description, self.project, before, after, renames))
+            self._restore(state, after, renames)
 
-    def _restore(self, project: Project, active: str) -> None:
+    def _restore(self, project: Project, active: str, renames: dict[str, str]) -> None:
         self.project, self._valid = project, None
         self.active = active if self.exists(active) else project.default_component()
         self._set_dirty(self._fingerprints() != self._saved)
+        for old, new in renames.items():  # before views are told: a tab follows
+            self.component_renamed.emit(old, new)
         self.changed.emit()
 
     def new(self, library: bool = False) -> None:

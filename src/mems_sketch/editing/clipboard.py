@@ -56,7 +56,7 @@ class ClipboardEdits(Commands):
     def cut(self, paths: list[NodePath]) -> str:
         """Copy the shapes and delete them (one step to undo)."""
         text = self.copy(paths)
-        self.session.nodes.remove(_outermost(paths))
+        self.session.nodes.remove(_outermost(paths), "Cut")
         return text
 
     def paste(self, text: str) -> Pasted:

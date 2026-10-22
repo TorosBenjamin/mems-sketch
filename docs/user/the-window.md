@@ -109,7 +109,7 @@ Every component opens in its own tab, with its own zoom, selection and view;
 the panels show the current tab. Double-click a component in **Components**,
 or a placed component on the canvas or in **Shapes**, to open it.
 
-**View → Split view** (Ctrl+\\) shows two tabs side by side: edit the spring
+**View → Split right** (Ctrl+\\) shows two tabs side by side: edit the spring
 on one side and watch the resonator that uses it on the other.
 
 ![Split view: the resonator and its suspension](../images/split-view.png)

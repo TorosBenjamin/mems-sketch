@@ -131,6 +131,11 @@ class Node(BaseModel):
     def child_lists(self) -> list[list[Shape]]:
         return [getattr(self, field) for field in self.child_fields]
 
+    def operand_labels(self) -> tuple[str, ...]:
+        """What each child list is, in words, where it has more than one (the
+        Shapes panel's rows above them); none: its children are shown directly."""
+        return ()
+
     def moved(
         self,
         x: Callable[[Value], Value],

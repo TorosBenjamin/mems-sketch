@@ -261,9 +261,13 @@ its points, stay where they are.
 **Shapes** lists the shapes of the component being edited, one line each: the
 name, then what it is in grey (a primitive's layer, the component a reference
 places). The eye hides a shape without deleting it; operations show
-their operands under them. A placed component expands to show what is inside
-it, read-only (changing it would change every copy); double-click such a row
-to open the component with that shape selected.
+their operands under them, named for what they do (a subtract's *Keep* and
+*Cut away*). Drag shapes to reorder them, or into and out of an operand (one
+step to undo); a duplicate goes right after its original. Right-click offers
+what the editor's right-click menu does for the selection; Enter (or a double
+click) on a placed component opens it. A placed component expands to show
+what is inside it, read-only (changing it would change every copy);
+double-click such a row to open the component with that shape selected.
 
 **Layers** shows the layers with their colours and GDS numbers; the eye shows
 or hides one, and clicking one makes it the drawing layer.

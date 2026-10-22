@@ -177,7 +177,7 @@ class ComponentEdits(Commands):
             for before, after in moved.items():
                 self.session.component_renamed.emit(before, after)
 
-        self.session.edit(description, change, done)
+        self.session.edit(description, change, done, renames=moved)
 
     def set_top(self, name: str | None) -> None:
         """Make a local component the top one; ``None`` makes the project a library."""

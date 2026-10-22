@@ -158,7 +158,7 @@ class PointsPanel(_Panel):
                 f"{built.angle:g}°, {built.width:g} µm wide, on {built.layer}" if built else "error"
             )
             item.setToolTip(0, f"{port.description}\nPort: {how}; double-click to rename".strip())
-        groups = [("default", "Default", "Every component has these: of the box around it")]
+        groups = [("default", "Its box", "Every component has these: of the box around it")]
         groups += [(name, name, f"The points of shape {name}") for name in shapes]
         opened = self._expanded.setdefault(self.document.active, set())
         for group, title, tip in groups:

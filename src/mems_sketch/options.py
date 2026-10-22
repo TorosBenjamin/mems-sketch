@@ -42,10 +42,8 @@ class Option:
         try:
             value = self.value_type(text)
         except ValueError:
-            raise ValueError(
-                f"option '{self.name}' is a{'n' if self.value_type is int else ''} "
-                f"{self.value_type.__name__}, not '{text}'"
-            ) from None
+            kind = "a whole number" if self.value_type is int else "a number"
+            raise ValueError(f"option '{self.name}' is {kind}, not '{text}'") from None
         return self.check(value)
 
     def check(self, value: Any) -> bool | int | float | str:

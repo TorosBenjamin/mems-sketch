@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -174,8 +175,12 @@ class CommitPanel(_Panel):
         self.count.setObjectName("muted")
         self.message = QPlainTextEdit()
         self.message.setObjectName("commit-message")
-        lines = self.message.fontMetrics().lineSpacing() * MESSAGE_LINES
-        self.message.setFixedHeight(lines + 2 * theme.metric("space_m"))
+        # Up to MESSAGE_LINES high, down to two when the panel is short: the
+        # list of changes keeps the room (at least a few rows).
+        line, margin = self.message.fontMetrics().lineSpacing(), 2 * theme.metric("space_m")
+        self.message.setMinimumHeight(2 * line + margin)
+        self.message.setMaximumHeight(MESSAGE_LINES * line + margin)
+        self.message.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.message.textChanged.connect(self._update_button)
         self.commit_button = QPushButton("Commit")
         self.commit_button.setDefault(True)
@@ -214,6 +219,7 @@ class CommitPanel(_Panel):
         body = QVBoxLayout(self.body)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
+        self.tree.setMinimumHeight(4 * self.tree.fontMetrics().height() + 2 * space)
         body.addWidget(self.tree, 1)
         body.addWidget(self.no_changes, 1)
         body.addWidget(line_host)

@@ -217,10 +217,12 @@ class EditSession:
         library: bool = False,
         libraries: Sequence[str | Path] = (),
         process_from: str | Path | None = None,
+        process: str | None = None,
     ) -> Path:
         """Start a new project (or library) called ``name`` and save it in ``folder``
-        at once: with the ``libraries`` loaded, and the process copied from the
-        project at ``process_from`` (else the default layers)."""
+        at once: with the ``libraries`` loaded, and a library's ``process``
+        (``mems.surface``), or the process copied from the project at
+        ``process_from``, else the default layers."""
         folder = Path(folder)
         if not name.strip():
             raise ValueError("the project needs a name")
@@ -239,6 +241,10 @@ class EditSession:
             project.libraries[key] = load_library(key, Path(path))
             if not project.libraries[key].components and not project.libraries[key].processes:
                 raise ValueError(f"{path} has no components or processes")
+        if process is not None:
+            if process not in project.process_names() or "." not in process:
+                raise ValueError(f"no library has a process '{process}'")
+            project.use_process(process)
         self._reset(project, None)
         return self.save(folder)
 

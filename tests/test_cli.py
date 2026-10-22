@@ -84,3 +84,89 @@ def test_new_process_starts_a_process_library(tmp_path, capsys):
     assert load(tmp_path / "blank").processes["blank"].rules == {}
     assert main(["new-process", str(tmp_path / "x"), "--from", "mems.nope"]) != 0
     assert "no process 'mems.nope'" in capsys.readouterr().err
+
+
+# -- #259: files, import and the command line -----------------------------------
+
+
+def test_export_makes_missing_folders_and_names_a_missing_extension(resonator, tmp_path, capsys):
+    assert main(["export", str(resonator), str(tmp_path / "out" / "sub" / "r.gds")]) == 0
+    assert (tmp_path / "out" / "sub" / "r.gds").exists()
+    captured = capsys.readouterr()
+    assert "building top…" in captured.err and "writing" in captured.err  # while it works
+    assert main(["export", str(resonator), str(tmp_path / "noext")]) == 2
+    assert "has no extension to tell the format by: give one (" in capsys.readouterr().err
+
+
+def test_a_layout_or_another_file_is_not_opened_as_a_project(resonator, tmp_path, capsys):
+    main(["export", str(resonator), str(tmp_path / "r.gds")])
+    capsys.readouterr()
+    assert main(["info", str(tmp_path / "r.gds")]) == 2
+    assert "is a layout, not a project: import it" in capsys.readouterr().err
+    (tmp_path / "notes.txt").write_text("hello")
+    assert main(["info", str(tmp_path / "notes.txt")]) == 2
+    assert "is not a project" in capsys.readouterr().err
+
+
+def test_a_library_asks_for_a_component_and_lists_them(tmp_path, capsys):
+    assert main(["new", str(tmp_path / "lib"), "--library"]) == 0
+    assert main(["check", str(tmp_path / "lib")]) == 2
+    error = capsys.readouterr().err
+    assert "'lib' is a library, with no top component: name one with --component" in error
+    assert "(its components: component1)" in error
+
+
+def test_new_on_a_library_process_and_new_process_lists_them(tmp_path, capsys):
+    assert main(["new", str(tmp_path / "p"), "--process", "mems.surface"]) == 0
+    assert load(tmp_path / "p").process_name == "mems.surface"
+    assert main(["new", str(tmp_path / "q"), "--process", "nope"]) == 2
+    assert "mems.surface, mems.polysilicon, mems.soi" in capsys.readouterr().err
+    assert main(["new-process", str(tmp_path / "f"), "--from", "soi"]) == 2
+    assert "mems.soi, or empty" in capsys.readouterr().err
+
+
+def test_info_shows_the_grid_and_whole_numbers_and_one_component(resonator, capsys):
+    assert main(["info", str(resonator)]) == 0
+    out = capsys.readouterr().out
+    assert "(grid 0.001 µm, curves within 0.005 µm)" in out
+    assert "process.undercut = 2\n" in out  # as the file says it, not 2.0
+    assert main(["info", str(resonator), "--component", "mems.anchor"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("component mems.anchor: Square pad")
+    assert "  size = 40 [> 0]: Pad edge length (µm)" in out
+    assert main(["info", str(resonator), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["process"]["grid_um"] == 0.001 and "top" in data["components"]
+    assert main(["info", str(resonator), "--component", "mems.anchor", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["parameters"]["size"]["default"] == 40
+
+
+def test_formats_say_the_grid_comes_from_the_process_and_grid_is_understood(
+    resonator, tmp_path, capsys
+):
+    assert main(["formats"]) == 0
+    assert "grid_um=0.001 µm (default: the process's grid)" in capsys.readouterr().out
+    assert main(["export", str(resonator), str(tmp_path / "r.gds"), "-O", "grid=0.002"]) == 0
+
+
+def test_a_cell_name_some_tools_refuse_is_warned_of(resonator, tmp_path, capsys):
+    path = str(tmp_path / "r.gds")
+    assert main(["export", str(resonator), path, "-O", "top_cell=My Chip"]) == 0
+    assert "warning: cell 'My Chip' is written as it is" in capsys.readouterr().err
+    assert main(["export", str(resonator), path, "-O", "top_cell=CHIP_1"]) == 0
+    assert "warning" not in capsys.readouterr().err
+
+
+def test_info_into_a_closed_pipe_is_quiet(resonator):
+    import subprocess
+    import sys
+
+    run = subprocess.run(
+        f'"{sys.executable}" -m mems_sketch.cli info "{resonator}" | head -1',
+        shell=True,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.stdout.startswith("project resonator")
+    assert "Broken pipe" not in run.stderr

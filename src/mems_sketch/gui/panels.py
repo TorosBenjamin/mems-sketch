@@ -590,7 +590,7 @@ class ComponentsPanel(_Panel):
             self._guard(lambda: self.document.components.add_library(folder))
 
     def import_gds(self, path: str | None = None) -> str | None:
-        """Choose a layout (GDS, OASIS or a geometry document) and how to import it;
+        """Choose a layout (GDS or a geometry document) and how to import it;
         returns the new component's name."""
         from mems_sketch.gui.import_dialog import ImportDialog
 

@@ -21,7 +21,7 @@ from mems_sketch.core.shapes.registry import kind_class
 from mems_sketch.core.user_component import ComponentDef, PointDef
 from mems_sketch.editing import EditSession
 from mems_sketch.engine import Build
-from mems_sketch.export.base import export_with_report
+from mems_sketch.export.base import cell_name_notes, export_with_report
 from mems_sketch.mcp_server import kinds, reference
 from mems_sketch.process import rules
 from mems_sketch.storage import yaml_format
@@ -316,18 +316,26 @@ class DesignTools:
         options: dict[str, Any] | None = None,
     ) -> str:
         """Write a component to GDS, OASIS, DXF (or JSON, XML, MAT): by the file's
-        extension unless ``format`` is given."""
+        extension unless ``format`` is given. A relative path is in the project's
+        folder (the working directory before it is saved)."""
         name = self._component(component)
-        written, output = export_with_report(
-            self.session.project,
-            Path(path),
-            format_name=format,
-            component=name,
-            params=params or {},
-            options=options,
-        )
-        note = output.describe() if output is not None and hasattr(output, "describe") else ""
-        return f"wrote {written}" + (f" ({note})" if note else "")
+        target = Path(path).expanduser()
+        if not target.is_absolute() and self.session.path is not None:
+            target = Path(self.session.path) / target
+        with cell_name_notes() as warned:
+            written, output = export_with_report(
+                self.session.project,
+                target.resolve(),
+                format_name=format,
+                component=name,
+                params=params or {},
+                options=options,
+            )
+        notes = output.describe() if output is not None and hasattr(output, "describe") else []
+        reply = f"wrote {written}"
+        if notes:
+            reply += "; snapping to the grid changed:\n" + "\n".join(f"- {n}" for n in notes)
+        return reply + "".join(f"\nwarning: {w}" for w in warned)
 
     # -- for rendering -------------------------------------------------------
 

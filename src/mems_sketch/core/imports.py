@@ -65,7 +65,7 @@ def read_layout(data: bytes) -> Layout:
     if digest not in _layouts:
         try:
             _layouts[digest] = layout_files.read(data)
-        except (ValueError, struct.error) as exc:
+        except struct.error as exc:
             raise ValueError(f"not a readable GDS file: {exc}") from None
     return _layouts[digest]
 

@@ -281,7 +281,7 @@ def test_version_2_files_load_as_references(tmp_path):
             component TEXT NOT NULL, params TEXT NOT NULL, x TEXT NOT NULL, y TEXT NOT NULL,
             rotation TEXT NOT NULL, mirror_x INTEGER NOT NULL DEFAULT 0);
         INSERT INTO meta VALUES ('schema_version', '2'), ('name', 'old');
-        INSERT INTO layers VALUES ('device', 1, 0, 0, NULL, NULL);
+        INSERT INTO layers VALUES ('device', 1, 0, 2, NULL, NULL);
         """
     )
     conn.execute(
@@ -292,4 +292,8 @@ def test_version_2_files_load_as_references(tmp_path):
     conn.close()
     loaded = load(path)
     assert loaded.find("r").kind == "transform"  # the retired rectangle, as a rect
+    assert [c.name for c in loaded.find("r").children] == ["r_rect"]  # as it is saved
     assert area(loaded) == pytest.approx(20)
+    # #259: the layer's undercut is the process's, with a note to check it
+    assert loaded.process.constants["undercut"] == 2
+    assert any("undercut" in note and "release rule" in note for note in loaded.load_notes)

@@ -109,3 +109,23 @@ def test_a_file_that_is_not_gds_is_refused(session, tmp_path):
     bad.write_text("hello")
     with pytest.raises(ValueError, match="not a readable GDS file"):
         session.imports.add(bad)
+
+
+def test_oasis_and_dxf_say_to_save_the_cell_as_gds(session, tmp_path):
+    """#259: one sentence each, not "not a readable GDS file" twice."""
+    oasis = tmp_path / "chip.oas"
+    oasis.write_bytes(b"%SEMI-OASIS\r\n" + bytes(20))
+    with pytest.raises(ValueError) as found:
+        session.imports.add(oasis)
+    assert str(found.value) == (
+        "OASIS files are written, not read: save the cell as GDS to import it"
+    )
+    dxf = tmp_path / "chip.dxf"
+    dxf.write_text("  0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n  0\nEOF\n")
+    with pytest.raises(ValueError, match="^DXF files are written, not read: save the cell"):
+        session.imports.add(dxf)
+    bad = tmp_path / "notes.gds"
+    bad.write_text("hello")
+    with pytest.raises(ValueError) as found:
+        session.imports.add(bad)
+    assert str(found.value).count("not a readable GDS file") == 1

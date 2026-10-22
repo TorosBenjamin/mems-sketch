@@ -12,7 +12,7 @@ parameters:
   beam_width: {default: 2, min: 0, min_exclusive: true, description: "Beam width, w (µm)"}
   gap: {default: 4, min: 0, min_exclusive: true, description: "Between neighbouring beams, and between the anchor and the shuttle bar (µm)"}
   truss: {default: 3, min: 0, min_exclusive: true, description: Width of the truss and of the shuttle bar (µm)}
-  anchor_size: {default: 20, min: "max(4, 2 * beam_width)", min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure"}
+  anchor_size: {default: 20, min: "max(4, 2 * beam_width)", min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure, and more than 4 plus twice the process's undercut or the etch frees it"}
   youngs_modulus: {default: 160, min: 0, min_exclusive: true, description: "Young's modulus of the structural layer, E (GPa; 160 for polysilicon)"}
   thickness: {default: 2, min: 0, min_exclusive: true, description: "Thickness of the structural layer, t (µm)"}
   inner_x: {default: anchor_size / 2 - beam_width / 2, internal: true, description: Centre of the inner beams (µm)}

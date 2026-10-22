@@ -156,7 +156,7 @@ the Components panel's **+** or listed in `project.yaml`:
 
 ```yaml
 libraries:
-  mems: bundled@2        # a bundled one, and the version the project was saved with
+  mems: bundled@3        # a bundled one, and the version the project was saved with
   fab: ../fab-library    # a folder of your own
 ```
 

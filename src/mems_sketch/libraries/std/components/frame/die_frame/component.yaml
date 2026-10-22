@@ -6,8 +6,8 @@ description: >-
   label area.
 tags: [frame, die, scribe lane, dicing, chip, label]
 parameters:
-  width: {default: 5000, min: 2 * lane + 2 * mark, min_exclusive: true, description: "Die width, x (µm)"}
-  height: {default: 5000, min: 2 * lane + 2 * mark, min_exclusive: true, description: "Die height, y (µm)"}
+  width: {default: 5000, min: 2 * (lane + mark + 2 * inset) + label_width, min_exclusive: true, description: "Die width, x (µm); the label area fits between the lower corner marks"}
+  height: {default: 5000, min: "2 * lane + max(2 * mark, 2 * inset + label_height)", min_exclusive: true, description: "Die height, y (µm); the label area fits inside the frame"}
   lane: {default: 50, min: 0, min_exclusive: true, description: "The die's share of the scribe lane: half the lane (µm)"}
   mark: {default: 200, min: mark_width, min_exclusive: true, description: Length of each arm of a corner mark (µm)}
   mark_width: {default: 20, min: 0, min_exclusive: true, description: Width of the corner marks (µm)}

@@ -1,7 +1,7 @@
 format: mems-sketch/2
 name: mems
 description: MEMS components and example processes
-version: 2
+version: 3
 top: null
 process: surface
 processes:

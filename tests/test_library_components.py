@@ -187,6 +187,73 @@ def test_the_stiffness_follows_the_formula():
     assert defaults("mems.clamped_beam")["stiffness"] == pytest.approx(16 * 160e3 * 2 * 8 / 200**3)
 
 
+def test_the_u_spring_is_half_as_stiff_as_a_guided_beam():
+    """Two guided beams in series: half one's stiffness, as its description says."""
+    u = defaults("mems.u_spring")
+    guided = evaluate("youngs_modulus * 1000 * thickness * beam_width ** 3 / length ** 3", u)
+    assert u["stiffness"] == pytest.approx(guided / 2)
+    assert "half that of a guided beam" in definition("mems.u_spring").description
+
+
+def box_of(polygons):
+    xs = [x for hull, _ in polygons for x, _ in hull]
+    ys = [y for hull, _ in polygons for _, y in hull]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def smallest(name: str, parameter: str) -> float:
+    """``parameter`` just above its (exclusive) minimum at the other defaults."""
+    low, _ = next(p for p in definition(name).parameters if p.name == parameter).limits(
+        defaults(name)
+    )
+    return low * 1.0001
+
+
+def test_the_die_frame_label_stays_inside_the_smallest_frame():
+    """#258: at its smallest the label area keeps clear of the lower corner marks
+    and inside the frame, instead of running across the scribe lane."""
+    width, height = smallest("std.die_frame", "width"), smallest("std.die_frame", "height")
+    geometry = (
+        Engine().load(on()).build("std.die_frame", {"width": width, "height": height}).geometry
+    )
+    left, bottom, right, top = box_of(geometry.polygons("metal"))
+    inside_x, inside_y = width / 2 - 50 - 50, height / 2 - 50 - 50  # lane, inset
+    # between the corner marks (200) and their insets, as far from either
+    assert left == pytest.approx(-inside_x + 200 + 50)
+    assert right <= inside_x - 200 - 50 + 1e-6
+    assert -inside_y - 1e-6 <= bottom and top <= inside_y + 1e-6
+
+
+def placed(name: str, params: dict):
+    """Build ``name`` placed in top with ``params``: where its limits are checked."""
+    project = on()
+    project.components["top"].shapes = [RefShape(name="part", component=name, params=params)]
+    return Engine().load(project).build("top").geometry
+
+
+def test_the_proof_mass_attachment_zones_stay_on_the_mass():
+    """#258: at their largest the zones reach across the shorter edge, not past it."""
+    values = defaults("mems.proof_mass")
+    attach = min(values["width"], values["height"])
+    params = {"attach": attach, "attach_depth": attach / 2}
+    geometry = Engine().load(on()).build("mems.proof_mass", params).geometry
+    width, height = values["width"], values["height"]
+    assert box_of(geometry.polygons("device")) == pytest.approx(
+        (-width / 2, -height / 2, width / 2, height / 2)
+    )
+    placed("mems.proof_mass", params)
+    with pytest.raises(ValueError, match="'attach'"):
+        placed("mems.proof_mass", {"attach": attach + 1})
+
+
+def test_round_holes_are_the_roundest_a_plate_takes():
+    """#258: a corner radius beyond half the hole is refused, not silently clipped."""
+    hole = defaults("mems.perforated_plate")["hole"]
+    placed("mems.perforated_plate", {"corner_radius": hole / 2})
+    with pytest.raises(ValueError, match="corner_radius"):
+        placed("mems.perforated_plate", {"corner_radius": hole})
+
+
 def test_the_accelerometer_banks_are_mirrored():
     """Moving along +x closes the small gaps on the left and the large ones on the
     right: each bank's fixed fingers (and their anchors) sit beside its moving

@@ -235,8 +235,9 @@ class ProcessEdits(Commands):
 
     def waive(self, violation, reason: str, component: str | None = None) -> None:
         """Accept one violation of the active (or given) component, for ``reason``
-        (requirement DRC-13). It is kept with the component and lapses when the
-        geometry around it changes."""
+        (requirement DRC-13). It is kept with the component, follows the violation
+        when what is around it moves as one, accepts it too wherever the component
+        is placed, and lapses when the geometry around it changes."""
         from mems_sketch.core.user_component import Waiver
         from mems_sketch.process.rules import fingerprint
 
@@ -264,7 +265,8 @@ class ProcessEdits(Commands):
         self.session.edit(f"Waive {violation.rule}", change)
 
     def unwaive(self, rule: str, box, component: str | None = None) -> None:
-        """Remove the waiver of ``rule`` at ``box``."""
+        """Remove the waiver of ``rule`` at ``box`` (where it was made: a violation's
+        ``waiver`` says which component keeps it, and where)."""
         from mems_sketch.process.rules import BOX_TOLERANCE_UM
 
         component = component or self.session.active
@@ -275,7 +277,9 @@ class ProcessEdits(Commands):
             )
 
         def change(project) -> None:
-            definition = project.components[component]
+            definition = project.components.get(component)
+            if definition is None:
+                raise ValueError(f"'{component}' is read-only: its waivers cannot be removed")
             kept = [w for w in definition.waivers if not matches(w)]
             if len(kept) == len(definition.waivers):
                 raise ValueError(f"no waiver of {rule} there")

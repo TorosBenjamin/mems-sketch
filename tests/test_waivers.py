@@ -3,7 +3,7 @@ component, lapsing when the geometry around it changes (requirement DRC-13)."""
 
 import pytest
 
-from mems_sketch import RectShape
+from mems_sketch import RectShape, RefShape
 from mems_sketch.cli import main
 from mems_sketch.editing import EditSession
 from mems_sketch.process import rules
@@ -80,6 +80,79 @@ def test_waivers_are_saved_with_the_component(doc, tmp_path, capsys):
     captured = capsys.readouterr()
     assert "waived (test structure): device_min_width" in captured.out
     assert "0 error(s), 0 warning(s), 1 waived" in captured.err
+
+
+def test_a_waiver_follows_what_it_accepts_when_it_moves(doc):
+    """#261: moving the waived beam (with nothing new around it) keeps its waiver."""
+    doc.process.waive(narrow(doc), "on purpose")
+    doc.nodes.replace(
+        ((0, 1),), RectShape(name="probe", layer="device", x0=105, y0=5, x1=106, y1=35)
+    )
+    [v] = violations(doc)
+    assert v.waived == "on purpose" and v.waiver == ("top", (100.0, 0.0, 101.0, 30.0))
+    doc.process.unwaive(v.rule, v.waiver[1])  # where it was made
+    assert narrow(doc).is_error
+
+
+def test_two_alike_violations_and_one_waiver(doc):
+    """A waiver accepts one violation: an identical copy of the waived beam is not
+    waived along with it."""
+    doc.process.waive(narrow(doc), "on purpose")
+    doc.nodes.add(RectShape(name="copy", layer="device", x0=200, y0=0, x1=201, y1=30))
+    found = [v for v in violations(doc) if v.rule == "device_min_width"]
+    assert sorted(bool(v.waived) for v in found) == [False, True]
+    [waived] = [v for v in found if v.waived]
+    assert waived.bbox_um == (100, 0, 101, 30)
+
+
+@pytest.fixture
+def placed(doc) -> EditSession:
+    """The probe waived in a component of its own, placed in top."""
+    doc.components.new("part")
+    doc.nodes.add(RectShape(name="probe", layer="device", x0=0, y0=0, x1=1, y1=30))
+    doc.process.waive(narrow(doc), "test structure", "part")
+    doc.set_active("top")
+    doc.nodes.remove([((0, 1),)])  # top's own probe
+    return doc
+
+
+def test_a_waiver_holds_where_its_component_is_placed(placed):
+    """#261: the waiver is kept with the component, so it accepts the violation in
+    each placement of it, turned or mirrored too."""
+    placed.nodes.add_component("part", 300, 0)
+    placed.nodes.add(
+        RefShape(name="turned", component="part", x=400, y=0, rotation=90, mirror_x=True)
+    )
+    found = violations(placed)
+    assert [(v.waived, v.waiver[0]) for v in found] == [("test structure", "part")] * 2
+    assert not rules.open_violations(found)
+
+
+def test_what_is_placed_near_it_ends_a_placed_waiver(placed):
+    """Next to something else the violation is not the one waived: it shows."""
+    placed.nodes.add_component("part", 300, 0)
+    placed.nodes.add(RectShape(name="close", layer="device", x0=302, y0=0, x1=303, y1=30))
+    found = [v for v in violations(placed) if v.rule == "device_min_width"]
+    assert found and not any(v.waived for v in found)
+
+
+def test_removing_a_placed_waiver_removes_it_from_its_component(placed):
+    placed.nodes.add_component("part", 300, 0)
+    [v] = violations(placed)
+    placed.process.unwaive(v.rule, v.waiver[1], v.waiver[0])
+    assert placed.project.components["part"].waivers == []
+    assert violations(placed)[0].is_error
+
+
+def test_a_waiver_saved_before_still_holds(doc):
+    """Waivers saved with the former fingerprint (of the geometry where it was)
+    still match there."""
+    v = narrow(doc)
+    doc.process.waive(v, "on purpose")
+    former = rules._former_fingerprint(v, doc.results.checked())
+    [waiver] = doc.project.components["top"].waivers
+    doc.project.components["top"].waivers = [waiver.model_copy(update={"fingerprint": former})]
+    assert [v.waived for v in violations(doc)] == ["on purpose"]
 
 
 # -- the GUI -----------------------------------------------------------------

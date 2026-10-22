@@ -1643,9 +1643,11 @@ class MessagesPanel(QListWidget):
 
     counts_changed = Signal(int, int)  # errors, violations not waived
 
-    def show_messages(self, errors: list[str], violations, checking: bool = False) -> None:
-        """Errors and rule violations; ``checking`` while the rules are still
-        being checked in the background."""
+    def show_messages(
+        self, errors: list[str], violations, checking: bool = False, component: str | None = None
+    ) -> None:
+        """Errors and rule violations of ``component``; ``checking`` while the
+        rules are still being checked in the background."""
         self.clear()
         for text in errors:
             item = QListWidgetItem(icons.icon("error"), text)
@@ -1667,7 +1669,9 @@ class MessagesPanel(QListWidget):
             x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
             where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
             if v.waived:
-                label = f"Waived: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
+                kept = v.waiver[0] if v.waiver else component
+                title = "Waived" if kept == component else f"Waived in {kept}"
+                label = f"{title}: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
                 item = QListWidgetItem(icons.icon("ok"), label)
                 item.setForeground(QBrush(theme.color("muted")))
             else:

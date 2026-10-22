@@ -1,7 +1,7 @@
 format: mems-sketch/2
 name: std
 description: "Generic layout parts for any process: alignment marks, test structures, pads, die frame"
-version: 1
+version: 2
 top: null
 components:
   cross_mark: components/alignment/cross_mark

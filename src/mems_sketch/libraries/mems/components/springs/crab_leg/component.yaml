@@ -9,7 +9,7 @@ parameters:
   thigh: {default: 60, min: 0, min_exclusive: true, description: "Thigh length, Lt (µm)"}
   shin: {default: 120, min: 0, min_exclusive: true, description: "Shin length, Ls (µm)"}
   beam_width: {default: 2, min: 0, min_exclusive: true, description: "Beam width, w (µm)"}
-  anchor_size: {default: 20, min: 4, min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure"}
+  anchor_size: {default: 20, min: 4, min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure, and more than 4 plus twice the process's undercut or the etch frees it"}
   youngs_modulus: {default: 160, min: 0, min_exclusive: true, description: "Young's modulus of the structural layer, E (GPa; 160 for polysilicon)"}
   thickness: {default: 2, min: 0, min_exclusive: true, description: "Thickness of the structural layer, t (µm)"}
   knee: {default: anchor_size / 2 + thigh, internal: true, description: Where the thigh meets the shin (µm)}

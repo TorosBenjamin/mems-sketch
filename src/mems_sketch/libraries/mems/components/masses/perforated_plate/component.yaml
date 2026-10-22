@@ -18,6 +18,7 @@ parameters:
   corner_radius:
     default: 0
     min: 0
+    max: hole / 2
     description: "Corner radius of the holes (µm): 0 square, half the size round; rounder holes leave more between their corners"
   web: {default: 2.5, min: 0, min_exclusive: true, internal: true, description: Between neighbouring holes (µm)}
   margin:

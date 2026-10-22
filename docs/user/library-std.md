@@ -162,8 +162,8 @@ Die frame centred on the origin: the die's share of the scribe lane as a ring at
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
-| `width` | `5000` | > 2 * lane + 2 * mark | Die width, x (µm) |
-| `height` | `5000` | > 2 * lane + 2 * mark | Die height, y (µm) |
+| `width` | `5000` | > 2 * (lane + mark + 2 * inset) + label_width | Die width, x (µm); the label area fits between the lower corner marks |
+| `height` | `5000` | > 2 * lane + max(2 * mark, 2 * inset + label_height) | Die height, y (µm); the label area fits inside the frame |
 | `lane` | `50` | > 0 | The die's share of the scribe lane: half the lane (µm) |
 | `mark` | `200` | > mark_width | Length of each arm of a corner mark (µm) |
 | `mark_width` | `20` | > 0 | Width of the corner marks (µm) |

@@ -52,7 +52,7 @@ Clamped-clamped beam: a straight beam along x between two anchors, centred on th
 |---|---|---|---|
 | `length` | `200` | > 0 | Beam length between the anchors, L (µm) |
 | `beam_width` | `2` | > 0 | Beam width, w (µm) |
-| `anchor_size` | `20` | > 4 | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure |
+| `anchor_size` | `20` | > 4 | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure, and more than 4 plus twice the process's undercut or the etch frees it |
 | `youngs_modulus` | `160` | > 0 | Young's modulus of the structural layer, E (GPa; 160 for polysilicon) |
 | `thickness` | `2` | > 0 | Thickness of the structural layer, t (µm) |
 | `stiffness` | `16 * youngs_modulus * 1000 * thickness * beam_width ** 3 / length ** 3` |  | *(derived)* Sideways stiffness at the middle (N/m) |
@@ -69,7 +69,7 @@ Guided beam: a beam along +y from an anchor at the origin, its free end meant to
 |---|---|---|---|
 | `length` | `120` | > 0 | Beam length, L (µm) |
 | `beam_width` | `2` | > 0 | Beam width, w (µm) |
-| `anchor_size` | `20` | > 4 | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure |
+| `anchor_size` | `20` | > 4 | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure, and more than 4 plus twice the process's undercut or the etch frees it |
 | `youngs_modulus` | `160` | > 0 | Young's modulus of the structural layer, E (GPa; 160 for polysilicon) |
 | `thickness` | `2` | > 0 | Thickness of the structural layer, t (µm) |
 | `stiffness` | `youngs_modulus * 1000 * thickness * beam_width ** 3 / length ** 3` |  | *(derived)* Sideways stiffness at the tip (N/m) |
@@ -80,7 +80,7 @@ Guided beam: a beam along +y from an anchor at the origin, its free end meant to
 
 ![mems.u_spring](../images/gallery/mems/u_spring.png)
 
-U-spring: two parallel beams along +y joined at the top, the left one on an anchor at the origin, the right one free at the bottom, where the mass attaches. Its two guided beams are in series: sideways (x) it is a spring of stiffness E t w³ / (2 L³) (`stiffness`), a quarter of a guided beam of the same length for half the space. Point: attach, the middle of the free leg's end.
+U-spring: two parallel beams along +y joined at the top, the left one on an anchor at the origin, the right one free at the bottom, where the mass attaches. Its two guided beams are in series: sideways (x) it is a spring of stiffness E t w³ / (2 L³) (`stiffness`), half that of a guided beam of the same length, in half the space. Point: attach, the middle of the free leg's end.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
@@ -88,7 +88,7 @@ U-spring: two parallel beams along +y joined at the top, the left one on an anch
 | `beam_width` | `2` | > 0 | Beam width, w (µm) |
 | `spread` | `18` | > anchor_size / 2 + beam_width / 2 | Between the beams' centres; the free one clears the anchor pad (µm) |
 | `truss` | `3` | > 0 | Width of the bar that joins them at the top (µm) |
-| `anchor_size` | `20` | > 4 | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure |
+| `anchor_size` | `20` | > 4 | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure, and more than 4 plus twice the process's undercut or the etch frees it |
 | `youngs_modulus` | `160` | > 0 | Young's modulus of the structural layer, E (GPa; 160 for polysilicon) |
 | `thickness` | `2` | > 0 | Thickness of the structural layer, t (µm) |
 | `top` | `anchor_size / 2 + length` |  | *(derived)* Where the beams meet the bar (µm) |
@@ -108,7 +108,7 @@ Folded flexure: two beams rise from an anchor at the origin to a truss, and two 
 | `beam_width` | `2` | > 0 | Beam width, w (µm) |
 | `gap` | `4` | > 0 | Between neighbouring beams, and between the anchor and the shuttle bar (µm) |
 | `truss` | `3` | > 0 | Width of the truss and of the shuttle bar (µm) |
-| `anchor_size` | `20` | > max(4, 2 * beam_width) | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure |
+| `anchor_size` | `20` | > max(4, 2 * beam_width) | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure, and more than 4 plus twice the process's undercut or the etch frees it |
 | `youngs_modulus` | `160` | > 0 | Young's modulus of the structural layer, E (GPa; 160 for polysilicon) |
 | `thickness` | `2` | > 0 | Thickness of the structural layer, t (µm) |
 | `inner_x` | `anchor_size / 2 - beam_width / 2` |  | *(derived)* Centre of the inner beams (µm) |
@@ -131,7 +131,7 @@ Crab-leg spring: a thigh along +x from an anchor at the origin, then a shin alon
 | `thigh` | `60` | > 0 | Thigh length, Lt (µm) |
 | `shin` | `120` | > 0 | Shin length, Ls (µm) |
 | `beam_width` | `2` | > 0 | Beam width, w (µm) |
-| `anchor_size` | `20` | > 4 | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure |
+| `anchor_size` | `20` | > 4 | Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure, and more than 4 plus twice the process's undercut or the etch frees it |
 | `youngs_modulus` | `160` | > 0 | Young's modulus of the structural layer, E (GPa; 160 for polysilicon) |
 | `thickness` | `2` | > 0 | Thickness of the structural layer, t (µm) |
 | `knee` | `anchor_size / 2 + thigh` |  | *(derived)* Where the thigh meets the shin (µm) |
@@ -154,7 +154,7 @@ Square plate centred on the origin, with a grid of release holes (square, rounde
 | `size` | `162.5` | ≥ 10 | Edge length (µm): a whole number of pitches plus a web gives a rim one web wide |
 | `pitch` | `10` | ≥ web + 0.5 | Hole pitch (µm); at least a web and the smallest hole |
 | `hole` | `pitch - web` | ≥ 0.5, < pitch | Hole size (µm); by default the pitch less a web |
-| `corner_radius` | `0` | ≥ 0 | Corner radius of the holes (µm): 0 square, half the size round; rounder holes leave more between their corners |
+| `corner_radius` | `0` | ≥ 0, ≤ hole / 2 | Corner radius of the holes (µm): 0 square, half the size round; rounder holes leave more between their corners |
 | `web` | `2.5` | > 0 | *(derived)* Between neighbouring holes (µm) |
 | `margin` | `pitch - hole` |  | *(derived)* From the plate's edge to the holes (µm) |
 
@@ -172,8 +172,8 @@ Rectangular proof mass centred on the origin, sized by its holes so that the rim
 | `rows` | `16` | ≥ 1, whole | Holes up (y) |
 | `pitch` | `10` | > web | Hole pitch (µm) |
 | `web` | `2.5` | > 0 | Between holes, and the rim (µm); where four webs meet the nearest hole is 0.71 webs away: keep that under the undercut |
-| `attach` | `6` | ≥ 0 | Width of the attachment zones (µm) |
-| `attach_depth` | `2.5` | ≥ 0 | Depth of the attachment zones (µm); a web deep, they keep the rim |
+| `attach` | `6` | ≥ 0, ≤ min(width, height) | Width of the attachment zones (µm); at most the mass's shorter edge |
+| `attach_depth` | `2.5` | ≥ 0, ≤ min(width, height) / 2 | Depth of the attachment zones (µm); a web deep, they keep the rim |
 | `width` | `columns * pitch + web` |  | *(derived)* Mass width (µm) |
 | `height` | `rows * pitch + web` |  | *(derived)* Mass height (µm) |
 
@@ -258,7 +258,7 @@ Comb drive (as `comb_drive`, anchored) with motion limiters: tabs at both ends o
 | `gap` | `2` | > 0 | Lateral finger gap (µm) |
 | `overlap` | `20` | ≥ 0, < finger_length | Initial finger overlap (µm) |
 | `travel` | `10` | > 0, < finger_length - overlap | How far the moving comb can move towards the fixed one (µm) |
-| `stop_size` | `10` | > 4 | Stop posts' anchor pads (µm) |
+| `stop_size` | `10` | > 4 | Stop posts' anchor pads (µm); more than 4 plus twice the process's undercut, or the etch frees them |
 | `side_gap` | `4` | ≥ 2 | Between the comb and the stops (µm) |
 | `moving_spine_width` | `4` | > 0 | *(derived)* |
 | `total` | `(2 * fingers + 1) * finger_width + 2 * fingers * gap` |  | *(derived)* Width of the spines (µm) |
@@ -307,7 +307,7 @@ Gap-closing (parallel-plate) electrodes: moving fingers up from a moving spine, 
 | `far_gap` | `6` | ≥ gap | The gap on the other side, that opens (µm) |
 | `spine_width` | `4` | > 0 | Moving spine width (µm) |
 | `clearance` | `4` | > 0 | Between the moving fingers' tips and the fixed anchors, and between the fixed fingers and the moving spine (µm) |
-| `anchor_size` | `9` | > 4, ≤ pitch - 2 | Fixed fingers' anchor pads (µm); neighbours stay 2 µm apart |
+| `anchor_size` | `9` | > 4, ≤ pitch - 2 | Fixed fingers' anchor pads (µm); neighbours stay 2 µm apart; more than 4 plus twice the process's undercut, or the etch frees them |
 | `pitch` | `2 * finger_width + gap + far_gap` |  | *(derived)* From one moving finger to the next (µm) |
 | `x_start` | `-fingers * pitch / 2` |  | *(derived)* |
 

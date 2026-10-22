@@ -136,7 +136,7 @@ but should not have to program. Scripting is there for those who want it.
   geometry: it is evaluated from its parameters.
 - **CMP-2** (Must, exists) **Bundled libraries** ship with the tool, one
   per domain, and every project has them without a path (listed as
-  `mems: bundled@2`, with the version saved with). `mems` has anchors,
+  `mems: bundled@3`, with the version saved with). `mems` has anchors,
   springs (with their stiffness as a derived parameter), electrodes, masses
   and two devices, each with the points things attach at, and the example
   processes `surface`, `polysilicon`

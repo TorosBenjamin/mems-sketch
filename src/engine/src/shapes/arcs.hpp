@@ -12,6 +12,7 @@
 namespace mems {
 
 constexpr double ARC_TOLERANCE_UM = 0.005;
+constexpr int MIN_ARC_SEGMENTS = 3;
 constexpr int MAX_ARC_SEGMENTS = 4096;
 
 // The ``segments`` a node asks for, as Python reads it (none, or 0: none).

@@ -409,13 +409,20 @@ QTabBar::tab {{
 }}
 QTabBar::tab:selected {{ background: {selected_inactive}; border: 1px solid {border_strong}; }}
 QTabBar::tab:hover:!selected {{ background: {hover}; }}
-QToolButton#tab-close {{ padding: 1px; border-radius: {radius_small}px; }}
+QToolButton#tab-close {{  /* as far from the tab's right edge as its icon from the left (#228) */
+    padding: 1px; margin-right: 8px; border-radius: {radius_small}px;
+}}
 
 QTreeView, QTableView, QListView, QTableWidget, QTreeWidget, QListWidget {{
     background: {island}; alternate-background-color: {island}; border: none;
     selection-background-color: {selected}; selection-color: {text};
     gridline-color: {border};
 }}
+/* A row selects and highlights as one, its check box, icon and indentation
+   too, with no focus frame around one cell of it (#220). */
+QTreeView {{ show-decoration-selected: 1; outline: 0; }}
+QTreeView::branch:selected {{ background: {selected}; }}
+QTreeView::branch:hover:!selected {{ background: {hover}; }}
 QTreeView::item, QListView::item {{ padding: 2px 0; }}
 QTreeView::item:hover, QListView::item:hover {{ background: {hover}; }}
 QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {{
@@ -554,9 +561,11 @@ QToolTip {{
     border-radius: {radius_control}px;
 }}
 
-/* Editing a cell: a flat field filling the cell, not a rounded box inside it. */
+/* Editing a cell: a flat field filling the cell, not a rounded box inside it, as
+   the cell looks (the row being edited is selected), the text where the cell
+   has it (a line edit keeps 3 px of its own: 3 + 1 = the cell's 4, #254). */
 QAbstractItemView QLineEdit, QAbstractItemView QLineEdit:focus {{
-    border: none; border-radius: 0; margin: 0; padding: 0 4px; background: {editor};
+    border: none; border-radius: 0; margin: 0; padding: 0 1px; background: {selected};
 }}
 QLineEdit[expression="true"] {{ background: {expression}; }}
 /* ... but fields in a row's fold-out (a rule's details) are ordinary fields. */
@@ -670,6 +679,10 @@ def apply(app: QApplication, name: str) -> str:
     if not hasattr(app, "_menu_polisher"):  # once: every menu, in every window
         app._menu_polisher = MenuPolisher(app)
         app.installEventFilter(app._menu_polisher)
+        from mems_sketch.gui.widgets import WrappedTooltips
+
+        app._tooltips = WrappedTooltips(app)  # long ones wrap, in every window
+        app.installEventFilter(app._tooltips)
     app.setPalette(palette(theme))
     t = _current.ui
     app.setStyleSheet(

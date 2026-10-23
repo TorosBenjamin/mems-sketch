@@ -421,12 +421,10 @@ class PropertyEditor(QScrollArea):
             self._editors[field] = lambda: combo.currentData()
             return self._applies(combo)
         if field in ("start", "end") and annotation is str:  # a route's ports
-            combo = _combo()
-            combo.setEditable(True)
+            combo = _editable(_combo(), "A port of a shape beside it: shape.port.name")
             with contextlib.suppress(Exception):  # it does not build: type one in
                 combo.addItems(self._ports_beside())
             combo.setCurrentText(value)
-            combo.setToolTip("A port of a shape beside it: shape.port.name")
             self._editors[field] = lambda: combo.currentText().strip()
             return self._applies(combo)
         if field == "level":  # where a placed component is
@@ -1052,7 +1050,7 @@ class PropertyEditor(QScrollArea):
             rows.addWidget(none)
         pick = QToolButton()
         pick.setText("Pick on the canvas")
-        icons.bind(pick, "fillet")
+        icons.bind(pick, "pick_corner")
         pick.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         pick.setToolTip("The Corners tool (O): click a corner to round it, drag to set its radius")
         pick.setEnabled(not read_only)
@@ -1063,8 +1061,9 @@ class PropertyEditor(QScrollArea):
 
     def _about_editor(self, key: str, value: str | None, path: NodePath) -> QWidget:
         """Where a mirror mirrors: nothing (use the axis), a guide, or a point."""
-        combo = _combo()
-        combo.setEditable(True)
+        combo = _editable(
+            _combo(), "A guide's name (mirror across it), or a point (mirror through it)"
+        )
         combo.addItem("")
         guides = [name for p, name, *_ in self.document.results.guides() if p != path]
         combo.addItems(guides)
@@ -1073,7 +1072,6 @@ class PropertyEditor(QScrollArea):
         combo.setCurrentText(value or "")
         self._applies(combo)
         combo.lineEdit().setPlaceholderText("the axis below")
-        combo.setToolTip("A guide's name (mirror across it), or a point (mirror through it)")
         self._editors[key] = lambda: combo.currentText().strip() or None
         return combo
 
@@ -1414,6 +1412,32 @@ def _combo() -> QComboBox:
     combo.setMinimumContentsLength(4)
     combo.setMinimumWidth(COMBO_MIN_PX)  # below its hint, which counts the placeholder too
     combo.view().setTextElideMode(Qt.TextElideMode.ElideNone)
+    return combo
+
+
+class _StartEdit(QLineEdit):
+    """An editable list's text: when not being edited it shows its start (the
+    shape of a point reference, not the middle of it, #227)."""
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.setCursorPosition(0)
+
+
+def _editable(combo: QComboBox, tip: str = "") -> QComboBox:
+    """Let ``combo`` take typed text, shown from its start; its tooltip has all of
+    the text, then ``tip``."""
+    edit = _StartEdit()
+    combo.setEditable(True)
+    combo.setLineEdit(edit)
+
+    def changed(text: str) -> None:
+        if not edit.hasFocus():
+            edit.setCursorPosition(0)
+        combo.setToolTip("\n".join(t for t in (text, tip) if t))
+
+    combo.currentTextChanged.connect(changed)
+    changed(combo.currentText())
     return combo
 
 

@@ -28,6 +28,7 @@ import html
 import re
 from collections.abc import Callable, Sequence
 
+from PySide6 import QtGui
 from PySide6.QtCore import (
     QEvent,
     QItemSelectionModel,
@@ -38,7 +39,7 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPalette, QShortcut
+from PySide6.QtGui import QColor, QFontMetrics, QKeySequence, QPainter, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -172,6 +173,48 @@ class _ElidedTooltip(QStyledItemDelegate):
                     QToolTip.showText(event.globalPos(), str(text), view)
                     return True
         return super().helpEvent(event, view, option, index)
+
+
+class IconAfterText(_ElidedTooltip):
+    """A column whose icon (a lock, say) follows the text, so that the text starts
+    at the column's edge like the other columns' (#254)."""
+
+    def initStyleOption(self, option, index) -> None:
+        super().initStyleOption(option, index)
+        option.decorationPosition = QStyleOptionViewItem.Position.Right
+
+
+TOOLTIP_CHARACTERS = 60  # a tooltip's lines wrap at about this many characters
+
+
+def wrapped_tooltip(text: str) -> str | None:
+    """``text`` as a tooltip that wraps (rich text, which Qt wraps at its width),
+    or None when it is short or already rich."""
+    if len(text) <= TOOLTIP_CHARACTERS or QtGui.Qt.mightBeRichText(text):
+        return None
+    lines = "<br>".join(html.escape(line) for line in text.split("\n"))
+    width = QFontMetrics(QToolTip.font()).averageCharWidth() * TOOLTIP_CHARACTERS
+    return f'<p style="white-space: pre-wrap" width="{width}">{lines}</p>'
+
+
+class WrappedTooltips(QObject):
+    """Installed on the application: a long plain tooltip, a widget's or a list
+    row's (a component's description), wraps at about ``TOOLTIP_CHARACTERS``
+    characters instead of running across the window (#233)."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() != QEvent.Type.ToolTip or not isinstance(watched, QWidget):
+            return False
+        text = watched.toolTip()
+        view = watched.parent()
+        if isinstance(view, QAbstractItemView) and watched is view.viewport():
+            index = view.indexAt(event.pos())
+            text = str(index.data(Qt.ItemDataRole.ToolTipRole) or "") if index.isValid() else ""
+        wrapped = wrapped_tooltip(text) if text else None
+        if wrapped is None:
+            return False
+        QToolTip.showText(event.globalPos(), wrapped, watched)
+        return True
 
 
 def tidy_header(header: QHeaderView, stretch: int) -> None:

@@ -24,6 +24,7 @@ from mems_sketch.core.shapes import (
     walk,
 )
 from mems_sketch.core.shapes.modifiers import total_copies
+from mems_sketch.core.shapes.points import BBOX_POINTS
 from mems_sketch.core.user_component import ComponentDef, ParamDef
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
@@ -270,6 +271,7 @@ class ComponentEdits(Commands):
                 "enabled": transform.enabled,
                 "modifiers": transform.modifiers,
             }
+        nodes, placement = _alignment_outside(nodes, placement)
         parameters = [  # passed in by the reference, so public in the new component
             p.model_copy(update={"internal": False})
             for p in parameters_used(self.session.active_definition, nodes)
@@ -433,6 +435,35 @@ def _names_used(nodes: list[Shape]) -> set[str]:
     for node in nodes:
         visit(node.model_dump())
     return found
+
+
+def _alignment_outside(
+    nodes: list[Shape], placement: dict[str, Any]
+) -> tuple[list[Shape], dict[str, Any]]:
+    """Nodes aligned to a shape that stays outside the new component (#248): one
+    node on its own hands its alignment (and its name, which shapes aligned to it
+    use) to the placement, its point being one of the box's, as the component's
+    box is the node's; otherwise it cannot be made."""
+    inside = {name for node in nodes for name in _names_in_tree(node)}
+    outside = [n for n in nodes if n.align is not None and n.align.to.split(".")[0] not in inside]
+    if not outside:
+        return nodes, placement
+    node = outside[0]
+    if len(nodes) == 1 and "align" not in placement and node.align.point in BBOX_POINTS:
+        moved = {"align": node.align, "name": node.name or placement["name"]}
+        return [node.model_copy(update={"align": None})], {**placement, **moved}
+    raise ValueError(
+        f"'{node.name}' is aligned to '{node.align.to}', which stays outside: choose "
+        f"that shape too, or make a component of '{node.name}' on its own"
+    )
+
+
+def _names_in_tree(node: Shape) -> list[str]:
+    names = [node.name] if node.name else []
+    for field in type(node).child_fields:
+        for child in getattr(node, field):
+            names += _names_in_tree(child)
+    return names
 
 
 def library_name(folder: str | Path) -> str:

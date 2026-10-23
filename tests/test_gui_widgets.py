@@ -326,7 +326,7 @@ def test_editing_a_cell_is_a_flat_field_filling_the_cell(window, qtbot):
     editor = next(e for e in table.viewport().findChildren(QLineEdit) if e.isVisible())
     qtbot.wait(20)
     image = editor.grab().toImage()
-    background = theme.color("editor").name()
+    background = theme.color("selected").name()  # the cell's own colour (#254)
     # No border: the corners and edges are the field's own background.
     for x, y in ((0, 0), (image.width() - 1, 0), (0, image.height() - 1)):
         assert image.pixelColor(x, y).name() == background
@@ -409,3 +409,73 @@ def test_no_menu_starts_or_ends_with_a_separator_or_has_two_in_a_row(window, qtb
     menu.close()
     assert entries[0] != "---" and entries[-1] != "---"
     assert "---,---" not in ",".join(entries)
+
+
+def test_parameter_names_start_at_the_edge_and_the_editor_looks_like_the_cell(window):
+    """#254: no gap before a public parameter's name (the lock of an internal one
+    follows its name), and renaming one keeps the cell's colour and text place."""
+    from PySide6.QtWidgets import QLineEdit
+
+    from mems_sketch.gui import theme, widgets
+
+    document = window.document
+    document.parameters.add()
+    document.parameters.add()
+    names = [p.name for p in document.active_definition.parameters]
+    document.parameters.set_internal([names[1]])
+    window.tool_windows.open("parameters")
+    table = window.parameters.table
+    assert table.item(0, 0).icon().isNull()  # public: nothing before or after the name
+    assert not table.item(1, 0).icon().isNull()  # internal: the lock ...
+    assert isinstance(table.itemDelegateForColumn(0), widgets.IconAfterText)  # ... after it
+    table.selectRow(0)
+    table.editItem(table.item(0, 0))
+    [editor] = table.viewport().findChildren(QLineEdit)
+    image = editor.grab().toImage()
+    assert image.pixelColor(editor.width() - 2, 2).name() == theme.color("selected").name()
+
+
+def test_numbers_use_a_decimal_point_whatever_the_locale(qtbot):
+    """#231: a comma-decimal system still shows and reads 0.001, not 0,001."""
+    import importlib
+
+    from PySide6.QtCore import QLocale
+    from PySide6.QtWidgets import QDoubleSpinBox
+
+    import mems_sketch.gui
+
+    QLocale.setDefault(QLocale(QLocale.Language.German, QLocale.Country.Germany))  # a system's
+    assert QLocale().decimalPoint() == ","
+    importlib.reload(mems_sketch.gui)  # what starting the app does
+    assert QLocale().decimalPoint() == "."
+    box = QDoubleSpinBox()
+    qtbot.addWidget(box)
+    box.setDecimals(4)
+    box.setRange(0, 1e6)
+    box.setValue(1234.001)
+    assert box.text() == "1234.0010"
+    assert box.valueFromText("0.5") == 0.5
+
+
+def test_a_long_tooltip_wraps(window, qtbot):
+    """#233: a description shown as a tooltip wraps (rich text, which Qt wraps)
+    instead of one line across the window; short ones stay as they are."""
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QHelpEvent
+    from PySide6.QtWidgets import QApplication, QLabel, QToolTip
+
+    from mems_sketch.gui.widgets import wrapped_tooltip
+
+    long = "A folded flexure: two pairs of beams joined by trusses & a shuttle. " * 3
+    wrapped = wrapped_tooltip(long + "\nsecond line")
+    assert wrapped.startswith("<p") and "<br>" in wrapped and "&amp;" in wrapped
+    assert wrapped_tooltip("short") is None
+    assert wrapped_tooltip("<b>rich</b> " * 20) is None  # Qt wraps rich text already
+    label = QLabel("hover me", window)
+    label.setToolTip(long)
+    label.show()
+    event = QHelpEvent(QEvent.Type.ToolTip, QPoint(2, 2), label.mapToGlobal(QPoint(2, 2)))
+    QApplication.sendEvent(label, event)
+    qtbot.waitUntil(QToolTip.isVisible, timeout=2000)
+    assert QToolTip.text().startswith("<p")
+    QToolTip.hideText()

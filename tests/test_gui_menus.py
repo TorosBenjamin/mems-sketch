@@ -308,3 +308,25 @@ def test_undo_says_what_each_step_did(window):
     doc.nodes.add(RectShape(name="c", layer="device", x0=0, y0=50, x1=5, y1=55))
     doc.nodes.remove([((0, 0),), ((0, 1),)])
     assert doc.undo_text() == "Delete 2 shapes"
+
+
+def test_a_submenu_opens_level_with_its_entry(window, qtbot):
+    """#229: File's first entry is level with File, however the window was put."""
+    from PySide6.QtCore import QPoint
+
+    from mems_sketch.gui.style import line_up_submenu
+
+    root, file = window.actions_.root, window.actions_.file
+    root.popup(window.mapToGlobal(QPoint(200, 100)))
+    qtbot.waitUntil(root.isVisible)
+    entry = root.actionGeometry(file.menuAction())
+    qtbot.mouseMove(root, entry.center())
+    qtbot.waitUntil(file.isVisible, timeout=2000)
+    file.move(file.pos() + QPoint(0, 9))  # as a platform might put it
+
+    def first_top():
+        return file.mapToGlobal(file.actionGeometry(file.actions()[0]).topLeft()).y()
+
+    line_up_submenu(file)
+    assert first_top() == root.mapToGlobal(entry.topLeft()).y()
+    root.hide()

@@ -133,6 +133,10 @@ class Tool:
     def deactivate(self) -> None:
         self.cancel()
 
+    def chosen_in_panel(self, paths: list[NodePath]) -> None:
+        """Shapes were chosen in a panel (Shapes, search) while this tool is on and
+        not busy: a tool that starts from a shape can start from them (#251)."""
+
     def reset(self) -> None:
         """Back to the first step, dropping anything in progress."""
 
@@ -1135,6 +1139,10 @@ class AlignTool(Tool):
         if len(self.window.selection) == 1 and self.step is None:
             self.begin(self.window.selection[0])
 
+    def chosen_in_panel(self, paths: list[NodePath]) -> None:
+        if len(paths) == 1:
+            self.begin(paths[0])
+
     def hint(self) -> str:
         name = self.document.node(self.path).name if self.path else None
         match self.step:
@@ -1299,6 +1307,10 @@ class CornersTool(Tool):
         super().activate()
         if len(self.window.selection) == 1:
             self.begin(self.window.selection[0])
+
+    def chosen_in_panel(self, paths: list[NodePath]) -> None:
+        if len(paths) == 1:
+            self.begin(paths[0])
 
     def deactivate(self) -> None:
         super().deactivate()

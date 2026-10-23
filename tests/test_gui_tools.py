@@ -561,3 +561,14 @@ def test_snap_markers_go_when_the_cursor_leaves_the_canvas(window):
     QApplication.sendEvent(window.canvas, QEvent(QEvent.Type.Leave))
     assert not window.canvas._snap_marker.isVisible()
     assert not window.canvas._points.get("snap")
+
+
+@pytest.mark.parametrize("tool", ["align", "corners"])
+def test_align_and_corners_start_from_a_shape_chosen_in_the_shapes_panel(window, tool):
+    """#251: with the tool on, choosing a shape in the Shapes panel starts it on that
+    shape, as choosing it before switching the tool on does."""
+    two_rects(window)
+    window.set_tool(tool)
+    assert not window.tool.busy
+    window.tree.select_paths([((0, 1),)])
+    assert window.tool.busy and window.tool.path == ((0, 1),)

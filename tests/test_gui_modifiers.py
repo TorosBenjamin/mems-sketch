@@ -175,3 +175,16 @@ def test_a_perforation_card_with_shapes_to_keep_clear_of(window, qtbot):
     names.setText("pad")
     qtbot.keyClick(names, Qt.Key.Key_Return)
     assert window.document.node(path).modifiers[0].keep_out == ["pad"]
+
+
+def test_a_long_point_reference_shows_from_its_start(window):
+    """#227: not scrolled to its middle ("sion_left.botto"); all of it in the tooltip."""
+    scene(window)
+    window.tree.select_paths([((0, 2),)])
+    _array, mirror = cards(window)
+    about = mirror.findChild(QComboBox)
+    reference = "suspension_left_outer_flexure.bottom_left"
+    about.setCurrentText(reference)
+    assert not about.lineEdit().hasFocus()
+    assert about.lineEdit().cursorPosition() == 0  # the start shows
+    assert about.toolTip().startswith(reference + "\n")

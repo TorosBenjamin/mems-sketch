@@ -1433,6 +1433,8 @@ class MainWindow(QMainWindow):
         else:
             self.properties.show_node(paths[0] if paths else None)
         self.update_overlay()
+        if picked and not self._quiet_selection and not self.tool.busy:
+            self.tool.chosen_in_panel(paths)  # Align, Corners: start from it (#251)
         if not self.tool.busy:  # its hint may depend on what is selected (#251)
             self.prompt(self.tool.hint())
         self.state_changed()

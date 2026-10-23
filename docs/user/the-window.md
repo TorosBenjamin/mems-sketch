@@ -136,9 +136,10 @@ toggle, the grid step, the zoom and the cursor position in µm.
 
 What a command did shows as a note at the bottom of the editor: "Exported
 resonator.gds" (with **Show in folder**), "Aligned A to B", "Undid Move". A
-note goes by itself after a few seconds; pointing at it keeps it. An error
-stays until you close it, with **Show messages** to see it in Messages. The
-status bar keeps the hint for the tool you are using.
+note goes by itself after a few seconds (an error after longer); pointing at
+it keeps it. A long note is cut to two lines: point at it for all of it, or
+use **Show messages** on an error to see it in Messages. The status bar keeps
+the hint for the tool you are using.
 
 The canvas glides to a place rather than jumping: **Fit** (F), the zoom
 buttons, and a problem chosen in Messages. Scrolling or panning takes over at

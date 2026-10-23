@@ -96,10 +96,29 @@ class _Host(QFrame):
         icons.bind(close, "minimize")
         close.clicked.connect(lambda _checked=False: hide())  # not the flag as an argument
         row.addWidget(close)
-        self.stack = QStackedWidget()
+        self.stack = _Stack()
         layout.addWidget(header)
         layout.addWidget(self.stack, 1)
         self.current: _Window | None = None
+
+
+class _Stack(QStackedWidget):
+    """The panels of one place, one shown at a time, sized by the one shown: a
+    stacked widget's own minimum is the largest of all its pages, so a hidden
+    panel (Commit, Git) would keep the one shown (Shapes, Messages) tall, and
+    the window too tall for a laptop (#219)."""
+
+    def minimumSizeHint(self) -> QSize:
+        current = self.currentWidget()
+        if current is None:
+            return QSize()
+        # At least a few rows, so that a panel never ends up a sliver.
+        rows = QSize(0, 3 * self.fontMetrics().height() + 2 * ISLAND_INSET)
+        return current.minimumSizeHint().expandedTo(current.minimumSize()).expandedTo(rows)
+
+    def sizeHint(self) -> QSize:
+        current = self.currentWidget()
+        return current.sizeHint() if current else QSize()
 
 
 class ToolWindows(QWidget):

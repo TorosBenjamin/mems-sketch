@@ -58,11 +58,16 @@ def test_a_note_says_what_happened_and_the_same_note_is_not_stacked(window):
     assert window.toasts.texts() == [] and not window.toasts.isVisible()
 
 
-def test_an_error_stays_until_closed_and_leads_to_the_messages(window):
+def test_an_error_stays_longer_and_leads_to_the_messages(window):
+    """#226: errors go by themselves too (they piled up), after longer."""
+    from mems_sketch.gui.toast import SECONDS
+
+    QCursor.setPos(0, 0)  # pointing at a note keeps it
     window.tool_windows.close("messages")
     window.report_error("width must be positive")
     (toast,) = window.toasts.toasts()
-    assert toast.kind == "error" and not toast._timer.isActive()  # no time limit
+    assert toast.kind == "error" and toast._timer.isActive()
+    assert toast._timer.interval() == SECONDS["error"] * 1000 > SECONDS["warning"] * 1000
     toast.button.click()
     assert window.tool_windows.is_open("messages")
     assert window.toasts.texts() == []
@@ -145,3 +150,16 @@ def test_a_rules_details_unfold(window, qtbot, moving):
     row = rules._rows.index(None)
     qtbot.waitUntil(lambda: not motion.running(rules, "unfold"), timeout=2000)
     assert rules.rules.rowHeight(row) == rules.details.sizeHint().height()
+
+
+def test_a_long_note_takes_two_lines_and_keeps_all_of_it(window, qtbot):
+    """#226: a long message is cut to two lines with "…"; its tooltip, the
+    toast's text and Messages have all of it."""
+    QCursor.setPos(0, 0)
+    long = "rounded corners cannot be applied into shapes; keep the modifier " * 4
+    toast = window.notify(long.strip(), "warning")
+    qtbot.waitUntil(lambda: toast.label.text() != long.strip(), timeout=2000)
+    label = toast.label
+    assert label.text().endswith("…") and toast.text() == long.strip()
+    assert label.toolTip() == long.strip()
+    assert label.heightForWidth(label.width()) <= 2 * label.fontMetrics().lineSpacing() + 4

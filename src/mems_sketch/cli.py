@@ -402,8 +402,12 @@ def _number(value: float | str) -> str:
 def _check(args: argparse.Namespace) -> int:
     project = load(args.project)
     name = _component(project, args.component)
-    checked = rules.checked_geometry(project, name, _values(project, name, args.set))
+    values = _values(project, name, args.set)
+    checked = rules.checked_geometry(project, name, values)
     violations = rules.check(project, checked, name)
+    violations = rules.name_shapes(
+        violations, project, name, rules.records_of(project, name, values)
+    )
     if args.json:
         print(
             json.dumps(
@@ -415,6 +419,8 @@ def _check(args: argparse.Namespace) -> int:
                         "layer": v.layer,
                         "message": v.message,
                         "bbox_um": v.bbox_um,
+                        "measured_um": v.measured,
+                        "shapes": list(v.shapes),
                         "values": v.values,
                         "waived": v.waived or None,
                     }
@@ -429,6 +435,8 @@ def _check(args: argparse.Namespace) -> int:
             if v.bbox_um:
                 x0, y0, x1, y1 = v.bbox_um
                 where = f" at ({(x0 + x1) / 2:.3f}, {(y0 + y1) / 2:.3f}) µm"
+            if v.shapes:
+                where += f" on {', '.join(v.shapes)}"
             state = f"waived ({v.waived})" if v.waived else v.severity
             print(f"{state}: {v.rule} {v.layer}: {v.message}{where}")
         errors, warnings = len(rules.errors(violations)), len(rules.warnings(violations))

@@ -240,7 +240,7 @@ the value (`2`); one with several, `name=value` separated by commas.
 | Separation | first, second | the layers are at least `value` apart and do not overlap |
 | Inside, not overlapping | two | one layer inside the other; the two never overlap |
 | Anchored | layer, anchor | every piece touches an anchor, so nothing floats away at release |
-| Release | layer, anchor | away from anchors no part is wider than twice the `undercut` (or the etch cannot free it: add release holes), and anchors are wider than that (or the undercut frees them too) |
+| Release | layer, anchor | away from anchors no part is wider than twice the `undercut` (or the etch cannot free it: add release holes), and anchors are wider than that (or the undercut frees them too). Widths allow for rounding onto the process grid, so a beam exactly twice the undercut wide passes at any angle; material only along an anchor's edge counts as the anchor's |
 
 A new project starts with minimum width and spacing on the device layer and
 the **anchored** and **release** rules (as warnings, with a `process.undercut`
@@ -251,7 +251,12 @@ under it: its **Note**, shown with its violations (e.g. why the rule exists),
 and where it comes from.
 
 Rules are checked on the final geometry after every change; **Messages**
-lists the violations and the canvas boxes them in red. More kinds can be
+lists the violations and the canvas boxes them in red. Each says what was
+measured against the limit (*1.5 µm wide < 2 µm*, *4.05 µm wide > 4 µm (2 × 2
+µm undercut)*), so a borderline case shows as one, and the shapes or placed
+components it is on (*on beam*). A part that does not release is told both
+ways out: narrow it or add release holes if it should move, anchor it if it
+should stay fixed (a pad, a wire, a frame). More kinds can be
 installed as plugins (`mems-sketch-cli rules` lists them).
 
 ### Processes from a library

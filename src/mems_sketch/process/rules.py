@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import inspect
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import entry_points
@@ -31,7 +32,7 @@ from mems_sketch.core.component import DBU_UM, Geometry
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.process import ERROR, WARNING, Rule
 from mems_sketch.core.project import Project
-from mems_sketch.core.region import Box, Region
+from mems_sketch.core.region import Box, IntPolygon, Region
 from mems_sketch.core.transform import Transform
 from mems_sketch.options import Option
 
@@ -44,6 +45,8 @@ class Finding:
 
     message: str
     bbox_um: tuple[float, float, float, float] | None = None
+    measured: float | None = None  # what was measured there (a width, a gap), in µm
+    outline: tuple[tuple[int, int], ...] = ()  # where, exactly (database units)
 
 
 class RuleKind(Protocol):
@@ -69,6 +72,9 @@ class Violation:
     # The waiver that accepts it (or the stale one): the component it is kept
     # with, and its box there.
     waiver: tuple[str, tuple[float, float, float, float]] | None = None
+    measured: float | None = None  # what the kind measured there, in µm (see Finding)
+    shapes: tuple[str, ...] = ()  # the shapes or placements it lies on (see name_shapes)
+    outline: tuple[tuple[int, int], ...] = ()  # where, exactly (database units)
 
     @property
     def is_error(self) -> bool:
@@ -408,10 +414,17 @@ def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> lis
     except Exception as exc:  # noqa: BLE001 - a bad value is the rule's problem
         return problem(f"{exc}: not checked")
     regions = [geometry.layers.get(n, Region()) for n in rule.layers]
-    key = (rule.kind, type(kind), repr(sorted(values.items())), tuple(r.digest() for r in regions))
+    # A kind that compares sizes may allow for rounding onto the process's grid.
+    extra = {"grid": project.process.grid_um} if _takes(kind, "grid") else {}
+    key = (
+        rule.kind,
+        type(kind),
+        repr(sorted((values | extra).items())),
+        tuple(r.digest() for r in regions),
+    )
     findings = _FINDINGS.get(key)
     if findings is None:
-        findings = kind().check(regions, DBU_UM, **values)
+        findings = kind().check(regions, DBU_UM, **values, **extra)
         if len(_FINDINGS) >= 256:
             _FINDINGS.clear()
         _FINDINGS[key] = findings
@@ -424,9 +437,72 @@ def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> lis
             kind=rule.kind,
             severity=rule.severity,
             values=values,
+            measured=f.measured,
+            outline=f.outline,
         )
         for f in findings
     ]
+
+
+def _takes(kind: type[RuleKind], name: str) -> bool:
+    """Whether a kind's check takes the keyword ``name`` (an optional extra)."""
+    try:
+        return name in inspect.signature(kind.check).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def records_of(project: Project, component: str, params: dict | None = None) -> dict:
+    """A component's nodes as built (path -> NodeRecord), for :func:`name_shapes`;
+    empty when it does not build (the violations are then reported unnamed)."""
+    from mems_sketch.engine import Engine
+
+    try:
+        return Engine().load(project).build(project._target(component), params).records()
+    except Exception:  # noqa: BLE001 - see above
+        return {}
+
+
+def name_shapes(
+    violations: Sequence[Violation], project: Project, component: str, records: Mapping
+) -> list[Violation]:
+    """The violations, each with the top-level shapes or placements it lies on, by
+    name (``records``: the component's nodes as built, path -> NodeRecord): which
+    shape to change."""
+    found = project.definition(component)
+    if found is None:
+        return list(violations)
+    shapes = found[0].shapes
+    nodes = []
+    for path, record in records.items():
+        if len(path) == 1 and path[0][0] == 0 and path[0][1] < len(shapes):
+            node = shapes[path[0][1]]
+            nodes.append((node.name or node.kind, record.geometry))
+    named = []
+    for violation in violations:
+        if violation.bbox_um is None or violation.shapes:
+            named.append(violation)
+            continue
+        if violation.outline:
+            where = Region(IntPolygon(list(violation.outline)))
+        else:
+            x0, y0, x1, y1 = (round(c / DBU_UM) for c in violation.bbox_um)
+            where = Region(Box(x0, y0, x1, y1))
+        # Inside it, clear of rounding onto the grid (the shapes are as built, the
+        # violation as checked): a shape that only touches it is not on it.
+        inside = where.sized(-2)
+        if inside.is_empty():  # a sliver: whatever it touches
+            inside = where.sized(2)
+        layers = violation.layer.split(", ")
+        on = []
+        for name, geometry in nodes:
+            for layer in layers:
+                region = geometry.layers.get(layer)
+                if region is not None and not (region & inside).is_empty():
+                    on.append(name)
+                    break
+        named.append(dataclasses.replace(violation, shapes=tuple(dict.fromkeys(on))))
+    return named
 
 
 def errors(violations: Sequence[Violation]) -> list[Violation]:

@@ -1689,6 +1689,8 @@ class MessagesPanel(QListWidget):
         for v in sorted(violations, key=lambda v: bool(v.waived)):  # waived ones last
             x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
             where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
+            if v.shapes:
+                where += f" on {', '.join(v.shapes)}"
             if v.waived:
                 kept = v.waiver[0] if v.waiver else component
                 title = "Waived" if kept == component else f"Waived in {kept}"

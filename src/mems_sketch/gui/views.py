@@ -66,7 +66,7 @@ def _check_job(build, grid: float, chord: float, project, component: str) -> lis
     except (RuntimeError, OSError):  # no process to be had (e.g. a script without a main guard)
         _executors["process"] = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rule-check")
         future = _checks().submit(rules.check, project, geometry, component)
-    return future.result()
+    return rules.name_shapes(future.result(), project, component, build.records())
 
 
 def _checks() -> Executor:
@@ -203,7 +203,9 @@ class ComponentView(QWidget):
         if drawn.point_count() <= BACKGROUND_CHECK_POINTS:
             try:
                 checked = build.output(process.grid_um, process.chord_um).geometry
-                self.violations = results.check(checked, self.component)
+                found = results.check(checked, self.component)
+                project = self.document.project
+                self.violations = rules.name_shapes(found, project, self.component, build.records())
             except Exception as exc:  # noqa: BLE001 - shown in the messages panel
                 self.errors.append(str(exc))
             return

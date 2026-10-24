@@ -295,6 +295,8 @@ class DesignTools:
         project = self.session.project
         geometry = rules.checked_geometry(project, name, params or {})
         violations = rules.check(project, geometry, name)
+        records = rules.records_of(project, name, params or {})
+        violations = rules.name_shapes(violations, project, name, records)
         return {
             "component": name,
             "errors": len(rules.errors(violations)),
@@ -426,6 +428,10 @@ def _violation(v) -> dict[str, Any]:
     }
     if v.bbox_um:
         entry["bbox_um"] = [_round(x) for x in v.bbox_um]
+    if v.shapes:
+        entry["shapes"] = list(v.shapes)
+    if v.measured is not None:
+        entry["measured_um"] = _round(v.measured)
     if v.waived:
         entry["waived"] = v.waived
     return entry

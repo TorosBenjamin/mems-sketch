@@ -90,7 +90,7 @@ _LABELS = {
     "y0": "y₀",
     "x1": "x₁",
     "y1": "y₁",
-    "mirror_x": "Flip top ↔ bottom",
+    "mirror_x": "Mirror about x axis",
     "keep_unmapped": "Keep unmapped layers",
     "inner_radius": "Inner radius",
     "outer_radius": "Outer radius",
@@ -217,13 +217,11 @@ FIELD_TIPS = {
     ("connection", "inner_radius"): "Where it turns in, between the beams (the usual case); "
     "0: sharp",
     ("connection", "width"): "For an end whose port has no width",
-    ("mirror", "axis"): "left ↔ right: across the vertical line at x; top ↔ bottom: across "
+    ("mirror", "axis"): "x: mirrors x, across the vertical line at x; y: mirrors y, across "
     "the horizontal line at y; both: four copies",
 }
 # The choices of a list in words: (kind, field) -> {value: text}.
-LITERAL_TEXTS = {
-    ("mirror", "axis"): {"x": "left ↔ right", "y": "top ↔ bottom", "both": "both"},
-}
+LITERAL_TEXTS: dict[tuple[str, str], dict[str, str]] = {}
 # Fields measured in µm: they show it at their end.
 LENGTH_FIELDS = {
     "radius",

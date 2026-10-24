@@ -239,7 +239,7 @@ its points, stay where they are.
   centred). The default is in the text's colour with *default* beside it.
 - **Lengths show µm** at the end of their field.
 - **Fields that do nothing** with the others as they are set are greyed out:
-  a mirror's line at y when it mirrors left ↔ right, a route's radius with
+  a mirror's line at y when it mirrors x, a route's radius with
   sharp bends.
 - **The layer** is picked from a list with each layer's colour: the layers
   relative to the component's level first, each saying where it lands

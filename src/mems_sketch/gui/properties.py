@@ -805,7 +805,8 @@ class PropertyEditor(QScrollArea):
             return {field: value for field, value in values.items() if value is not None}
 
         self._editors["params"] = read
-        box.setVisible(bool(shown))  # e.g. an imported cell has no parameters
+        if not shown:  # e.g. an imported cell has no parameters
+            box.hide()  # (showing it here, before it has a parent, would open it as a window)
         return box
 
     def _align_editor(self, node: Shape, path: NodePath) -> QWidget:
@@ -842,9 +843,13 @@ class PropertyEditor(QScrollArea):
             )
             return button
 
+        # Point first, To second, or the other way round: nothing applies until To is chosen
+        # (applying before would find nothing to align to and untick the section, #288).
+        own.activated.connect(lambda _index: self.apply() if target.currentText().strip() else None)
+        own.setEnabled(editable)
         form.addRow(
             "Point",
-            _with_button(self._applies(own), picker("point", "Pick the point on the canvas")),
+            _with_button(own, picker("point", "Pick the point on the canvas")),
         )
         explain = (
             "Moves the shape so that its *Point* lands on *To* (another shape's point), "
@@ -1130,6 +1135,7 @@ class PropertyEditor(QScrollArea):
     def _show_interface(self) -> None:
         """What a component offers whoever places it, as text: its description,
         public parameters and declared points (for one that cannot be edited)."""
+        self._editors = {}  # the fields shown before are gone
         self.header_context.setText("")
         name = self.document.active
         definition = self.document.definition_of(name)
@@ -1233,6 +1239,7 @@ class PropertyEditor(QScrollArea):
     def _show_component(self) -> None:
         """Nothing selected: the open component's own settings (its description),
         when it is one of the project's, then how to see a shape's."""
+        self._editors = {}  # the fields shown before are gone
         name = self.document.active
         if self.document.read_only or name not in self.document.project.components:
             self._show_placeholder("Select a shape to edit its properties.")
@@ -1287,6 +1294,7 @@ class PropertyEditor(QScrollArea):
         self.header_context.setText("Component")
 
     def _show_placeholder(self, text: str) -> None:
+        self._editors = {}  # the fields shown before are gone
         self.header_context.setText("")
         body = QWidget()
         body.setObjectName("properties-body")  # the island's colour, as with a shape shown
@@ -1341,6 +1349,8 @@ class PropertyEditor(QScrollArea):
         try:
             node = self._collect()
         except Exception as exc:  # noqa: BLE001 - reported, as Enter would
+            if _gone(exc):
+                return
             message = _message(exc)
             self.error.emit(message)
             QTimer.singleShot(0, lambda: self._rejected(path, at, left, message))
@@ -1355,6 +1365,8 @@ class PropertyEditor(QScrollArea):
         try:
             self.document.nodes.replace(path, node)
         except Exception as exc:  # noqa: BLE001 - reported to the user
+            if _gone(exc):
+                return
             message = _message(exc)
             self.error.emit(message)
             self._rejected(path, at, left, message)
@@ -1373,6 +1385,8 @@ class PropertyEditor(QScrollArea):
         try:
             self.document.nodes.replace(path, self._collect())
         except Exception as exc:  # noqa: BLE001 - reported to the user
+            if _gone(exc):
+                return
             message = _message(exc)
             self.error.emit(message)
             self._rejected(path, at, at, message)
@@ -1383,11 +1397,21 @@ class PropertyEditor(QScrollArea):
     def _rejected(
         self, path: NodePath, at: int | None, culprit: int | None = None, message: str = ""
     ) -> None:
-        """A value was refused: show the node as it is (the value stored, not the
-        one typed), so the refused text cannot block the next edit, and mark the
-        field it was typed in (field number ``culprit``) with why."""
+        """A value was refused: show the node as it is (the value stored), and mark
+        the field it was typed in (field number ``culprit``) with why. If that field
+        still has the focus, the refused text stays in it to be corrected; Esc or
+        leaving it puts the stored value back, so it cannot block the next edit."""
         if self.path != path:
             return
+        body = self.widget()
+        fields = _focusable(body) if body is not None else []
+        typed = (
+            fields[culprit].text()
+            if culprit is not None
+            and culprit < len(fields)
+            and isinstance(fields[culprit], ValueEdit)
+            else None
+        )
         self.show_node(path)
         self._focus_field(path, at)
         body = self.widget()
@@ -1397,6 +1421,8 @@ class PropertyEditor(QScrollArea):
             field.setProperty("invalid", True)
             if isinstance(field, ValueEdit):
                 field.set_help(f"Not applied: {message}")
+                if typed is not None and culprit == at:  # still being edited: keep the text
+                    field.reject(typed)
             else:
                 field.setToolTip(f"Not applied: {message}")
             field.style().unpolish(field)
@@ -1669,6 +1695,12 @@ def _limit(limit, relation: str, values: dict[str, float]) -> str:
         with contextlib.suppress(ValueError):
             text += f" = {evaluate(limit, values):g}"
     return text
+
+
+def _gone(exc: Exception) -> bool:
+    """Whether ``exc`` says a field of a form built again meanwhile is gone (#292):
+    nothing the user did wrong, and the new form shows the node as it is."""
+    return isinstance(exc, RuntimeError) and "already deleted" in str(exc)
 
 
 def _message(exc: Exception) -> str:

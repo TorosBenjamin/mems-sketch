@@ -56,7 +56,9 @@ def make_action(
 ) -> QAction:
     """An action calling ``slot``, with its shortcut in the tooltip, added to ``menu``."""
     action = QAction(text, parent)
-    action.triggered.connect(slot)
+    # only a checkable action passes its state on: Qt's ``checked`` would land in
+    # a slot's optional first argument (``search(scope)``) otherwise
+    action.triggered.connect(lambda checked: slot(checked) if action.isCheckable() else slot())
     if shortcut is not None:
         action.setShortcut(QKeySequence(shortcut))
     if icon is not None:
@@ -241,6 +243,9 @@ class Actions:
         self.search.setToolTip("Search everywhere (press Shift twice)")
         self.find = act("Find action…", w.find_action, "Ctrl+Shift+A", help_menu, "search")
         act("Keyboard shortcuts", lambda: w.show_settings("Keymap"), None, help_menu)
+        help_menu.addSeparator()
+        act("User guide", w.open_user_guide, None, help_menu, "help")
+        act("About MEMS Sketch", w.show_about, None, help_menu)
 
         self.root_menus = [file, edit, tools_menu, insert, operations, view, help_menu]
         self.root = QMenu(w)  # the ☰ button's menu

@@ -320,7 +320,9 @@ class PropertyEditor(QScrollArea):
     def show_node(self, path: NodePath | None) -> None:
         self.path = path
         if self.document.active is None:  # a library of processes only (#285)
-            self._show_placeholder("This library has no components: its processes are in the Process tab.")
+            self._show_placeholder(
+                "This library has no components: its processes are in the Process tab."
+            )
             return
         if path is None and self.hide_implementation:
             self._show_interface()

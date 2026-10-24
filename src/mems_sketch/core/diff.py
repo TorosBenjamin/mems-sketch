@@ -103,7 +103,32 @@ def _process(old: Project, new: Project) -> list[Change]:
         elif before[name] != after[name]:
             detail = f"{_short(before[name])} → {_short(after[name])}"
             changes.append(Change(CHANGED, PROCESS, "constant", name, (detail,)))
+    if old.process_name != new.process_name:
+        detail = f"{old.process_name} → {new.process_name}"
+        changes.append(Change(CHANGED, PROCESS, "process", "", (detail,)))
+    old_rules, new_rules = old.process.rules, new.process.rules
+    for name in _union(old_rules, new_rules):  # changed (or overridden) and added rules (#290)
+        before, after = old_rules.get(name), new_rules.get(name)
+        if before is None or after is None:
+            rule = after or before
+            what = f"{rule.kind} on {', '.join(rule.layers)}"
+            changes.append(
+                Change(ADDED if before is None else REMOVED, PROCESS, "rule", name, (what,))
+            )
+            continue
+        details = list(_fields(_rule_data(before), _rule_data(after)))
+        if old.reasons.get(name) != new.reasons.get(name):
+            details.append("reason changed")
+        if details:
+            changes.append(Change(CHANGED, PROCESS, "rule", name, tuple(details)))
     return changes
+
+
+def _rule_data(rule) -> dict[str, Any]:
+    """A rule's fields, its values as fields of their own (``value 2 → 3``)."""
+    data = {"kind": rule.kind, "layers": ", ".join(rule.layers), **rule.values}
+    data.update(severity=rule.severity, enabled=rule.enabled, message=rule.message)
+    return data
 
 
 def _layer_data(layer) -> dict[str, Any]:

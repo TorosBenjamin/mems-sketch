@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QMessageBox,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -184,9 +185,24 @@ class RulesPanel(_Panel):
 
     def _process_chosen(self, index: int) -> None:
         name = self.process.itemText(index)
-        if name != self.document.project.process_name and not self._guard(
-            lambda: self.document.process.use(name)
-        ):
+        current = self.document.project.process_name
+        if name == current:
+            return
+        lost = self.document.process.changes_lost_by_switching()
+        if lost:  # the overrides and their reasons go with the process (#291)
+            answer = QMessageBox.question(
+                self,
+                "Use another process",
+                f"Using {name} drops your {lost} change{'s' if lost != 1 else ''} to "
+                f"{current}'s rules and constants, with their reasons.\n\n"
+                "Undo brings them back.",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                self.refresh()  # the list shows the process in use again
+                return
+        if not self._guard(lambda: self.document.process.use(name)):
             self.refresh()
 
     # -- showing -------------------------------------------------------------

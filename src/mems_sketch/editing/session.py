@@ -345,7 +345,10 @@ class EditSession:
         return self._engine.load(self.project)
 
     def exists(self, component: str) -> bool:
-        """Whether ``component`` (as written at project level) can be opened."""
+        """Whether ``component`` (as written at project level) can be opened. None
+        (nothing to show) is what a library of processes only opens."""
+        if component is None:
+            return self.project.default_component() is None
         try:
             self.project.qualify(component)
             return True
@@ -359,7 +362,10 @@ class EditSession:
 
     def definition_of(self, component: str) -> ComponentDef:
         """A component's definition; for an imported cell, one listing its numeric
-        parameters (none)."""
+        parameters (none). With no component (a library of processes only), an
+        empty one, which cannot be edited."""
+        if component is None:
+            return ComponentDef.model_construct(name="", shapes=[], parameters=[])
         found = self.project.definition(self.project.qualify(component))
         if found is not None:
             return found[0]

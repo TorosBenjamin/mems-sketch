@@ -1447,10 +1447,11 @@ class MainWindow(QMainWindow):
         project = self.document.project
         where = str(self.document.path) if self.document.path else "not saved"
         star = "*" if self.document.dirty else ""
-        doing = "viewing" if self.document.read_only else "editing"
-        self.setWindowTitle(
-            f"{star}{project.name} — {doing} {self.document.active} — {where} — MEMS Sketch"
-        )
+        if self.document.active is None:  # a library of processes only
+            doing = "processes"
+        else:
+            doing = f"{'viewing' if self.document.read_only else 'editing'} {self.document.active}"
+        self.setWindowTitle(f"{star}{project.name} — {doing} — {where} — MEMS Sketch")
         self.project_label.setText(f"{star}{project.name}")
         self.project_label.setToolTip(where)
 
@@ -2186,6 +2187,8 @@ class MainWindow(QMainWindow):
             self.tree.collapsed = {}
             self.refresh()
             self.restore_editor_state()
+            if self.document.active is None:  # a library of processes only: edit them
+                self.open_process()
         finally:
             self._restoring = False
 

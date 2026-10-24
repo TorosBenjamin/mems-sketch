@@ -246,7 +246,9 @@ class ProcessEdits(Commands):
             raise ValueError("a waiver needs a reason")
         if violation.bbox_um is None:
             raise ValueError("only a violation with a place can be waived")
-        geometry = self.session.results.geometry(component=component)
+        # The geometry the check sees (on the grid, curves within tolerance), as the
+        # check compares it: the editor's own can differ where curves are (#286).
+        geometry = self.session.results.checked(component)
         waiver = Waiver(
             rule=violation.rule,
             box=tuple(violation.bbox_um),

@@ -405,7 +405,23 @@ def rule_data(rule: Rule) -> dict[str, Any]:
 
 
 def rule_from_data(name: str, entry: dict[str, Any]) -> Rule:
-    values = {str(k): _value(v) for k, v in entry.items() if k not in RULE_FIELDS}
+    if not isinstance(entry, dict):
+        raise ProjectFormatError(f"rule '{name}': expected its fields (kind, layers, …)")
+    values = {}
+    for key, value in entry.items():
+        if key in RULE_FIELDS:
+            continue
+        if value is None:  # "{value: 2, 5}" reads as a key "5" with no value
+            raise ProjectFormatError(
+                f"rule '{name}': '{key}' has no value (inside {{ }}, a comma starts a new "
+                "key: put text with commas in quotes)"
+            )
+        try:
+            values[str(key)] = _value(value)
+        except (TypeError, ValueError):
+            raise ProjectFormatError(
+                f"rule '{name}': '{key}' must be a number, text, yes/no or a list, not {value!r}"
+            ) from None
     return Rule(
         name=str(name),
         kind=str(entry.get("kind", "")),
@@ -592,7 +608,7 @@ def _contents(
         path = folder / str(rel) / PROCESS_FILE
         try:
             processes[str(name)] = process_from_data(_read(path) or {})
-        except ProjectFormatError as error:
+        except (ProjectFormatError, ValueError, TypeError) as error:  # say which file
             raise ProjectFormatError(f"{path}: {error}") from None
 
     def open_component(rel: Any, where: Path) -> tuple[Any, Path]:

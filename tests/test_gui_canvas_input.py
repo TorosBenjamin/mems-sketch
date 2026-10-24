@@ -191,3 +191,29 @@ def test_by_direction_the_left_way_touches(shapes):
     shapes.select_box(120, -10, 90, 10, additive=False)  # to the left: touching
     assert selected(shapes) == {"beam"}
     assert not shapes.box_touches(0, 10) and shapes.box_touches(10, 0)
+
+
+def test_panning_off_a_shape_with_two_fingers_takes_its_name_away(window, qtbot):
+    """The view moves under a still cursor: what is under it changes without a
+    mouse move, and the hover follows."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QMouseEvent
+
+    window.document.nodes.add(RectShape(name="bar", layer="device", x0=0, y0=0, x1=100, y1=20))
+    canvas = window.canvas
+    canvas.fit()
+    where = QPointF(canvas.viewport().rect().center())
+    move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        where,
+        canvas.viewport().mapToGlobal(where),
+        NONE,
+        NONE,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    QApplication.sendEvent(canvas.viewport(), move)
+    qtbot.waitUntil(lambda: canvas.hover_label is not None, timeout=2000)
+    assert window._hovered is not None
+    wheel(canvas, angle=(0, 400), pixels=(0, 300), phase=Qt.ScrollPhase.ScrollUpdate)
+    qtbot.waitUntil(lambda: canvas.hover_label is None, timeout=2000)
+    assert window._hovered is None

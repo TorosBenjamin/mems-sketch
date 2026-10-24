@@ -77,6 +77,11 @@ SCROLLING = {  # canvas/scrolling: value -> label
     "pan": "Scrolling pans (Ctrl zooms)",
 }
 
+EMPTY_DRAG = {  # canvas/empty_drag: value -> label
+    "box": "Draws a selection box",
+    "pan": "Pans the view (Shift: a selection box)",
+}
+
 BOX_SELECTION = {  # editor/box_selection: value -> label
     "touching": "What the box touches",
     "inside": "What is entirely inside the box",
@@ -237,6 +242,18 @@ SETTINGS: tuple[Setting, ...] = (
         "other.",
         choices=SCROLLING,
         keywords=("touchpad", "trackpad", "pinch", "pan", "wheel", "mouse"),
+    ),
+    Setting(
+        "canvas/empty_drag",
+        "box",
+        "Dragging on empty canvas",
+        "Canvas",
+        "Navigation",
+        "In the Select tool. Pan suits a touchpad's tap-and-drag, which reaches the app "
+        "as a left-button drag; Shift+drag then draws the selection box. Panning also "
+        "works with the middle button, Space+drag, the Hand tool and two fingers.",
+        choices=EMPTY_DRAG,
+        keywords=("touchpad", "trackpad", "tap", "drag", "pan", "box", "select"),
     ),
     Setting(
         "canvas/zoom_step",

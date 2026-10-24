@@ -193,6 +193,77 @@ def test_by_direction_the_left_way_touches(shapes):
     assert not shapes.box_touches(0, 10) and shapes.box_touches(10, 0)
 
 
+def drag_left(canvas, start, end, modifiers=Qt.KeyboardModifier.NoModifier):
+    """A left-button drag in viewport pixels, as a touchpad's tap-and-drag sends."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QMouseEvent
+
+    left = Qt.MouseButton.LeftButton
+    steps = [
+        start,
+        *[
+            (start[0] + (end[0] - start[0]) * k / 5, start[1] + (end[1] - start[1]) * k / 5)
+            for k in range(1, 6)
+        ],
+    ]
+    for index, (x, y) in enumerate(steps):
+        kind = QEvent.Type.MouseButtonPress if index == 0 else QEvent.Type.MouseMove
+        pos = QPointF(x, y)
+        event = QMouseEvent(kind, pos, canvas.viewport().mapToGlobal(pos), left, left, modifiers)
+        QApplication.sendEvent(canvas.viewport(), event)
+    pos = QPointF(*end)
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        pos,
+        canvas.viewport().mapToGlobal(pos),
+        left,
+        NONE,
+        modifiers,
+    )
+    QApplication.sendEvent(canvas.viewport(), event)
+
+
+@pytest.fixture
+def selected_bar(window):
+    path = window.document.nodes.add(RectShape(name="bar", layer="device", x0=0, y0=0, x1=10, y1=4))
+    window.canvas.fit()
+    window.canvas.zoom_by(0.2)  # empty canvas all around it
+    window.tree.select_paths([path])
+    return path
+
+
+def test_dragging_empty_canvas_draws_a_box_by_default(window, selected_bar):
+    canvas = window.canvas
+    before = view_of(canvas)
+    drag_left(canvas, (20, 20), (120, 90))
+    assert view_of(canvas) == before and window.selection == []  # a box over nothing
+
+
+def test_dragging_empty_canvas_pans_when_set_and_keeps_the_selection(window, selected_bar):
+    canvas = window.canvas
+    window.settings.set("canvas/empty_drag", "pan")
+    assert "pan" in window.tool.hint()
+    _, h, v = view_of(canvas)
+    drag_left(canvas, (20, 20), (120, 90))
+    _, h2, v2 = view_of(canvas)
+    assert (h2, v2) == (h - 100, v - 70)
+    assert window.selection == [selected_bar] and not window.tool.busy
+
+
+def test_a_click_on_empty_canvas_still_clears_the_selection_when_set_to_pan(window, selected_bar):
+    window.settings.set("canvas/empty_drag", "pan")
+    drag_left(window.canvas, (20, 20), (20, 20))
+    assert window.selection == []
+
+
+def test_shift_drag_draws_the_box_when_set_to_pan(window, selected_bar):
+    canvas = window.canvas
+    window.settings.set("canvas/empty_drag", "pan")
+    before = view_of(canvas)
+    drag_left(canvas, (20, 20), (120, 90), Qt.KeyboardModifier.ShiftModifier)
+    assert view_of(canvas) == before
+
+
 def test_panning_off_a_shape_with_two_fingers_takes_its_name_away(window, qtbot):
     """The view moves under a still cursor: what is under it changes without a
     mouse move, and the hover follows."""

@@ -1485,11 +1485,26 @@ class LayoutCanvas(QGraphicsView):
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
             self.view_changed.emit()
+            self._cursor_over_moved_view(event.position(), event.modifiers())
             return
         delta = event.angleDelta()
         notches = (delta.y() or delta.x()) / 120  # a touchpad sends a fraction of one
         if notches:
             self._zoom_by_at(self.options["zoom_step"] ** notches, event.position())
+            self._cursor_over_moved_view(event.position(), event.modifiers())
+
+    def _cursor_over_moved_view(self, pos: QPointF, modifiers) -> None:
+        """The view moved under a cursor that did not (two fingers panning, a wheel
+        zooming): what is under it changed, so tell the tools and the hover, as a
+        mouse move would. Otherwise a shape's name stays up after panning off it."""
+        self._cursor_at = pos
+        p = self.mapToScene(pos.toPoint())
+        x = min(max(p.x(), WORLD.left()), WORLD.right())
+        y = min(max(p.y(), WORLD.top()), WORLD.bottom())
+        left = self._left_down and bool(QApplication.mouseButtons() & Qt.MouseButton.LeftButton)
+        self._pending_move = (x, y, modifiers, left)
+        if not self._move_timer.isActive():
+            self._move_timer.start(1)  # with the next frame, not for every scroll step
 
     def viewportEvent(self, event) -> bool:
         """A pinch on a touchpad (macOS, and Linux with libinput) zooms about the
@@ -1501,6 +1516,7 @@ class LayoutCanvas(QGraphicsView):
                 # in the view; the position on the screen is right everywhere.
                 at = self.viewport().mapFromGlobal(event.globalPosition())
                 self._zoom_by_at(1.0 + event.value(), at)
+                self._cursor_over_moved_view(at, event.modifiers())
                 return True
             if event.gestureType() == Qt.NativeGestureType.SmartZoomNativeGesture:
                 self.fit(animated=True)  # a two-finger double tap

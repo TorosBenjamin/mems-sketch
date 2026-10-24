@@ -34,7 +34,7 @@ from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import _Panel
-from mems_sketch.gui.value_edit import ValueEdit
+from mems_sketch.gui.value_edit import ValueEdit, ask_parameter_name
 
 # ("declared", name) / ("port", name) / ("default", name) / (shape, name)
 KEY_ROLE = Qt.ItemDataRole.UserRole + 20
@@ -419,6 +419,7 @@ class PointsPanel(_Panel):
         for edit in (x, y):
             edit.returnPressed.connect(apply)
             edit.scrub_finished.connect(apply)
+            self._offer_parameters(edit, f"{name}_{edit.prefix}", apply)
         description.editingFinished.connect(apply)
         layout.addRow("At", at)
         layout.addRow("X", x)
@@ -426,6 +427,23 @@ class PointsPanel(_Panel):
         layout.addRow("Description", description)
         layout.addRow("Position", QLabel(_position(self._positions.get(("declared", name)))))
         self.at_edit, self.x_edit, self.y_edit = at, x, y
+
+    def _offer_parameters(self, edit: ValueEdit, suggestion: str, apply) -> None:
+        """The field's "Make a parameter from this value": the parameter is made with
+        the value as its default, then the field uses it."""
+
+        def make(value) -> None:
+            taken = {p.name for p in self.document.active_definition.parameters}
+            try:
+                name = ask_parameter_name(self, self.document.active, taken, value, suggestion)
+            except ValueError as exc:
+                self.error.emit(str(exc))
+                return
+            if name is not None and self._guard(lambda: self.document.parameters.set(name, value)):
+                edit.setText(name)
+                apply()
+
+        edit.make_parameter.connect(make)
 
     def _port_form(self, layout: QFormLayout, name: str) -> None:
         port = next(p for p in self.document.active_definition.ports if p.name == name)
@@ -504,6 +522,7 @@ class PointsPanel(_Panel):
         for edit in (x, y):
             edit.returnPressed.connect(apply)
             edit.scrub_finished.connect(apply)
+            self._offer_parameters(edit, f"{name}_{edit.prefix}", apply)
         width.editingFinished.connect(apply)
         description.editingFinished.connect(apply)
         layout.addRow("At", at)

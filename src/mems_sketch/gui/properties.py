@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -63,7 +62,12 @@ from mems_sketch.gui.canvas import layer_color
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import component_icon, parse_value, read_only_kind, swatch_icon
 from mems_sketch.gui.settings import APPLICATION, ORGANIZATION
-from mems_sketch.gui.value_edit import ElidedLineEdit, ExpandedEdit, ValueEdit
+from mems_sketch.gui.value_edit import (
+    ElidedLineEdit,
+    ExpandedEdit,
+    ValueEdit,
+    ask_parameter_name,
+)
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
 _SPECIAL = {
@@ -129,7 +133,33 @@ MODIFIER_LABELS = {  # per kind, then per field
         "margin": "Margin",
         "keep_out": "Keep clear of",
         "keep_out_margin": "Keep-out margin",
+        "even_rim": "Even rim",
     },
+}
+# What a field does, behind a "?" by its name: (kind, field) -> explanation.
+FIELD_HELP = {
+    ("perforate", "grid"): "*square*: rows of holes straight above each other. *hex*: every "
+    "other row shifted by half a pitch, rows pitch × √3/2 apart.",
+    ("perforate", "pitch"): "From one hole's centre to the next along a row. The webs "
+    "between holes are *pitch − hole size* wide.",
+    ("perforate", "row_pitch"): "From one row's centre to the next. Empty: the pitch (on a "
+    "hex grid, pitch × √3/2).",
+    ("perforate", "hole_size"): "How wide each hole is. Bigger holes make the webs "
+    "(pitch − hole size) narrower.",
+    ("perforate", "hole_height"): "How high each hole is. Empty: as high as it is wide.",
+    ("perforate", "corner_radius"): "How round the holes' corners are. Empty: half the "
+    "shorter side, so round holes; 0: square holes.",
+    ("perforate", "margin"): "The narrowest the solid rim between the outline and the holes "
+    "gets. A hole goes only where it fits whole, so the rim comes out wider where the "
+    "holes do not fill the shape exactly.\n\nFor a rim as wide as the webs, tick *Even rim*.",
+    ("perforate", "keep_out"): "Shapes the holes keep clear of, by name: an anchor, or "
+    "where a spring lands on the plate.",
+    ("perforate", "keep_out_margin"): "How far the holes stay from the shapes to keep clear "
+    "of. Empty: the margin.",
+    ("perforate", "x"): "A hole's centre goes here. Empty: the grid is centred on the shape.",
+    ("perforate", "even_rim"): "Every web and the rim the same width: the pitch stretches a "
+    "little, along x and y, so that the holes fill the shape's box. Square grid only; the "
+    "margin and the hole position are then not used.",
 }
 MODIFIER_TIPS = {
     "array": "Copies on a grid; i and j are each copy's column and row",
@@ -248,7 +278,7 @@ def default_hint(kind: str, field: str, model, scope: dict[str, float]) -> str:
         if field == "keep_out_margin":
             return shown(value("margin"), "margin")
         if field in ("x", "y"):
-            return "centred"
+            return "auto"
     return ""
 
 
@@ -571,6 +601,7 @@ class PropertyEditor(QScrollArea):
         edit.returnPressed.connect(self.apply)
         edit.scrubbed.connect(self._preview)
         edit.scrub_finished.connect(self.apply)  # one step to undo, however long the drag
+        edit.setProperty("field", field.rpartition(":")[2])  # the name a new parameter gets
         edit.make_parameter.connect(lambda v, e=edit: self._make_parameter(e, v))
         edit.setReadOnly(self.document.read_only)
         self._editors[field] = edit.value
@@ -608,12 +639,13 @@ class PropertyEditor(QScrollArea):
                     hint = default_hint(kind, name, model, self._scope) if value is None else ""
                     if optional and value is None:
                         edit.setPlaceholderText(hint)
-                    if pair in LENGTH_PAIRS and not hint.isalpha():  # "centred" needs the room
+                    if pair in LENGTH_PAIRS and not hint.isalpha():  # a word needs the room
                         edit.set_unit("µm")
                     line.addWidget(edit, 1)
                     widgets[name] = edit
                     done.add(name)
-                form.addRow(label, row)
+                help_text = FIELD_HELP.get((kind, field))
+                form.addRow(_label_with_help(label, help_text) if help_text else label, row)
                 continue
             label = labels.get(field) or _LABELS.get(field, field.replace("_", " ").capitalize())
             value = getattr(model, field)
@@ -625,9 +657,13 @@ class PropertyEditor(QScrollArea):
                 if hint:
                     widget.setPlaceholderText(hint)
             tip = FIELD_TIPS.get((kind, field))
-            shown = _label(label)
+            help_text = FIELD_HELP.get((kind, field))
+            shown = _label_with_help(label, help_text) if help_text else _label(label)
             if tip:
-                widget.setToolTip(tip)
+                if isinstance(widget, ValueEdit):
+                    widget.set_help(tip)
+                else:
+                    widget.setToolTip(tip)
                 shown.setToolTip(tip)
             widgets[field] = widget
             form.addRow(shown, widget)
@@ -635,18 +671,15 @@ class PropertyEditor(QScrollArea):
 
     def _make_parameter(self, edit: ValueEdit, value) -> None:
         """Make a parameter with this value as its default, and use it in the field."""
-        suggestion = "param"
-        name, ok = QInputDialog.getText(
-            self,
-            "Make a parameter",
-            f"Name of the new parameter of {self.document.active} (default {_format(value)}):",
-            text=suggestion,
-        )
-        name = name.strip()
-        if not ok or not name:
+        taken = {p.name for p in self.document.active_definition.parameters}
+        try:
+            name = ask_parameter_name(
+                self, self.document.active, taken, value, edit.property("field") or "param"
+            )
+        except ValueError as exc:
+            self.error.emit(str(exc))
             return
-        if not name.isidentifier():
-            self.error.emit(f"'{name}' is not a valid parameter name")
+        if name is None:
             return
         edit.setText(name)
         try:
@@ -753,9 +786,13 @@ class PropertyEditor(QScrollArea):
             if field in component.internal:
                 label = _label(f"{field} (internal)")
                 widget.setProperty("invalid", True)
-                widget.setToolTip(
+                internal = (
                     f"'{field}' is internal to {node.component}: clear it (it cannot be set here)"
                 )
+                if isinstance(widget, ValueEdit):
+                    widget.set_help(internal)
+                else:
+                    widget.setToolTip(internal)
             elif info.description:
                 label = _label_with_help(field, info.description)
                 unit = re.search(r"\((µm|nm|mm|°)\)", info.description)
@@ -975,6 +1012,15 @@ class PropertyEditor(QScrollArea):
             k[len(key) :]: self._editors.pop(k) for k in list(self._editors) if k.startswith(key)
         }
         layout.addLayout(form)
+        if kind == "perforate":  # an even rim places the holes itself
+
+            def update_rim(*_) -> None:
+                even = widgets["even_rim"].isChecked()
+                for field in ("margin", "x", "y"):
+                    _set_active(form, widgets[field], not even)
+
+            widgets["even_rim"].toggled.connect(update_rim)
+            update_rim()
         if kind == "mirror":  # a line or point given by "about" replaces axis, x and y
             about = widgets["about"].findChild(QComboBox) or widgets["about"]
             axis = widgets["axis"]
@@ -1351,7 +1397,10 @@ class PropertyEditor(QScrollArea):
         if culprit is not None and culprit < len(fields) and message:
             field = fields[culprit]
             field.setProperty("invalid", True)
-            field.setToolTip(f"Not applied: {message}")
+            if isinstance(field, ValueEdit):
+                field.set_help(f"Not applied: {message}")
+            else:
+                field.setToolTip(f"Not applied: {message}")
             field.style().unpolish(field)
             field.style().polish(field)
 

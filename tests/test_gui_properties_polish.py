@@ -196,7 +196,7 @@ def test_empty_optional_fields_show_their_default(window):
         ),
     )
     hints = {e.placeholderText() for e in edits(card(window))}
-    assert {"10", "4", "2 (round)", "centred"} <= hints  # row pitch, height, corners, x/y
+    assert {"10", "4", "2 (round)", "auto"} <= hints  # row pitch, height, corners, x/y
 
 
 def test_perforate_x_and_y_share_one_row(window):
@@ -206,7 +206,7 @@ def test_perforate_x_and_y_share_one_row(window):
             name="r", layer="device", x0=0, y0=0, x1=50, y1=50, modifiers=[PerforateModifier()]
         ),
     )
-    centred = [e for e in edits(card(window)) if e.placeholderText() == "centred"]
+    centred = [e for e in edits(card(window)) if e.placeholderText() == "auto"]
     assert len(centred) == 2 and centred[0].parentWidget() is centred[1].parentWidget()
 
 

@@ -235,7 +235,8 @@ its points, stay where they are.
 - **The panel stays where it was scrolled to** when a field applies.
 - **An empty optional field shows its default** greyed in it: a perforation's
   row pitch, hole height and corner radius, a polar array's angle step
-  (360 / copies), *auto* for segments, *centred* for a hole's position.
+  (360 / copies), *auto* for segments and for a hole's position (the grid
+  centred). The default is in the text's colour with *default* beside it.
 - **Lengths show µm** at the end of their field.
 - **Fields that do nothing** with the others as they are set are greyed out:
   a mirror's line at y when it mirrors left ↔ right, a route's radius with

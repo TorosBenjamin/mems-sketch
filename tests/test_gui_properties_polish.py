@@ -196,7 +196,7 @@ def test_empty_optional_fields_show_their_default(window):
         ),
     )
     hints = {e.placeholderText() for e in edits(card(window))}
-    assert {"10", "4", "2 (round)", "centred"} <= hints  # row pitch, height, corners, x/y
+    assert {"10", "4", "2 (round)", "auto"} <= hints  # row pitch, height, corners, x/y
 
 
 def test_perforate_x_and_y_share_one_row(window):
@@ -206,7 +206,7 @@ def test_perforate_x_and_y_share_one_row(window):
             name="r", layer="device", x0=0, y0=0, x1=50, y1=50, modifiers=[PerforateModifier()]
         ),
     )
-    centred = [e for e in edits(card(window)) if e.placeholderText() == "centred"]
+    centred = [e for e in edits(card(window)) if e.placeholderText() == "auto"]
     assert len(centred) == 2 and centred[0].parentWidget() is centred[1].parentWidget()
 
 
@@ -228,13 +228,13 @@ def test_polar_step_shows_360_over_count(window):
     assert "60" in {e.placeholderText() for e in edits(card(window))}
 
 
-def test_mirror_axis_says_which_way_and_greys_out_the_unused_line(window):
+def test_mirror_axis_is_explained_and_greys_out_the_unused_line(window):
     select(
         window,
         RectShape(name="r", layer="device", x0=0, y0=0, x1=5, y1=5, modifiers=[MirrorModifier()]),
     )
     axis = next(c for c in card(window).findChildren(QComboBox) if c.currentData() == "x")
-    assert axis.currentText().startswith("left ↔ right")
+    assert axis.currentText() == "x" and axis.toolTip().startswith("x: mirrors x")
     x, y = [e for e in edits(card(window)) if e.prefix in ("x", "y")]
     assert x.isEnabled() and not y.isEnabled()
     axis.setCurrentIndex(axis.findData("y"))
@@ -243,10 +243,10 @@ def test_mirror_axis_says_which_way_and_greys_out_the_unused_line(window):
     assert x.isEnabled() and y.isEnabled()
 
 
-def test_a_placement_flip_is_worded_as_what_it_does(window):
+def test_a_placement_mirrors_about_the_x_axis(window):
     select(window, RefShape(name="plate", component="mems.perforated_plate"))
     texts = {label.text() for label in window.properties.findChildren(QLabel)}
-    assert "Flip top ↔ bottom" in texts and "Mirror about x" not in texts
+    assert "Mirror about x axis" in texts
 
 
 @pytest.fixture

@@ -399,6 +399,12 @@ class PerforateModifier(Modifier):
     for sharp corners). ``grid: hex`` staggers every other row by half a pitch,
     rows ``pitch`` × √3/2 apart unless ``row_pitch`` says. The grid is centred
     on the node; ``x``, ``y`` put a hole's centre there instead.
+
+    The webs between holes are ``pitch - hole_size`` wide, and the rim is at
+    least ``margin``, wider where the holes do not fill the node exactly. With
+    ``even_rim`` (a square grid) the pitch stretches a little, along x and y,
+    so that the holes fill the node's box with the rim as wide as the webs
+    (``margin``, ``x`` and ``y`` are then not used).
     """
 
     kind: Literal["perforate"] = "perforate"
@@ -414,6 +420,7 @@ class PerforateModifier(Modifier):
     keep_out_margin: Value | None = None
     x: Value | None = None
     y: Value | None = None
+    even_rim: bool = False
 
     @field_validator("keep_out")
     @classmethod

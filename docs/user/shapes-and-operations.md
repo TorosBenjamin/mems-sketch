@@ -187,6 +187,12 @@ plate:
 - **The holes follow the shape:** resize or reshape it and they refill.
 - **Centred:** the grid is centred on the shape, so the pattern stays
   symmetric; `x`, `y` put a hole's centre at a chosen place instead.
+- **Webs and rim:** the webs between holes are `pitch − hole_size` wide; the
+  rim is at least `margin`, and wider where the holes do not fill the shape
+  exactly. For a rim as wide as the webs, tick **Even rim** (`even_rim:
+  true`, square grid): the pitch then stretches a little along x and y so the
+  holes fill the shape's box, every web and the rim the same width (`margin`,
+  `x` and `y` are then not used). Each field's **?** in Properties explains it.
 - **Hole shapes:** `hole_size` × `hole_height` with the corners rounded by
   `corner_radius`: round by default (half the size), square at 0, a rounded
   square in between, a slot when oblong.

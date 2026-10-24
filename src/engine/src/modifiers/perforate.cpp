@@ -42,6 +42,32 @@ struct Lines {
     long long index = 0;  // the index of ``first`` counted from origin's line
 };
 
+// The holes spread to fill [lo, hi] with every web and both rims the same width
+// (an even rim): as many holes of ``size`` as a pitch near ``step`` gives, and the
+// pitch they then have.
+struct Spread {
+    Lines lines;
+    double pitch = 0.0;
+    double web = 0.0;
+};
+
+Spread spread(double lo, double hi, double size, double step) {
+    const double length = hi - lo;
+    long long n = std::max(1LL, std::llround((length - (step - size)) / step));
+    double web = (length - static_cast<double>(n) * size) / static_cast<double>(n + 1);
+    while (n > 1 && web <= 0) {
+        --n;
+        web = (length - static_cast<double>(n) * size) / static_cast<double>(n + 1);
+    }
+    Spread s;
+    if (web <= 0) return s;  // not even one hole fits
+    s.web = web;
+    s.pitch = size + web;
+    s.lines.first = lo + web + size / 2.0;
+    s.lines.count = n;
+    return s;
+}
+
 Lines lines(double lo, double hi, double origin, double step, bool centred) {
     const auto fit = [&](double through) {
         Lines l;
@@ -90,6 +116,10 @@ Result apply_perforate(const Json& modifier, const Produce& produce, const Varia
     if (margin < 0) throw BuildError("perforation margin must not be negative");
     const double keep_margin = ctx.number(modifier, "keep_out_margin", margin);
     if (keep_margin < 0) throw BuildError("keep-out margin must not be negative");
+    const bool even = modifier.value("even_rim", false);
+    if (even && hex) throw BuildError("an even rim needs a square grid: set the perforation's grid to square");
+    if (even && (given(modifier, "x") || given(modifier, "y")))
+        throw BuildError("an even rim places the holes itself: leave the perforation's x and y empty");
 
     std::vector<mgeom::Region> keep;
     for (const auto& name : modifier.value("keep_out", Json::array())) {
@@ -113,15 +143,28 @@ Result apply_perforate(const Json& modifier, const Produce& produce, const Varia
 
     Layers result;
     for (const auto& [layer, region] : flat) {
-        mgeom::Region area = margin > 0 ? region.offset(-margin, mgeom::Join::round) : region;
+        double step = pitch, row_step = row_pitch, rim = margin;
+        Lines rows, columns;
+        if (even) {  // the pitch stretched so the holes fill the shape: rims as wide as webs
+            const mgeom::Box outer = region.bbox();
+            const Spread across = spread(outer.x0, outer.x1, width, pitch);
+            const Spread down = spread(outer.y0, outer.y1, height, row_pitch);
+            columns = across.lines, rows = down.lines;
+            step = across.pitch > 0 ? across.pitch : pitch;
+            row_step = down.pitch > 0 ? down.pitch : row_pitch;
+            rim = std::max(0.0, std::min(across.web, down.web) - FIT_SLACK_UM);
+        }
+        mgeom::Region area = rim > 0 ? region.offset(-rim, mgeom::Join::round) : region;
         if (!kept.empty()) area = area - kept;
-        if (area.empty()) {
+        if (area.empty() || (even && (rows.count == 0 || columns.count == 0))) {
             result.emplace(layer, region);
             continue;
         }
         const mgeom::Box box = area.bbox();
-        const Lines rows = lines(box.y0 + height / 2, box.y1 - height / 2, oy, row_pitch, centred);
-        const Lines columns = lines(box.x0 + width / 2, box.x1 - width / 2, ox, pitch, centred);
+        if (!even) {
+            rows = lines(box.y0 + height / 2, box.y1 - height / 2, oy, row_pitch, centred);
+            columns = lines(box.x0 + width / 2, box.x1 - width / 2, ox, pitch, centred);
+        }
         // Odd rows of a hex grid are half a pitch along, so one more may fit.
         const Lines shifted = hex ? lines(box.x0 + width / 2, box.x1 - width / 2, columns.first + pitch / 2, pitch, false)
                                   : columns;
@@ -133,9 +176,9 @@ Result apply_perforate(const Json& modifier, const Produce& produce, const Varia
         }
         std::vector<mgeom::Point> sites;
         for (long long j = 0; j < rows.count; ++j) {
-            const double y = rows.first + static_cast<double>(j) * row_pitch;
+            const double y = rows.first + static_cast<double>(j) * row_step;
             const Lines& along = hex && ((rows.index + j) % 2 != 0) ? shifted : columns;
-            for (long long i = 0; i < along.count; ++i) sites.push_back({along.first + static_cast<double>(i) * pitch, y});
+            for (long long i = 0; i < along.count; ++i) sites.push_back({along.first + static_cast<double>(i) * step, y});
         }
         const auto fits = mgeom::fits_inside(area, tested, sites, FIT_CHORD_UM);
         std::vector<mgeom::Region> holes;

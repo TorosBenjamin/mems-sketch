@@ -568,6 +568,7 @@ QAbstractItemView QLineEdit, QAbstractItemView QLineEdit:focus {{
     border: none; border-radius: 0; margin: 0; padding: 0 1px; background: {selected};
 }}
 QLineEdit[expression="true"] {{ background: {expression}; }}
+QLineEdit[default="true"] {{ placeholder-text-color: {text}; }}
 /* ... but fields in a row's fold-out (a rule's details) are ordinary fields. */
 QWidget#rule-details QLineEdit {{
     border: 1px solid {border_strong}; border-radius: {radius_control}px; padding: 3px 6px;

@@ -175,7 +175,12 @@ between them when an offset sets them apart.
 In **Properties**, *Align to another shape's point* has a pick button beside
 **Point** and beside **To**: it picks just that end on the canvas and keeps
 the other end and the offset (Esc changes nothing). The **To** list groups
-the points of each shape together.
+the points of each shape together. Point and To can be chosen in either
+order: nothing applies until both are set.
+
+Mirroring or turning an aligned shape turns its offset with it: a spring
+kept 3 µm into the shuttle's top, duplicated and mirrored up-down, is kept
+3 µm into the bottom once its **To** is the bottom.
 
 In **Shapes**, a link icon marks an aligned shape; hover it for e.g. `bottom
 at spring.end`.
@@ -234,9 +239,10 @@ its points, stay where they are.
   field, the canvas or another shape and the edit is kept); a list or a tick
   box when you choose. A box of several lines (a polygon's points, a layer
   map) applies when you leave it or press Ctrl+Enter. There is no Apply
-  button. Esc in the wider editor is the way to drop an edit. A value that
-  is refused goes back to the one stored, and its field is outlined in red
-  with why in its tooltip.
+  button. **Esc** drops an edit (the stored value comes back); pressed again,
+  it goes back to the canvas. A value that is refused is outlined in red
+  with why in its tooltip, and stays in its field to be corrected: Esc, or
+  leaving the field as it is, puts the stored value back.
 - **The panel stays where it was scrolled to** when a field applies.
 - **An empty optional field shows its default** greyed in it: a perforation's
   row pitch, hole height and corner radius, a polar array's angle step

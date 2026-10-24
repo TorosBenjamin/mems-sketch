@@ -548,6 +548,23 @@ class MenuTidier(QObject):
         return False
 
 
+class TypeAhead(QObject):
+    """Installed on the application: a plain letter or digit typed in a list or a
+    tree goes to it (jump to the item starting with it), not to a window shortcut
+    such as the canvas tools' C or H (#322)."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            event.type() == QEvent.Type.ShortcutOverride
+            and isinstance(watched, QAbstractItemView)
+            and not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+            and len(event.text()) == 1
+            and event.text().isalnum()
+        ):
+            event.accept()
+        return False
+
+
 # -- qualified names ------------------------------------------------------------
 # A name from somewhere else is written with where it is from: ``std.perforated_plate``
 # (a library's component), ``base.top`` (a shape's point), ``device.anchor`` (a

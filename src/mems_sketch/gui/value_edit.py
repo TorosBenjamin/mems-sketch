@@ -34,7 +34,7 @@ import re
 from collections.abc import Sequence
 
 import shiboken6
-from PySide6.QtCore import QPoint, QRect, QSize, QStringListModel, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QStringListModel, Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPalette, QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
@@ -213,6 +213,8 @@ class ValueEdit(QLineEdit):
         self.expanded: ExpandedEdit | None = None  # the wider editor, while open
         self._back_from_expanded = False  # focus returning from it: do not open it again
         self._hint = ""
+        self._stored = self.text()  # the text when the edit began: Esc puts it back
+        self._rejected = ""  # text that was refused, kept to be corrected (see reject)
         self.setProperty("expression", False)
         self.setProperty("invalid", False)
         # A click must not focus the field before it sees the press (Qt does that for
@@ -382,7 +384,9 @@ class ValueEdit(QLineEdit):
         self._update_cursor()
         if self._back_from_expanded:
             self._back_from_expanded = False
-        elif not self._fits(with_hint=False):
+            return
+        self._stored = self.text()
+        if not self._fits(with_hint=False):
             QTimer.singleShot(0, self.expand)  # after the click has placed the cursor
 
     def expand(self) -> None:
@@ -392,10 +396,56 @@ class ValueEdit(QLineEdit):
         self.expanded = ExpandedEdit(self)
         self.expanded.open()
 
+    def reject(self, text: str) -> None:
+        """Show ``text``, which was refused, to be corrected: Esc or leaving the field
+        unchanged puts the stored value back."""
+        self._stored = self.text()
+        self._rejected = text
+        self.setText(text)
+        self.selectAll()
+
+    def event(self, event) -> bool:
+        if (
+            event.type() == QEvent.Type.ShortcutOverride
+            and event.key() == Qt.Key.Key_Escape
+            and not event.modifiers()
+        ):
+            event.accept()  # Esc is the field's (see keyPressEvent), not the window's Cancel
+            return True
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:
-        enter = event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        expanded = self.expanded
+        if expanded is not None and shiboken6.isValid(expanded) and not expanded.forwarding:
+            # Typed quickly, keys already on their way here when the wider editor
+            # opened: they go on there, in order (#293).
+            expanded.forwarding = True
+            try:
+                expanded.keyPressEvent(event)
+            finally:
+                expanded.forwarding = False
+            return
+        key = event.key()
+        enter = key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
         if enter and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
             self.expand()
+            return
+        if enter:
+            super().keyPressEvent(event)
+            self._stored = self.text()  # applied (or put back by the panel): the new start
+            return
+        if key == Qt.Key.Key_Escape and not event.modifiers():
+            if self._completer.popup().isVisible():
+                self._completer.popup().hide()
+            elif self.text() != self._stored:  # Esc: put the stored value back
+                self.setText(self._stored)
+                self.selectAll()
+            else:  # a second Esc: back to the canvas
+                editor = getattr(self.window(), "focus_editor", None)
+                if editor is not None:
+                    editor()
+                else:
+                    self.clearFocus()
             return
         super().keyPressEvent(event)
 
@@ -472,6 +522,9 @@ class ValueEdit(QLineEdit):
             super().focusOutEvent(event)
             return
         self._bind.setVisible(False)
+        if self._rejected and self.text() == self._rejected:  # left uncorrected
+            self.setText(self._stored)
+        self._rejected = ""
         super().focusOutEvent(event)
         self.setCursorPosition(0)  # next time, start at the beginning
         self._layout()
@@ -585,6 +638,7 @@ class ExpandedEdit(QTextEdit):
         self.setObjectName("expanded-value")
         self.field = field
         self._done = False
+        self.forwarding = False  # a key the field passed on (it may come back: its parent)
         self.setAcceptRichText(False)
         self.setTabChangesFocus(True)
         self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)

@@ -82,6 +82,10 @@ class EditSession:
         # what does not build instead (references are checked either way).
         self.check_builds = True
         self._valid: bool | None = None  # whether the project builds, once known
+        # Edits made without that check since the last time someone looked (see
+        # :meth:`take_back_unchecked`): the editor builds afterwards and takes them back
+        # if they broke a project that built.
+        self.unchecked_edits = 0
         # (description, other project state, active before the change, active after it)
         # Each step: what it was, the project before it, the active component
         # before and after it, and the components it renamed (old: new).
@@ -145,6 +149,8 @@ class EditSession:
             self.project, self.active = before, active
             raise
         self._valid = True if was_valid else None
+        if not self.check_builds:
+            self.unchecked_edits += 1
         if not self.exists(self.active):
             self.active = self.project.default_component()
         self._undo.append((description, before, active, self.active, dict(renames or {})))
@@ -197,8 +203,16 @@ class EditSession:
             self._undo.append((description, self.project, before, after, renames))
             self._restore(state, after, renames)
 
+    def take_back_unchecked(self, count: int) -> None:
+        """Undo the last ``count`` edits, made without the build check, that broke the
+        project (the editor found out when it built them); they can be redone."""
+        for _ in range(count):
+            if self._undo:
+                self.undo()
+
     def _restore(self, project: Project, active: str, renames: dict[str, str]) -> None:
         self.project, self._valid = project, None
+        self.unchecked_edits = 0
         self.active = active if self.exists(active) else project.default_component()
         self._set_dirty(self._fingerprints() != self._saved)
         for old, new in renames.items():  # before views are told: a tab follows
@@ -301,6 +315,7 @@ class EditSession:
 
     def _reset(self, project: Project, path: Path | None) -> None:
         self.project, self._valid = project, None
+        self.unchecked_edits = 0
         self.active = project.default_component()
         self.path = path
         self._undo.clear()
@@ -330,7 +345,10 @@ class EditSession:
         return self._engine.load(self.project)
 
     def exists(self, component: str) -> bool:
-        """Whether ``component`` (as written at project level) can be opened."""
+        """Whether ``component`` (as written at project level) can be opened. None
+        (nothing to show) is what a library of processes only opens."""
+        if component is None:
+            return self.project.default_component() is None
         try:
             self.project.qualify(component)
             return True
@@ -344,7 +362,10 @@ class EditSession:
 
     def definition_of(self, component: str) -> ComponentDef:
         """A component's definition; for an imported cell, one listing its numeric
-        parameters (none)."""
+        parameters (none). With no component (a library of processes only), an
+        empty one, which cannot be edited."""
+        if component is None:
+            return ComponentDef.model_construct(name="", shapes=[], parameters=[])
         found = self.project.definition(self.project.qualify(component))
         if found is not None:
             return found[0]

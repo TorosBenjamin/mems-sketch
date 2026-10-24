@@ -199,6 +199,22 @@ class ProcessEdits(Commands):
 
     # -- the process used ------------------------------------------------------
 
+    def changes_lost_by_switching(self) -> int:
+        """How many changes to the library's process in use (constants, changed and
+        added rules) using another process drops; 0 for a process of the project's
+        own, which stays in the project."""
+        from mems_sketch.core.process import changes_between
+
+        project = self.session.project
+        base = project.base_process
+        if base is None:
+            return 0
+        try:
+            constants, changed, added = changes_between(base, project.process)
+        except ValueError:
+            return 1  # changed in a way it cannot say (but something is lost)
+        return len(constants) + len(changed) + len(added)
+
     def use(self, name: str) -> None:
         """Use another process: one of the project's own, or a library's
         (``std.polymumps``), whose layers then stay as they are there."""
@@ -246,7 +262,9 @@ class ProcessEdits(Commands):
             raise ValueError("a waiver needs a reason")
         if violation.bbox_um is None:
             raise ValueError("only a violation with a place can be waived")
-        geometry = self.session.results.geometry(component=component)
+        # The geometry the check sees (on the grid, curves within tolerance), as the
+        # check compares it: the editor's own can differ where curves are (#286).
+        geometry = self.session.results.checked(component)
         waiver = Waiver(
             rule=violation.rule,
             box=tuple(violation.bbox_um),

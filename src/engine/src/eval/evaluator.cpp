@@ -158,24 +158,63 @@ NodeResult render_node(const Json& node, Builder& builder, const std::string& co
 
     Produce produce = [&](const Variables& v) { return render(node, Context{builder, component, v, scope}); };
     const ModifierContext context{builder, component, scope};
-    for (const auto& modifier : node.value("modifiers", Json::array())) {
-        if (!modifier.value("enabled", true)) continue;
-        const std::string modifier_kind = modifier.value("kind", std::string());
-        const ApplyModifier apply = find_modifier(modifier_kind);
-        if (!apply) throw NotSupported("'" + modifier_kind + "' modifiers are not built by the engine yet");
-        produce = [modifier, apply, inner = produce, context](const Variables& v) {
-            return apply(modifier, inner, v, context);
-        };
-    }
+    const Json modifiers = node.value("modifiers", Json::array());
+    const bool aligned = node.contains("align") && !node["align"].is_null();
+    // A mirror's axis is in the parent's frame. On an aligned node the node is aligned
+    // as it is before its first mirror, then mirrored (and the modifiers after it
+    // applied), so the image lands across the axis from where the node is (#289).
+    std::size_t split = modifiers.size();
+    if (aligned)
+        for (std::size_t k = 0; k < modifiers.size(); ++k)
+            if (modifiers[k].value("enabled", true) && modifiers[k].value("kind", std::string()) == "mirror") {
+                split = k;
+                break;
+            }
+    const auto wrap = [&](std::size_t from, std::size_t to) {
+        for (std::size_t k = from; k < to; ++k) {
+            const Json& modifier = modifiers[k];
+            if (!modifier.value("enabled", true)) continue;
+            const std::string modifier_kind = modifier.value("kind", std::string());
+            const ApplyModifier apply = find_modifier(modifier_kind);
+            if (!apply) throw NotSupported("'" + modifier_kind + "' modifiers are not built by the engine yet");
+            produce = [modifier, apply, inner = produce, context](const Variables& v) {
+                return apply(modifier, inner, v, context);
+            };
+        }
+    };
+    wrap(0, split);
     Variables first = variables;  // the first copy: i and j are 0
     first["i"] = 0.0;
     first["j"] = 0.0;
+    const auto points_of = [&](Result& made) {
+        Points points{label_of(node), {}, made.points, {}, {}, made.ports};
+        points.box = bbox_of(made.layers, made.instances);
+        points.outline = std::make_shared<Outline>(made.layers, made.instances);
+        return points;
+    };
+    std::optional<mgeom::Transform> aligned_first;  // the alignment, made before a mirror
+    if (split < modifiers.size()) {
+        Result before = produce(first);
+        const mgeom::Transform shift = alignment(node, points_of(before), first, scope, builder, component);
+        aligned_first = shift;
+        produce = [inner = produce, shift](const Variables& v) {
+            Result made = inner(v);
+            made.layers = placed(made.layers, shift);
+            made.instances = placed(made.instances, shift);
+            for (auto& [name, point] : made.points) point = shift.apply(point);
+            for (auto& [name, port] : made.ports) port = placed(port, shift);
+            return made;
+        };
+        wrap(split, modifiers.size());
+    }
     Result made = produce(first);
     NodeResult result{std::move(made.layers), std::move(made.instances),
                       Points{label_of(node), {}, std::move(made.points), {}, {}, std::move(made.ports)}, {}, {}};
     result.points.box = bbox_of(result.layers, result.instances);
     result.points.outline = std::make_shared<Outline>(result.layers, result.instances);
-    if (node.contains("align") && !node["align"].is_null()) {
+    if (aligned_first) {
+        result.shift = *aligned_first;
+    } else if (aligned) {
         result.shift = alignment(node, result.points, first, scope, builder, component);
         for (auto& [layer, region] : result.layers) region = region.transformed(result.shift);
         result.instances = placed(result.instances, result.shift);

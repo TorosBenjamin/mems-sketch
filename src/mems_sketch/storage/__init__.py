@@ -15,13 +15,22 @@ from mems_sketch.storage.document import is_document, read_project, write_projec
 from mems_sketch.storage.legacy_sqlite import load_legacy
 from mems_sketch.storage.project_files import load_library, load_project, save_project
 
+LAYOUT_SUFFIXES = (".gds", ".gds2", ".gdsii", ".oas", ".dxf")
+
 
 def load(path: str | Path) -> Project:
     path = Path(path)
-    if path.is_file() and path.suffix == ".mems":
+    if path.is_file() and path.suffix.lower() == ".mems":
         return load_legacy(path)
     if is_document(path):
         return read_project(path)
+    if path.suffix.lower() in LAYOUT_SUFFIXES:
+        raise ValueError(
+            f"'{path}' is a layout, not a project: import it into a project "
+            "(File → Import… in the editor) to use it"
+        )
+    if path.is_file() and path.name != "project.yaml":
+        raise ValueError(f"'{path}' is not a project: open a project folder or its project.yaml")
     return load_project(path)
 
 
@@ -36,7 +45,7 @@ def is_copy(path: str | Path) -> bool:
     """Whether opening ``path`` gives a copy to save as a folder (a legacy design
     or a one-file document), rather than the project folder itself."""
     path = Path(path)
-    return path.suffix == ".mems" or is_document(path)
+    return path.suffix.lower() == ".mems" or is_document(path)
 
 
 __all__ = [

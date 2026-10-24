@@ -38,7 +38,7 @@ def run(window: bool = True) -> None:
 
     say(", ".join(f"{name} {number}" for name, number in versions().items()))
 
-    project = new_project("self-test")
+    project = new_project("selftest")  # a cell name every tool takes
     project.components["top"].shapes = [
         RefShape(name="comb", component="mems.comb_drive"),
         RefShape(name="spring", component="mems.serpentine_spring", x=200),

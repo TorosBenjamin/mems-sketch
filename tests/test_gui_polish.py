@@ -550,3 +550,21 @@ def test_a_shape_cut_in_two_says_so_and_shows_its_box(window):
         ((0, 0),), BooleanShape(name="cut", op="subtract", a=[bar], b=[notch])
     )
     assert "pieces" not in window.tree.topLevelItem(0).data(0, DETAIL_ROLE)  # a notch: one piece
+
+
+def test_the_tab_close_button_keeps_a_margin(window):
+    """#228: the × is as far from the tab's right edge as the icon from its left."""
+    bar = window.area.panes[0].tabBar()
+    rect = bar.tabRect(0)
+    image = bar.grab().toImage()
+    background = image.pixelColor(rect.center().x(), rect.top() + 4)
+
+    def drawn(x):  # something other than the tab's background in this column
+        return any(
+            abs(image.pixelColor(x, y).lightness() - background.lightness()) > 40
+            for y in range(rect.top() + 6, rect.bottom() - 5)
+        )
+
+    left = next(x for x in range(rect.left() + 2, rect.right()) if drawn(x)) - rect.left()
+    right = rect.right() - next(x for x in range(rect.right() - 2, rect.left(), -1) if drawn(x))
+    assert right >= 6 and abs(right - left) <= 5

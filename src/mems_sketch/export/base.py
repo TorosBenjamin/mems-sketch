@@ -22,7 +22,9 @@ registered at runtime with :func:`register_exporter`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import contextlib
+import warnings
+from collections.abc import Iterator, Mapping
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
@@ -112,9 +114,13 @@ def get_exporter(format_name: str) -> Exporter:
 def format_for(path: str | Path) -> str:
     """The format that writes files like ``path``, by its extension."""
     suffix = Path(path).suffix.lower()
-    matches = [n for n, c in available_exporters().items() if c.file_extension == suffix]
+    exporters = available_exporters()
+    matches = [n for n, c in exporters.items() if c.file_extension == suffix]
     if not matches:
-        raise ValueError(f"no exporter handles '{suffix}' files")
+        known = ", ".join(sorted({c.file_extension for c in exporters.values()}))
+        if not suffix:
+            raise ValueError(f"'{path}' has no extension to tell the format by: give one ({known})")
+        raise ValueError(f"no exporter writes '{suffix}' files (it takes {known})")
     return matches[0]
 
 
@@ -141,6 +147,19 @@ def export(
     return export_with_report(
         project, path, format_name, geometry, component, params, options, build
     )[0]
+
+
+@contextlib.contextmanager
+def cell_name_notes() -> Iterator[list[str]]:
+    """Collect what writing a layout warns of (cell names some tools refuse),
+    instead of letting it go to the console: the list is filled in on leaving."""
+    from mems_sketch.layout import CellNameWarning
+
+    found: list[str] = []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", CellNameWarning)
+        yield found
+    found.extend(str(w.message) for w in caught if issubclass(w.category, CellNameWarning))
 
 
 def export_with_report(
@@ -175,4 +194,5 @@ def export_with_report(
         geometry = project.render(component, params)
     if getattr(exporter, "wants_context", False):
         values.update(component=component, params=params)
+    path.parent.mkdir(parents=True, exist_ok=True)  # out/sub/x.gds: make out/sub
     return path, exporter.export(project, geometry, path, **values)

@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QMessageBox, QToolButton
 
 from mems_sketch.core.shapes import CornersModifier, RectShape
+from mems_sketch.gui import icons
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.value_edit import ValueEdit
 
@@ -115,6 +116,7 @@ def test_the_properties_card_edits_and_removes_corners(window):
     style.activated.emit(1)
     assert corners(window)[0].style == "chamfer"
     pick = next(b for b in card.findChildren(QToolButton) if b.text() == "Pick on the canvas")
+    assert icons._bound[pick][0] == "pick_corner"  # #235: not the modifier's own icon
     pick.click()
     assert window.tool.name == "corners"
     remove = next(

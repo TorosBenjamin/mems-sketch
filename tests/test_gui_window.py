@@ -219,3 +219,24 @@ def test_a_background_check_overtaken_by_an_edit_is_dropped(window, qtbot, monke
     qtbot.waitUntil(lambda: not view.checking, timeout=10_000)
     expected = window.document.results.check(component=view.component)  # of the design as it is
     assert [(v.rule, v.bbox_um) for v in view.violations] == [(v.rule, v.bbox_um) for v in expected]
+
+
+def test_a_hidden_panel_does_not_make_the_shown_one_tall(qtbot):
+    """#219: a place's minimum is that of the panel shown, not of a hidden one
+    (Commit's or Git's), so the window fits a laptop and Shapes keeps its rows."""
+    from PySide6.QtWidgets import QLabel
+
+    from mems_sketch.gui.toolwindows import _Stack
+
+    stack = _Stack()
+    qtbot.addWidget(stack)
+    small, tall = QLabel("shown"), QLabel("hidden")
+    tall.setMinimumHeight(400)
+    stack.addWidget(small)
+    stack.addWidget(tall)
+    stack.setCurrentWidget(small)
+    assert stack.minimumSizeHint().height() < 100
+    rows = 3 * stack.fontMetrics().height()
+    assert stack.minimumSizeHint().height() >= rows  # never a sliver
+    stack.setCurrentWidget(tall)
+    assert stack.minimumSizeHint().height() >= 400

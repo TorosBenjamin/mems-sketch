@@ -303,7 +303,8 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
         options: dict[str, Any] | None = None,
     ) -> str:
         """Export a component to a file: GDS, OASIS or DXF (also JSON, XML, MAT), by its
-        extension unless ``format`` is given."""
+        extension unless ``format`` is given. A relative path is in the project's
+        folder; missing folders are made. Replies with the file's full path."""
         return tools.export(path, component, format, params, options)
 
     return server

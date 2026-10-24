@@ -35,7 +35,7 @@ from mems_sketch.core.errors import explain
 from mems_sketch.core.shapes import CornersModifier, NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
-from mems_sketch.export.base import available_exporters, options_of, title_of
+from mems_sketch.export.base import available_exporters, cell_name_notes, options_of, title_of
 from mems_sketch.gui import component_picker, icons, motion, recent_projects, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
@@ -1433,6 +1433,8 @@ class MainWindow(QMainWindow):
         else:
             self.properties.show_node(paths[0] if paths else None)
         self.update_overlay()
+        if picked and not self._quiet_selection and not self.tool.busy:
+            self.tool.chosen_in_panel(paths)  # Align, Corners: start from it (#251)
         if not self.tool.busy:  # its hint may depend on what is selected (#251)
             self.prompt(self.tool.hint())
         self.state_changed()
@@ -2218,7 +2220,12 @@ class MainWindow(QMainWindow):
                 return
             values = dialog.values()
             remember(self.settings, format_name, options, values, start, scope)
-        ok, result = self._run(lambda: self.document.export_with_report(path, format_name, values))
+        with cell_name_notes() as warned:
+            ok, result = self._run(
+                lambda: self.document.export_with_report(path, format_name, values)
+            )
+        for note in warned:
+            self.notify(note, "warning")
         if ok:
             self._remember_dir(path)
             written = result[1]

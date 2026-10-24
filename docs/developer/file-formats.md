@@ -209,6 +209,6 @@ points: {tip: {x: 10, y: 5}}
 
 Reading is lenient for files written by hand or by MATLAB: a polygon can be a
 bare N×2 matrix, `polygons` can be a single struct, and `gds` can be a `[1 0]`
-row. On import (`editing/imports.py`) the geometry becomes an OASIS file with
+row. On import (`editing/imports.py`) the geometry becomes a GDS file with
 one cell, `TOP`, so layer names survive and everything after that (the
 dialog, re-import, `imports/`) is the same as for GDS.

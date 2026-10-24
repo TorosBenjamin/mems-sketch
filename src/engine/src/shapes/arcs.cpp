@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <string>
 
 namespace mems {
 
@@ -14,10 +15,16 @@ double explicit_segments(const Json& node, const Context& ctx) {
 }
 
 int segment_count(double radius, double explicit_segments) {
-    int n;
-    if (explicit_segments != 0.0) n = static_cast<int>(explicit_segments);
-    else if (radius <= ARC_TOLERANCE_UM) n = 8;
-    else n = static_cast<int>(std::ceil(std::numbers::pi / std::acos(1 - ARC_TOLERANCE_UM / radius)));
+    if (explicit_segments != 0.0) {  // as given: 3 a triangle, 6 a hexagon
+        if (explicit_segments != std::trunc(explicit_segments) || explicit_segments < MIN_ARC_SEGMENTS ||
+            explicit_segments > MAX_ARC_SEGMENTS)
+            throw BuildError("segments must be a whole number from " + std::to_string(MIN_ARC_SEGMENTS) +
+                             " to " + std::to_string(MAX_ARC_SEGMENTS) + ", not " +
+                             number_text(explicit_segments));
+        return static_cast<int>(explicit_segments);
+    }
+    if (radius <= ARC_TOLERANCE_UM) return 8;
+    const int n = static_cast<int>(std::ceil(std::numbers::pi / std::acos(1 - ARC_TOLERANCE_UM / radius)));
     return std::max(8, std::min(n, MAX_ARC_SEGMENTS));
 }
 

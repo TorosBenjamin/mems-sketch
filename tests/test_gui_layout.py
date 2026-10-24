@@ -444,6 +444,19 @@ def test_the_process_panel_sets_the_fabs_grid(window):
     assert process.grid_um == pytest.approx(0.002)
     window.document.undo()
     assert window.area.process_view.layers.grid.value() == pytest.approx(0.001)
+    assert panel.grid.isVisible() and not panel.grid_text.isVisible()
+    text = panel.grid.textFromValue(panel.grid.value()) + panel.grid.suffix()
+    room = panel.grid.width() - 24  # less the arrows
+    assert panel.grid.fontMetrics().horizontalAdvance(text) <= room  # "µm" is not cut off
+
+
+def test_a_library_process_shows_its_grid_as_text(window):
+    """#230: values a library's process sets are text in full, not greyed fields."""
+    window.document.process.use("mems.surface")
+    window.open_process()
+    panel = window.area.process_view.layers
+    assert not panel.grid.isVisible() and panel.grid_text.isVisible()
+    assert panel.grid_text.text() == "0.001 µm" and panel.chord_text.text() == "0.005 µm"
 
 
 def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path):

@@ -590,7 +590,7 @@ class ComponentsPanel(_Panel):
             self._guard(lambda: self.document.components.add_library(folder))
 
     def import_gds(self, path: str | None = None) -> str | None:
-        """Choose a layout (GDS, OASIS or a geometry document) and how to import it;
+        """Choose a layout (GDS or a geometry document) and how to import it;
         returns the new component's name."""
         from mems_sketch.gui.import_dialog import ImportDialog
 
@@ -1117,6 +1117,7 @@ class ParametersPanel(_Panel):
         self.document = document
         self.title = self.header_context = widgets.header_context()  # the component
         self.table = widgets.make_table(self.COLUMNS, stretch=self.COLUMNS.index("Default"))
+        self.table.setItemDelegateForColumn(0, widgets.IconAfterText(self.table))  # the lock
         self.table.itemChanged.connect(self._changed)
         self.table.viewport().installEventFilter(self)
         self.table.setMouseTracking(True)  # for the drag cursor
@@ -1174,7 +1175,8 @@ class ParametersPanel(_Panel):
                 QTableWidgetItem(_format(trials.get(p.name))),
                 _readonly("error" if value is None else f"{value:g}"),
             ]
-            cells[0].setIcon(icons.icon("lock") if p.internal else _blank_icon())  # aligned
+            if p.internal:
+                cells[0].setIcon(icons.icon("lock"))
             access = (
                 "Internal: only this component uses it"
                 if p.internal
@@ -1452,14 +1454,24 @@ class LayerDefinitionsPanel(_Panel):
         # export writes it, and layout exports start from it.
         self.grid = QDoubleSpinBox()
         self.chord = QDoubleSpinBox()
+        # A library's process sets them: shown as text, in full, not as fields
+        # that cannot be changed (#230).
+        self.grid_text, self.chord_text = QLabel(), QLabel()
         fields = QHBoxLayout()
         fields.setSpacing(theme.metric("space_s"))
         fields.addWidget(QLabel("Top components on level"))
         fields.addWidget(self.default_level)
-        for box, label, tip, minimum in (
-            (self.grid, "Grid", "The fab's grid: rule checks round the design onto it", 0.001),
+        for box, text, label, tip, minimum in (
+            (
+                self.grid,
+                self.grid_text,
+                "Grid",
+                "The fab's grid: rule checks round the design onto it",
+                0.001,
+            ),
             (
                 self.chord,
+                self.chord_text,
                 "Curve tolerance",
                 "How far the straight segments that curves become may stray from them",
                 0.0005,
@@ -1471,11 +1483,14 @@ class LayerDefinitionsPanel(_Panel):
             box.setSuffix(" µm")
             box.setToolTip(tip)
             box.setKeyboardTracking(False)
-            box.setMinimumWidth(90)
+            # Room for the number and its unit, and the arrows' space.
+            box.setMinimumWidth(box.fontMetrics().horizontalAdvance("0.0000 µm") + 32)
             box.editingFinished.connect(self._output_changed)
+            text.setToolTip(f"{tip} (set by the library's process)")
             fields.addSpacing(theme.metric("space_l"))
             fields.addWidget(QLabel(label))
             fields.addWidget(box)
+            fields.addWidget(text)
         fields.addStretch(1)
         card.body.addLayout(fields)
         layout = QVBoxLayout(self)
@@ -1511,11 +1526,17 @@ class LayerDefinitionsPanel(_Panel):
         self.default_level.setCurrentText(default or "(the first level)")
         self.default_level.setEnabled(bool(levels))
         process = self.document.project.process
-        for box, value in ((self.grid, process.grid_um), (self.chord, process.chord_um)):
+        own = self.document.project.base_process is None
+        for box, text, value in (
+            (self.grid, self.grid_text, process.grid_um),
+            (self.chord, self.chord_text, process.chord_um),
+        ):
             box.blockSignals(True)
             box.setValue(value)
             box.blockSignals(False)
-            box.setEnabled(self.document.project.base_process is None)
+            box.setVisible(own)
+            text.setText(f"{value:g} µm")
+            text.setVisible(not own)
         widgets.fit_to_rows(self.layers)
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:

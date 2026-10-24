@@ -165,6 +165,16 @@ def test_variants_are_combinations_and_limited(tools):
         tools.variants({"a": list(range(30))})
 
 
+def test_export_replies_with_the_full_path_in_the_project_folder(tools, tmp_path):
+    """#259: a relative path is the project's folder's; the reply is readable."""
+    tools.save(str(tmp_path / "p"))
+    tools.add_shape(None, "beam", rect(x1=40, y1=4))
+    reply = tools.export("out/beam.gds")
+    assert reply == f"wrote {(tmp_path / 'p' / 'out' / 'beam.gds').resolve()}"
+    reply = tools.export("odd.gds", options={"top_cell": "a b/c"})
+    assert "\nwarning: cell 'a b/c' is written as it is" in reply and "['" not in reply
+
+
 def test_the_cli_command_needs_no_extra_to_be_listed():
     from mems_sketch.cli import _parser
 

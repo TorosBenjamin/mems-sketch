@@ -106,3 +106,25 @@ def test_enter_opens_a_component_in_the_components_panel(window, qtbot):
     tree.setFocus()
     qtbot.keyClick(tree, Qt.Key.Key_Return)
     assert window.document.active == "pad"
+
+
+def test_clicking_past_the_name_selects_and_highlights_the_whole_row(window, qtbot):
+    """#220: one highlight across the row, eye and icon included, wherever it is
+    clicked; no frame around one cell of it."""
+    from PySide6.QtCore import QPoint
+
+    window.document.nodes.add(RectShape(name="pad", layer="device", x0=0, y0=0, x1=10, y1=10))
+    tree = window.tree
+    item = next(
+        tree.topLevelItem(i)
+        for i in range(tree.topLevelItemCount())
+        if tree.topLevelItem(i).text(0) == "pad"
+    )
+    rect = tree.visualItemRect(item)
+    right = QPoint(tree.viewport().width() - 10, rect.center().y())
+    qtbot.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton, pos=right)
+    assert tree.selectedItems() == [item]
+    image = tree.viewport().grab().toImage()
+    y = rect.top() + 2  # above the text and icons
+    colours = {image.pixelColor(x, y).name() for x in range(2, tree.viewport().width() - 2, 6)}
+    assert len(colours) == 1

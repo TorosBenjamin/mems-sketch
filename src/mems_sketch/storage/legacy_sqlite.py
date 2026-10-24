@@ -37,9 +37,12 @@ def load_legacy(path: str | Path) -> Project:
         rows = conn.execute("SELECT * FROM layers")
         columns = [c[0] for c in rows.description]
         known = set(Layer.__dataclass_fields__)
+        undercuts: dict[str, float] = {}
         for row in rows:  # columns Layer no longer has (e.g. undercut) are left out
             values = dict(zip(columns, row))
             project.add_layer(Layer(**{k: v for k, v in values.items() if k in known}))
+            if values.get("undercut"):
+                undercuts[values["name"]] = float(values["undercut"])
             for rule in layer_rules(
                 values["name"], values.get("min_width"), values.get("min_space")
             ):
@@ -60,9 +63,23 @@ def load_legacy(path: str | Path) -> Project:
             top.shapes.extend(_legacy_instances(conn))
         for definition in project.components.values():
             definition.shapes = [_without_rectangles(shape) for shape in definition.shapes]
+        if undercuts:
+            _note_undercuts(project, undercuts)
         return project
     finally:
         conn.close()
+
+
+def _note_undercuts(project: Project, undercuts: dict[str, float]) -> None:
+    """Layers had an undercut each; a process has one constant, ``undercut``, that
+    release rules use: the largest, with a note of each layer's."""
+    project.process.constants["undercut"] = max(undercuts.values())
+    each = ", ".join(f"{name} {value:g} µm" for name, value in undercuts.items())
+    project.load_notes.append(
+        f"the layers' undercuts ({each}) are now the process constant undercut = "
+        f"{max(undercuts.values()):g}: add a release rule (layers: the released layer and "
+        "its anchors, undercut: process.undercut) to check that the etch frees what it should"
+    )
 
 
 def _legacy_instances(conn: sqlite3.Connection) -> list[Shape]:
@@ -93,7 +110,12 @@ def _without_rectangles(shape: Shape) -> Shape:
         negative = (f"-{v}" if isinstance(v, str) else -v for v in (half_w, half_h))
         x0, y0 = negative
         rect = RectShape(
-            layer=str(params.get("layer", "device")), x0=x0, y0=y0, x1=half_w, y1=half_h
+            name=f"{shape.name}_rect",
+            layer=str(params.get("layer", "device")),
+            x0=x0,
+            y0=y0,
+            x1=half_w,
+            y1=half_h,
         )
         return TransformShape(
             name=shape.name,

@@ -93,3 +93,38 @@ def test_cancelling_the_wizard_changes_nothing(window, monkeypatch):
     monkeypatch.setattr(window, "show_dialog", lambda dialog: dialog.DialogCode.Rejected)
     window.new_project()
     assert window.document.project is before
+
+
+def test_a_library_process_can_be_chosen(dialog, tmp_path):
+    """#259: the bundled processes and those of an added library are offered."""
+    from PySide6.QtCore import Qt
+
+    from mems_sketch.cli import main
+
+    assert main(["new-process", str(tmp_path / "fab")]) == 0
+    texts = [dialog.process.itemText(i) for i in range(dialog.process.count())]
+    assert "mems.surface" in texts and "fab.fab" not in texts
+    dialog.add_library(str(tmp_path / "fab"))
+    texts = [dialog.process.itemText(i) for i in range(dialog.process.count())]
+    assert texts[0].startswith("Default layers") and texts[-1].startswith("Copy from")
+    assert "fab.fab" in texts
+    dialog.process.setCurrentIndex(texts.index("fab.fab"))
+    assert dialog.values()["process"] == "fab.fab"
+    assert dialog.values()["process_from"] is None
+    policy = dialog.libraries.horizontalScrollBarPolicy()
+    assert policy == Qt.ScrollBarPolicy.ScrollBarAlwaysOff  # the names are elided instead
+    dialog.libraries.item(0).setSelected(True)
+    dialog.remove.click()  # its process goes with it
+    assert dialog.process.findText("fab.fab") == -1 and dialog.values()["process"] is None
+
+
+def test_a_new_project_on_a_library_process(window, tmp_path, monkeypatch):
+    def fill(dialog):
+        dialog.location.setText(str(tmp_path))
+        dialog.name.setText("chip")
+        dialog.process.setCurrentIndex(dialog.process.findText("mems.polysilicon"))
+        return dialog.DialogCode.Accepted
+
+    monkeypatch.setattr(window, "show_dialog", fill)
+    window.new_project()
+    assert window.document.project.process_name == "mems.polysilicon"

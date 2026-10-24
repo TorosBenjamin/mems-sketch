@@ -192,3 +192,14 @@ def test_a_corners_rounding_is_drawn_tangent_to_its_edges():
     assert math.dist(middle, (10, 10)) == pytest.approx(2 * (2**0.5 - 1))  # on the bisector
     assert corner.arc(2, "chamfer") == [pytest.approx((8, 10)), pytest.approx((10, 8))]
     assert corner.handle(2) == pytest.approx((10 - 2 * s, 10 - 2 * s))
+
+
+def test_a_saved_segments_is_read_and_dropped():
+    """#216: segments never did anything (the corners are exact arcs): files that
+    give it still open, and it is not written again."""
+    from mems_sketch.core.shapes.modifiers import CornersModifier
+
+    modifier = CornersModifier.model_validate(
+        {"kind": "corners", "corners": [{"x": 0, "y": 0, "radius": 1}], "segments": 32}
+    )
+    assert "segments" not in modifier.model_dump()

@@ -86,6 +86,17 @@ def test_the_commit_panel_sits_on_the_left_and_lists_changes_by_component(window
     assert rows(panel.tree)[2] == "    beam | x1 40 → 50"  # one field: on its row
 
 
+def test_a_short_panel_keeps_room_for_the_changes(window, panel):
+    """#259: the message box gives way to the list (it used to be about a row and a
+    half high), down to two lines of its own."""
+    resize(window, x1=50, y1=8)
+    window.resize(1200, 600)
+    rows_high = panel.tree.height() / panel.tree.fontMetrics().height()
+    assert rows_high >= 4
+    lines = panel.message.height() / panel.message.fontMetrics().lineSpacing()
+    assert lines >= 2
+
+
 def test_names_are_coloured_by_what_happened(window, panel):
     resize(window, x1=50)
     window.document.nodes.add(RectShape(name="pad", layer="device", x0=0, y0=20, x1=10, y1=30))

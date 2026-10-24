@@ -1578,6 +1578,20 @@ class LayoutCanvas(QGraphicsView):
             return
         super().mousePressEvent(event)
 
+    def begin_pan(self, since: tuple[float, float] | None = None) -> None:
+        """A tool's left-button drag turns into panning (a drag on empty canvas, when
+        that is set to pan): the view follows the cursor until the button is released.
+        ``since``: where the drag began (µm), so the view catches up with all of it."""
+        self.stop_gliding()
+        start = self.mapFromScene(QPointF(*since)) if since is not None else self._cursor_at
+        self._pan_from = QPointF(start)
+        if since is not None:  # the move that started it: the view follows at once
+            delta = self._cursor_at - self._pan_from
+            self._pan_from = QPointF(self._cursor_at)
+            self.horizontalScrollBar().setValue(int(self.horizontalScrollBar().value() - delta.x()))
+            self.verticalScrollBar().setValue(int(self.verticalScrollBar().value() - delta.y()))
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+
     def mouseDoubleClickEvent(self, event) -> None:
         self._flush_move()
         if event.button() == Qt.MouseButton.LeftButton and not (self.left_pans or self._space):
@@ -1640,6 +1654,10 @@ class LayoutCanvas(QGraphicsView):
             self._pan_from = None
             self._update_cursor()
             self.view_changed.emit()
+            if event.button() == Qt.MouseButton.LeftButton and self._left_down:
+                self._left_down = False  # a tool's drag that turned into panning: it ends
+                p = self._scene(event)
+                self.released.emit(p.x(), p.y(), event.modifiers())
             return
         if event.button() == Qt.MouseButton.LeftButton and self._left_down:
             self._left_down = False

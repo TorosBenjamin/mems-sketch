@@ -1423,11 +1423,11 @@ class PropertyEditor(QScrollArea):
         fields = _focusable(body) if body is not None else []
         if culprit is not None and culprit < len(fields) and message:
             field = fields[culprit]
+            if isinstance(field, ValueEdit) and typed is not None and culprit == at:
+                field.reject(typed)  # still being edited: keep the text (first: it re-checks)
             field.setProperty("invalid", True)
             if isinstance(field, ValueEdit):
                 field.set_help(f"Not applied: {message}")
-                if typed is not None and culprit == at:  # still being edited: keep the text
-                    field.reject(typed)
             else:
                 field.setToolTip(f"Not applied: {message}")
             field.style().unpolish(field)

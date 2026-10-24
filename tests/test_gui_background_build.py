@@ -77,16 +77,23 @@ def test_only_the_newest_of_quick_changes_is_shown(window, qtbot):
     assert area(window.view.shown) == pytest.approx(14)
 
 
-def test_a_change_that_does_not_build_keeps_the_last_picture_and_says_why(window, qtbot):
+def test_a_change_that_does_not_build_is_taken_back_once_built(window, qtbot):
+    """Not checked when made (a slow design), so built first: then taken back with
+    why, as a checked edit is (#287), and the picture is the last that built."""
     slow(window)
     view = window.view
+    notes = []
+    window.notify = lambda text, *a, **k: notes.append(text)
     window.run(lambda: window.document.parameters.update("width", default=8.0))
     qtbot.waitUntil(lambda: not view.updating, timeout=10_000)
     bad = RectShape(name="bad", layer="device", x0=0, y0=0, x1="nope", y1=1)
-    window.run(lambda: window.document.nodes.add(bad))  # refused only where builds are checked
+    window.run(lambda: window.document.nodes.add(bad))  # not refused: builds are not checked
+    qtbot.waitUntil(lambda: any("nope" in n for n in notes), timeout=10_000)
     qtbot.waitUntil(lambda: not view.updating, timeout=10_000)
-    assert any("nope" in e for e in view.errors)
-    assert area(view.shown) == pytest.approx(16)  # still the last picture that built
+    assert notes[-1].startswith("Not applied") and "bad" not in [
+        s.name for s in window.document.shapes
+    ]
+    assert area(view.shown) == pytest.approx(16)  # the last picture that built
 
 
 def test_a_quick_design_is_built_at_once(window):

@@ -121,7 +121,7 @@ def test_a_commit_is_compared_from_the_git_panel(window, commit):
     view = window.area.comparison_view
     assert view.key[0] == "commit"
     assert marks(view) == [("beam", "changed"), ("post", MOVED)]  # aligned to its top
-    assert "Longer beam" in view.what.text()
+    assert "Longer beam" in view.what.toolTip()  # in full; the bar may shorten it
     view.go_to(0)
     assert "Roll back" not in view.card.links.text()  # only uncommitted changes roll back
 

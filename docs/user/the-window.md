@@ -220,7 +220,9 @@ the reason. A theme changes colours and sizes, never what is where.
   where the change was made, reopening it if it was closed.
 - Every edit is checked: if it would stop the project from building
   (including components that use the edited one), it is taken back with a
-  message.
+  message. On a design that takes a while to build, the edit shows at once
+  and is checked when the build is done: then it is taken back (Redo shows
+  it again).
 - **How you were looking at the project** comes back when you reopen it: open
   tabs and the split, zoom and position per tab, selections, rulers,
   collapsed tree items, hidden layers, trial values, the drawing layer. It is

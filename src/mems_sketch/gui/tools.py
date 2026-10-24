@@ -346,14 +346,17 @@ class SelectTool(Tool):
         self._press: tuple[float, float] | None = None
         self._press_hit: NodePath | None = None
         self._pending: NodePath | None = None
-        self._mode: str | None = None  # None, "move", "box" or "blocked"
+        self._mode: str | None = None  # None, "move", "box", "pan" or "blocked"
         self._plan: DragPlan | None = None
         self._snap = None
+        self._press_modifiers = NONE
+        self._deselect = False  # a press on empty canvas that pans if dragged
 
     def hint(self) -> str:
-        return (
-            self._chosen_hint()
-            or "Click to select, drag to move, drag on empty space to select with a box"
+        return self._chosen_hint() or (
+            "Click to select, drag to move, drag on empty space to pan (Shift: select with a box)"
+            if self._drag_pans()
+            else "Click to select, drag to move, drag on empty space to select with a box"
         )
 
     def press(self, x, y, modifiers) -> None:
@@ -371,11 +374,19 @@ class SelectTool(Tool):
         self.chosen = None
         additive = bool(modifiers & (CTRL | SHIFT))
         hit = self.window.hit(x, y)
-        self._press, self._press_hit = (x, y), hit
+        self._press, self._press_hit, self._press_modifiers = (x, y), hit, modifiers
         if hit is not None and not additive and self.window.on_selection(x, y):
             self._pending = hit  # keep the selection: this may become a drag
             return
+        if hit is None and not additive and self._drag_pans():
+            self._deselect = True  # a click clears the selection; a drag pans and keeps it
+            return
         self.window.select_click(hit, additive)
+
+    def _drag_pans(self) -> bool:
+        """A drag on empty canvas pans (a touchpad's tap-and-drag), as set; with
+        Shift it still draws a selection box."""
+        return self.setting("canvas/empty_drag", "box") == "pan"
 
     def move(self, x, y, modifiers, left) -> None:
         if self.gizmo_dragging:
@@ -401,6 +412,10 @@ class SelectTool(Tool):
             self._pending = None
             if self._press_hit is not None and self.window.selection:
                 self._start_move()
+            elif self._deselect:
+                self._mode = "pan"
+                self.canvas.begin_pan(since=self._press)
+                return
             else:
                 self._mode = "box"
         if self._mode == "move":
@@ -459,8 +474,11 @@ class SelectTool(Tool):
             self._release_dimension()
             return
         mode, press, pending, plan = self._mode, self._press, self._pending, self._plan
+        deselect = self._deselect and mode is None
         self.cancel()
         self.canvas.show_points("snap", [])
+        if deselect:  # a click on empty canvas, set to pan when dragged
+            self.window.select_click(None, False)
         if mode == "move":
             dx, dy, snap = self.snapped_move(plan, x - press[0], y - press[1], modifiers)
             self._finish_move(plan, dx, dy, snap, modifiers)
@@ -811,7 +829,7 @@ class SelectTool(Tool):
     @property
     def busy(self) -> bool:
         return (
-            self._mode in ("move", "box")
+            self._mode in ("move", "box", "pan")
             or self.gizmo_dragging
             or self._handle is not None
             or self.entry is not None

@@ -7,7 +7,12 @@
   drag in any tool; **F** (or a two-finger double tap) fits the design. The
   buttons in the bottom-right corner zoom and fit too. *Preferences → Canvas →
   Scrolling* says what scrolling does if your device is taken for the other
-  kind (a mouse wheel zooms, a touchpad pans).
+  kind (a mouse wheel zooms, a touchpad pans). To pan with a touchpad's
+  tap-and-drag, set *Preferences → Canvas → Dragging on empty canvas* to
+  **Pan**: in the Select tool a drag on empty space then pans and keeps the
+  selection, a click there still clears it, and Shift + drag draws the
+  selection box (a tap-and-drag reaches the app as a left-button drag, so this
+  applies to a mouse too).
 - The **canvas modes** float in the top-right corner: Select, Hand, Move,
   Rotate, Align, Corners, Measure.
 - The selection is outlined in orange; the shape under the cursor is outlined

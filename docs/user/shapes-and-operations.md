@@ -147,8 +147,10 @@ They are cards in Properties (**Add modifier**).
   mirrors a half across its own left edge). An array's spacing then reads
   `dx: self.width + 5` (5 µm gaps), `dx: self.width` (copies touching) or
   `dx: 20` (a fixed pitch).
-- Modifiers work before the shape's alignment moves it, so a mirror about the
-  mass's centre stays put when the part moves.
+- Modifiers work before the shape's alignment moves it, except a mirror: an
+  aligned shape is aligned as it is before its first mirror, then mirrored
+  (and the modifiers after it applied). So a mirror about the mass's centre
+  stays put wherever the part is aligned, and the image lands opposite it.
 - **Apply** turns the first modifier into real shapes, as Blender's Apply does.
 
 Example: two combs, mirrored about the plate's centre, three of each:

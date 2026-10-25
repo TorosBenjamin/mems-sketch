@@ -504,15 +504,18 @@ def test_leaving_a_field_that_cannot_be_evaluated_says_why(window, qtbot):
 
 
 def test_a_refused_value_goes_back_and_does_not_block_the_next_edit(window, qtbot):
-    """#247: the refused text is replaced by the value stored, so the next edit
-    (another field, the name) applies."""
+    """#247: the refused text stays to be corrected (#325), and leaving the field
+    puts the stored value back, so the next edit (another field) applies."""
     messages = []
     window.properties.error.connect(messages.append)
     edits = fields(window)
     _focus(qtbot, edits["To x"])
     edits["To x"].setText("nonexistent + 1")
     qtbot.keyClick(edits["To x"], Qt.Key.Key_Return)
-    assert messages and fields(window)["To x"].text() == "pitch * 2"
+    assert messages and fields(window)["To x"].text() == "nonexistent + 1"
+    to_y = fields(window)["To y"]
+    _focus(qtbot, to_y)
+    assert fields(window)["To x"].text() == "pitch * 2"
     to_y = fields(window)["To y"]
     to_y.setText("9")
     qtbot.keyClick(to_y, Qt.Key.Key_Return)

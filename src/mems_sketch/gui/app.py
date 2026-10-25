@@ -15,8 +15,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QColor, QCursor, QKeySequence
+from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QCloseEvent, QColor, QCursor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -91,7 +91,7 @@ from mems_sketch.gui.tools import TOOLS, AlignTool, Tool
 from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import ComponentView, EditorArea, builds
 from mems_sketch.gui.welcome import WelcomeWindow
-from mems_sketch.gui.widgets import MenuTidier
+from mems_sketch.gui.widgets import MenuTidier, TypeAhead
 
 PANEL_HELP = {  # the "?" in each tool window's header
     "components": "Every component, each listed once: the project's and each library's, "
@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.document = document or EditSession()
         self._problems: list[str] = []
+        self._built_clean = False  # the last build had no problems (see _refresh_built)
         self._corner_errors: list[tuple[float, float]] = []  # corners whose radius does not fit
         # The longest each component has taken to build since the project was opened:
         # one that can take long is built in the background, even when a change
@@ -290,16 +291,10 @@ class MainWindow(QMainWindow):
         self.messages.waive_requested.connect(self.waive)
         self.messages.unwaive_requested.connect(self.unwaive)
         self.settings.changed.connect(self._setting_changed)
-        for panel in (
-            self.properties,
-            self.parameters,
-            self.layers,
-            self.points,
-            self.components,
-            self.commit_panel,
-            self.git,
-        ):
+        for panel in (self.parameters, self.layers, self.components, self.commit_panel, self.git):
             panel.error.connect(self.report_error)
+        for panel in (self.properties, self.points):  # the field says why too (#325)
+            panel.error.connect(self.report_refusal)
         self.properties.previewed.connect(self._preview_node)
         self.properties.pick_corners.connect(lambda: self.set_tool("corners"))
         self.properties.pick_alignment.connect(self._pick_alignment)
@@ -312,6 +307,8 @@ class MainWindow(QMainWindow):
         if not hasattr(app, "_menu_tidier"):  # once for every window and menu
             app._menu_tidier = MenuTidier(app)
             app.installEventFilter(app._menu_tidier)
+            app._type_ahead = TypeAhead(app)
+            app.installEventFilter(app._type_ahead)
 
         self.setWindowIcon(icons.icon("component"))
         self.resize(1500, 950)
@@ -335,6 +332,10 @@ class MainWindow(QMainWindow):
     @property
     def canvas(self) -> LayoutCanvas:
         return self.view.canvas
+
+    def focus_editor(self) -> None:
+        """Keyboard focus back on the canvas (Esc in a panel whose edit is done)."""
+        self.canvas.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     @property
     def selection(self) -> list[NodePath]:
@@ -529,6 +530,25 @@ class MainWindow(QMainWindow):
                 action.setChecked(self.settings.get(key))
                 action.blockSignals(False)
         self.prompt(self.tool.hint())
+
+    def open_user_guide(self) -> None:
+        """Help → User guide: the guide on the project's site, in the browser."""
+        QDesktopServices.openUrl(QUrl(USER_GUIDE))
+
+    def show_about(self) -> None:
+        """Help → About: the version, and the libraries this copy runs on."""
+        import PySide6
+
+        from mems_sketch import __version__
+
+        QMessageBox.about(
+            self,
+            "About MEMS Sketch",
+            f"<b>MEMS Sketch {__version__}</b><p>Parametric MEMS layout design: components, "
+            f"rule checks and pluggable export.</p><p>Python {sys.version.split()[0]} · "
+            f"Qt {PySide6.QtCore.qVersion()} · PySide6 {PySide6.__version__}</p>"
+            f'<p><a href="{USER_GUIDE}">User guide</a></p>',
+        )
 
     def show_settings(self, page: str | None = None) -> None:
         """The settings dialog (Ctrl+Alt+S); ``page`` opens a page, e.g. ``Keymap``."""
@@ -1129,9 +1149,20 @@ class MainWindow(QMainWindow):
         self.area.update_titles()
         self.draw_rulers()
         self._problems = self.document.results.problems()
+        # Edits a slow design took without checking that it still builds (see _took):
+        # one that broke a design that built is taken back now, as it would have been.
+        unchecked, self.document.unchecked_edits = self.document.unchecked_edits, 0
+        if unchecked and self._problems and self._built_clean:
+            QTimer.singleShot(0, lambda: self._take_back(unchecked, self._problems[0]))
+        else:
+            self._built_clean = not self._problems
         self._corner_errors = self._failing_corners()
         self._took(self.document.results.build_seconds)
         self._refresh_panels()
+
+    def _take_back(self, count: int, problem: str) -> None:
+        self.document.take_back_unchecked(count)
+        self.report_error(f"Not applied: {problem}")
 
     def _build_in_background(self) -> None:
         """Build the open tabs on another thread; show the result when it is there.
@@ -1226,7 +1257,10 @@ class MainWindow(QMainWindow):
 
     def _show_messages(self, *extra: str) -> None:
         view = self.view
-        errors = [*extra, *view.errors, *(p for p in self._problems if p not in view.errors)]
+        # A build problem the tab already says, but with its component in front
+        # ("top: …"), is listed once.
+        shown = {*view.errors, *(f"{view.component}: {e}" for e in view.errors)}
+        errors = [*extra, *view.errors, *(p for p in self._problems if p not in shown)]
         self.messages.show_messages(
             errors, view.violations, checking=view.checking, component=view.component
         )
@@ -1413,10 +1447,11 @@ class MainWindow(QMainWindow):
         project = self.document.project
         where = str(self.document.path) if self.document.path else "not saved"
         star = "*" if self.document.dirty else ""
-        doing = "viewing" if self.document.read_only else "editing"
-        self.setWindowTitle(
-            f"{star}{project.name} — {doing} {self.document.active} — {where} — MEMS Sketch"
-        )
+        if self.document.active is None:  # a library of processes only
+            doing = "processes"
+        else:
+            doing = f"{'viewing' if self.document.read_only else 'editing'} {self.document.active}"
+        self.setWindowTitle(f"{star}{project.name} — {doing} — {where} — MEMS Sketch")
         self.project_label.setText(f"{star}{project.name}")
         self.project_label.setToolTip(where)
 
@@ -1785,6 +1820,11 @@ class MainWindow(QMainWindow):
         ``kind`` is info, success, warning or error (which stays until closed)."""
         return self.toasts.show_toast(text, kind, action, seconds, key)
 
+    def report_refusal(self, message: str) -> None:
+        """A value typed in a field was not applied: a note, and the field marked with
+        why. Not a problem of the design, so not in Messages or the problem count."""
+        self.notify(message, "error")
+
     def report_error(self, message: str) -> None:
         self.notify(message, "error", ("Show messages", self._show_messages_panel))
         self._show_messages(message)
@@ -2147,6 +2187,8 @@ class MainWindow(QMainWindow):
             self.tree.collapsed = {}
             self.refresh()
             self.restore_editor_state()
+            if self.document.active is None:  # a library of processes only: edit them
+                self.open_process()
         finally:
             self._restoring = False
 
@@ -2310,11 +2352,30 @@ def _path(steps) -> NodePath:
     return tuple((int(slot), int(index)) for slot, index in steps)
 
 
+USER_GUIDE = "https://github.com/TorosBenjamin/mems-sketch/blob/main/docs/user/README.md"
+
+USAGE = """usage: mems-sketch [PROJECT]
+
+Open the MEMS Sketch editor: PROJECT (a project folder or its project.yaml)
+in a window, or without one the Welcome window.
+
+options:
+  -h, --help   show this message
+  --version    print the version
+  --self-test  check that the installation works, without a window
+
+The command-line tools (check, export, info, …) are mems-sketch-cli --help."""
+
+
 def main(argv: list[str] | None = None) -> int:
     # First: in a bundled app the rule-check process starts as another copy of
     # the program, which must run its task, not open a window.
     multiprocessing.freeze_support()
     argv = sys.argv if argv is None else argv
+    if len(argv) > 1 and argv[1].startswith("-") and argv[1] not in ("--version", "--self-test"):
+        known = argv[1] in ("-h", "--help")
+        print(USAGE if known else f"mems-sketch: unknown option {argv[1]}\n\n{USAGE}")
+        return 0 if known else 2
     if len(argv) > 1 and argv[1] in ("--version", "--self-test"):
         from mems_sketch import __version__
 

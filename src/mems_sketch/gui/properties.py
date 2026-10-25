@@ -379,9 +379,12 @@ class PropertyEditor(QScrollArea):
                 widget = fields_shown.get(name)
                 if widget is not None:
                     _set_active(form, widget, False)
-                    widget.setToolTip(
+                    why = (
                         "Not used while the shape is aligned: the alignment places it "
                         "(Edit → Remove alignment keeps it where it is)"
+                    )
+                    widget.set_help(why) if isinstance(widget, ValueEdit) else widget.setToolTip(
+                        why
                     )
         bend = fields_shown.get("bend")
         if isinstance(bend, QComboBox) and "radius" in fields_shown:  # a route: sharp has none

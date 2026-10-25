@@ -74,7 +74,9 @@ _recorded: dict[str, object] | None = None
 # their defaults (what the recorded result was built without); a component's
 # own fields are under None.
 _LATER_FIELDS = {
-    ("rect", "corner_radius"): 0.0,
+    ("rect", "rotation"): 0.0,
+    ("polygon", "rotation"): 0.0,
+    ("path", "rotation"): 0.0,
     (None, "category"): "",
     (None, "tags"): [],
     (None, "ports"): [],

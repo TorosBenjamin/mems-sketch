@@ -168,6 +168,7 @@ CANVAS_OPTIONS = {
     "outline_width": "canvas/outline_width",
     "show_grid": "canvas/show_grid",
     "grid_spacing_px": "canvas/grid_spacing_px",
+    "snap_step_um": "snapping/grid_step",
     "show_axes": "canvas/show_axes",
     "show_scale_bar": "canvas/show_scale_bar",
     "gizmo_size_px": "canvas/gizmo_size_px",
@@ -1088,7 +1089,15 @@ class MainWindow(QMainWindow):
 
     def _show_zoom(self) -> None:
         canvas = self.canvas
-        self.grid_label.setText(f"grid {canvas.grid_step():g} µm")
+        fixed = self.settings.get("snapping/grid_step")
+        if fixed > 0:  # the user's step: shown as what it is (#48)
+            self.grid_label.setText(f"snap {fixed:g} µm")
+            self.grid_label.setToolTip(
+                f"Snapping to {fixed:g} µm (Preferences → Snapping); grid {canvas.grid_step():g} µm"
+            )
+        else:
+            self.grid_label.setText(f"grid {canvas.grid_step():g} µm")
+            self.grid_label.setToolTip("Grid step at this zoom: what drawing and moving snap to")
         self.zoom_label.setText(f"{canvas.pixels_per_um():.3g} px/µm")
 
     def waive(self, violation) -> None:
@@ -1370,8 +1379,11 @@ class MainWindow(QMainWindow):
         focus = (
             [m for m in (self.points.focused_marker(), self._hovered_point) if m] if open_ else []
         )
+        # With shapes selected, only their points and ports: the component's own
+        # (and everyone else's) would hide them (#239).
+        selection = list(view.selection)
         declared = []
-        if shown:
+        if shown and not selection:
             try:
                 declared = [(n, x, y) for n, (x, y) in results.declared_points().items()]
             except Exception:  # noqa: BLE001 - the messages panel shows why
@@ -1379,23 +1391,61 @@ class MainWindow(QMainWindow):
         highlighted = {m[0] for m in focus}  # drawn once, highlighted
         self.canvas.show_points("declared", [d for d in declared if d[0] not in highlighted], True)
         self.canvas.show_ports(
-            "declared", self._ports_of(results.declared_ports) if shown else [], True
+            "declared",
+            self._ports_of(results.declared_ports) if shown and not selection else [],
+            True,
         )
         tool_markers = self.tool.markers()
-        selected = results.node_points(single) if shown and single is not None else []
-        selected = [p for p in selected if not p[0].startswith("port.")]  # drawn as arrows
+        selected = self._selected_points(selection) if shown else []
         self.canvas.show_points("selected", [] if "pick" in tool_markers else selected)
-        # A selected placement's ports, always: where its wires attach.
-        self.canvas.show_ports(
-            "selected",
-            self._ports_of(lambda: results.node_ports(single)) if single is not None else [],
-        )
+        # The selected placements' ports, always: where their wires attach.
+        self.canvas.show_ports("selected", self._selected_ports(selection))
+        self.points.mark_selected(self._selected_names(selection))
         self.canvas.show_points("focus", focus, labels=True)
         for style in ("pick", "anchor"):
             self.canvas.show_points(style, tool_markers.get(style, []))
         self._place_gizmo()
         self._place_handles()
         self._show_zoom()
+
+    def _selected_names(self, selection) -> list[str]:
+        """The names of the selected top-level shapes."""
+        names = []
+        for path in selection:
+            if len(path) == 1:
+                try:
+                    node = self.document.node(path)
+                except (IndexError, KeyError):
+                    continue
+                if node.name:
+                    names.append(node.name)
+        return names
+
+    def _selected_points(self, selection) -> list[tuple[str, float, float]]:
+        """The points of the selected shapes, without ports (drawn as arrows); with
+        several, each named after its shape (``comb.fixed``)."""
+        results = self.document.results
+        found = []
+        for path in selection:
+            prefix = ""
+            if len(selection) > 1:
+                try:
+                    prefix = f"{self.document.node(path).name or '?'}."
+                except (IndexError, KeyError):
+                    continue
+            found += [
+                (prefix + n, x, y)
+                for n, x, y in results.node_points(path)
+                if not n.startswith("port.")
+            ]
+        return found
+
+    def _selected_ports(self, selection) -> list[tuple[str, float, float, float]]:
+        results = self.document.results
+        found = []
+        for path in selection:
+            found += self._ports_of(lambda path=path: results.node_ports(path))
+        return found
 
     def _ports_of(self, ports) -> list[tuple[str, float, float, float]]:
         """``ports()``'s ports as markers (name, x, y, angle); none when it fails."""
@@ -2019,7 +2069,7 @@ class MainWindow(QMainWindow):
         """Move the selection by grid steps (a tenth of one when ``fine``)."""
         if not self.selection or self.tool.busy:
             return
-        step = self.canvas.grid_step() / (10 if fine else 1)
+        step = self.canvas.snap_step() / (10 if fine else 1)
         paths = list(self.selection)
         self._run(lambda: self.document.moves.move(paths, steps_x * step, steps_y * step))
 

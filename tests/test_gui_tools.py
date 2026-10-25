@@ -10,7 +10,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
-from mems_sketch.core.shapes import Align, RectShape, RefShape, TransformShape
+from mems_sketch.core.shapes import Align, RectShape, RefShape
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.editor_state import state_path
 
@@ -181,7 +181,7 @@ def test_rotate_and_mirror_buttons(window):
     window.tree.select_paths([((0, 0),)])
     window.rotate_selection(90)
     node = window.document.node(((0, 0),))
-    assert isinstance(node, TransformShape) and node.rotation == 90
+    assert node.kind == "rect" and node.rotation == 90  # its own rotation (#214)
     box = window.document.results.highlight([((0, 0),)]).layers["device"].bbox()
     assert (box.width(), box.height()) == (10000, 20000)
     assert box.center().x == 10000 and box.center().y == 5000  # about its own centre

@@ -91,13 +91,16 @@ def test_name_this_point(window):
 
 
 def test_points_show_only_while_the_points_panel_is_open(window):
-    window.tree.select_paths([((0, 0),)])
+    window.tree.select_paths([])
     assert [m.toolTip() for m in markers(window, "declared")] == ["beam_right"]
-    assert markers(window, "selected")
+    window.tree.select_paths([((0, 0),)])  # a shape selected: its points only (#239)
+    assert markers(window, "declared") == [] and markers(window, "selected")
     window.tool_windows.open("properties")  # the same side: Points closes
     assert markers(window, "declared") == [] and markers(window, "selected") == []
     window.settings.set("canvas/always_show_points", True)
-    assert markers(window, "declared") and markers(window, "selected")
+    assert markers(window, "selected")
+    window.tree.select_paths([])
+    assert markers(window, "declared") and not markers(window, "selected")
 
 
 def test_re_exporting_all_points_of_a_placed_part(window):

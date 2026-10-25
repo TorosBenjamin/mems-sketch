@@ -111,6 +111,7 @@ DEFAULT_OPTIONS = {
     "outline_width": 1.0,  # px
     "show_grid": True,
     "grid_spacing_px": 12,
+    "snap_step_um": 0.0,  # a fixed step to snap to (0: the grid drawn, #48)
     "show_axes": True,
     "show_scale_bar": True,
     "gizmo_size_px": 70,
@@ -2431,17 +2432,31 @@ class LayoutCanvas(QGraphicsView):
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def on_grid(self, x: float, y: float) -> tuple[float, float]:
-        """``(x, y)`` µm rounded to the nearest grid point, without float noise."""
-        step = self.grid_step()
+        """``(x, y)`` µm rounded to the nearest point it snaps to, without float noise."""
+        step = self.snap_step()
         return round(round(x / step) * step, 6) + 0.0, round(round(y / step) * step, 6) + 0.0
+
+    def snap_step(self) -> float:
+        """What drawing and moving snap to, in µm: the user's fixed step, else the
+        grid drawn (an editor setting, apart from the geometry's precision and an
+        export's grid, #48)."""
+        fixed = self.options.get("snap_step_um") or 0.0
+        return fixed if fixed > 0 else self.grid_step()
 
     def grid_step(self) -> float:
         """Grid spacing in µm: the smallest 1-2-5 step with lines at least
-        ``grid_spacing_px`` apart."""
+        ``grid_spacing_px`` apart; with a fixed snap step, the smallest 1-2-5
+        multiple of it, so every line drawn is a point it snaps to."""
         pixels_per_um = abs(self.transform().m11())
         target = self.options["grid_spacing_px"] / pixels_per_um
-        exponent = math.floor(math.log10(target))
-        return next(m * 10**exponent for m in (1, 2, 5, 10) if m * 10**exponent >= target)
+        fixed = self.options.get("snap_step_um") or 0.0
+        unit = fixed if fixed > 0 else 1.0
+        if fixed > 0 and fixed >= target:
+            return fixed
+        exponent = math.floor(math.log10(target / unit))
+        return next(
+            unit * m * 10**exponent for m in (1, 2, 5, 10) if unit * m * 10**exponent >= target
+        )
 
 
 def _mixed(under: QColor, over: QColor, alpha: float) -> QColor:

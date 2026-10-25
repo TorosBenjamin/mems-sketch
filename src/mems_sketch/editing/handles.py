@@ -38,8 +38,9 @@ from mems_sketch.editing.dimensions import ordered_names
 
 @dataclass
 class HandleDrag:
-    """A drag of one handle, worked out when it starts. ``frame`` maps the node's
-    own frame into the component's (its parents' frames and its alignment)."""
+    """A drag of one handle, worked out when it starts. ``frame`` maps the frame of
+    the list holding the node into the component's (its parents' frames and its
+    alignment); the node's own frame is that turned by its rotation (``own``)."""
 
     path: NodePath
     node: Shape
@@ -52,9 +53,14 @@ class HandleDrag:
         return _number(value, self.scope)
 
     @property
+    def own(self) -> Transform:
+        """Maps the node's own frame (its handles') into the component's."""
+        return own_frame(self.node, self.frame, self.value)
+
+    @property
     def at(self) -> tuple[float, float]:
         """Where the handle is, in the component's frame."""
-        return self.frame.apply(self.handle.x, self.handle.y)
+        return self.own.apply(self.handle.x, self.handle.y)
 
 
 class HandleEdits(Commands):
@@ -69,9 +75,10 @@ class HandleEdits(Commands):
         node, frame, scope = found
         try:
             handles = node.edit_handles(lambda value: _number(value, scope))
+            own = own_frame(node, frame, lambda value: _number(value, scope))
         except (ValueError, KeyError, ZeroDivisionError):  # an expression it cannot work out
             return []
-        return [(h, *frame.apply(h.x, h.y)) for h in handles]
+        return [(h, *own.apply(h.x, h.y)) for h in handles]
 
     def start(self, path: NodePath, key: str) -> HandleDrag | None:
         """Begin dragging handle ``key`` of the node at ``path`` (None: no such handle)."""
@@ -90,7 +97,7 @@ class HandleEdits(Commands):
 
     def dragged(self, drag: HandleDrag, x: float, y: float) -> Shape:
         """The node with the handle at ``(x, y)`` (the component's frame)."""
-        return self._moved_to(drag, drag.frame.inverted().apply(x, y))
+        return self._moved_to(drag, drag.own.inverted().apply(x, y))
 
     def typed(self, drag: HandleDrag, values: list[float]) -> Shape:
         """The node with the handle where typed ``values`` put it: a side's coordinate,
@@ -102,7 +109,7 @@ class HandleEdits(Commands):
         node = drag.node
         changed = node.handle_moved(drag.handle.key, to, drag.value)
         moved = type(node).model_validate({**node.model_dump(), **changed})
-        return _keep_alignment(drag, _follow_corners(drag, moved))
+        return _keep_alignment(drag, _follow_corners(drag, _keep_turn(drag, moved)))
 
     def retuned(self, drag: HandleDrag, x: float, y: float) -> tuple[Shape, dict[str, float]]:
         """The drag to ``(x, y)`` done with Alt: the node, and the parameters that change
@@ -110,7 +117,7 @@ class HandleEdits(Commands):
         and the parameter changes to put it under the cursor; the others get an
         offset, as :meth:`dragged` does."""
         node = drag.node
-        to = drag.frame.inverted().apply(x, y)
+        to = drag.own.inverted().apply(x, y)
         changed = node.handle_moved(drag.handle.key, to, drag.value)
         tuned: dict[str, float] = {}
         rest: dict[str, Any] = {}
@@ -125,7 +132,7 @@ class HandleEdits(Commands):
         if not rest:
             return node, tuned
         moved = type(node).model_validate({**node.model_dump(), **rest})
-        return _keep_alignment(drag, _follow_corners(drag, moved)), tuned
+        return _keep_alignment(drag, _follow_corners(drag, _keep_turn(drag, moved))), tuned
 
     def _tuned_point(self, drag: HandleDrag, old, new, tuned: dict[str, float]):
         if not isinstance(old, list | tuple) or old == new:
@@ -345,7 +352,7 @@ class HandleEdits(Commands):
             fewest = len(getattr(node, "points", ())) or "its"
             raise ValueError(f"{node.name or node.kind} keeps at least {fewest} points")
         moved = type(node).model_validate({**node.model_dump(), **changed})
-        moved = _keep_alignment(drag, _follow_corners(drag, moved))
+        moved = _keep_alignment(drag, _follow_corners(drag, _keep_turn(drag, moved)))
         self._replace(path, node, moved, f"Remove {handle_label(key)} of")
 
     def _started(self, path: NodePath, key: str) -> HandleDrag:
@@ -439,6 +446,33 @@ def _box_point(box, point: str) -> tuple[float, float]:
         return (x0 + x1) / 2, ys[point]
     vertical, _, horizontal = point.partition("_")
     return xs[horizontal], ys[vertical]
+
+
+def own_frame(node: Shape, frame: Transform, v) -> Transform:
+    """``frame`` (the list's) followed by the node's own rotation (#214): where its
+    handles and dimensions are."""
+    turn = node.turn(v)
+    return frame if turn is None else frame * turn
+
+
+def _keep_turn(drag: HandleDrag, moved: Shape) -> Shape:
+    """A turned node (its ``rotation``) moved so that what the drag did not change
+    stays where it was: the drag moves the centre it turns about, which would
+    move the rest of it too."""
+    try:
+        before, after = drag.node.turn(drag.value), moved.turn(drag.value)
+    except (ValueError, KeyError, ZeroDivisionError):
+        return moved
+    if before is None or after is None:
+        return moved
+    (bx, by), (ax, ay) = before.apply(0.0, 0.0), after.apply(0.0, 0.0)
+    dx, dy = round(bx - ax, 6), round(by - ay, 6)
+    if dx == 0 and dy == 0:
+        return moved
+    from mems_sketch.core.shapes.handles import shifted
+
+    changed = moved.moved(lambda x: shifted(x, dx), lambda y: shifted(y, dy), lambda inner: inner)
+    return moved.model_copy(update=changed)
 
 
 def _keep_alignment(drag: HandleDrag, moved: Shape) -> Shape:

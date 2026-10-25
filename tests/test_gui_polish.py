@@ -173,7 +173,7 @@ def test_rotate_drag_rotates_about_the_centre_with_a_sweep(window):
     assert window.canvas._gizmo_sweep == (0.0, 90.0)
     mouse(window.canvas, QEvent.Type.MouseButtonRelease, cx, cy + radius, Qt.MouseButton.NoButton)
     node = window.document.node(((0, 0),))
-    assert node.kind == "transform" and node.rotation == 90  # a primitive gets wrapped
+    assert node.kind == "rect" and node.rotation == 90  # its own rotation (#214)
 
 
 def test_gizmos_can_be_hidden_and_are_not_shown_on_read_only_tabs(window):

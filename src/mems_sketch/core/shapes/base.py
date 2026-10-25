@@ -191,6 +191,35 @@ class Node(BaseModel):
         whether it is closed; None for the others."""
         return None
 
+    def turn(self, v: Callable[[Value], float]) -> Transform | None:
+        """How its own ``rotation`` turns its outline (about :meth:`pivot`): the frame its
+        handles and dimensions are in, inside the list's; None when it has no
+        rotation or it is 0."""
+        rotation = getattr(self, "rotation", None)
+        if rotation is None:
+            return None
+        angle = v(rotation)
+        if angle == 0:
+            return None
+        from mems_sketch.core.transform import Transform
+
+        return Transform.rotating(angle, self.pivot(v))
+
+    def pivot(self, v: Callable[[Value], float]) -> tuple[float, float]:
+        """What its ``rotation`` turns it about: the centre of its own points' box."""
+        points = [(v(x), v(y)) for x, y in getattr(self, "points", ())]
+        if not points:
+            return 0.0, 0.0
+        xs, ys = [x for x, _ in points], [y for _, y in points]
+        return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+
+    def turned(
+        self, points: list[tuple[float, float]], v: Callable[[Value], float]
+    ) -> list[tuple[float, float]]:
+        """``points`` of its own frame where its rotation puts them."""
+        turn = self.turn(v)
+        return points if turn is None else [turn.apply(x, y) for x, y in points]
+
     def corner_vertices(self, v: Callable[[Value], float]) -> list[tuple[float, float]] | None:
         """The corners of its outline, in order, for rounded corners (a corners
         modifier) to follow when a handle moves one; None when they are not simply

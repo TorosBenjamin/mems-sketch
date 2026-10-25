@@ -228,7 +228,7 @@ class Tool:
         if found is not None:
             return found[1], found[2], found[0]
         if grid and self.setting("snapping/grid", True):
-            step = self.canvas.grid_step()
+            step = self.canvas.snap_step()
             return _um(round(x / step) * step), _um(round(y / step) * step), None
         return x, y, None
 
@@ -261,7 +261,7 @@ class Tool:
         if not self.setting("snapping/grid", True):
             return dx, dy, None
         moving = [(px, py) for _, _, px, py in plan.points]
-        return (*grid_move(moving, dx, dy, self.canvas.grid_step()), None)
+        return (*grid_move(moving, dx, dy, self.canvas.snap_step()), None)
 
     # -- the move gizmo (Select and Move) ---------------------------------
 
@@ -292,7 +292,7 @@ class Tool:
         along = dx if part == "x" else dy
         if not modifiers & CTRL and self.setting("snapping/grid", True):
             moving = [(px, py) for _, _, px, py in plan.points]
-            gx, gy = grid_move(moving, dx, dy, self.canvas.grid_step(), axes=part)
+            gx, gy = grid_move(moving, dx, dy, self.canvas.snap_step(), axes=part)
             along = gx if part == "x" else gy
         return (along, 0.0) if part == "x" else (0.0, along)
 
@@ -743,7 +743,7 @@ class SelectTool(Tool):
         dimension = self.window.edit_dimensions[index]
         value = self.document.dimensions.dragged_value(dimension, x, y)
         if not modifiers & CTRL and self.setting("snapping/grid", True):
-            step = self.canvas.grid_step()
+            step = self.canvas.snap_step()
             value = _um(round(value / step) * step)
         self._dimension_value = value
         self.canvas.show_dimensions(self.window.edit_dimensions, None, (index, f"{value:g}", False))
@@ -1639,7 +1639,7 @@ class MeasureTool(Tool):
             if found is not None:
                 return found
         if self.setting("snapping/grid", True):
-            step = self.canvas.grid_step()
+            step = self.canvas.snap_step()
             return _um(round(x / step) * step), _um(round(y / step) * step), None
         return x, y, None
 
@@ -1903,7 +1903,7 @@ class CircleTool(_TwoPointTool):
         radius = math.hypot(end[0] - start[0], end[1] - start[1])
         snapping = self._snap is None and not modifiers & CTRL
         if snapping and self.setting("snapping/grid", True):  # a round radius, unless on a point
-            step = self.canvas.grid_step()
+            step = self.canvas.snap_step()
             radius = round(radius / step) * step
         radius = _um(radius)
         if radius <= 0:

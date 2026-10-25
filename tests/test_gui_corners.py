@@ -83,20 +83,20 @@ def test_corners_follow_moves_rotations_and_mirroring(window):
     doc, path = window.document, ((0, 0),)
     doc.corners.add(path, 40, 20, radius=2)
     doc.moves.move([path], 10, 5)
-    doc.moves.rotate([path], 30, (0, 0))  # wraps the plate in a transform
-    doc.moves.rotate([path], 45, (5, 5))  # turns the transform
-    doc.moves.mirror([path], True, (3, 0))
+    doc.moves.rotate([path], 30, (0, 0))  # the plate's own rotation, its corner carried
+    doc.moves.rotate([path], 45, (5, 5))
+    doc.moves.mirror([path], True, (3, 0))  # a mirror wraps it in a transform
     doc.moves.move([path], -7, 2)
-    assert doc.problems() == []
-    plate = doc.node(path).children[0]  # the plate, inside the transform, keeps its corner
-    assert [c.at for m in plate.modifiers for c in m.corners] == ["self.top_right"]
+    assert doc.problems() == []  # the corner still rounds a corner
+    plate = doc.node(path).children[0]
+    assert plate.rotation == 75 and len(plate.modifiers[0].corners) == 1
 
 
 def test_a_placed_nodes_corner_turns_with_it(window):
     doc, path = window.document, ((0, 0),)
-    doc.moves.rotate([path], 45, (0, 0))  # now a transform holding the plate
+    doc.moves.rotate([path], 45, (0, 0))  # the plate turned by its own rotation (#214)
     x, y = doc.corners.candidates(path)[0]
-    doc.corners.add(path, x, y, radius=2)  # a corner of the transform, recorded around it
+    doc.corners.add(path, x, y, radius=2)  # recorded where it is, around the plate
     doc.moves.rotate([path], 90, (0, 0))
     assert doc.problems() == []
     [(_, (rx, ry))] = doc.corners.rounded(path)

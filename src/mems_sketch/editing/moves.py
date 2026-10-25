@@ -181,8 +181,10 @@ class MoveEdits(Commands):
         """Apply a rigid transform, given in the active component's frame, to shapes.
 
         References and transforms get a new ``rotation`` / ``mirror_x`` (and
-        position); other shapes have no orientation of their own, so they are
-        wrapped in a transform that takes over their name, so alignments and
+        position). A rectangle, polygon or path turned (not mirrored) gets a new
+        ``rotation`` of its own (#214), its rounded corners carried along, unless
+        it has other modifiers, which would then work on it turned. Other shapes have no orientation of their own, so they
+        are wrapped in a transform that takes over their name, so alignments and
         point expressions that use them keep working. Aligned shapes stay
         attached: only their orientation changes.
         """
@@ -208,6 +210,8 @@ class MoveEdits(Commands):
                 replacements[path] = self._carry_corners(
                     path, moved, _placement_change(node, local, record[path])
                 )
+            elif (turned := _turned_itself(node, local, self._scope(path))) is not None:
+                replacements[path] = self._carry_corners(path, turned, local)
             else:
                 name = node.name or fresh_name("transform", taken)
                 inner = fresh_name(f"{name}_shape", taken)
@@ -229,6 +233,42 @@ class MoveEdits(Commands):
                 container[index] = new
 
         self.session.edit(description, change)
+
+    def _scope(self, path: NodePath) -> dict[str, float] | None:
+        try:
+            return self.session.results.scope(path)
+        except Exception:  # noqa: BLE001 - the design does not evaluate
+            return None
+
+
+def _turned_itself(node: Shape, local: Transform, scope: dict[str, float] | None) -> Shape | None:
+    """``node`` turned by ``local`` (the list's frame) through its own ``rotation``:
+    its coordinates moved so that it turns about its new centre as ``local``
+    turns it; None when it cannot (no rotation field, a mirror, modifiers other
+    than rounded corners, which would then work on it turned)."""
+    if "rotation" not in type(node).model_fields or type(node).placed or local.mirror:
+        return None
+    if scope is None or any(not isinstance(m, CornersModifier) for m in node.modifiers):
+        return None  # (rounded corners are carried along with it, as a placement's)
+    from mems_sketch.core.expressions import evaluate
+    from mems_sketch.core.shapes.handles import shifted
+
+    def v(value) -> float:
+        return float(value) if isinstance(value, int | float) else evaluate(value, scope)
+
+    try:
+        px, py = node.pivot(v)
+    except (ValueError, KeyError, ZeroDivisionError):
+        return None
+    qx, qy = local.apply(px, py)
+    dx, dy = _round_um(qx - px), _round_um(qy - py)
+    changed = node.moved(lambda x: shifted(x, dx), lambda y: shifted(y, dy), lambda inner: inner)
+    rotation = node.rotation
+    if isinstance(rotation, int | float):
+        changed["rotation"] = _angle(rotation + local.angle)
+    else:
+        changed["rotation"] = shifted(rotation, _angle(local.angle))
+    return node.model_copy(update=changed)
 
 
 def _turned_align(align, turn: Transform):

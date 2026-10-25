@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "../eval/context.hpp"
 
@@ -34,6 +35,13 @@ Result render_route(const Json& node, const Context& ctx);
 // The port a reference like ``beam.port.end`` names, of a shape beside the
 // node, and that shape. Errors start with the role and the reference
 // (``end 'beam.port.end': ...``).
+// ``made`` turned by the node's ``rotation`` (degrees, counter-clockwise) about
+// ``pivot``: its geometry, points and ports (rect, polygon and path; #214).
+Result turned(Result made, const Json& node, const Context& ctx, mgeom::Point pivot);
+
+// The centre of the box around ``points``: what a polygon or a path turns about.
+mgeom::Point centre_of(const std::vector<mgeom::Point>& points);
+
 std::pair<const Points*, Port> port_of(const Context& ctx, const std::string& reference, const std::string& role);
 
 }  // namespace mems

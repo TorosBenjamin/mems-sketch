@@ -5,7 +5,9 @@ attach: a point with a direction, a wire width and a layer), both editable;
 then the points every component has (``center``, ``left``, …, of the whole
 component) and those of each named top-level shape, read-only (a placed
 component's ports among them: ``port.drive``). Hover a point to see it on the
-canvas, click it to pan there and edit it in the form below the list.
+canvas, click it to pan there and edit it in the form below the list. The
+shapes selected on the canvas have their groups opened and in bold, as their
+points are the ones drawn (#239).
 """
 
 from __future__ import annotations
@@ -187,12 +189,34 @@ class PointsPanel(_Panel):
             for name, xy in points.items():
                 self._item(holder, (group, name), xy).setForeground(0, QBrush(theme.color("muted")))
             holder.setExpanded(group in opened)
+        self._show_marked()
         self.tree.resizeColumnToContents(0)
         self._rebuilding = False
         self.select(keep)
         self.actions.buttons["Add point"].setEnabled(not read_only)
         self.actions.buttons["Add port"].setEnabled(not read_only)
         self._update_remove()
+
+    def mark_selected(self, names: list[str]) -> None:
+        """Open and embolden the groups of the shapes ``names`` (selected on the canvas)."""
+        names = set(names)
+        if names == getattr(self, "_marked", set()):
+            return
+        self._marked = names
+        self._show_marked()
+
+    def _show_marked(self) -> None:
+        marked = getattr(self, "_marked", set())
+        for k in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(k)
+            group = item.data(0, GROUP_ROLE)
+            if group is None or group == "default":
+                continue
+            font = item.font(0)
+            font.setBold(group in marked)
+            item.setFont(0, font)
+            if group in marked:
+                item.setExpanded(True)
 
     def _item(self, parent, key: Key, xy) -> QTreeWidgetItem:
         item = QTreeWidgetItem(parent, [key[1], _position(xy)])

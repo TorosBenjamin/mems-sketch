@@ -265,18 +265,23 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
         component: str | None = None,
         params: dict[str, Any] | None = None,
         points: bool = False,
+        ports: str | list[str] | None = None,
         box: list[float] | None = None,
         width: int = 800,
         height: int = 600,
     ) -> Image:
         """A picture (PNG) of a component, layers in their canvas colours, with a scale
         bar; ``points`` marks and labels its points, and its ports as arrows (the way
-        a wire leaves, a bar as wide as the wire); ``box`` [x0, y0, x1, y1] in µm
-        zooms in."""
-        _, built = tools.built(component, params)
+        a wire leaves, a bar as wide as the wire). ``ports`` also draws the ports of
+        the shapes in it, labelled as a route names them (``comb.port.drive``): of
+        every placed component, path and route (``"all"``), or of the shapes named
+        in a list. ``box`` [x0, y0, x1, y1] in µm zooms in."""
+        name, built = tools.built(component, params)
         picture = Picture(built.geometry)
         if points:
             picture.points, picture.ports = dict(built.points()), _ports(built)
+        if ports:
+            picture.ports = {**picture.ports, **_placed_ports(tools, name, built, ports)}
         return Image(data=_png([picture], tools, width, height, box), format="png")
 
     @tool
@@ -369,6 +374,32 @@ def _png(pictures, tools: DesignTools, width, height, box, columns=None) -> byte
 
 def _ports(built) -> dict[str, tuple[float, float, float, float]]:
     return {f"port.{n}": (p.x, p.y, p.angle, p.width) for n, p in built.ports().items()}
+
+
+def _placed_ports(tools, component: str, built, which) -> dict[str, tuple]:
+    """The ports of the top-level shapes in ``component`` (``"all"``, or a list of
+    their names), ``shape.port.name``: what a route or a connection names (#212)."""
+    shapes = tools.session.definition_of(component).shapes
+    named = {node.name for node in shapes if node.name}
+    if which == "all":
+        wanted = named
+    else:
+        wanted = {which} if isinstance(which, str) else set(which)
+        unknown = sorted(wanted - named)
+        if unknown:
+            raise ValueError(
+                f"no shape named {', '.join(repr(n) for n in unknown)} in {component}"
+                f' (ports takes "all" or a list of names: {", ".join(sorted(named))})'
+            )
+    found = {}
+    for path, record in built.records().items():
+        if len(path) != 1:
+            continue
+        node = shapes[path[0][1]]
+        if node.name in wanted:
+            for port, p in record.ports.items():
+                found[f"{node.name}.port.{port}"] = (p.x, p.y, p.angle, p.width)
+    return found
 
 
 def _has_image(result: Any) -> bool:

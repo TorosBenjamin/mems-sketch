@@ -66,6 +66,7 @@ class Setting:
     suffix: str = ""
     decimals: int = 0
     keywords: tuple[str, ...] = field(default_factory=tuple)
+    special: str = ""  # what the minimum is shown as, e.g. "Follows the zoom" for 0
 
     def options(self) -> dict[str, str] | None:
         return self.choices() if callable(self.choices) else self.choices
@@ -300,6 +301,23 @@ SETTINGS: tuple[Setting, ...] = (
         keywords=("magnet",),
     ),
     Setting("snapping/grid", True, "Snap to the grid", "Snapping", "Snapping"),
+    Setting(
+        "snapping/grid_step",
+        0.0,
+        "Grid step",
+        "Snapping",
+        "Snapping",
+        "What drawing and moving snap to. Empty: the grid drawn, finer as you zoom in. "
+        "This is the editor's only: the geometry keeps 1 nm, and an export rounds to "
+        "its own grid (the process's).",
+        minimum=0.0,
+        maximum=1e4,
+        step=0.5,
+        suffix=" µm",
+        decimals=3,
+        keywords=("precision", "resolution", "fixed grid"),
+        special="Follows the zoom",
+    ),
     Setting(
         "snapping/distance_px",
         10,
@@ -644,6 +662,8 @@ class PreferencesDialog(QDialog):
             editor.setRange(setting.minimum, setting.maximum)
             editor.setSingleStep(setting.step or 1)
             editor.setSuffix(setting.suffix)
+            if setting.special:
+                editor.setSpecialValueText(setting.special)
             editor.setValue(value)
             editor.valueChanged.connect(lambda v, k=key: self.settings.set(k, v))
         if not isinstance(editor, QCheckBox):

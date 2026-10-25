@@ -56,8 +56,14 @@ afterwards.
 **Moving keeps things parametric.** A move changes what the shape stores,
 relative to its parent: `plate/2 + 39` moved by 11 becomes `plate/2 + 50`.
 An aligned shape keeps its alignment and changes its offset, shown by the
-cursor while you drag (Alt-drag removes the alignment instead). Primitives have no rotation of their own, so rotating
-one wraps it in a transform.
+cursor while you drag (Alt-drag removes the alignment instead).
+
+**Rotating a rectangle, polygon or path sets its own `rotation`** (degrees,
+about the centre of its box), shown in Properties. Its handles turn with it,
+and dragging one keeps the rest of the shape where it is; rounded corners turn
+with it. A shape with other modifiers (an array, a mirror), a mirrored one and
+the other kinds are wrapped in a transform instead, so their modifiers keep
+working as they did.
 
 **Drag a shape's handles to change it.** With the Select tool, one selected
 shape shows its handles:

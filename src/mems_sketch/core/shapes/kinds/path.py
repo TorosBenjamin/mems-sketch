@@ -37,6 +37,7 @@ class PathShape(Primitive):
     points: list[tuple[Value, Value]] = Field(min_length=2)
     width: Value
     ends: Literal["flush", "square", "round"] = "flush"
+    rotation: Value = 0.0  # degrees, about the centre of its points' box
 
     def moved(self, x, y, inner) -> dict:
         return {"points": [(x(px), y(py)) for px, py in self.points]}

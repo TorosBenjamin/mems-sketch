@@ -1,5 +1,5 @@
-"""Perforation as a modifier (#83); rounded rectangles, fully rounded ones as
-circles and stadiums (#107)."""
+"""Perforation as a modifier (#83); rounded rectangles, now a corners modifier
+(#107, #234)."""
 
 import math
 
@@ -42,24 +42,43 @@ def near(area: float, perimeter: float):
     return pytest.approx(area, abs=0.005 * perimeter)
 
 
-# -- rounded rectangles ----------------------------------------------------------
+# -- rounded rectangles: a corners modifier (#234) ------------------------------------
 
 
-def test_a_rectangle_takes_a_corner_radius(doc):
-    doc.nodes.add(rect(x1=10, y1=4, corner_radius=1))
-    assert area_um2(doc) == near(40 - (4 - math.pi), 28)
+def test_a_rectangle_has_no_corner_radius_of_its_own():
+    assert "corner_radius" not in RectShape.model_fields
 
 
-def test_the_radius_is_clamped_to_half_the_shorter_side(doc):
+def test_an_old_corner_radius_is_read_as_a_corners_modifier(doc):
+    old = RectShape.model_validate(
+        {"kind": "rect", "layer": "device", "x0": 0, "y0": 0, "x1": 10, "y1": 4, "corner_radius": 1}
+    )
+    [corners] = old.modifiers
+    assert corners.kind == "corners" and {c.radius for c in corners.corners} == {1}
+    assert {c.at for c in corners.corners} == {
+        "self.bottom_left",
+        "self.bottom_right",
+        "self.top_right",
+        "self.top_left",
+    }
+    doc.nodes.add(old.model_copy(update={"name": "r"}))
+    assert area_um2(doc) == near(40 - (4 - math.pi), 28)  # as it drew before
+
+
+def test_an_old_radius_is_still_clamped_to_half_the_shorter_side(doc):
     doc.nodes.add(rect(x1=10, y1=4, corner_radius=50))  # a stadium
     assert area_um2(doc) == near(6 * 4 + math.pi * 4, 28)
+    expression = RectShape(layer="device", x0=0, y0=0, x1="w", y1=4, corner_radius="r")
+    assert expression.modifiers[0].corners[0].radius.startswith("min(r, ")
 
 
-def test_a_fully_rounded_square_is_the_circle(doc):
+def test_an_old_zero_radius_adds_nothing():
+    assert rect(corner_radius=0).modifiers == []
+
+
+def test_a_fully_rounded_square_is_a_circle(doc):
     doc.nodes.add(rect(x0=-3, y0=-3, x1=3, y1=3, corner_radius=3))
-    doc.nodes.add(CircleShape(name="disc", layer="other", x=0, y=0, radius=3))
-    geometry = doc.results.geometry().layers
-    assert geometry["device"].digest() == geometry["other"].digest()
+    assert area_um2(doc) == near(math.pi * 9, 2 * math.pi * 3)
 
 
 def test_a_negative_corner_radius_is_an_error(doc):

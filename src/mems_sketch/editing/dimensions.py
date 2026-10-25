@@ -108,8 +108,11 @@ class Dimensions(Commands):
         def v(value) -> float:
             return float(value) if isinstance(value, int | float) else _evaluate(value, scope)
 
+        from mems_sketch.editing.handles import own_frame  # (it imports this module)
+
         try:
             dimensions = node.dimensions(v)
+            frame = own_frame(node, frame, v)
         except (ValueError, KeyError, ZeroDivisionError):
             return []
         known = self._parameter_names()

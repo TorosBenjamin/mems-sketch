@@ -1176,6 +1176,9 @@ class ParametersPanel(_Panel):
         self.table.itemChanged.connect(self._changed)
         self.table.viewport().installEventFilter(self)
         self.table.setMouseTracking(True)  # for the drag cursor
+        # A row's menu: its description and whether it is a whole number (#308).
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
         self._drag: dict | None = None  # the cell being dragged, see eventFilter
         self.hide_implementation = False  # a read-only component: public parameters only
         layout = QVBoxLayout(self)
@@ -1242,7 +1245,8 @@ class ParametersPanel(_Panel):
                 if p.internal
                 else "Public: can be set where the component is placed"
             )
-            cells[0].setToolTip("\n".join(t for t in (p.description, access) if t))
+            whole = "A whole number" if p.integer else ""
+            cells[0].setToolTip("\n".join(t for t in (p.description, whole, access) if t))
             cells[self.TRIAL].setToolTip("Try a value without changing the design (not saved)")
             for column, limit in ((2, p.min), (3, p.max)):
                 tip = "A number or an expression; start with > or < to exclude the limit itself"
@@ -1345,6 +1349,62 @@ class ParametersPanel(_Panel):
                 self._guard(lambda: self.document.parameters.update(name, default=value))
             return True
         return False
+
+    def context_menu(self, row: int) -> QMenu | None:
+        """The menu of the parameter in ``row``: its description, whether it is a
+        whole number, internal or public, removing it (#308)."""
+        if row < 0 or row >= len(self._names) or self.document.read_only:
+            return None
+        name = self._names[row]
+        definition = {p.name: p for p in self.document.active_definition.parameters}[name]
+        menu = QMenu(self)
+        _menu_action(menu, "Description…", lambda: self.describe(name), "edit")
+        whole = _menu_action(
+            menu,
+            "Whole number",
+            lambda: self._guard(
+                lambda: self.document.parameters.update(name, integer=not definition.integer)
+            ),
+        )
+        whole.setCheckable(True)
+        whole.setChecked(definition.integer)
+        whole.setToolTip("Only whole values: a count, such as a number of fingers")
+        internal = _menu_action(
+            menu,
+            "Internal",
+            lambda: self._guard(
+                lambda: self.document.parameters.set_internal([name], not definition.internal)
+            ),
+        )
+        internal.setCheckable(True)
+        internal.setChecked(definition.internal)
+        menu.addSeparator()
+        _menu_action(
+            menu, "Remove", lambda: self._guard(lambda: self.document.parameters.remove(name))
+        )
+        return menu
+
+    def _context_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if row >= 0:
+            widgets.select_row(self.table, row)
+        menu = self.context_menu(row)
+        if menu is not None:
+            menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def describe(self, name: str) -> None:
+        """Ask for the description of the parameter ``name``: shown in its tooltips
+        and behind the "?" where the component is placed."""
+        current = {p.name: p for p in self.document.active_definition.parameters}[name]
+        text, ok = QInputDialog.getText(
+            self,
+            "Description",
+            f'What {name} is (shown in its tooltip, and by its "?" where the component '
+            'is placed; a unit in brackets, "Finger width (µm)", goes into the field):',
+            text=current.description,
+        )
+        if ok and text.strip() != current.description:
+            self._guard(lambda: self.document.parameters.update(name, description=text.strip()))
 
     def _toggle_internal(self) -> None:
         """Make the selected parameters internal, or public if they all are already."""

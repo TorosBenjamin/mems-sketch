@@ -225,9 +225,21 @@ class DesignTools:
         """Place another component (``mems.comb_drive``, a project component)."""
         if not self.session.exists(place):
             raise ValueError(f"there is no component '{place}': see list_components")
+        into = self._component(component)
+        roles = (
+            f"`place` is the component to place ('{place}'), `component` the one to place "
+            f"it in ('{into}'), `name` the new shape's name ('{name}')"
+        )
+        if place == into:  # the arguments mixed up, most likely (#311)
+            raise ValueError(f"'{place}' cannot be placed inside itself: {roles}")
         shape = {"ref": place, **(params or {}), "x": x, "y": y, "rotation": rotation}
-        self.add_shape(component, name, shape)
-        return f"placed {place} as {name}"
+        try:
+            self.add_shape(component, name, shape)
+        except Exception as error:
+            if "circular" in str(error).lower():
+                raise ValueError(f"{error}: {roles}") from error
+            raise
+        return f"placed {place} as {name} in {into}"
 
     def new_component(self, name: str, description: str = "") -> str:
         """A new, empty component, made the one edited."""

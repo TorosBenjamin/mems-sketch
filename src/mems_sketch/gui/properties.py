@@ -580,7 +580,7 @@ class PropertyEditor(QScrollArea):
         stack = Stack.of(process.levels, process.default_level)
         definition = self.document.active_definition
         try:
-            current = stack.top_level(getattr(definition, "default_level", None))
+            current = stack.top_level(getattr(definition, "level", None))  # its own level
         except ValueError:
             current = None
         colors = {name: layer_color(i) for i, name in enumerate(project.layers)}

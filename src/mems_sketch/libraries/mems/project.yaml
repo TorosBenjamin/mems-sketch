@@ -10,6 +10,7 @@ processes:
   soi: processes/soi
 components:
   anchor: components/anchors/anchor
+  bond_pad: components/anchors/bond_pad
   comb_drive: components/electrodes/comb_drive
   comb_drive_with_stops: components/electrodes/comb_drive_with_stops
   differential_comb: components/electrodes/differential_comb

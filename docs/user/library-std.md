@@ -136,7 +136,7 @@ Bond and probe pads.
 
 ![std.bond_pad](../images/gallery/std/bond_pad.png)
 
-Square bond or probe pad on the component's level, with an opening on the level above (passivation, or metal on the pad) inset by `margin`; set `opening` to 0 for a pad without one. A pad is meant to stay put, so the rule check's "not released" warning on it is expected. Port: signal, on its right edge.
+Square bond or probe pad on the component's level, with an opening on the level above (passivation, or metal on the pad) inset by `margin`; set `opening` to 0 for a pad without one. In a released process (the `mems` examples) it is not anchored and floats away: use `mems.bond_pad`, which is. Port: signal, on its right edge.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
@@ -158,7 +158,7 @@ The die's outline, scribe lane and marks.
 
 ![std.die_frame](../images/gallery/std/die_frame.png)
 
-Die frame centred on the origin: the die's share of the scribe lane as a ring at its edge, L-shaped marks in its four inner corners, and a label area on the level above near the bottom left corner (for the die's name; text will come as a shape of its own). Point: label, the middle of the label area.
+Die frame centred on the origin: the die's share of the scribe lane as a ring at its edge, L-shaped marks in its four inner corners, and a label area on the level above near the bottom left corner (for the die's name; text will come as a shape of its own). Point: label, the middle of the label area. Made for processes without a release etch: in a released one (the `mems` examples) the ring, the marks and the label area are not anchored and the rule check says they float; anchor them (`mems.anchor` under each) or waive those warnings. The label area is on the level above, so it needs the frame's level under it where a process asks for that.
 
 | Parameter | Default | Limits | |
 |---|---|---|---|

@@ -135,11 +135,12 @@ def test_dragging_an_aligned_shape_shows_its_new_offset(window, qtbot):
             return None
         return [float(v) for v in label.removeprefix("offset ").removesuffix(" µm").split(", ")]
 
-    qtbot.waitUntil(lambda: offset() is not None and abs(offset()[1] - 15) < 0.3)
-    assert offset()[0] == pytest.approx(0, abs=0.3)
+    pixel = 1 / canvas.pixels_per_um() + 0.05  # how near a mouse position can be
+    qtbot.waitUntil(lambda: offset() is not None and abs(offset()[1] - 15) < pixel)
+    assert offset()[0] == pytest.approx(0, abs=pixel)
     mouse(QEvent.Type.MouseButtonRelease, 50, 50)
     assert doc.node(paths(window)[2]).align.dy == pytest.approx(
-        offset()[1] if offset() else 15, abs=0.3
+        offset()[1] if offset() else 15, abs=pixel
     )
 
 

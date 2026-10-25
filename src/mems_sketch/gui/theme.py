@@ -102,7 +102,7 @@ class CanvasColors(_Colors):
     highlight: str  # the selection
     hover: str
     violation: str  # rule violations: errors
-    violation_warning: str = "#c98200"  # and warnings
+    violation_warning: str | None = None  # and warnings (none: the errors' colour)
     added: str  # history: material a version added
     removed: str  # and removed (hatched: it is not there any more; grey, not a problem's red)
     declared: str  # points: the edited component's own

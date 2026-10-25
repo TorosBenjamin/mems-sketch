@@ -1031,7 +1031,8 @@ class LayoutCanvas(QGraphicsView):
                 (x0, y0, x1, y1), (outline, holes), severity = marker
             else:
                 (x0, y0, x1, y1), outline, holes, severity = marker, (), (), "error"
-            color = QColor(self.theme["violation" if severity == "error" else "violation_warning"])
+            warning = self.theme.get("violation_warning") or self.theme["violation"]
+            color = QColor(self.theme["violation"] if severity == "error" else warning)
             if outline:
                 path = QPainterPath()
                 path.setFillRule(Qt.FillRule.OddEvenFill)
@@ -1039,6 +1040,7 @@ class LayoutCanvas(QGraphicsView):
                     path.addPolygon(QPolygonF([QPointF(x * DBU_UM, y * DBU_UM) for x, y in ring]))
                     path.closeSubpath()
                 item = QGraphicsPathItem(path)
+                item.setData(0, "violation")  # a marker, not a selected shape's outline
                 fill = QColor(color)
                 fill.setAlpha(70)
                 item.setBrush(QBrush(fill))

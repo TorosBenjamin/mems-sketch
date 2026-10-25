@@ -2254,8 +2254,8 @@ class RouteTool(DrawTool):
         found = 0.0
         try:
             scope = process.scope()
-            for rule in process.rules.values():
-                if rule.enabled and rule.kind == "min_width" and layer in rule.layers:
+            for rule in process.rules_of("min_width"):
+                if layer in rule.layers:
                     value = rule.values.get("value", 0.0)
                     value = value if isinstance(value, int | float) else evaluate(str(value), scope)
                     found = max(found, float(value))

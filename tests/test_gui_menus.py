@@ -229,8 +229,8 @@ def test_clicking_a_layer_draws_on_that_layer(window):
 
 def test_commands_on_the_wrong_selection_say_why(window, monkeypatch):
     """#253: nothing selected, or too many: the command says what it needs."""
-    errors = []
-    monkeypatch.setattr(window, "report_error", errors.append)
+    errors = []  # a hint now, not an error (#326)
+    monkeypatch.setattr(window, "ask_selection", errors.append)
     window.tree.select_paths([])
     for command in (
         window.duplicate,
@@ -241,7 +241,7 @@ def test_commands_on_the_wrong_selection_say_why(window, monkeypatch):
         window.remove_alignment,
     ):
         command()
-    assert len(errors) == 6 and all(e.startswith("select ") for e in errors)
+    assert len(errors) == 6 and all(e.startswith("Select ") for e in errors)
 
 
 def test_duplicate_copies_every_selected_shape_in_one_step(window):

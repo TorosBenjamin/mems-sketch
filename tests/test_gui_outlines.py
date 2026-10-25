@@ -63,7 +63,11 @@ def test_touching_selected_shapes_are_outlined_one_by_one(window):
     add(window, "left", 0, 0, 10, 10)
     add(window, "right", 10, 0, 20, 10)  # shares an edge with left
     window.tree.select_paths([paths(window, "left"), paths(window, "right")])
-    selected = [i for i in window.canvas._overlay if isinstance(i, QGraphicsPathItem)]
+    selected = [
+        i
+        for i in window.canvas._overlay
+        if isinstance(i, QGraphicsPathItem) and i.data(0) != "violation"
+    ]
     widths = sorted(width(i) for i in selected)
     assert widths == [10, 10]  # two outlines, not one 20 µm wide
 
@@ -74,7 +78,11 @@ def test_the_selection_stays_outlined_while_a_value_is_dragged(window):
     window.tree.select_paths([path])
     wider = window.document.node(path).model_copy(update={"x1": 30})
     window._preview_node(wider, path)
-    selected = [i for i in window.canvas._overlay if isinstance(i, QGraphicsPathItem)]
+    selected = [
+        i
+        for i in window.canvas._overlay
+        if isinstance(i, QGraphicsPathItem) and i.data(0) != "violation"
+    ]
     assert [width(i) for i in selected] == [30]  # the new size
 
 

@@ -1080,8 +1080,7 @@ class PropertyEditor(QScrollArea):
             constants = process.scope()
             undercuts = [
                 _evaluate_in(rule.values.get("undercut"), constants)
-                for rule in process.rules.values()
-                if rule.enabled and rule.kind == "release"
+                for rule in process.rules_of("release")
             ]
             scope = {**constants, **self._scope}
             pitch = _evaluate_in(modifier.pitch, scope)

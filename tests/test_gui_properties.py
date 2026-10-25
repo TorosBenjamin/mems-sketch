@@ -226,6 +226,27 @@ def shown(widget) -> bool:
     return shiboken6.isValid(widget) and widget.isVisibleTo(widget.window())
 
 
+def test_a_rebuild_while_the_panel_is_replaced_keeps_the_newer_one(window):
+    """Hiding the old content can make its focused field apply itself, which builds
+    the panel again from inside the rebuild: the panel's fields are then the inner
+    rebuild's, so its content must be the one shown (with the fonts on CI the name
+    field did this, and the eye clicked was already deleted)."""
+    editor = window.properties
+    take, nested = editor.takeWidget, []
+
+    def take_widget():
+        old = take()
+        if not nested:  # as the old name field's focus-out would
+            nested.append(True)
+            editor.show_node(((0, 0),))
+        return old
+
+    editor.takeWidget = take_widget
+    editor.show_node(((0, 0),))
+    assert nested and shown(editor.enabled_toggle) and shown(editor.name_edit)
+    assert editor.widget().isAncestorOf(editor.enabled_toggle)
+
+
 def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window, qtbot):
     """Enter in a field, or a click on the eye or a card button, rebuilds the panel
     from inside that widget's own event: the old widgets must outlive the event."""

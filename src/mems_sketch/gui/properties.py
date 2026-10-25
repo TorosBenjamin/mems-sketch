@@ -304,6 +304,7 @@ class PropertyEditor(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.path: NodePath | None = None
         self._shown: NodePath | None = None  # the node the form shows (to keep its scroll)
+        self._shows = 0  # how many times the content was replaced (see _show)
         self.hide_implementation = False  # a read-only component: show its interface
         self._editors: dict[str, typing.Callable[[], object]] = {}
         self._scope: dict[str, float] = {}
@@ -413,8 +414,8 @@ class PropertyEditor(QScrollArea):
         layout.addStretch()
         _line_up(body)
         # The same node again (a field applied): stay where the panel was scrolled to.
-        self._show(body, keep_scroll=path == self._shown)
-        self._shown = path
+        if self._show(body, keep_scroll=path == self._shown):
+            self._shown = path
 
     def show_several(self, count: int) -> None:
         """Several shapes selected: say how many (one at a time is edited here)."""
@@ -1264,19 +1265,28 @@ class PropertyEditor(QScrollArea):
         layout.addStretch()
         self._show(body)
 
-    def _show(self, content: QWidget, keep_scroll: bool = False) -> None:
+    def _show(self, content: QWidget, keep_scroll: bool = False) -> bool:
         """Replace the panel's content. The old content is deleted later, not now: the
         change may come from one of its own fields or buttons (Enter in a field,
         the eye), which Qt is still delivering an event to. ``keep_scroll``: the
-        new content is scrolled as the old was (the same node, built again)."""
+        new content is scrolled as the old was (the same node, built again).
+        False: the panel was built again meanwhile, and ``content`` was not kept."""
         bar = self.verticalScrollBar()
         scrolled = bar.value() if keep_scroll else 0
         if not keep_scroll:
             self._shown = None
+        self._shows += 1
+        shows = self._shows
         old = self.takeWidget()
         if old is not None:
             old.hide()
             old.deleteLater()
+        if self._shows != shows:
+            # Hiding the old content took the focus from one of its fields, which
+            # applied itself and built the panel again: that content is newer, and
+            # the panel's fields (name_edit, the eye…) are its own. Keep it.
+            content.deleteLater()
+            return False
         self.setWidget(content)
         if not scrolled:
             bar.setValue(0)  # another node: from its top
@@ -1286,6 +1296,7 @@ class PropertyEditor(QScrollArea):
             QTimer.singleShot(  # once laid out, unless replaced meanwhile
                 0, lambda: bar.setValue(scrolled) if self.widget() is content else None
             )
+        return True
 
     def _show_component(self) -> None:
         """Nothing selected: the open component's own settings (its description),
@@ -1341,8 +1352,8 @@ class PropertyEditor(QScrollArea):
         layout.addWidget(hint)
         layout.addStretch(1)
         self.description_edit = description
-        self._show(body)
-        self.header_context.setText("Component")
+        if self._show(body):
+            self.header_context.setText("Component")
 
     def _show_placeholder(self, text: str) -> None:
         self._editors = {}  # the fields shown before are gone

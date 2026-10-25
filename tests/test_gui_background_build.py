@@ -15,7 +15,7 @@ from mems_sketch.core.project import Project
 from mems_sketch.core.user_component import ComponentDef
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import app
-from mems_sketch.gui.app import BACKGROUND_BUILD_S, MainWindow
+from mems_sketch.gui.app import MainWindow
 
 
 def area(geometry) -> float:
@@ -38,7 +38,7 @@ def window(qtbot, monkeypatch):
 
 def slow(window) -> None:
     """As if the component had taken long to build: a change builds in the background."""
-    window._took({window.view.component: BACKGROUND_BUILD_S * 2})
+    window._took({window.view.component: app.BACKGROUND_BUILD_S * 2})
 
 
 def test_a_slow_design_shows_the_last_result_until_the_new_one_is_built(window, qtbot, monkeypatch):

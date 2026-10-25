@@ -116,7 +116,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.gui == 'true'  # every change to the program reaches the GUI
     runs-on: ubuntu-latest
-    timeout-minutes: 45  # a hung test stops here, its log kept (usually 10-20 minutes)
+    timeout-minutes: 45  # a hung test stops here, its log kept (usually 5-10 minutes)
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
@@ -148,11 +148,12 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           MGEOM_REQUIRED: "1"
           ONLY_GUI: ${{ needs.changes.outputs.python != 'true' }}
+        # -n auto: one worker per core (pytest-xdist), each with its own Qt.
         run: |
           if [ "$ONLY_GUI" = "true" ]; then
-            pytest -q tests/test_gui_*.py tests/test_architecture.py tests/test_selftest.py
+            pytest -q -n auto tests/test_gui_*.py tests/test_architecture.py tests/test_selftest.py
           else
-            pytest -q
+            pytest -q -n auto
           fi
       - name: Design-rule check of the example project
         if: needs.changes.outputs.python == 'true'

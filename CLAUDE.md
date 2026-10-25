@@ -16,9 +16,9 @@ Several sessions work on this repository at the same time. Follow
   wait for CI again. Don't use `--admin` or force-push to get around this.
 - **`main` changes only by a pull request from `development`.**
 - Before pushing: `uv run --extra dev ruff check . && uv run --extra dev ruff
-  format --check . && uv run --extra dev python -m pytest -q` (GUI tests run
-  offscreen; no windows open). After changing `src/geom/` (C++), also
-  `cmake --build build/geom && ctest --test-dir build/geom
+  format --check . && uv run --extra dev python -m pytest -q -n auto` (on
+  every core; GUI tests run offscreen, no windows open). After changing
+  `src/geom/` (C++), also `cmake --build build/geom && ctest --test-dir build/geom
   --output-on-failure`; `src/geom/README.md` has the one-time setup. After
   changing `src/engine/`, the same with `build/engine`
   (`src/engine/README.md`).

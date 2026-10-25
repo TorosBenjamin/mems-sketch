@@ -218,6 +218,14 @@ def test_shapes_and_placements_offer_relative_layers_and_levels(window):
     assert doc.project.components["post"].level == "device"
 
 
+def shown(widget) -> bool:
+    """Whether a widget of the panel is still there and shown: the panel is built again
+    when a background build finishes, deleting the widgets it had."""
+    import shiboken6
+
+    return shiboken6.isValid(widget) and widget.isVisibleTo(widget.window())
+
+
 def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window, qtbot):
     """Enter in a field, or a click on the eye or a card button, rebuilds the panel
     from inside that widget's own event: the old widgets must outlive the event."""
@@ -244,7 +252,7 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
     # On a slow machine the design builds in the background, and the panel is built
     # again when it is done: take the eye of the panel as it is then.
     qtbot.waitUntil(lambda: not window.view.updating)
-    qtbot.wait(1)
+    qtbot.waitUntil(lambda: shown(editor.enabled_toggle))
     qtbot.mouseClick(editor.enabled_toggle, Qt.MouseButton.LeftButton)
     qtbot.wait(1)
     assert window.document.shapes[0].enabled is False
@@ -253,9 +261,13 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
     )
     window.tree.select_paths([((0, 0),)])
     qtbot.waitUntil(lambda: not window.view.updating)
-    qtbot.wait(1)
-    remove = next(b for b in window.properties.findChildren(QToolButton) if b.toolTip() == "Remove")
-    qtbot.mouseClick(remove, Qt.MouseButton.LeftButton)
+
+    def remove():
+        buttons = window.properties.findChildren(QToolButton)
+        return next((b for b in buttons if shown(b) and b.toolTip() == "Remove"), None)
+
+    qtbot.waitUntil(lambda: remove() is not None)
+    qtbot.mouseClick(remove(), Qt.MouseButton.LeftButton)
     qtbot.wait(1)
     assert window.document.shapes[0].modifiers == []
 

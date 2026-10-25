@@ -9,15 +9,20 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolated_settings(tmp_path, monkeypatch):
     """Keep the GUI's remembered state (last folder, open tabs) and the user's own
-    themes out of the tests, and animations out of their timing."""
+    themes out of the tests, and animations and background builds out of their timing."""
     try:
         from PySide6.QtCore import QSettings
 
-        from mems_sketch.gui import motion, theme
+        from mems_sketch.gui import app, motion, theme
     except ImportError:
         yield
         return
     monkeypatch.setattr(motion, "_held_off", True)  # animations jump to their end
+    # A design that takes long to build is built in the background: how long is long
+    # depends on the machine and how busy it is (CI, tests run in parallel), so the
+    # tests would take one path here and the other there. They build at once; the
+    # tests of background builds say so themselves.
+    monkeypatch.setattr(app, "BACKGROUND_BUILD_S", 1e9)
     for fmt in (QSettings.Format.NativeFormat, QSettings.Format.IniFormat):
         QSettings.setPath(fmt, QSettings.Scope.UserScope, str(tmp_path / "settings"))
     monkeypatch.setattr(theme, "user_folder", lambda: tmp_path / "themes")

@@ -35,7 +35,7 @@ tested against the latest `development`.
    ```bash
    pip install -e ".[dev]"      # once
    ruff check . && ruff format --check .
-   pytest -q                    # GUI tests run headless (offscreen); no windows open
+   pytest -q -n auto            # on every core; GUI tests run headless (offscreen), no windows open
    ```
 
    If you changed the C++ geometry library (`src/geom/`) or the engine

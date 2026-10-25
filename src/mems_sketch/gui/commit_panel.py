@@ -79,6 +79,7 @@ FILE_WORDS = {
     git.DELETED: "deleted",
     git.UNTRACKED: "new file",
 }
+CHANGES_ROWS = 6  # the change list's least height, in rows
 MESSAGE_LINES = 4  # the message box's height, in lines
 DETAIL_MAX_CHARS = 80  # a longer detail is cut off with "…" (the tooltip has it whole)
 
@@ -219,7 +220,8 @@ class CommitPanel(_Panel):
         body = QVBoxLayout(self.body)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        self.tree.setMinimumHeight(4 * self.tree.fontMetrics().height() + 2 * space)
+        # Room for a few changes before the message and the buttons take it (#303).
+        self.tree.setMinimumHeight(CHANGES_ROWS * theme.metric("row_height") + 2 * space)
         body.addWidget(self.tree, 1)
         body.addWidget(self.no_changes, 1)
         body.addWidget(line_host)
@@ -288,14 +290,14 @@ class CommitPanel(_Panel):
         tracked = [f for f in local.files if f.tracked]
         untracked = [f for f in local.files if not f.tracked]
         if local.groups or tracked:
-            heading = self._heading(CHANGES, f"Changes · {len(local.groups) + len(tracked)}")
+            heading = self._heading(CHANGES, f"Changes  {len(local.groups) + len(tracked)}")
             for group in local.groups:
                 self._group(heading, group)
             for status in tracked:
                 self._file(heading, status, ("file", status.path) not in self._left_out)
             self._settle(heading)
         if untracked:
-            heading = self._heading(UNTRACKED, f"Unversioned files · {len(untracked)}")
+            heading = self._heading(UNTRACKED, f"Unversioned files  {len(untracked)}")
             for status in untracked:
                 self._file(heading, status, status.path in self._taken)
             self._settle(heading)
@@ -310,13 +312,13 @@ class CommitPanel(_Panel):
         self._update_box()
 
     def _heading(self, which: str, text: str) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([text.upper()])
+        # A heading as everywhere else (#319): sentence case, semibold, the text colour.
+        item = QTreeWidgetItem([text])
         item.setData(0, ROW_ROLE, ("heading", which))
         font = QFont(self.tree.font())
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() * 0.85)
+        font.setWeight(QFont.Weight.DemiBold)
         item.setFont(0, font)
-        item.setForeground(0, theme.color("muted"))
+        item.setForeground(0, theme.color("text"))
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         self.tree.addTopLevelItem(item)
         item.setFirstColumnSpanned(True)  # (only once it is in the tree)

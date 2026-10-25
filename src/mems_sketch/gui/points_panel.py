@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.core.shapes import BBOX_POINTS
+from mems_sketch.core.shapes import BBOX_POINTS, walk
 from mems_sketch.core.user_component import DIRECTIONS
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons, theme, widgets
@@ -161,12 +161,17 @@ class PointsPanel(_Panel):
         groups = [("default", "Its box", "Every component has these: of the box around it")]
         groups += [(name, name, f"The points of shape {name}") for name in shapes]
         opened = self._expanded.setdefault(self.document.active, set())
+        kinds = {  # each shape's own icon, as in the Shapes panel (#317)
+            node.name: node.icon_name() for node in walk(self.document.shapes) if node.name
+        }
         for group, title, tip in groups:
             holder = QTreeWidgetItem(self.tree, [title])
             holder.setData(0, GROUP_ROLE, group)
             holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
             holder.setToolTip(0, tip)
-            holder.setIcon(0, icons.icon("shapes" if group != "default" else "component"))
+            holder.setIcon(
+                0, icons.icon(kinds.get(group, "shapes") if group != "default" else "component")
+            )
             points = defaults if group == "default" else shapes[group]
             for name, xy in points.items():
                 self._item(holder, (group, name), xy).setForeground(0, QBrush(theme.color("muted")))

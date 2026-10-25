@@ -202,7 +202,7 @@ class Actions:
         view = self.view = QMenu("&View", w)
         self.fit = act("Fit", lambda: w.canvas.fit(animated=True), "F", view, "fit")
         self.zoom_selection = act(
-            "Zoom to selection", w.zoom_to_selection, "Shift+F", view, "zoom_in"
+            "Zoom to selection", w.zoom_to_selection, "Shift+F", view, "zoom_selection"
         )
         act("Zoom in", lambda: w.canvas.zoom_by(1.25, animated=True), "Ctrl+=", view, "zoom_in")
         act("Zoom out", lambda: w.canvas.zoom_by(0.8, animated=True), "Ctrl+-", view, "zoom_out")
@@ -232,7 +232,7 @@ class Actions:
         self.settings_toggles["editor/show_implementation"] = implementation
         view.addSeparator()
         act("Open top component", w._edit_top, "Ctrl+T", view, "top")
-        act("Process", w.open_process, None, view, "layers")
+        act("Process", w.open_process, None, view, "process")
         self.split = act("Split right", w.split_view, "Ctrl+\\", view, "split")
         act("Merge panes", w.area.unsplit, None, view)
         act("Close tab", w.close_tab, QKeySequence.StandardKey.Close, view, "close")

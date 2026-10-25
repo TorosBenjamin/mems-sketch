@@ -284,6 +284,8 @@ class SearchDialog(QDialog):
             for result in ranked:
                 item = QTreeWidgetItem([result.title, result.detail, result.keys])
                 item.setIcon(0, result.icon)
+                # Every row as high as the theme's rows, with or without an icon (#316).
+                item.setSizeHint(0, QSize(0, theme.metric("row_height")))
                 item.setData(0, RESULT_ROLE, result)
                 item.setForeground(1, muted)
                 item.setForeground(2, muted)

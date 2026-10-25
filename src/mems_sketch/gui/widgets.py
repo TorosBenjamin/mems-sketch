@@ -137,7 +137,9 @@ class ElidedLabel(QLabel):
         self._elide()
 
     def _elide(self) -> None:
-        shown = self.fontMetrics().elidedText(self._text, self._mode, self.width())
+        # The room inside its margins and padding: cut short of the edge, never at it.
+        room = self.contentsRect().width() - 2 * self.margin() - 2
+        shown = self.fontMetrics().elidedText(self._text, self._mode, max(room, 0))
         super().setText(shown)
         self.setToolTip(self._text if shown != self._text else "")
 

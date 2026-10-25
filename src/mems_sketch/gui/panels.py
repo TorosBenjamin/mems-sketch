@@ -49,6 +49,7 @@ PATH_ROLE = Qt.ItemDataRole.UserRole
 VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message (a list: a group)
 GROUP_ROLE = Qt.ItemDataRole.UserRole + 51  # a group's key (see _group_key)
 GROUP_AT = 4  # this many violations of a rule on the same shapes are one line
+PARAMETER_COLUMN_MIN_PX = 44  # no column of the Parameters table gets narrower ("Default")
 
 
 def _group_key(v) -> tuple:
@@ -232,7 +233,7 @@ class ComponentsPanel(_Panel):
         local = self._group(project.name, "project", "folder", "Project components")
         process = QTreeWidgetItem(local, ["Process"])
         process.setData(0, self.PROCESS_ROLE, True)
-        process.setIcon(0, icons.icon("layers"))
+        process.setIcon(0, icons.icon("process"))
         process.setToolTip(0, "The process's layers and constants (opens in a tab)")
         shared = [n for n in project.components if "/" not in n]
         for name in sorted(shared, key=lambda n: n != project.top):  # top first
@@ -312,11 +313,10 @@ class ComponentsPanel(_Panel):
         drag = Qt.ItemFlag.ItemIsDragEnabled  # onto the canvas, where it may be placed
         placeable = self._placeable(name)
         item.setFlags(item.flags() | drag if placeable else item.flags() & ~drag)
-        if name == self.document.active:  # the tab being edited
+        if name == self.document.active:  # the tab being edited: bold, its icon kept (#317)
             font = QFont()
             font.setBold(True)
             item.setFont(0, font)
-            item.setIcon(0, icons.icon("eye" if self.document.read_only else "edit", "blue"))
         library_internals = "." in name and self.hide_implementation
         for child in [] if library_internals else project.private_components(name):
             self._component(item, child)
@@ -451,7 +451,7 @@ class ComponentsPanel(_Panel):
         if item is None:
             self._project_actions(menu)
         elif item.data(0, self.PROCESS_ROLE):
-            _menu_action(menu, "Open the process", self.process_requested.emit, "layers")
+            _menu_action(menu, "Open the process", self.process_requested.emit, "process")
         elif item.data(0, self.GROUP_ROLE) is not None:
             group = item.data(0, self.GROUP_ROLE)
             if group == "project":
@@ -818,6 +818,11 @@ class ShapeTree(QTreeWidget):
         self._rebuilding = False
         self.hide_implementation = False  # a read-only component: its interface only
         self.show_implementation = False  # the setting: what placed library parts hold
+        self.empty = widgets.placeholder(  # an empty component says how to start (#319)
+            self,
+            "No shapes yet. Draw with B (rectangle), C (circle), P (polygon) or W (path), "
+            "or place a component with Shift+A.",
+        )
         # Per component: collapsed operations (others are open) and opened
         # placed components (others are closed).
         self.collapsed: dict[str, set[NodePath]] = {}
@@ -1126,6 +1131,11 @@ class ParametersPanel(_Panel):
         self.document = document
         self.title = self.header_context = widgets.header_context()  # the component
         self.table = widgets.make_table(self.COLUMNS, stretch=self.COLUMNS.index("Default"))
+        # The name shares the room with the default (both cut with "…", the whole in
+        # the tooltip), so the trial value and the value always fit (#303).
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setMinimumSectionSize(PARAMETER_COLUMN_MIN_PX)
         self.table.setItemDelegateForColumn(0, widgets.IconAfterText(self.table))  # the lock
         self.table.itemChanged.connect(self._changed)
         self.table.viewport().installEventFilter(self)
@@ -1143,6 +1153,11 @@ class ParametersPanel(_Panel):
         )
         self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.table)
+        self.empty = widgets.placeholder(  # what to do when there is none yet (#303)
+            self.table,
+            "No parameters yet. + adds one; or right-click a value in Properties and "
+            "choose Make a parameter from this value.",
+        )
         self._names: list[str] = []
 
     def _clear_trials(self) -> None:

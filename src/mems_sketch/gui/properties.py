@@ -1117,6 +1117,7 @@ class PropertyEditor(QScrollArea):
             reader = self._editors.pop(f"{key}corner{index}")
             style = _combo()
             style.addItems(["round", "chamfer"])
+            style.setMinimumWidth(CORNER_STYLE_MIN_PX)  # "round" in full, not "roı" (#318)
             style.setCurrentText(corner.style)
             style.setEnabled(not read_only)
             style.activated.connect(lambda _=0: self.apply())
@@ -1523,6 +1524,7 @@ def _focusable(body: QWidget) -> list[QWidget]:
 
 
 COMBO_MIN_PX = 64  # the narrowest a list of the form gets
+CORNER_STYLE_MIN_PX = 88  # a corner's round/chamfer list
 
 
 def _combo() -> QComboBox:
@@ -1792,8 +1794,8 @@ def _with_button(widget: QWidget, button: QToolButton) -> QWidget:
     return row
 
 
-LINE_UP_MAX_PX = 110
-PARAMETER_FIELD_MIN_PX = 60  # a placed component's parameter field never narrower  # the widest the labels of a form are made to line up to
+LINE_UP_MAX_PX = 110  # the labels' column: one width for every kind of shape (#316)
+PARAMETER_FIELD_MIN_PX = 60  # a placed component's parameter field never narrower
 
 
 def _line_up(body: QWidget) -> None:
@@ -1806,12 +1808,11 @@ def _line_up(body: QWidget) -> None:
         for row in range(form.rowCount())
         if (item := form.itemAt(row, QFormLayout.ItemRole.LabelRole)) and item.widget()
     ]
-    if labels:
-        # Up to a point: one very long label ("Initial finger overlap") would
-        # otherwise narrow every field of the form.
-        width = min(max(label.sizeHint().width() for label in labels), LINE_UP_MAX_PX)
-        for label in labels:
-            label.setMinimumWidth(width)
+    # One width, whatever is shown: the fields start at the same place for a
+    # rectangle and a path, so they do not jump when the selection changes. A
+    # longer label ("Initial finger overlap") takes what it needs.
+    for label in labels:
+        label.setMinimumWidth(LINE_UP_MAX_PX)
 
 
 def _label_with_help(text: str, help_text: str) -> QWidget:

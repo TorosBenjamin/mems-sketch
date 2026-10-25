@@ -129,7 +129,7 @@ DRAFT_ABOVE_MS = 25.0  # draft quality only when a full-quality frame takes long
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
 OUTLINE_PX = 1.0
-SELECTION_HALO_PX = 4.0  # the soft band around a selected shape's outline
+SELECTION_TINT_ALPHA = 45  # how strongly a selected shape is tinted (0-255)
 AXIS_ALPHA = 90  # the x and y axes, drawn faintly
 CHIP_ROW_MARGIN_PX = 60  # a row of parameter labels wraps this far from the right edge
 CHIP_LINE_PX = 22  # and its lines are this far apart
@@ -993,26 +993,22 @@ class LayoutCanvas(QGraphicsView):
                 for layer, region in leaf.own.items():
                     if region.is_empty():
                         continue
-                    # An outline with a soft halo, the layer's colour left as it is: a
-                    # tint would mix with it (selected device read as anchor, #312).
-                    path = own_path(leaf, layer)
-                    halo_color = QColor(self.theme["highlight"])
-                    halo_color.setAlpha(80)
-                    for color, width, z in (
-                        (halo_color, OUTLINE_PX + SELECTION_HALO_PX, 999),
-                        (QColor(self.theme["highlight"]), OUTLINE_PX + 1, 1000),
-                    ):
-                        item = ShapeItem(path)
-                        item.setTransform(qtransform(at))
-                        pen = QPen(color, width)
-                        pen.setCosmetic(True)
-                        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                        item.setPen(pen)
-                        item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-                        item.setZValue(z)
-                        self._highlight_band.add(item)
-                        self.scene().addItem(item)
-                        self._overlay.append(item)
+                    # A blue no layer uses, outlined and only faintly tinted, so the
+                    # layer's colour still reads (an orange tint made selected device look
+                    # like anchor, #312). The outline stays 1 px: wider ones draw ~100x
+                    # slower on a shape with thousands of holes.
+                    item = ShapeItem(own_path(leaf, layer))
+                    item.setTransform(qtransform(at))
+                    pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
+                    pen.setCosmetic(True)
+                    item.setPen(pen)
+                    tint = QColor(self.theme["highlight"])
+                    tint.setAlpha(SELECTION_TINT_ALPHA)
+                    item.setBrush(QBrush(tint))
+                    item.setZValue(1000)
+                    self._highlight_band.add(item)
+                    self.scene().addItem(item)
+                    self._overlay.append(item)
         self._highlight_band.changed(
             item for item in self._overlay if getattr(item, "band", None) is self._highlight_band
         )

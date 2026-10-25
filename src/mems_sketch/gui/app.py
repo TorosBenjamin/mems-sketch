@@ -181,6 +181,7 @@ CANVAS_OPTIONS = {
 # after a change: the editor goes on, showing the last result until the new one is
 # there (requirement QS-8). A quicker one is built at once.
 BACKGROUND_BUILD_S = 0.15
+REFUSAL_NOTE_S = 6  # how long a note about a refused value stays
 # A background build says so (and greys out what shows built geometry) only when it
 # takes longer than this (ms): a quick one does not make the window flicker.
 UPDATING_SHOWN_MS = 200
@@ -553,8 +554,13 @@ class MainWindow(QMainWindow):
     def show_settings(self, page: str | None = None) -> None:
         """The settings dialog (Ctrl+Alt+S); ``page`` opens a page, e.g. ``Keymap``."""
         native = QKeySequence.SequenceFormat.NativeText
+        fixed = {self.actions_.undo: "Undo", self.actions_.redo: "Redo"}  # not "Undo Add …"
+
+        def name(action) -> str:
+            return fixed.get(action) or action.text().replace("&", "").rstrip("…")
+
         shortcuts = [
-            (action.text().replace("&", "").rstrip("…"), action.shortcut().toString(native), path)
+            (name(action), action.shortcut().toString(native), path)
             for path, action in menu_actions(self.actions_.root)
             if not action.shortcut().isEmpty()
         ]
@@ -1825,13 +1831,14 @@ class MainWindow(QMainWindow):
         key: str = "",
     ) -> Toast:
         """A note over the editor about what just happened (see :mod:`toast`):
-        ``kind`` is info, success, warning or error (which stays until closed)."""
+        ``kind`` is info, success, warning or error (which stays longest)."""
         return self.toasts.show_toast(text, kind, action, seconds, key)
 
     def report_refusal(self, message: str) -> None:
         """A value typed in a field was not applied: a note, and the field marked with
-        why. Not a problem of the design, so not in Messages or the problem count."""
-        self.notify(message, "error")
+        why. Not a problem of the design, so not in Messages or the problem count.
+        The latest replaces the one before: they do not stack up (#303)."""
+        self.notify(message, "error", seconds=REFUSAL_NOTE_S, key="refusal")
 
     def report_error(self, message: str) -> None:
         self.notify(message, "error", ("Show messages", self._show_messages_panel))

@@ -386,8 +386,10 @@ QToolButton:hover {{ background: {hover}; }}
 QToolButton:pressed {{ background: {pressed}; }}
 QToolButton:checked {{ background: {selected}; }}
 QToolButton[popupMode="2"] {{ padding-right: 12px; }}
-QToolButton#main-menu {{ padding: 5px; }}
+QToolButton#main-menu {{ padding: 5px; background: transparent; }}  /* flat as the others */
+QToolButton#main-menu:hover, QToolButton#main-menu:open {{ background: {hover}; }}
 QToolButton::menu-indicator {{ image: none; }}
+QToolButton::menu-button {{ border: none; background: transparent; width: 12px; }}  /* #319 */
 QToolBar#tools-toolbar QToolButton {{ padding: 5px; margin: 1px 2px; }}
 
 QMenuBar {{ background: {window}; }}

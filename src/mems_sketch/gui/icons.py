@@ -137,6 +137,8 @@ ICONS = {
     "layer_map": '<path d="M8 2.2 14 5.2 8 8.2 2 5.2z"/><path d="M2 8.4l6 3 6-3M2 11.4l6 3 6-3" '
     'stroke="{blue}"/>',
     "layers": '<path d="M8 2.2 14 5.2 8 8.2 2 5.2z"/><path d="M2 8.4l6 3 6-3M2 11.4l6 3 6-3"/>',
+    # a wafer with its flat and a die grid: the process, apart from the layers (#317)
+    "process": '<path d="M4.6 13.4A6 6 0 1 1 11.4 13.4z"/><path d="M5.6 6h4.8M5.6 9h4.8M8 4v7.4"/>',
     "repeat": '<rect x="2" y="2" width="5" height="5" rx=".5"/><rect x="9" y="2" width="5" '
     'height="5" rx=".5"/><rect x="2" y="9" width="5" height="5" rx=".5"/><rect x="9" y="9" '
     'width="5" height="5" rx=".5"/>',
@@ -219,12 +221,17 @@ ICONS = {
     "fit": '<path d="M2 5.4V2h3.4M10.6 2H14v3.4M14 10.6V14h-3.4M5.4 14H2v-3.4"/>'
     '<rect x="5.2" y="5.2" width="5.6" height="5.6" rx=".5" stroke="{blue}"/>',
     "zoom_in": '<circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4l3.8 3.8M7 4.9v4.2M4.9 7h4.2"/>',
+    # a magnifier over a dashed box: zoom to the selection, not zoom in (#317)
+    "zoom_selection": '<circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4l3.8 3.8"/>'
+    '<path d="M5 5h4v4H5z" stroke-dasharray="1.2 1"/>',
     "zoom_out": '<circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4l3.8 3.8M4.9 7h4.2"/>',
     "split": '<rect x="1.8" y="2.4" width="12.4" height="11.2" rx="1"/><path d="M8 2.4v11.2"/>',
     "close": '<path d="M4 4l8 8M12 4l-8 8"/>',
     "eye": '<path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8 12 12.4 8 12.4 1.6 8 1.6 8z"/>'
     '<circle cx="8" cy="8" r="2"/>',
-    "clear": '<path d="M2.6 13.4h10.8"/><path d="M4.6 11.4 10.8 3.2l2.4 1.8-5.4 6.4z"/>',
+    # an eraser on the line it rubs out (not a pencil, #303)
+    "clear": '<path d="M2.6 13.4h10.8"/><path d="M6.2 12.2 2.8 8.8l6-6 4.4 4.4-5 5z"/>'
+    '<path d="M5.4 6.2l4.4 4.4"/>',
     # -- snapping and view -------------------------------------------------
     "snap": '<path d="M3.4 2.4v5.2a4.6 4.6 0 0 0 9.2 0V2.4H9.6v5.2a1.6 1.6 0 0 1-3.2 0V2.4z"/>'
     '<path d="M3.4 4.6h3M9.6 4.6h3" stroke="{red}"/>',

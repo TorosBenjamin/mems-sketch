@@ -303,6 +303,7 @@ class MainWindow(QMainWindow):
         self.document.changed.connect(self.state_changed)  # e.g. trial values
         self.messages.zoom_requested.connect(self._zoom_to_bbox)
         self.messages.counts_changed.connect(self._show_problem_count)
+        self.messages.lines_changed.connect(lambda px: self.tool_windows.fit_bottom("messages", px))
         self.messages.waive_requested.connect(self.waive)
         self.messages.unwaive_requested.connect(self.unwaive)
         self.settings.changed.connect(self._setting_changed)
@@ -579,11 +580,16 @@ class MainWindow(QMainWindow):
                 "…"
             )
 
-        shortcuts = [
-            (name(action), action.shortcut().toString(native), path)
-            for path, action in menu_actions(self.actions_.root)
-            if not action.shortcut().isEmpty()
-        ]
+        def keys(action) -> str:
+            # Every key of a command (Redo: Ctrl+Y and Ctrl+Shift+Z), else the one
+            # written after a tab ("Shift Shift", a drawing tool's key; #327).
+            found = [k.toString(native) for k in action.shortcuts() if not k.isEmpty()]
+            return ", ".join(found) or action.text().partition("\t")[2]
+
+        # Every command, those without a key too: the keymap is where to look for one.
+        listed = [(path, action) for path, action in menu_actions(self.actions_.root)]
+        listed += [("", action) for action in self.actions_.unlisted]
+        shortcuts = [(name(action), keys(action), path) for path, action in listed]
         dialog = PreferencesDialog(self.settings, shortcuts, self)
         if page is not None:
             names = [dialog.pages.item(i).text() for i in range(dialog.pages.count())]
@@ -591,6 +597,11 @@ class MainWindow(QMainWindow):
                 dialog.pages.setCurrentRow(names.index(page))
         self._preferences = dialog
         dialog.show()
+
+    def start_commit(self) -> None:
+        """Ctrl+K, as in JetBrains IDEs: the Commit panel, its message to type (#327)."""
+        self.tool_windows.open("commit")
+        self.commit_panel.message.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def search(self, scope: str = ALL) -> None:
         """Search Everywhere (Shift twice): components, shapes, parameters, commands."""
@@ -2068,7 +2079,7 @@ class MainWindow(QMainWindow):
 
     def unwrap(self) -> None:
         if len(self.selection) != 1:
-            self.ask_selection("Select one operation to unwrap")
+            self.ask_selection("Select one operation to unpack")
             return
         self._run(lambda: self.document.nodes.unwrap(self.selection[0]))
 

@@ -146,7 +146,7 @@ def test_a_point_description_is_a_multi_line_box(window):
 # -- #225: a placed component's parameters by name, the description behind "?" --
 
 
-def test_placed_parameters_are_named_with_their_description_behind_help(window):
+def test_placed_parameters_are_labelled_by_their_description_with_help(window):
     select(window, RefShape(name="plate", component="mems.perforated_plate"))
     box = next(
         b
@@ -154,7 +154,8 @@ def test_placed_parameters_are_named_with_their_description_behind_help(window):
         if b.title().startswith("Parameters of")
     )
     texts = {label.text() for label in box.findChildren(QLabel)}
-    assert "pitch" in texts and not any(t.startswith("Hole pitch") for t in texts)
+    # The description's phrase as the label (#329); its name and all of it on hover.
+    assert "Hole pitch" in texts and "pitch" not in texts
     assert box.findChildren(HelpButton)
     assert all(e.minimumWidth() >= 60 for e in edits(box))
 

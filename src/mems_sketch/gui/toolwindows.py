@@ -36,7 +36,7 @@ GAP = 5  # px of frame between islands
 ISLAND_INSET = 4  # px between an island's edge and its content: the corners stay round
 # Splitter sizes until the user changes them: [left, editor, right], [left top,
 # left bottom] and [the row above, bottom].
-DEFAULT_SIZES = {"main": [270, 900, 320], "left": [300, 380], "center": [700, 140]}
+DEFAULT_SIZES = {"main": [270, 900, 320], "left": [300, 380], "center": [700, 240]}
 
 
 def main_sizes(width: int) -> list[int]:
@@ -144,6 +144,9 @@ class ToolWindows(QWidget):
     def __init__(self, editor: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._main_default = True  # the side panels' widths follow the window's (#318)
+        # The bottom panel is as tall as its content wants (fit_bottom) until dragged.
+        self._center_default = True
+        self._bottom_wish: tuple[str, int] | None = None  # (window, px its content wants)
         self._windows: dict[str, _Window] = {}
         self._hosts = {anchor: _Host(lambda a=anchor: self._hide(a)) for anchor in ANCHORS}
 
@@ -294,6 +297,8 @@ class ToolWindows(QWidget):
         window.button.setChecked(True)
         self._update()
         self._unfold(window.anchor)
+        if window.anchor == "bottom":
+            self._fit_bottom()  # Messages fitted, another window its default height
         self.changed.emit()
 
     def close(self, name: str) -> None:
@@ -317,12 +322,35 @@ class ToolWindows(QWidget):
         # Until the user sizes the side panels, they follow the window's width.
         if self._main_default and "main" in self._splitters:
             self._splitters["main"].setSizes(main_sizes(self.width()))
+        self._fit_bottom()
+
+    def fit_bottom(self, name: str, content_px: int) -> None:
+        """The bottom window ``name``'s content wants ``content_px``: while it is
+        shown, and until the user drags the panel's edge, the panel is no taller
+        than that and its header need (an empty Messages panel said "No rule
+        violations" in 140 px; #318), and at most its default height."""
+        self._bottom_wish = (name, content_px)
+        self._fit_bottom()
+
+    def _fit_bottom(self) -> None:
+        host = self._hosts["bottom"]
+        if not self._center_default or self._bottom_wish is None or host.current is None:
+            return
+        height = DEFAULT_SIZES["center"][1]
+        name, content = self._bottom_wish
+        if host.current.name == name:
+            height = min(theme.metric("header_height") + ISLAND_INSET + content, height)
+        total = sum(self.center.sizes())
+        if total > height:
+            self.center.setSizes([total - height, height])
 
     def _dragged(self, name: str) -> None:
         """A splitter moved: a panel dragged down to nothing closes, and comes back at
         the size it had when it opens again."""
         if name == "main":
             self._main_default = False
+        if name == "center":
+            self._center_default = False
         splitter = self._splitters[name]
         sizes = splitter.sizes()
         collapsed = [
@@ -366,6 +394,7 @@ class ToolWindows(QWidget):
         return {
             "open": [name for name in self._windows if self.is_open(name)],
             "sizes": {name: s.sizes() for name, s in self._splitters.items()},
+            "bottom_dragged": not self._center_default,
         }
 
     def restore(self, state: dict) -> None:
@@ -375,6 +404,7 @@ class ToolWindows(QWidget):
         for name in state.get("open", []):
             if name in self._windows:
                 self.open(name)
+        self._center_default = not state.get("bottom_dragged", False)
         for name, sizes in state.get("sizes", {}).items():
             if name == "main":
                 self._main_default = False  # sized as it was left

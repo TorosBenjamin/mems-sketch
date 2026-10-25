@@ -45,7 +45,7 @@ A component is **shared** or **private** to another one, like a nested class:
 `comb/finger` is `finger`, made for `comb` and placed only inside it. It is
 listed under its owner. This says what belongs to what, not where things are
 used; hover a component to see what it places and where it is placed. **Make
-component** (Ctrl+K) on a selection makes a private component of the one you
+component** (Ctrl+Alt+M) on a selection makes a private component of the one you
 are editing.
 
 ## Parameters
@@ -186,8 +186,8 @@ changes those to `mems.anchor` and so on, and says so once.
 
 ## The process
 
-**Process** (the first item under the project in Components, or **View →
-Process**) is a tab with the process the project uses at the top, then a card
+**Process** (the first item under the project in Components, or **Check →
+Process and rules**) is a tab with the process the project uses at the top, then a card
 each for the process constants, available in every expression as
 `process.<name>`, the layers with their GDS layer and datatype, and the design
 rules.

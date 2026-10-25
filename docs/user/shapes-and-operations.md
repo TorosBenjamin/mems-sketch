@@ -20,8 +20,8 @@ input, so a subtraction stays editable and parametric.
 | Construction | `guide` | A line that draws nothing, but has points and can be aligned and mirrored about |
 
 **Operations** (Operations ▾ or the right-click menu) wrap the selected shapes
-in a new operation; **Edit → Unwrap** reverses it. There is no union: shapes
-on one layer are merged anyway.
+in a new operation; **Operations → Unpack operation** reverses it. There is no
+union: shapes on one layer are merged anyway.
 
 - **Booleans, offsets and fillets act per layer.** Subtracting a device-layer
   hole only affects the device layer. To combine layers, bring them onto one
@@ -30,9 +30,9 @@ on one layer are merged anyway.
   shape in two pieces; the Shapes list says so ("2 pieces · subtract"). Its
   points come from the box around all the pieces, drawn dashed while it is
   selected.
-- **Make component** (Ctrl+K) moves the selection into a new component; the
+- **Make component** (Ctrl+Alt+M) moves the selection into a new component; the
   parameters it uses become the new component's, so nothing moves. **Unpack
-  component** (Ctrl+Shift+K) does the opposite.
+  component** (Ctrl+Alt+N) does the opposite.
 - **Transform or component?** Make a component when something is reused or
   deserves its own parameters; use a transform to move or mirror a few shapes
   together once.

@@ -109,6 +109,46 @@ def header_actions(*actions: Action) -> Actions:
     return Actions(actions)
 
 
+SCROLL_FADE_PX = 22  # the fade at the bottom of a panel with more below
+
+
+class ScrollFade(QWidget):
+    """A fade over the bottom edge of a scroll area while there is more below it:
+    the cue that the panel scrolls (#318). It takes no clicks."""
+
+    def __init__(self, area: QScrollArea, color_key: str = "island") -> None:
+        super().__init__(area)
+        self.area, self.color_key = area, color_key
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        bar = area.verticalScrollBar()
+        bar.valueChanged.connect(self.update_shown)
+        bar.rangeChanged.connect(self.update_shown)
+        area.installEventFilter(self)
+        self.update_shown()
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.LayoutRequest):
+            self.update_shown()
+        return False
+
+    def update_shown(self, *_) -> None:
+        bar = self.area.verticalScrollBar()
+        viewport = self.area.viewport().geometry()
+        height = min(SCROLL_FADE_PX, viewport.height() // 3)
+        self.setGeometry(viewport.left(), viewport.bottom() - height + 1, viewport.width(), height)
+        self.setVisible(bar.maximum() > 0 and bar.value() < bar.maximum())
+        self.raise_()
+
+    def paintEvent(self, event) -> None:
+        solid = QColor(theme.color(self.color_key))
+        clear = QColor(solid)
+        clear.setAlpha(0)
+        gradient = QtGui.QLinearGradient(0, 0, 0, self.height())
+        gradient.setColorAt(0, clear)
+        gradient.setColorAt(1, solid)
+        QPainter(self).fillRect(self.rect(), gradient)
+
+
 class ElidedLabel(QLabel):
     """One line of plain text, cut off with "…" (and shown whole as the tooltip)
     when it does not fit: at its end, or (``mode``) in the middle, for a path."""

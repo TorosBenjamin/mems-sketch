@@ -312,6 +312,7 @@ class PropertyEditor(QScrollArea):
         # The tool window's header says what the shape is ("Rectangle").
         self.header_context = widgets.header_context()
         self._show_placeholder("Select a shape to edit its properties.")
+        self.fade = widgets.ScrollFade(self)  # more below: the bottom edge fades (#318)
         # Leaving a text field applies it, as Enter does: an edit is never lost by
         # clicking elsewhere (another field, the canvas, another shape).
         QApplication.instance().focusChanged.connect(self._focus_changed)
@@ -477,13 +478,21 @@ class PropertyEditor(QScrollArea):
             combo = _combo()
             combo.setEditable(True)
             levels = [lv.layer for lv in self.document.project.process.levels]
-            combo.addItems(["", "level+1", "level-1", *levels] if levels else [""])
-            combo.setCurrentText(value or "")
+            # The first entry, no level set, in words rather than blank (#328).
+            combo.addItems(
+                [DEFAULT_LEVEL, "level+1", "level-1", *levels] if levels else [DEFAULT_LEVEL]
+            )
+            combo.setCurrentText(value or DEFAULT_LEVEL)
             combo.setToolTip(
                 "The level of the layer stack it is placed on: a level, or one relative to "
-                "this component's (level+1). Empty: its own default level, else this one's"
+                "this component's (level+1). Its default level: the component's own, else "
+                "this one's"
             )
-            self._editors[field] = lambda: combo.currentText().strip() or None
+            self._editors[field] = lambda: (
+                None
+                if combo.currentText().strip() in ("", DEFAULT_LEVEL)
+                else combo.currentText().strip()
+            )
             return self._applies(combo)
         if field == "component":
             return self._component_field(field, value)
@@ -578,7 +587,8 @@ class PropertyEditor(QScrollArea):
         combo = _combo()
         if optional:
             combo.addItem(icons.icon("layers"), "ports' layer", None)
-        choices = [*layer_choices(process.levels), *project.layers]
+        relative = layer_choices(process.levels)
+        choices = [*relative, *project.layers]
         if value and value not in choices:  # kept as it is, whatever it is
             choices.append(value)
         for spec in choices:
@@ -586,6 +596,8 @@ class PropertyEditor(QScrollArea):
                 lands = stack.layer(spec, current)
             except ValueError:
                 lands = None
+            if lands is None and current is not None and spec in relative and spec != value:
+                continue  # e.g. level-1 on the bottom level: no such layer (#297)
             label = spec if lands in (None, spec) else f"{spec} · {lands}"
             color = colors.get(lands)
             icon = swatch_icon(color) if color is not None else icons.icon("layers")
@@ -797,7 +809,6 @@ class PropertyEditor(QScrollArea):
                     for bound in ("le", "lt"):
                         if getattr(limit, bound, None) is not None:
                             widget.maximum = getattr(limit, bound)
-            # The name, as expressions write it; the description behind a "?".
             widget.setMinimumWidth(PARAMETER_FIELD_MIN_PX)
             if field in component.internal:
                 label = _label(f"{field} (internal)")
@@ -810,7 +821,10 @@ class PropertyEditor(QScrollArea):
                 else:
                     widget.setToolTip(internal)
             elif info.description:
-                label = _label_with_help(field, info.description)
+                # Its description as the label ("Moving fingers"), the name as
+                # expressions write it in the tooltip (#329).
+                label = _label_with_help(parameter_label(field, info.description), info.description)
+                label.setToolTip(f"{field}: {info.description}")
                 unit = re.search(r"\((µm|nm|mm|°)\)", info.description)
                 if unit and isinstance(widget, ValueEdit):  # "Hole pitch (µm)": in the field
                     widget.set_unit(unit[1])
@@ -1345,7 +1359,14 @@ class PropertyEditor(QScrollArea):
         description.editingFinished.connect(describe)
         form.addRow("Description", description)
         layout.addWidget(part)
-        hint = QLabel("Select a shape to edit its properties.")
+        # An empty component: how to start, not which shape to select (#329).
+        hint = QLabel(
+            "Select a shape to edit its properties."
+            if definition.shapes
+            else "Draw a shape (Rectangle B, Circle C, Path W) or place a component "
+            "(Shift+A) to start."
+        )
+        hint.setWordWrap(True)
         hint.setObjectName("muted")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setContentsMargins(0, 12, 0, 0)
@@ -1741,6 +1762,9 @@ def _format(value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
 
 
+DEFAULT_LEVEL = "its default level"  # a placement's level left unset
+
+
 def layer_choices(levels) -> list[str]:
     """The relative layers a shape can be on with this layer stack."""
     if not levels:
@@ -1858,6 +1882,19 @@ def _label_text(widget: QWidget) -> str:
     if label is None:
         return ""
     return re.sub(r"<[^>]+>", "", label.text()).replace("&", "").strip()
+
+
+PARAMETER_LABEL_MAX = 32  # characters: a longer description is not a label
+
+
+def parameter_label(name: str, description: str) -> str:
+    """A placed component's parameter as Properties labels it: the start of its
+    description, up to a colon or semicolon, without its unit ("Initial finger
+    overlap" for ``overlap``), when that is a short phrase; else its name (#329)."""
+    short = re.split(r"[:;]", description, maxsplit=1)[0]
+    short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()  # the unit is in the field
+    words = re.search(r"[^\W\d_]{2}", short)
+    return short if words and len(short) <= PARAMETER_LABEL_MAX else name
 
 
 def _label_with_help(text: str, help_text: str) -> QWidget:

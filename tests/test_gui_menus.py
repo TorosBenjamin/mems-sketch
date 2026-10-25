@@ -111,7 +111,7 @@ def test_a_menu_at_the_cursor_starts_its_panel_there(window, qtbot):
 
 def test_the_main_menu_has_an_icon_by_each_entry(window):
     entries = window.actions_.root.actions()
-    assert len(entries) == 7 and all(not a.icon().isNull() for a in entries)
+    assert len(entries) == 8 and all(not a.icon().isNull() for a in entries)
 
 
 def test_right_click_on_empty_space_offers_adding_there(window):

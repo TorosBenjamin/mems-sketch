@@ -314,6 +314,17 @@ class Build:
             outputs[(grid, chord)] = Output(grid, chord, _geometry(layers, steps), snapping)
         return outputs[(grid, chord)]
 
+    def cells(self, grid: float = GRID_UM, chord: float = CHORD_UM) -> tuple[str, dict[str, tuple]]:
+        """The component as the cells a layout keeps (#74): (its key, {key: (own
+        layers, [(key, transform)], component)}), each component it places whole a
+        cell of its own, rounded once onto ``grid`` in its own frame, curves within
+        ``chord``. Layers {layer: ([(hull, [holes])], box)} in grid units;
+        transforms (dx, dy, angle, mirror_x, scale), µm."""
+        engine = self._engine
+        engine.variables(self.component, self.params)  # the model's checks, with its messages
+        key, cells, _points, _ports = engine._core.tree(self.component, self.params, grid, chord)
+        return key, cells
+
     def layers(self) -> list[str]:
         """The layers with geometry."""
         return self.geometry.layer_names()
@@ -390,7 +401,7 @@ def _cell(engine: Engine, cells: dict[str, tuple], key: str) -> Geometry:
     if key not in known:
         if len(known) >= 4096:
             known.clear()
-        layers, placed = cells[key]
+        layers, placed, _component = cells[key]
         geometry = _geometry(layers)
         for child, placement in placed:
             geometry.place(_cell(engine, cells, child), _transform(placement))

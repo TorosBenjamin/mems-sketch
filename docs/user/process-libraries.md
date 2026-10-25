@@ -117,7 +117,7 @@ the checks report instead):
   as floating for `anchored` on poly2 and anchor2 (one anchor layer per rule).
 - **Aspect ratio** (a trench's width against the layer's thickness), and
   rules that depend on a feature's length (long thin beams).
-- **Pattern density** windows (DRC-5, #86) and rules between layers through
-  the stack (PRC-3, #104).
+- **A pattern density map** (DRC-5, #86): the `density` rule checks windows,
+  but there is no map of them on the canvas yet.
 - **Exact overlaps** (a via must be covered by both layers *and* lie where
   they overlap): write it as two enclosures, as `mems.polysilicon` does.

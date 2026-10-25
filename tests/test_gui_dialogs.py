@@ -136,5 +136,6 @@ def test_export_options_explain_themselves_by_their_question_mark(qtbot):
     assert len(dialog.findChildren(HelpButton)) == len(options_of(GdsExporter))
     top_cell = dialog.editors["top_cell"]
     assert isinstance(top_cell, QLineEdit)
-    assert top_cell.placeholderText() == "The project's name"
-    assert not any(isinstance(e, QCheckBox) for e in dialog.editors.values())
+    assert top_cell.placeholderText() == "The component's name"
+    boxes = [n for n, e in dialog.editors.items() if isinstance(e, QCheckBox)]
+    assert boxes == ["keep_hierarchy"] and dialog.editors["keep_hierarchy"].isChecked()  # #74

@@ -9,6 +9,11 @@ growing by half the spacing and shrinking back adds is a gap narrower than
 the spacing. Corners keep their shape (miter joins), so right-angled corners
 pass; at a diagonal corner-to-corner gap the distance is measured along x
 and y, which is stricter than the straight-line distance.
+
+Minimum angle looks at the corners of the material (spikes that etch away or
+break off); density compares a layer's area with the component's extent, or
+with each window of it; overlap asks that two layers overlap by at least a
+width wherever they meet (#65).
 """
 
 from __future__ import annotations
@@ -203,6 +208,143 @@ class MinHoleArea(_Kind):
         return _pieces(small, dbu, f"hole area < {value:g} µm²")
 
 
+class MinAngle(_Kind):
+    """Corners of the material sharper than ``angle``: spikes that the etch rounds
+    away or that break off. Only the material's own corners count (a sharp notch
+    into it is a gap, for minimum spacing); the many slight turns along a curve
+    are far from sharp."""
+
+    name = "min_angle"
+    title = "Minimum angle"
+    parameters = (Option("angle", 30.0, "Angle", minimum=0, maximum=180, suffix=" °"),)
+
+    def check(self, regions: Sequence[Region], dbu: float, angle: float) -> list[Finding]:
+        found = []
+        reach = max(1, round(0.5 / dbu))  # the box drawn around a corner: 1 µm
+        for piece in regions[0].each_merged():
+            for ring, is_hole in [(piece.hull, False), *((h, True) for h in piece.holes)]:
+                for (x, y), corner in _sharp_corners(ring.tolist(), is_hole, angle):
+                    box = (x - reach, y - reach, x + reach, y + reach)
+                    outline = (
+                        (box[0], box[1]),
+                        (box[2], box[1]),
+                        (box[2], box[3]),
+                        (box[0], box[3]),
+                    )
+                    found.append(
+                        Finding(
+                            f"{_um(corner)}° corner < {angle:g}°",
+                            _box(Box(*box), dbu),
+                            round(corner, 6),
+                            outline,
+                        )
+                    )
+        return found
+
+
+def _sharp_corners(points, is_hole: bool, limit: float) -> list[tuple[tuple[int, int], float]]:
+    """The corners of a ring whose angle inside the material is less than ``limit``
+    degrees: (where, angle)."""
+    count = len(points)
+    if count < 3:
+        return []
+    signed = sum(
+        points[k][0] * points[(k + 1) % count][1] - points[(k + 1) % count][0] * points[k][1]
+        for k in range(count)
+    )
+    if (signed < 0) != is_hole:  # the material on the left: hulls anticlockwise, holes not
+        points = points[::-1]
+    sharp = []
+    for k in range(count):
+        ax, ay = points[k - 1]
+        bx, by = points[k]
+        cx, cy = points[(k + 1) % count]
+        ux, uy, vx, vy = bx - ax, by - ay, cx - bx, cy - by
+        if (ux == 0 and uy == 0) or (vx == 0 and vy == 0):
+            continue
+        turn = math.degrees(math.atan2(ux * vy - uy * vx, ux * vx + uy * vy))
+        inside = 180.0 - turn  # the material's angle at the corner
+        if inside < limit - 1e-9:
+            sharp.append(((int(bx), int(by)), inside))
+    return sharp
+
+
+class Density(_Kind):
+    """The share of the component's extent (the box around all of it) that the
+    layer covers, in percent, between ``minimum`` and ``maximum``: what a fab
+    asks of a layer that is polished or etched evenly. With a ``window``, every
+    window of that size over the extent (the last row and column cut to fit) is
+    checked on its own; 0: the whole extent at once."""
+
+    name = "density"
+    title = "Density"
+    parameters = (
+        Option("minimum", 0.0, "Minimum", minimum=0, maximum=100, suffix=" %"),
+        Option("maximum", 100.0, "Maximum", minimum=0, maximum=100, suffix=" %"),
+        Option("window", 0.0, "Window", minimum=0, suffix=" µm"),
+    )
+
+    MAX_WINDOWS: ClassVar[int] = 10_000
+
+    def check(
+        self,
+        regions: Sequence[Region],
+        dbu: float,
+        minimum: float,
+        maximum: float,
+        window: float,
+        extent: tuple[float, float, float, float] | None = None,
+    ) -> list[Finding]:
+        region = regions[0].merged()
+        if extent is None:
+            box = region.bbox()
+            if box.empty():
+                return []
+        else:
+            box = Box(*(_dbu(v, dbu) for v in extent))
+        if box.width() <= 0 or box.height() <= 0:
+            return []
+        step = _dbu(window, dbu) if window > 0 else max(box.width(), box.height())
+        columns = -(-box.width() // step)
+        rows = -(-box.height() // step)
+        if columns * rows > self.MAX_WINDOWS:
+            message = (
+                f"a {window:g} µm window makes {columns * rows} windows, more than "
+                f"{self.MAX_WINDOWS}: not checked; take a larger window"
+            )
+            return [Finding(message, _box(box, dbu))]
+        found = []
+        for j in range(rows):
+            for i in range(columns):
+                tile = Box(
+                    box.left + i * step,
+                    box.bottom + j * step,
+                    min(box.right, box.left + (i + 1) * step),
+                    min(box.top, box.bottom + (j + 1) * step),
+                )
+                area = tile.width() * tile.height()
+                covered = (region & Region(tile)).area() if area else 0
+                density = 100.0 * covered / area if area else 0.0
+                if density < minimum - 1e-9 or density > maximum + 1e-9:
+                    where = "" if window <= 0 else " in this window"
+                    bound = f"< {minimum:g} %" if density < minimum else f"> {maximum:g} %"
+                    outline = (
+                        (tile.left, tile.bottom),
+                        (tile.right, tile.bottom),
+                        (tile.right, tile.top),
+                        (tile.left, tile.top),
+                    )
+                    found.append(
+                        Finding(
+                            f"density {_um(density)} % {bound}{where}",
+                            _box(tile, dbu),
+                            round(density, 6),
+                            outline,
+                        )
+                    )
+        return found
+
+
 class Connected(_Kind):
     name = "connected"
     title = "Number of pieces"
@@ -248,6 +390,29 @@ class Separation(_Kind):
         return _pieces(_real(close), dbu, f"closer than {value:g} µm") + _pieces(
             _real(overlap), dbu, "overlapping"
         )
+
+
+class Overlap(_Kind):
+    """Wherever ``first`` meets ``second``, it overlaps it by at least ``value``:
+    an overlap narrower than that is reported with its width, and so is a piece
+    of ``first`` that touches ``second`` without overlapping it. (For ``first``
+    to overlap ``second`` everywhere, use inside.)"""
+
+    name = "overlap"
+    title = "Overlap"
+    roles = ("first", "second")
+
+    def check(self, regions: Sequence[Region], dbu: float, value: float) -> list[Finding]:
+        first, second = regions[0].merged(), regions[1].merged()
+        overlap = first & second
+        narrow = overlap - _opening(overlap, max(0, (_dbu(value, dbu) - 2) // 2))
+        touching, _ = _interacting(first, second)
+        only_touching = [p for p in touching if (Region(p) & second).is_empty()]
+        return _measured(
+            _real(narrow),
+            dbu,
+            lambda w: f"overlap {_um(w)} µm < {value:g} µm" if w else f"overlap < {value:g} µm",
+        ) + _pieces(only_touching, dbu, "touches without overlapping")
 
 
 class Inside(_Kind):
@@ -338,9 +503,12 @@ BUILTIN = (
     MaxWidth,
     MinArea,
     MinHoleArea,
+    MinAngle,
+    Density,
     Connected,
     Enclosure,
     Separation,
+    Overlap,
     Inside,
     NotOverlapping,
     Anchored,

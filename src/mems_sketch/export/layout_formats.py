@@ -38,8 +38,16 @@ TOP_CELL = ExportOption(
     "top_cell",
     "",
     "Top cell",
-    "The top cell's name; empty: the project's name.",
-    placeholder="The project's name",
+    "The top cell's name; empty: the exported component's name.",
+    placeholder="The component's name",
+)
+HIERARCHY = ExportOption(
+    "keep_hierarchy",
+    True,
+    "Keep the hierarchy",
+    "Each placed component a cell of its own, placed by reference (arrays as array "
+    "references), and rounded onto the grid once, in its own frame. Off: one flat "
+    "cell, everything rounded together.",
 )
 
 
@@ -47,7 +55,7 @@ class _LayoutExporter:
     format_name: ClassVar[str]
     file_extension: ClassVar[str]
     layout_format: ClassVar[str]
-    options: ClassVar[tuple[ExportOption, ...]] = (GRID, CHORD, TOP_CELL)
+    options: ClassVar[tuple[ExportOption, ...]] = (GRID, CHORD, TOP_CELL, HIERARCHY)
     wants_build: ClassVar[bool] = True  # rounds the exact geometry itself, once
 
     def export(
@@ -58,11 +66,14 @@ class _LayoutExporter:
         grid_um: float = DBU_UM,
         chord_um: float = 0.005,
         top_cell: str = "",
+        keep_hierarchy: bool = True,
         build: Build | None = None,
     ) -> Output | None:
         """Write the file. With the engine's ``build``, the exact geometry is rounded
-        once onto the grid, curves within the chord tolerance (requirements OUT-2,
-        QP-4), and what that changed in its shape is returned (OUT-3)."""
+        onto the grid, curves within the chord tolerance (requirements OUT-2,
+        QP-4), and what rounding everything together changes in its shape is
+        returned (OUT-3). With ``keep_hierarchy``, each placed component is a cell
+        of its own (OUT-4, see :mod:`mems_sketch.export.hierarchy`)."""
         mapping = {n: (x.gds_layer, x.gds_datatype) for n, x in project.layers.items()}
         if hasattr(geometry, "references"):  # a cell of the geometry library (_geom)
             from mems_sketch.export.cells import write_cell
@@ -79,10 +90,26 @@ class _LayoutExporter:
         steps = round(grid_um / DBU_UM)  # the grid in the geometry's 1 nm units
         if steps < 1 or abs(steps * DBU_UM - grid_um) > 1e-9 * DBU_UM:
             raise ValueError(f"the grid must be a whole multiple of 1 nm, not {grid_um:g} µm")
+        name = top_cell or (build.component if build is not None else project.name) or "TOP"
+        if build is not None and keep_hierarchy:
+            from mems_sketch.export.hierarchy import cell_name, write_tree
+
+            write_tree(
+                build,
+                path,
+                mapping,
+                grid_um=steps * DBU_UM,
+                chord_um=chord_um,
+                file_format=self.layout_format,
+                top_cell=top_cell or cell_name(name),
+            )
+            return build.output(grid_um, chord_um)
         output = build.output(grid_um, chord_um) if build is not None else None
         layers = output.geometry.layers if output is not None else geometry.layers
         out = layout.Layout(dbu=steps * DBU_UM)
-        top = out.cell(top_cell or project.name or "TOP")
+        from mems_sketch.export.hierarchy import cell_name
+
+        top = out.cell(top_cell or cell_name(name))
         for name, region in layers.items():
             if region.is_empty():
                 continue

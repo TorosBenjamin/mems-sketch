@@ -236,10 +236,15 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
         qtbot.wait(1)
     bar = window.document.shapes[0]
     assert (bar.x0, bar.y1) == (3, "pitch")
+    qtbot.waitUntil(lambda: not window.view.updating)  # a slow machine builds later
     qtbot.keyClicks(editor.name_edit, "_2")
     qtbot.keyClick(editor.name_edit, Qt.Key.Key_Return)
     qtbot.wait(1)
     assert window.document.shapes[0].name.endswith("_2")
+    # On a slow machine the design builds in the background, and the panel is built
+    # again when it is done: take the eye of the panel as it is then.
+    qtbot.waitUntil(lambda: not window.view.updating)
+    qtbot.wait(1)
     qtbot.mouseClick(editor.enabled_toggle, Qt.MouseButton.LeftButton)
     qtbot.wait(1)
     assert window.document.shapes[0].enabled is False
@@ -247,6 +252,8 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
         ((0, 0),), window.document.shapes[0].model_copy(update={"modifiers": [ArrayModifier()]})
     )
     window.tree.select_paths([((0, 0),)])
+    qtbot.waitUntil(lambda: not window.view.updating)
+    qtbot.wait(1)
     remove = next(b for b in window.properties.findChildren(QToolButton) if b.toolTip() == "Remove")
     qtbot.mouseClick(remove, Qt.MouseButton.LeftButton)
     qtbot.wait(1)

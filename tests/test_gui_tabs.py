@@ -168,3 +168,16 @@ def test_new_reference_placed_in_a_tab_does_not_change_other_tabs_selection(exam
     w.open_component("top")
     assert w.selection == [((0, 1),)]
     assert isinstance(w.document.node(((0, 1),)), RefShape)
+
+
+def test_undoing_a_component_rename_keeps_its_tab(example):
+    """#260: the tab follows the name back and forth instead of closing."""
+    w = example
+    w.open_component("suspension")
+    w.document.components.rename("suspension", "spring_unit")
+    assert "spring_unit" in "".join(tab_names(w))
+    w.document.undo()
+    names = "".join(tab_names(w))
+    assert "suspension" in names and "spring_unit" not in names
+    w.document.redo()
+    assert "spring_unit" in "".join(tab_names(w))

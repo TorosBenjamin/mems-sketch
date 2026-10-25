@@ -72,8 +72,9 @@ be read.
 
 **File → Import…** (Ctrl+I) makes a layout into a read-only component:
 
-- **one cell of a GDS or OASIS file**: a foundry pad frame, alignment marks,
-  an earlier design (its sub-cells are flattened);
+- **one cell of a GDS file**: a foundry pad frame, alignment marks, an
+  earlier design (its sub-cells are flattened). OASIS and DXF files are
+  written but not read: save the cell as GDS in the tool that made it;
 - **a geometry file** (JSON, XML, `.mat`) written by a script or exported
   above. Only `format: mems-sketch-geometry/1` and `layers.<name>.polygons`
   are needed; a polygon is an N×2 matrix, or `{hull, holes}`.
@@ -103,8 +104,9 @@ The same design, without the editor, e.g. in scripts, CI or from MATLAB with
 `system(...)`:
 
 ```bash
-mems-sketch-cli new     my_project [--library]
-mems-sketch-cli info    my_project                           # components, parameters, layers
+mems-sketch-cli new     my_project [--library] [--process mems.surface]
+mems-sketch-cli new-process my_fab [--from mems.soi]         # a process library to fill in
+mems-sketch-cli info    my_project [--component NAME] [--json]  # components, parameters, layers
 mems-sketch-cli check   my_project [--component NAME] [--set pitch=15] [--json] [--strict]
 mems-sketch-cli rules                                        # the rule kinds and their values
 mems-sketch-cli export  my_project out.gds [--set pitch=15]  # also .oas .dxf .json .xml .mat
@@ -117,10 +119,22 @@ mems-sketch-cli mcp     [my_project]                         # for AI assistants
 
 - `check` exits with status 1 when a rule with severity *error* is violated
   (with `--strict`, a *warning* too), so it can gate CI; errors exit with
-  status 2. Waived violations are listed but never fail it.
+  status 2. Waived violations are listed but never fail it. Each violation
+  says what was measured and the shapes it is on; `--json` gives them as
+  `measured_um` and `shapes` (the MCP `check` too).
 - `--set` takes numbers or expressions (which may use the component's other
   parameters, as a default can: `--set pitch=plate/16`) and can be repeated:
   convenient for parameter sweeps.
+- `new` starts a project on a process of its own (device, anchor and metal
+  layers); `--process` picks a bundled library's instead (`mems.surface`,
+  `mems.polysilicon`, `mems.soi`). `new-process` makes a library holding one
+  process, a copy of `--from` (or `empty`), to edit into your fab's.
+- `info` shows the process (its grid and curve tolerance), layers, rules,
+  constants and components; `--component` one component's parameters with
+  their limits, points and ports (a library's too: `mems.anchor`); `--json`
+  the same as JSON.
+- `export` writes into missing folders, and warns of a cell name some layout
+  tools refuse (GDSII names are up to 32 letters, digits, `_`, `?` and `$`).
 - `convert` does not overwrite a folder that already holds a project, or a
   one-file project that exists.
 - `mcp` serves the design tools to an AI assistant over stdin/stdout; the
@@ -128,7 +142,8 @@ mems-sketch-cli mcp     [my_project]                         # for AI assistants
 - `-O NAME=VALUE` (or `--option`) sets one of the format's settings and can
   be repeated; `formats` lists them. GDSII, OASIS and DXF take `grid_um`, the
   file's grid (a whole multiple of 1 nm), `chord_um`, the curve tolerance
-  (both default to the process's), and `top_cell`, the top cell's name. What
+  (both default to the process's; `grid` and `chord` work too, as the
+  process calls them), and `top_cell`, the top cell's name. What
   rounding onto the grid changed in the shape of the design is printed after
   the file is written. **File → Export…** asks for the same settings and
   remembers, per project and format, the ones you changed from the

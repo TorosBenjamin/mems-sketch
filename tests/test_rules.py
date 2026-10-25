@@ -51,7 +51,8 @@ def test_width_space_and_area():
     two = box(0, 0, 5, 5) + box(6, 0, 11, 5)
     assert violations(Rule("s", "min_space", ["device"], {"value": 2}), device=two)
     wide = violations(Rule("m", "max_width", ["device"], {"value": 4}), device=two)
-    assert [v.message for v in wide] == ["wider than 4 µm"] * 2
+    assert [v.message for v in wide] == ["5 µm wide > 4 µm"] * 2
+    assert [v.measured for v in wide] == [5.0, 5.0]
     assert not violations(Rule("m", "max_width", ["device"], {"value": 5}), device=two)
     small = box(0, 0, 5, 5) + box(10, 0, 11, 1)
     [tiny] = violations(Rule("a", "min_area", ["device"], {"value": 2}), device=small)
@@ -122,7 +123,7 @@ def test_values_are_expressions_over_the_process():
     rule = Rule("w", "min_width", ["device"], {"value": "2 * process.min_gap"})
     narrow = box(0, 0, 3, 10)
     [found] = violations(rule, {"min_gap": 2}, device=narrow)
-    assert found.values == {"value": 4.0} and found.message == "width < 4 µm"
+    assert found.values == {"value": 4.0} and found.message == "3 µm wide < 4 µm"
     assert not violations(rule, {"min_gap": 1}, device=narrow)
 
 

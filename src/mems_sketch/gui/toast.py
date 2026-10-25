@@ -3,9 +3,10 @@
 "Exported resonator.gds", "Aligned A to B", "Undid Move": the result of
 something the user did, where they are looking, instead of in the status bar
 (which keeps hints for the active tool). A note fades in at the bottom of the
-editor and out again after a few seconds; an error stays until it is closed
-and can carry a button ("Show messages"). Pointing at a note keeps it. The
-same text again only restarts its time, and at most ``MOST`` are shown.
+editor and out again after a few seconds, an error after longer, and can carry
+a button ("Show messages"). Pointing at a note keeps it. A long text is cut
+to two lines (all of it in the tooltip, and in Messages). The same text again
+only restarts its time, and at most ``MOST`` are shown.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QCursor, QFont, QFontMetrics, QTextLayout
 from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
@@ -27,7 +28,8 @@ from PySide6.QtWidgets import (
 from mems_sketch.gui import icons, motion, theme
 
 KINDS = {"info": "info", "success": "ok", "warning": "warning", "error": "error"}
-SECONDS = {"info": 4, "success": 3, "warning": 6, "error": 0}  # 0: until closed
+SECONDS = {"info": 4, "success": 3, "warning": 6, "error": 10}  # 0: until closed
+LINES = 2  # the most a note's text takes; the rest is cut with "…"
 MOST = 3
 WIDTH = 400  # px: every note is as wide (less in a narrow editor)
 
@@ -52,9 +54,11 @@ class Toast(QWidget):
         icon = QLabel()
         size = theme.metric("icon_size")
         icon.setPixmap(icons.icon(KINDS.get(kind, "info")).pixmap(size, size))
+        self._text = text
         self.label = QLabel(text)
         self.label.setObjectName("toast-text")
         self.label.setWordWrap(True)
+        self.label.setToolTip(text)
         row = QHBoxLayout(self)
         pad = theme.metric("space_m")
         row.setContentsMargins(pad + 2, pad - 2, pad - 2, pad - 2)
@@ -84,7 +88,14 @@ class Toast(QWidget):
         self._seconds = SECONDS.get(kind, 4) if seconds is None else seconds
 
     def text(self) -> str:
-        return self.label.text()
+        """All of it, however much is shown."""
+        return self._text
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        shown = at_most_lines(self._text, self.label.font(), self.label.width(), LINES)
+        if shown != self.label.text():
+            self.label.setText(shown)
 
     def show_for(self) -> None:
         """Fade in and start the time it stays (pointing at it keeps it)."""
@@ -131,6 +142,29 @@ class Toast(QWidget):
         self.deleteLater()
         if isinstance(stack, Toasts):
             stack.forget(self)
+
+
+def at_most_lines(text: str, font: QFont, width: int, lines: int) -> str:
+    """``text`` as it wraps at ``width`` px, cut to ``lines`` lines with "…"."""
+    if width <= 0:
+        return text
+    layout = QTextLayout(text, font)
+    layout.beginLayout()
+    starts = []
+    while True:
+        line = layout.createLine()
+        if not line.isValid():
+            break
+        line.setLineWidth(width)
+        starts.append(line.textStart())
+    layout.endLayout()
+    if len(starts) <= lines:
+        return text
+    last = starts[lines - 1]
+    rest = QFontMetrics(font).elidedText(
+        text[last:].replace("\n", " "), Qt.TextElideMode.ElideRight, width
+    )
+    return text[:last] + rest
 
 
 class Toasts(QWidget):

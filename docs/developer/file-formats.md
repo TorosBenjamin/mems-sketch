@@ -28,7 +28,7 @@ A library's manifest is a project's, usually with `top: null`:
 format: mems-sketch/2
 name: resonator
 top: top                          # null: a library
-libraries: {mems: bundled@2, std: bundled@1}   # bundled (with the version saved with), or folders
+libraries: {mems: bundled@3, std: bundled@2}   # bundled (with the version saved with), or folders
 process: mems.surface             # a process of its own (main), or a library's
 overrides:                        # changes to a library's process
   constants: {undercut: 3}
@@ -177,7 +177,7 @@ as a list of rows, so readers accept both (`formats.rows`). `.mat` uses scipy
 format: mems-sketch/2
 name: resonator
 top: top
-libraries: {mems: bundled@2, fab: ../fab}   # folders relative to the document
+libraries: {mems: bundled@3, fab: ../fab}   # folders relative to the document
 process: main                               # and overrides, as in project.yaml
 processes: {main: {...}}                    # as process.yaml
 imports: {padframe: {file, cell, layers, data: <bytes>}}
@@ -209,6 +209,6 @@ points: {tip: {x: 10, y: 5}}
 
 Reading is lenient for files written by hand or by MATLAB: a polygon can be a
 bare N×2 matrix, `polygons` can be a single struct, and `gds` can be a `[1 0]`
-row. On import (`editing/imports.py`) the geometry becomes an OASIS file with
+row. On import (`editing/imports.py`) the geometry becomes a GDS file with
 one cell, `TOP`, so layer names survive and everything after that (the
 dialog, re-import, `imports/`) is the same as for GDS.

@@ -71,6 +71,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.core.component import Geometry
+from mems_sketch.core.region import DBU_UM
 from mems_sketch.core.transform import Transform
 from mems_sketch.gui import icons, motion
 from mems_sketch.gui import theme as themes
@@ -128,6 +129,10 @@ DRAFT_ABOVE_MS = 25.0  # draft quality only when a full-quality frame takes long
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
 OUTLINE_PX = 1.0
+SELECTION_TINT_ALPHA = 45  # how strongly a selected shape is tinted (0-255)
+AXIS_ALPHA = 90  # the x and y axes, drawn faintly
+CHIP_ROW_MARGIN_PX = 60  # a row of parameter labels wraps this far from the right edge
+CHIP_LINE_PX = 22  # and its lines are this far apart
 ALIGN_LABEL_GAP_PX = 14  # an alignment's names sit this far beyond the arrow's ends
 ALIGN_APART_PX = 4  # an alignment's point and target closer than this are drawn as one
 CURSOR_LABEL_OFFSET = 16  # px: a label by the cursor starts this far right and below it
@@ -712,10 +717,14 @@ class LayoutCanvas(QGraphicsView):
         box = self._overlay_box(Qt.Orientation.Horizontal)
         layout = box.layout()
         for name, tip, slot in (
-            ("zoom_in", "Zoom in", lambda: self.zoom_by(self.options["zoom_step"], animated=True)),
+            (
+                "zoom_in",
+                "Zoom in (Ctrl+=)",
+                lambda: self.zoom_by(self.options["zoom_step"], animated=True),
+            ),
             (
                 "zoom_out",
-                "Zoom out",
+                "Zoom out (Ctrl+-)",
                 lambda: self.zoom_by(1 / self.options["zoom_step"], animated=True),
             ),
             ("fit", "Fit (F)", lambda: self.fit(animated=True)),
@@ -988,13 +997,17 @@ class LayoutCanvas(QGraphicsView):
                 for layer, region in leaf.own.items():
                     if region.is_empty():
                         continue
+                    # A blue no layer uses, outlined and only faintly tinted, so the
+                    # layer's colour still reads (an orange tint made selected device look
+                    # like anchor, #312). The outline stays 1 px: wider ones draw ~100x
+                    # slower on a shape with thousands of holes.
                     item = ShapeItem(own_path(leaf, layer))
                     item.setTransform(qtransform(at))
                     pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
                     pen.setCosmetic(True)
                     item.setPen(pen)
                     tint = QColor(self.theme["highlight"])
-                    tint.setAlpha(60)  # a stronger tint makes up for the thin outline
+                    tint.setAlpha(SELECTION_TINT_ALPHA)
                     item.setBrush(QBrush(tint))
                     item.setZValue(1000)
                     self._highlight_band.add(item)
@@ -1011,12 +1024,32 @@ class LayoutCanvas(QGraphicsView):
             item.setZValue(1000)
             self.scene().addItem(item)
             self._overlay.append(item)
-        for x0, y0, x1, y1 in markers:
-            pad = 0.5
-            item = QGraphicsRectItem(
-                QRectF(x0 - pad, y0 - pad, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad)
-            )
-            pen = QPen(QColor(self.theme["violation"]), 2)
+        for marker in markers:
+            # A box (x0, y0, x1, y1), or (box, (outline, holes), severity): the outline
+            # (database units) is where the violation is exactly, drawn instead (#313).
+            if len(marker) == 3 and isinstance(marker[0], tuple | list):
+                (x0, y0, x1, y1), (outline, holes), severity = marker
+            else:
+                (x0, y0, x1, y1), outline, holes, severity = marker, (), (), "error"
+            warning = self.theme.get("violation_warning") or self.theme["violation"]
+            color = QColor(self.theme["violation"] if severity == "error" else warning)
+            if outline:
+                path = QPainterPath()
+                path.setFillRule(Qt.FillRule.OddEvenFill)
+                for ring in (outline, *holes):
+                    path.addPolygon(QPolygonF([QPointF(x * DBU_UM, y * DBU_UM) for x, y in ring]))
+                    path.closeSubpath()
+                item = QGraphicsPathItem(path)
+                item.setData(0, "violation")  # a marker, not a selected shape's outline
+                fill = QColor(color)
+                fill.setAlpha(70)
+                item.setBrush(QBrush(fill))
+            else:
+                pad = 0.5
+                item = QGraphicsRectItem(
+                    QRectF(x0 - pad, y0 - pad, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad)
+                )
+            pen = QPen(color, 2)
             pen.setCosmetic(True)
             item.setPen(pen)
             item.setZValue(1001)
@@ -1485,11 +1518,26 @@ class LayoutCanvas(QGraphicsView):
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
             self.view_changed.emit()
+            self._cursor_over_moved_view(event.position(), event.modifiers())
             return
         delta = event.angleDelta()
         notches = (delta.y() or delta.x()) / 120  # a touchpad sends a fraction of one
         if notches:
             self._zoom_by_at(self.options["zoom_step"] ** notches, event.position())
+            self._cursor_over_moved_view(event.position(), event.modifiers())
+
+    def _cursor_over_moved_view(self, pos: QPointF, modifiers) -> None:
+        """The view moved under a cursor that did not (two fingers panning, a wheel
+        zooming): what is under it changed, so tell the tools and the hover, as a
+        mouse move would. Otherwise a shape's name stays up after panning off it."""
+        self._cursor_at = pos
+        p = self.mapToScene(pos.toPoint())
+        x = min(max(p.x(), WORLD.left()), WORLD.right())
+        y = min(max(p.y(), WORLD.top()), WORLD.bottom())
+        left = self._left_down and bool(QApplication.mouseButtons() & Qt.MouseButton.LeftButton)
+        self._pending_move = (x, y, modifiers, left)
+        if not self._move_timer.isActive():
+            self._move_timer.start(1)  # with the next frame, not for every scroll step
 
     def viewportEvent(self, event) -> bool:
         """A pinch on a touchpad (macOS, and Linux with libinput) zooms about the
@@ -1501,6 +1549,7 @@ class LayoutCanvas(QGraphicsView):
                 # in the view; the position on the screen is right everywhere.
                 at = self.viewport().mapFromGlobal(event.globalPosition())
                 self._zoom_by_at(1.0 + event.value(), at)
+                self._cursor_over_moved_view(at, event.modifiers())
                 return True
             if event.gestureType() == Qt.NativeGestureType.SmartZoomNativeGesture:
                 self.fit(animated=True)  # a two-finger double tap
@@ -1561,6 +1610,20 @@ class LayoutCanvas(QGraphicsView):
             self.pressed.emit(p.x(), p.y(), event.modifiers())
             return
         super().mousePressEvent(event)
+
+    def begin_pan(self, since: tuple[float, float] | None = None) -> None:
+        """A tool's left-button drag turns into panning (a drag on empty canvas, when
+        that is set to pan): the view follows the cursor until the button is released.
+        ``since``: where the drag began (µm), so the view catches up with all of it."""
+        self.stop_gliding()
+        start = self.mapFromScene(QPointF(*since)) if since is not None else self._cursor_at
+        self._pan_from = QPointF(start)
+        if since is not None:  # the move that started it: the view follows at once
+            delta = self._cursor_at - self._pan_from
+            self._pan_from = QPointF(self._cursor_at)
+            self.horizontalScrollBar().setValue(int(self.horizontalScrollBar().value() - delta.x()))
+            self.verticalScrollBar().setValue(int(self.verticalScrollBar().value() - delta.y()))
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
 
     def mouseDoubleClickEvent(self, event) -> None:
         self._flush_move()
@@ -1624,6 +1687,10 @@ class LayoutCanvas(QGraphicsView):
             self._pan_from = None
             self._update_cursor()
             self.view_changed.emit()
+            if event.button() == Qt.MouseButton.LeftButton and self._left_down:
+                self._left_down = False  # a tool's drag that turned into panning: it ends
+                p = self._scene(event)
+                self.released.emit(p.x(), p.y(), event.modifiers())
             return
         if event.button() == Qt.MouseButton.LeftButton and self._left_down:
             self._left_down = False
@@ -1662,9 +1729,8 @@ class LayoutCanvas(QGraphicsView):
             return
         name = bytes(data.data(COMPONENT_MIME)).decode()
         p = self.mapToScene(event.position().toPoint())
-        step = self.grid_step()
         event.acceptProposedAction()
-        self.component_dropped.emit(name, round(p.x() / step) * step, round(p.y() / step) * step)
+        self.component_dropped.emit(name, *self.on_grid(p.x(), p.y()))
 
     def keyReleaseEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
@@ -1757,7 +1823,7 @@ class LayoutCanvas(QGraphicsView):
         plain = QColor(self.theme["overlay"])
         plain.setAlpha(170)
         boxes, ends = [], []
-        rows: dict[tuple[int, int], float] = {}  # how far each row of labels reaches
+        rows: dict[tuple[int, int], tuple[float, int]] = {}  # each row: how far, which line
         editing = self._editing_dimension
         for index, d in enumerate(self._dimensions):
             typing = editing is not None and editing[0] == index
@@ -1771,10 +1837,15 @@ class LayoutCanvas(QGraphicsView):
             a, b = px(d.a), px(d.b)
             if d.style == "chip":  # a placement's value with no size: in a row under it
                 key = (round(a.x()), round(a.y()))
-                left = rows.get(key, 0.0)
+                left, line = rows.get(key, (0.0, 0))
                 width = self._label_width(label)
-                center = a + QPointF(left + width / 2, DIMENSION_GAP_PX * 0.75)
-                rows[key] = left + width + 6
+                # The row wraps at the view's right edge (and the zoom buttons) (#299).
+                room = self.viewport().width() - max(a.x(), 0.0) - CHIP_ROW_MARGIN_PX
+                if left > 0 and left + width > room:
+                    left, line = 0.0, line + 1
+                down = DIMENSION_GAP_PX * 0.75 + line * CHIP_LINE_PX
+                center = QPointF(max(a.x(), 4.0), a.y()) + QPointF(left + width / 2, down)
+                rows[key] = (left + width + 6, line)
                 ends.append(None)
                 boxes.append(self._dimension_label(painter, center, label, hovered, None, typing))
                 continue
@@ -2055,8 +2126,8 @@ class LayoutCanvas(QGraphicsView):
                 ("axis_y", (QPointF(0, rect.top()), QPointF(0, rect.bottom()))),
             ):
                 color = QColor(self.theme[key])
-                color.setAlpha(150)
-                pen = QPen(color, 1.5)
+                color.setAlpha(AXIS_ALPHA)  # quiet: red is for problems (#313)
+                pen = QPen(color, 1)
                 pen.setCosmetic(True)
                 painter.setPen(pen)
                 painter.drawLine(*line)
@@ -2358,6 +2429,11 @@ class LayoutCanvas(QGraphicsView):
         painter.drawRoundedRect(box, 4, 4)
         painter.setPen(color or QColor(self.theme["overlay"]))
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+
+    def on_grid(self, x: float, y: float) -> tuple[float, float]:
+        """``(x, y)`` µm rounded to the nearest grid point, without float noise."""
+        step = self.grid_step()
+        return round(round(x / step) * step, 6) + 0.0, round(round(y / step) * step, 6) + 0.0
 
     def grid_step(self) -> float:
         """Grid spacing in µm: the smallest 1-2-5 step with lines at least

@@ -101,9 +101,10 @@ class CanvasColors(_Colors):
     grid_alpha: tuple[int, int, int]  # minor lines, every fifth line, the axes (0-255)
     highlight: str  # the selection
     hover: str
-    violation: str  # rule violations
+    violation: str  # rule violations: errors
+    violation_warning: str | None = None  # and warnings (none: the errors' colour)
     added: str  # history: material a version added
-    removed: str  # and removed (hatched: it is not there any more)
+    removed: str  # and removed (hatched: it is not there any more; grey, not a problem's red)
     declared: str  # points: the edited component's own
     selected: str  # of the selected shape
     pick: str  # candidates while aligning
@@ -379,14 +380,21 @@ QToolBar::separator {{ background: {border_strong}; width: 1px; height: 1px; mar
 QToolButton#window-button, QToolButton#window-close {{ padding: 4px 10px; margin: 0; border-radius: 0; }}
 QToolButton#window-close:hover {{ background: #c42b1c; }}
 QToolButton {{
-    background: transparent; border: none; border-radius: {radius_control}px; padding: 4px;
+    background: transparent; border: 1px solid transparent; border-radius: {radius_control}px;
+    padding: 3px;
 }}
+QToolButton[keyfocus="true"], QCheckBox[keyfocus="true"], QPushButton[keyfocus="true"] {{
+    border: 1px solid {accent};  /* reached with Tab (widgets.FocusRing) */
+}}
+QAbstractItemView[keyfocus="true"] {{ border: 1px solid {accent}; border-radius: {radius_small}px; }}
 QToolButton:hover {{ background: {hover}; }}
 QToolButton:pressed {{ background: {pressed}; }}
 QToolButton:checked {{ background: {selected}; }}
 QToolButton[popupMode="2"] {{ padding-right: 12px; }}
-QToolButton#main-menu {{ padding: 5px; }}
+QToolButton#main-menu {{ padding: 5px; background: transparent; }}  /* flat as the others */
+QToolButton#main-menu:hover, QToolButton#main-menu:open {{ background: {hover}; }}
 QToolButton::menu-indicator {{ image: none; }}
+QToolButton::menu-button {{ border: none; background: transparent; width: 12px; }}  /* #319 */
 QToolBar#tools-toolbar QToolButton {{ padding: 5px; margin: 1px 2px; }}
 
 QMenuBar {{ background: {window}; }}
@@ -409,13 +417,20 @@ QTabBar::tab {{
 }}
 QTabBar::tab:selected {{ background: {selected_inactive}; border: 1px solid {border_strong}; }}
 QTabBar::tab:hover:!selected {{ background: {hover}; }}
-QToolButton#tab-close {{ padding: 1px; border-radius: {radius_small}px; }}
+QToolButton#tab-close {{  /* as far from the tab's right edge as its icon from the left (#228) */
+    padding: 1px; margin-right: 8px; border-radius: {radius_small}px;
+}}
 
 QTreeView, QTableView, QListView, QTableWidget, QTreeWidget, QListWidget {{
     background: {island}; alternate-background-color: {island}; border: none;
     selection-background-color: {selected}; selection-color: {text};
     gridline-color: {border};
 }}
+/* A row selects and highlights as one, its check box, icon and indentation
+   too, with no focus frame around one cell of it (#220). */
+QTreeView {{ show-decoration-selected: 1; outline: 0; }}
+QTreeView::branch:selected {{ background: {selected}; }}
+QTreeView::branch:hover:!selected {{ background: {hover}; }}
 QTreeView::item, QListView::item {{ padding: 2px 0; }}
 QTreeView::item:hover, QListView::item:hover {{ background: {hover}; }}
 QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {{
@@ -554,11 +569,14 @@ QToolTip {{
     border-radius: {radius_control}px;
 }}
 
-/* Editing a cell: a flat field filling the cell, not a rounded box inside it. */
+/* Editing a cell: a flat field filling the cell, not a rounded box inside it, as
+   the cell looks (the row being edited is selected), the text where the cell
+   has it (a line edit keeps 3 px of its own: 3 + 1 = the cell's 4, #254). */
 QAbstractItemView QLineEdit, QAbstractItemView QLineEdit:focus {{
-    border: none; border-radius: 0; margin: 0; padding: 0 4px; background: {editor};
+    border: none; border-radius: 0; margin: 0; padding: 0 1px; background: {selected};
 }}
 QLineEdit[expression="true"] {{ background: {expression}; }}
+QLineEdit[default="true"] {{ placeholder-text-color: {text}; }}
 /* ... but fields in a row's fold-out (a rule's details) are ordinary fields. */
 QWidget#rule-details QLineEdit {{
     border: 1px solid {border_strong}; border-radius: {radius_control}px; padding: 3px 6px;
@@ -568,7 +586,7 @@ QTextEdit#expanded-value {{
     background: {editor}; border: 1px solid {accent}; border-radius: {radius_control}px;
     padding: 1px 3px;
 }}
-QLineEdit[invalid="true"] {{ border: 1px solid {error}; }}
+QLineEdit[invalid="true"], QPlainTextEdit[invalid="true"] {{ border: 1px solid {error}; }}
 QLineEdit#title-edit {{
     background: transparent; border: 1px solid transparent; font-size: {font_title}px; font-weight: 600;
     padding: 2px 4px;
@@ -593,6 +611,7 @@ QFrame#card {{
 QLabel#card-heading {{ font-weight: 600; }}
 QWidget#empty-state QLabel {{ color: {muted}; }}
 QLabel#muted[error="true"] {{ color: {error}; }}
+QLabel#warning-note {{ color: {warning}; }}
 QLabel#heading {{ font-weight: 600; font-size: {font_heading}px; }}
 QWidget#view-header {{ background: {editor}; border-bottom: 1px solid {border}; }}
 QWidget#view-header QLabel {{ color: {muted}; }}
@@ -670,6 +689,10 @@ def apply(app: QApplication, name: str) -> str:
     if not hasattr(app, "_menu_polisher"):  # once: every menu, in every window
         app._menu_polisher = MenuPolisher(app)
         app.installEventFilter(app._menu_polisher)
+        from mems_sketch.gui.widgets import WrappedTooltips
+
+        app._tooltips = WrappedTooltips(app)  # long ones wrap, in every window
+        app.installEventFilter(app._tooltips)
     app.setPalette(palette(theme))
     t = _current.ui
     app.setStyleSheet(

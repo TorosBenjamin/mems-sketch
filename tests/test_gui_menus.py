@@ -111,7 +111,7 @@ def test_a_menu_at_the_cursor_starts_its_panel_there(window, qtbot):
 
 def test_the_main_menu_has_an_icon_by_each_entry(window):
     entries = window.actions_.root.actions()
-    assert len(entries) == 7 and all(not a.icon().isNull() for a in entries)
+    assert len(entries) == 8 and all(not a.icon().isNull() for a in entries)
 
 
 def test_right_click_on_empty_space_offers_adding_there(window):
@@ -229,8 +229,8 @@ def test_clicking_a_layer_draws_on_that_layer(window):
 
 def test_commands_on_the_wrong_selection_say_why(window, monkeypatch):
     """#253: nothing selected, or too many: the command says what it needs."""
-    errors = []
-    monkeypatch.setattr(window, "report_error", errors.append)
+    errors = []  # a hint now, not an error (#326)
+    monkeypatch.setattr(window, "ask_selection", errors.append)
     window.tree.select_paths([])
     for command in (
         window.duplicate,
@@ -241,7 +241,7 @@ def test_commands_on_the_wrong_selection_say_why(window, monkeypatch):
         window.remove_alignment,
     ):
         command()
-    assert len(errors) == 6 and all(e.startswith("select ") for e in errors)
+    assert len(errors) == 6 and all(e.startswith("Select ") for e in errors)
 
 
 def test_duplicate_copies_every_selected_shape_in_one_step(window):
@@ -272,3 +272,61 @@ def test_the_edit_menu_greys_out_what_does_not_apply(window):
     assert actions.delete.isEnabled() and actions.rename.isEnabled()
     assert not actions.unpack.isEnabled() and not actions.remove_alignment.isEnabled()
     actions.edit.aboutToHide.emit()
+
+
+def test_deleting_the_top_component_asks_first(window, monkeypatch):
+    """#260: it is the whole design; No keeps it."""
+    asked = []
+
+    def answer(*args, **kwargs):
+        asked.append(args[2])
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", answer)
+    window.components._delete("top")
+    assert asked and "top component" in asked[0]
+    assert window.document.project.top == "top"
+
+
+def test_the_place_button_says_why_it_places_nothing(window):
+    errors = []
+    window.components.error.connect(errors.append)
+    window.components.tree.clearSelection()
+    window.components._place()
+    window.components.select_component("top")
+    window.components._place()
+    assert errors == ["select a component to place", "'top' cannot be placed in itself"]
+
+
+def test_undo_says_what_each_step_did(window):
+    doc = window.document
+    doc.nodes.set_enabled(((0, 0),), False)
+    assert doc.undo_text() == "Hide bar"
+    window.tree.select_paths([((0, 1),)])
+    window.cut()
+    assert doc.undo_text() == "Cut pad"
+    doc.nodes.add(RectShape(name="c", layer="device", x0=0, y0=50, x1=5, y1=55))
+    doc.nodes.remove([((0, 0),), ((0, 1),)])
+    assert doc.undo_text() == "Delete 2 shapes"
+
+
+def test_a_submenu_opens_level_with_its_entry(window, qtbot):
+    """#229: File's first entry is level with File, however the window was put."""
+    from PySide6.QtCore import QPoint
+
+    from mems_sketch.gui.style import line_up_submenu
+
+    root, file = window.actions_.root, window.actions_.file
+    root.popup(window.mapToGlobal(QPoint(200, 100)))
+    qtbot.waitUntil(root.isVisible)
+    entry = root.actionGeometry(file.menuAction())
+    qtbot.mouseMove(root, entry.center())
+    qtbot.waitUntil(file.isVisible, timeout=2000)
+    file.move(file.pos() + QPoint(0, 9))  # as a platform might put it
+
+    def first_top():
+        return file.mapToGlobal(file.actionGeometry(file.actions()[0]).topLeft()).y()
+
+    line_up_submenu(file)
+    assert first_top() == root.mapToGlobal(entry.topLeft()).y()
+    root.hide()

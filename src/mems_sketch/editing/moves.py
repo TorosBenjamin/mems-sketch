@@ -201,6 +201,8 @@ class MoveEdits(Commands):
                 continue  # follows the shape it is aligned to
             frame = frame_of(record, path)
             local = frame.inverted() * transform * frame  # the same move, in the parent's frame
+            if node.align is not None:  # the offset turns too: a mirrored copy attaches alike
+                node = node.model_copy(update={"align": _turned_align(node.align, local)})
             if type(node).placed:
                 moved = _reoriented(node, local, record[path])
                 replacements[path] = self._carry_corners(
@@ -227,6 +229,37 @@ class MoveEdits(Commands):
                 container[index] = new
 
         self.session.edit(description, change)
+
+
+def _turned_align(align, turn: Transform):
+    """``align`` with its offset turned (and mirrored) by ``turn``'s orientation (#289):
+    a shape aligned 3 µm below a point and mirrored up-down sits 3 µm above it.
+    Numbers are worked out; expressions are kept, swapped and negated as quarter
+    turns and mirrors need; an offset turned by another angle stays as it is."""
+    ax, ay = turn.apply_vector(1.0, 0.0)  # where the x and y directions go
+    bx, by = turn.apply_vector(0.0, 1.0)
+    if all(isinstance(v, int | float) for v in (align.dx, align.dy)):
+        dx, dy = float(align.dx), float(align.dy)
+        return align.model_copy(
+            update={"dx": _round_um(ax * dx + bx * dy), "dy": _round_um(ay * dx + by * dy)}
+        )
+    signs = [round(v) for v in (ax, bx, ay, by)]
+    if any(abs(v - s) > 1e-9 for v, s in zip((ax, bx, ay, by), signs, strict=True)):
+        return align  # an expression turned by an odd angle: left alone
+
+    def combine(a: int, b: int):
+        terms = [(a, align.dx), (b, align.dy)]
+        parts = [(sign, value) for sign, value in terms if sign and value not in (0, 0.0, "0")]
+        if not parts:
+            return 0.0
+        (sign, value), *_ = parts  # a quarter turn or mirror takes one of the two
+        if isinstance(value, int | float):
+            return _round_um(sign * float(value))
+        return value if sign > 0 else f"-({value})"
+
+    return align.model_copy(
+        update={"dx": combine(signs[0], signs[1]), "dy": combine(signs[2], signs[3])}
+    )
 
 
 def _shift_corners(node: Shape, dx: float, dy: float) -> Shape:

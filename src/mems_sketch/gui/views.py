@@ -66,7 +66,7 @@ def _check_job(build, grid: float, chord: float, project, component: str) -> lis
     except (RuntimeError, OSError):  # no process to be had (e.g. a script without a main guard)
         _executors["process"] = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rule-check")
         future = _checks().submit(rules.check, project, geometry, component)
-    return future.result()
+    return rules.name_shapes(future.result(), project, component, build.records())
 
 
 def _checks() -> Executor:
@@ -122,7 +122,7 @@ class ComponentView(QWidget):
 
     @property
     def read_only(self) -> bool:
-        return self.component not in self.document.project.components
+        return self.component is None or self.component not in self.document.project.components
 
     @property
     def implementation_hidden(self) -> bool:
@@ -132,16 +132,22 @@ class ComponentView(QWidget):
 
     def title(self) -> str:
         name = self.component
+        if name is None:  # a library of processes only (#285)
+            return "No components"
         if self.read_only:
             return f"{name} (read-only)"
         return f"{name}*" if self.document.modified(name) else name
 
     def icon_name(self) -> str:
+        if self.component is None:
+            return "component"
         if self.read_only:
             return "lock"
         return "top" if self.component == self.document.project.top else "component"
 
     def tooltip(self) -> str:
+        if self.component is None:
+            return "This library has processes only: edit them in the Process tab"
         if self.read_only:
             where = "library" if "." in self.component else "imported"
             return f"{self.component} — {where} component, read-only (trial values work)"
@@ -152,6 +158,10 @@ class ComponentView(QWidget):
     def refresh(self, colors: dict, visible: dict[str, bool]) -> None:
         """Recompile the component and redraw; errors are kept for the messages panel."""
         self.errors = []
+        if self.component is None:  # a library of processes only: nothing to draw
+            self.node_regions, self.guides, self.violations, self.selection = [], [], [], []
+            self.canvas.show_geometry(Geometry(), colors, visible, [])
+            return
         drawn = None
         try:
             drawn = geometry = self.document.results.geometry(component=self.component)
@@ -203,7 +213,9 @@ class ComponentView(QWidget):
         if drawn.point_count() <= BACKGROUND_CHECK_POINTS:
             try:
                 checked = build.output(process.grid_um, process.chord_um).geometry
-                self.violations = results.check(checked, self.component)
+                found = results.check(checked, self.component)
+                project = self.document.project
+                self.violations = rules.name_shapes(found, project, self.component, build.records())
             except Exception as exc:  # noqa: BLE001 - shown in the messages panel
                 self.errors.append(str(exc))
             return
@@ -305,7 +317,7 @@ class EditorArea(QSplitter):
         icons.bind(button, "close")
         button.setIconSize(QSize(12, 12))
         button.setAutoRaise(True)
-        button.setToolTip("Close (Ctrl+W)")
+        button.setToolTip("Close (Ctrl+W)")  # Ctrl+W closes a tab on every platform (actions)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.setObjectName("tab-close")
         button.clicked.connect(lambda: self.close_view(view))

@@ -38,9 +38,9 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from mems_sketch.core.expressions import evaluate
 from mems_sketch.core.transform import Transform
@@ -351,7 +351,15 @@ class CornersModifier(Modifier):
     kind: Literal["corners"] = "corners"
     icon: ClassVar[str] = "fillet"
     corners: list[Corner] = []
-    segments: Value | None = None  # per full circle; default from ARC_TOLERANCE_UM
+
+    @model_validator(mode="before")
+    @classmethod
+    def _without_segments(cls, data: Any) -> Any:
+        """Files written before #216 may give ``segments``, which never did
+        anything (the corners are exact arcs, split by the curve tolerance)."""
+        if isinstance(data, dict) and "segments" in data:
+            data = {k: v for k, v in data.items() if k != "segments"}
+        return data
 
     def point_references(self) -> list[str]:
         return [f"{c.at}.{axis}" for c in self.corners if c.at for axis in "xy"]
@@ -391,6 +399,12 @@ class PerforateModifier(Modifier):
     for sharp corners). ``grid: hex`` staggers every other row by half a pitch,
     rows ``pitch`` × √3/2 apart unless ``row_pitch`` says. The grid is centred
     on the node; ``x``, ``y`` put a hole's centre there instead.
+
+    The webs between holes are ``pitch - hole_size`` wide, and the rim is at
+    least ``margin``, wider where the holes do not fill the node exactly. With
+    ``even_rim`` (a square grid) the pitch stretches a little, along x and y,
+    so that the holes fill the node's box with the rim as wide as the webs
+    (``margin``, ``x`` and ``y`` are then not used).
     """
 
     kind: Literal["perforate"] = "perforate"
@@ -406,6 +420,7 @@ class PerforateModifier(Modifier):
     keep_out_margin: Value | None = None
     x: Value | None = None
     y: Value | None = None
+    even_rim: bool = False
 
     @field_validator("keep_out")
     @classmethod

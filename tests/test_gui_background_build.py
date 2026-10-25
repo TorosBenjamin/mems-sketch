@@ -15,7 +15,7 @@ from mems_sketch.core.project import Project
 from mems_sketch.core.user_component import ComponentDef
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import app
-from mems_sketch.gui.app import BACKGROUND_BUILD_S, MainWindow
+from mems_sketch.gui.app import MainWindow
 
 
 def area(geometry) -> float:
@@ -38,7 +38,7 @@ def window(qtbot, monkeypatch):
 
 def slow(window) -> None:
     """As if the component had taken long to build: a change builds in the background."""
-    window._took({window.view.component: BACKGROUND_BUILD_S * 2})
+    window._took({window.view.component: app.BACKGROUND_BUILD_S * 2})
 
 
 def test_a_slow_design_shows_the_last_result_until_the_new_one_is_built(window, qtbot, monkeypatch):
@@ -60,12 +60,18 @@ def test_a_slow_design_shows_the_last_result_until_the_new_one_is_built(window, 
     assert "updating…" not in view.canvas.caption_details.text()
 
 
-def test_a_quick_change_to_a_slow_design_is_built_in_the_background_too(window, qtbot):
+def test_a_quick_change_to_a_slow_design_is_built_in_the_background_too(window, qtbot, monkeypatch):
     slow(window)
     window._took({window.view.component: 0.001})  # this one was quick, others were not
     assert not window.document.check_builds
+    # The build waits until the test lets it go: one this small could be done before
+    # the window asks to hear of it, and then it is shown at once.
+    held, builder = threading.Event(), ThreadPoolExecutor(max_workers=1)
+    builder.submit(held.wait)
+    monkeypatch.setattr(app, "builds", lambda: builder)
     window.run(lambda: window.document.parameters.update("width", default=9.0))
     assert window.view.updating
+    held.set()
     qtbot.waitUntil(lambda: not window.view.updating, timeout=10_000)
 
 
@@ -77,16 +83,23 @@ def test_only_the_newest_of_quick_changes_is_shown(window, qtbot):
     assert area(window.view.shown) == pytest.approx(14)
 
 
-def test_a_change_that_does_not_build_keeps_the_last_picture_and_says_why(window, qtbot):
+def test_a_change_that_does_not_build_is_taken_back_once_built(window, qtbot):
+    """Not checked when made (a slow design), so built first: then taken back with
+    why, as a checked edit is (#287), and the picture is the last that built."""
     slow(window)
     view = window.view
+    notes = []
+    window.notify = lambda text, *a, **k: notes.append(text)
     window.run(lambda: window.document.parameters.update("width", default=8.0))
     qtbot.waitUntil(lambda: not view.updating, timeout=10_000)
     bad = RectShape(name="bad", layer="device", x0=0, y0=0, x1="nope", y1=1)
-    window.run(lambda: window.document.nodes.add(bad))  # refused only where builds are checked
+    window.run(lambda: window.document.nodes.add(bad))  # not refused: builds are not checked
+    qtbot.waitUntil(lambda: any("nope" in n for n in notes), timeout=10_000)
     qtbot.waitUntil(lambda: not view.updating, timeout=10_000)
-    assert any("nope" in e for e in view.errors)
-    assert area(view.shown) == pytest.approx(16)  # still the last picture that built
+    assert notes[-1].startswith("Not applied") and "bad" not in [
+        s.name for s in window.document.shapes
+    ]
+    assert area(view.shown) == pytest.approx(16)  # the last picture that built
 
 
 def test_a_quick_design_is_built_at_once(window):

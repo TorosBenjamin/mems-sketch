@@ -29,8 +29,58 @@ def _box(box: Box, dbu: float) -> tuple[float, float, float, float]:
     return (box.left * dbu, box.bottom * dbu, box.right * dbu, box.top * dbu)
 
 
+def _outline(piece: IntPolygon) -> tuple[tuple[int, int], ...]:
+    """Where a finding is, exactly: its outline in database units."""
+    return tuple((int(x), int(y)) for x, y in piece.hull.tolist())
+
+
+def _holes(piece: IntPolygon) -> tuple[tuple[tuple[int, int], ...], ...]:
+    """And its holes (a ring's inside is not where it is, #300)."""
+    return tuple(tuple((int(x), int(y)) for x, y in hole.tolist()) for hole in piece.holes)
+
+
 def _pieces(polygons: Iterable[IntPolygon], dbu: float, message: str) -> list[Finding]:
-    return [Finding(message, _box(p.bbox(), dbu)) for p in polygons]
+    return [
+        Finding(message, _box(p.bbox(), dbu), outline=_outline(p), holes=_holes(p))
+        for p in polygons
+    ]
+
+
+MEASURED_MAX = 64  # pieces measured one by one; more are reported without their size
+
+
+def _half_width(piece: IntPolygon) -> int:
+    """The largest inset (database units) that leaves something of ``piece``: half
+    its widest part, less one."""
+    region = Region(piece)
+    box = piece.bbox()
+    low, high = 0, max(1, min(box.right - box.left, box.top - box.bottom) // 2)
+    while low < high:  # the largest k with something left after insetting by k
+        middle = (low + high + 1) // 2
+        if region.sized(-middle).is_empty():
+            high = middle - 1
+        else:
+            low = middle
+    return low
+
+
+def _measured(polygons: Sequence[IntPolygon], dbu: float, message, inset: int = 0) -> list[Finding]:
+    """A finding per piece, its message made by ``message(width_um)``: the width of
+    its widest part, plus ``2 × inset`` (what was taken off before it was found).
+    Past MEASURED_MAX pieces, ``message(None)``."""
+    found = []
+    for index, piece in enumerate(polygons):
+        width = None
+        if index < MEASURED_MAX:
+            width = round(2 * (inset + _half_width(piece) + 1) * dbu, 6)
+        found.append(
+            Finding(message(width), _box(piece.bbox(), dbu), width, _outline(piece), _holes(piece))
+        )
+    return found
+
+
+def _um(value: float) -> str:
+    return f"{round(value, 3):g}"
 
 
 def _real(region: Region) -> list[IntPolygon]:
@@ -92,7 +142,11 @@ class MinWidth(_Kind):
         # Shrinking by a little under half the width removes only what is
         # narrower than it, so features exactly at the limit pass.
         narrow = region - _opening(region, max(0, (_dbu(value, dbu) - 2) // 2))
-        return _pieces(_real(narrow), dbu, f"width < {value:g} µm")
+        return _measured(
+            _real(narrow),
+            dbu,
+            lambda w: f"{_um(w)} µm wide < {value:g} µm" if w else f"width < {value:g} µm",
+        )
 
 
 class MinSpace(_Kind):
@@ -103,7 +157,11 @@ class MinSpace(_Kind):
         region = regions[0].merged()
         # Growing by a little under half the spacing closes only narrower gaps.
         gaps = _closing(region, max(0, (_dbu(value, dbu) - 1) // 2)) - region
-        return _pieces(_real(gaps), dbu, f"spacing < {value:g} µm")
+        return _measured(
+            _real(gaps),
+            dbu,
+            lambda w: f"{_um(w)} µm gap < {value:g} µm" if w else f"gap < {value:g} µm",
+        )
 
 
 class MaxWidth(_Kind):
@@ -112,8 +170,14 @@ class MaxWidth(_Kind):
 
     def check(self, regions: Sequence[Region], dbu: float, value: float) -> list[Finding]:
         # What survives shrinking by half the width is wider than the width.
-        wide = regions[0].merged().sized(-(_dbu(value, dbu) // 2 + 1))
-        return _pieces(wide.each_merged(), dbu, f"wider than {value:g} µm")
+        inset = _dbu(value, dbu) // 2 + 1
+        wide = regions[0].merged().sized(-inset)
+        return _measured(
+            wide.each_merged(),
+            dbu,
+            lambda w: f"{_um(w)} µm wide > {value:g} µm" if w else f"wider than {value:g} µm",
+            inset,
+        )
 
 
 class MinArea(_Kind):
@@ -227,24 +291,40 @@ class Release(_Kind):
     """The etch undercuts the layer from its edges (outlines and release
     holes) by ``undercut``. Away from anchors, every part must be undercut,
     so no part may be wider than twice the undercut; an anchored part must be
-    wider than that, or the undercut frees it too."""
+    wider than that, or the undercut frees it too.
+
+    Widths are compared with an allowance of the process's ``grid`` (rounding
+    onto it can make a slanted beam a few nm wider), so a beam exactly twice
+    the undercut wide passes at any angle. Material held only along an
+    anchor's edge (where a beam meets its anchor pad) is part of the anchor's
+    foot, not a part that fails to release."""
 
     name = "release"
     title = "Release"
     roles = ("layer", "anchor")
     parameters = (Option("undercut", 1.0, "Undercut", minimum=0, suffix=" µm"),)
 
-    def check(self, regions: Sequence[Region], dbu: float, undercut: float) -> list[Finding]:
+    def check(
+        self, regions: Sequence[Region], dbu: float, undercut: float, grid: float = 0.001
+    ) -> list[Finding]:
         layer, anchor = regions
         layer = layer.merged()
         shrink = _dbu(undercut, dbu)
-        held = layer.sized(-shrink)  # what the undercut does not reach
-        stuck = held - anchor
-        findings = _pieces(
-            _real(stuck),
-            dbu,
-            f"not released: wider than 2 × {undercut:g} µm undercut (add release holes)",
-        )
+        allowance = math.ceil(1.5 * grid / dbu)  # a slanted edge rounded onto the grid
+        held = layer.sized(-(shrink + allowance))  # what the undercut does not reach
+        foot = anchor.sized(shrink)
+        # Held material only along an anchor's edge is part of its foot.
+        stuck = [p for p in _real(held - anchor) if not (Region(p) - foot).is_empty()]
+        limit = f"{2 * undercut:g} µm (2 × {undercut:g} µm undercut)"
+
+        def message(width) -> str:
+            size = f"{_um(width)} µm wide > {limit}" if width else f"wider than {limit}"
+            return (
+                f"not released: {size}; if it should move, narrow it or add release holes, "
+                "if it should stay fixed (a pad, a wire, a frame), anchor it"
+            )
+
+        findings = _measured(stuck, dbu, message, shrink + allowance)
         anchors = layer & anchor
         _, lost = _interacting(anchors, anchors.sized(-shrink))
         return findings + _pieces(

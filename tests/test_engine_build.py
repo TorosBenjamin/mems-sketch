@@ -116,11 +116,22 @@ def set_back(components, defaults) -> None:
                 parameter.default = values[parameter.name]
 
 
+def stack_as_recorded(project: Project) -> None:
+    """Give ``project``'s process the layer stack it was recorded with: mems.surface
+    has had a wiring level under the device since (#309), which the example does
+    not use."""
+    process = project.process
+    process.levels = [level for level in process.levels if level.layer != "wiring"]
+    process.default_level = None  # the first level: device, as then
+
+
 def _as_recorded(value):
     if isinstance(value, dict):
         kind = value.get("kind")
         if kind == "ref" and value.get("component") in OLD_NAMES:
             value = {**value, "component": OLD_NAMES[value["component"]]}
+        if kind == "corners" and "segments" not in value:  # recorded before #216 dropped it
+            value = {**value, "segments": None}
         return {
             k: _as_recorded(v)
             for k, v in value.items()
@@ -260,8 +271,10 @@ def test_the_example_project():
     project = load(EXAMPLES / "resonator")
     set_back(project.components, RECORDED_EXAMPLE)
     set_back(project.libraries["mems"].components, RECORDED_DEFAULTS)
+    stack_as_recorded(project)
     recorded_as = load(EXAMPLES / "resonator")
     set_back(recorded_as.components, RECORDED_EXAMPLE)
+    stack_as_recorded(recorded_as)
     recorded_as.libraries.pop("std")  # bundled now, the example library then
     recorded_as.libraries["std"] = Library("std", {"perforated_plate": recorded_plate()})
     for name in project.components:
@@ -429,9 +442,38 @@ def hand_written() -> Project:
     return project
 
 
+def hand_written_now() -> Project:
+    """:func:`hand_written`, recorded when fewer than 8 segments still gave 8: its
+    circle of 6 (a hexagon now, #213) with the 8 it had then."""
+    project = hand_written()
+    [circle] = [s for s in project.components["shapes"].shapes if getattr(s, "segments", None) == 6]
+    circle.segments = 8
+    return project
+
+
 @pytest.mark.parametrize("component", ["plate", "shapes", "chip", "top"])
 def test_hand_written_components(component):
-    assert assert_same(hand_written(), component) == "same"
+    assert assert_same(hand_written_now(), component, recorded_as=hand_written()) == "same"
+
+
+@pytest.mark.parametrize("segments, area", [(3, 3 * 3**0.5 / 4), (6, 3 * 3**0.5 / 2)])
+def test_few_segments_are_kept(segments, area):
+    """#213: a circle of 3 segments is a triangle, of 6 a hexagon."""
+    project = Project(name="t")
+    project.components["top"] = ComponentDef(
+        name="top", shapes=[CircleShape(layer="device", radius=1, segments=segments)]
+    )
+    assert engine_regions(project, "top")["device"].area() * 1e-6 == pytest.approx(area, 1e-3)
+
+
+@pytest.mark.parametrize("segments", [2, 4097, 6.5])
+def test_segments_out_of_range_are_refused(segments):
+    project = Project(name="t")
+    project.components["top"] = ComponentDef(
+        name="top", shapes=[CircleShape(layer="device", radius=1, segments=segments)]
+    )
+    with pytest.raises(ValueError, match="segments must be a whole number from 3 to 4096"):
+        engine_regions(project, "top")
 
 
 def test_straight_edges_within_1_nm():
@@ -454,7 +496,7 @@ def test_a_scaled_circle():
     ],
 )
 def test_parameter_values(component, params):
-    assert_same(hand_written(), component, params)
+    assert_same(hand_written_now(), component, params, recorded_as=hand_written())
 
 
 def test_errors_alike():

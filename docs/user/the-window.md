@@ -73,8 +73,10 @@ defaults, its description, parameters and points. Enter (or **Place**) places
 it, Ctrl+Enter (or **Open**) opens it.
 
 A component's description is the sentence or two you give it: with nothing
-selected, Properties shows the open component's **Description** (the first
-sentence is what the popup shows).
+selected, Properties shows the open component's **Description**, a box that
+grows with its text (the first sentence is what the popup shows). Leaving it
+or Ctrl+Enter applies it; a blank line starts a new paragraph, and
+`` `code` `` and `*emphasis*` are shown as such wherever the description is.
 
 The toolbar is also the window's title bar: minimize, maximize and close are
 at its right end. Drag an empty part of it to move the window, double-click it
@@ -107,7 +109,7 @@ Every component opens in its own tab, with its own zoom, selection and view;
 the panels show the current tab. Double-click a component in **Components**,
 or a placed component on the canvas or in **Shapes**, to open it.
 
-**View → Split view** (Ctrl+\\) shows two tabs side by side: edit the spring
+**View → Split right** (Ctrl+\\) shows two tabs side by side: edit the spring
 on one side and watch the resonator that uses it on the other.
 
 ![Split view: the resonator and its suspension](../images/split-view.png)
@@ -134,9 +136,10 @@ toggle, the grid step, the zoom and the cursor position in µm.
 
 What a command did shows as a note at the bottom of the editor: "Exported
 resonator.gds" (with **Show in folder**), "Aligned A to B", "Undid Move". A
-note goes by itself after a few seconds; pointing at it keeps it. An error
-stays until you close it, with **Show messages** to see it in Messages. The
-status bar keeps the hint for the tool you are using.
+note goes by itself after a few seconds (an error after longer); pointing at
+it keeps it. A long note is cut to two lines: point at it for all of it, or
+use **Show messages** on an error to see it in Messages. The status bar keeps
+the hint for the tool you are using.
 
 The canvas glides to a place rather than jumping: **Fit** (F), the zoom
 buttons, and a problem chosen in Messages. Scrolling or panning takes over at
@@ -217,7 +220,9 @@ the reason. A theme changes colours and sizes, never what is where.
   where the change was made, reopening it if it was closed.
 - Every edit is checked: if it would stop the project from building
   (including components that use the edited one), it is taken back with a
-  message.
+  message. On a design that takes a while to build, the edit shows at once
+  and is checked when the build is done: then it is taken back (Redo shows
+  it again).
 - **How you were looking at the project** comes back when you reopen it: open
   tabs and the split, zoom and position per tab, selections, rulers,
   collapsed tree items, hidden layers, trial values, the drawing layer. It is

@@ -22,8 +22,8 @@ from mems_sketch.storage import git
 LANE_PX = 14
 ROW_PX = 24
 DOT_RADIUS = 4.5
-LANE_COLOURS = ("blue", "orange", "green", "purple", "red")  # icon colours, in turn (white
-# reads on each: a local branch's label is white on its lane's colour)
+LANE_COLOURS = ("blue", "orange", "green", "purple", "red")  # icon colours, in turn (a
+# local branch's label is tinted with its lane's colour, its name in a deeper shade)
 GRAPH_ROLE = Qt.ItemDataRole.UserRole + 40  # a row: (Row, Commit)
 
 Line = tuple[int, int, int]  # from lane, to lane, colour
@@ -208,8 +208,11 @@ class GraphDelegate(QStyledItemDelegate):
             edge = tag
         elif ref.role == git.REMOTE:
             fill, edge, ink = theme.color("island"), colour, colour
-        else:
-            fill, edge, ink = colour, colour, QColor("white")
+        else:  # tinted, its name in a deeper shade: white on orange did not read (#315)
+            fill = QColor(colour)
+            fill.setAlpha(46)
+            edge = colour
+            ink = colour.lighter(135) if theme.current().dark else colour.darker(160)
         painter.setPen(QPen(edge, 1))
         painter.setBrush(fill)
         painter.drawRoundedRect(box, 8.5, 8.5)

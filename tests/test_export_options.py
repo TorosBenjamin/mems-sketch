@@ -72,9 +72,9 @@ def test_options_parse_text():
     assert SIZE.parse("1.5") == 1.5
     assert COUNT.parse("7") == 7
     assert FLAG.parse("yes") is True and FLAG.parse("off") is False
-    with pytest.raises(ValueError, match="is a float, not 'wide'"):
+    with pytest.raises(ValueError, match="is a number, not 'wide'"):
         SIZE.parse("wide")
-    with pytest.raises(ValueError, match="is an int"):
+    with pytest.raises(ValueError, match="is a whole number"):
         COUNT.parse("2.5")
 
 

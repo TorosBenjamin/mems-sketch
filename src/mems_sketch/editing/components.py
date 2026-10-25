@@ -24,10 +24,13 @@ from mems_sketch.core.shapes import (
     walk,
 )
 from mems_sketch.core.shapes.modifiers import total_copies
+from mems_sketch.core.shapes.points import BBOX_POINTS
 from mems_sketch.core.user_component import ComponentDef, ParamDef
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
 from mems_sketch.storage.project_files import load_library
+
+LIBRARIES_DIR = "libraries"  # where a library copied into a project goes
 
 
 class ComponentEdits(Commands):
@@ -132,6 +135,49 @@ class ComponentEdits(Commands):
         self.session.edit(f"Add library {name}", lambda p: p.libraries.__setitem__(name, library))
         return name
 
+    def outside_repository(self) -> list[tuple[str, Path]]:
+        """The libraries kept in folders outside the project's git repository, with
+        their folders: a clone of the repository will not have them (#310)."""
+        from mems_sketch.storage import git
+
+        if self.session.path is None:
+            return []
+        root = git.repository(self.session.path)
+        if root is None:
+            return []
+        root = root.resolve()
+        found = []
+        for name, library in self.session.project.libraries.items():
+            if library.bundled or library.path is None:
+                continue
+            folder = Path(library.path).resolve()
+            if root != folder and root not in folder.parents:
+                found.append((name, folder))
+        return found
+
+    def copy_library_in(self, name: str) -> Path:
+        """Copy the folder of the library ``name`` into the project (``libraries/name``)
+        and use the copy: it is then in the project's repository (#310). Saving
+        writes where it is now; undo goes back to the folder outside."""
+        import shutil
+
+        project = self.session.project
+        if self.session.path is None:
+            raise ValueError("save the project first: the library is copied into its folder")
+        library = project.libraries.get(name)
+        if library is None or library.bundled or library.path is None:
+            raise ValueError(f"'{name}' is not a library kept in a folder")
+        target = Path(self.session.path) / LIBRARIES_DIR / name
+        if target.exists():
+            raise ValueError(f"{target} already exists: move it away or use it as the library")
+        shutil.copytree(library.path, target, ignore=shutil.ignore_patterns(".git", ".mems-sketch"))
+        copied = load_library(name, target)
+        self.session.edit(
+            f"Copy library {name} into the project",
+            lambda p: p.libraries.__setitem__(name, copied),
+        )
+        return target
+
     def remove_library(self, name: str) -> None:
         project = self.session.project
         if name not in project.libraries:
@@ -177,7 +223,7 @@ class ComponentEdits(Commands):
             for before, after in moved.items():
                 self.session.component_renamed.emit(before, after)
 
-        self.session.edit(description, change, done)
+        self.session.edit(description, change, done, renames=moved)
 
     def set_top(self, name: str | None) -> None:
         """Make a local component the top one; ``None`` makes the project a library."""
@@ -205,8 +251,10 @@ class ComponentEdits(Commands):
 
     def set_description(self, name: str, text: str) -> None:
         """What a project component is, in a sentence or two: shown where it is
-        placed from (the Place popup, Search Everywhere) and by its parameters."""
-        text = " ".join(text.split())
+        placed from (the Place popup, Search Everywhere) and by its parameters.
+        Paragraphs (split by blank lines) are kept; other runs of space are one."""
+        paragraphs = (" ".join(p.split()) for p in re.split(r"\n\s*\n", text))
+        text = "\n\n".join(p for p in paragraphs if p)
 
         def change(project: Project) -> None:
             project.components[name].description = text
@@ -268,6 +316,7 @@ class ComponentEdits(Commands):
                 "enabled": transform.enabled,
                 "modifiers": transform.modifiers,
             }
+        nodes, placement = _alignment_outside(nodes, placement)
         parameters = [  # passed in by the reference, so public in the new component
             p.model_copy(update={"internal": False})
             for p in parameters_used(self.session.active_definition, nodes)
@@ -431,6 +480,35 @@ def _names_used(nodes: list[Shape]) -> set[str]:
     for node in nodes:
         visit(node.model_dump())
     return found
+
+
+def _alignment_outside(
+    nodes: list[Shape], placement: dict[str, Any]
+) -> tuple[list[Shape], dict[str, Any]]:
+    """Nodes aligned to a shape that stays outside the new component (#248): one
+    node on its own hands its alignment (and its name, which shapes aligned to it
+    use) to the placement, its point being one of the box's, as the component's
+    box is the node's; otherwise it cannot be made."""
+    inside = {name for node in nodes for name in _names_in_tree(node)}
+    outside = [n for n in nodes if n.align is not None and n.align.to.split(".")[0] not in inside]
+    if not outside:
+        return nodes, placement
+    node = outside[0]
+    if len(nodes) == 1 and "align" not in placement and node.align.point in BBOX_POINTS:
+        moved = {"align": node.align, "name": node.name or placement["name"]}
+        return [node.model_copy(update={"align": None})], {**placement, **moved}
+    raise ValueError(
+        f"'{node.name}' is aligned to '{node.align.to}', which stays outside: choose "
+        f"that shape too, or make a component of '{node.name}' on its own"
+    )
+
+
+def _names_in_tree(node: Shape) -> list[str]:
+    names = [node.name] if node.name else []
+    for field in type(node).child_fields:
+        for child in getattr(node, field):
+            names += _names_in_tree(child)
+    return names
 
 
 def library_name(folder: str | Path) -> str:

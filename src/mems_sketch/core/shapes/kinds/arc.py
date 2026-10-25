@@ -25,8 +25,8 @@ class ArcShape(Primitive):
     """Annular sector on ``layer`` centred at (``x``, ``y``), between ``inner_radius``
     (0: a disc or pie slice) and ``outer_radius``, from ``start_angle`` to
     ``end_angle`` (degrees, counter-clockwise from +x; a ring when they span
-    360°). ``segments``: straight edges for a full circle in exports (default:
-    within the curve tolerance)."""
+    360°). ``segments``: straight edges for a full circle, 3 to 4096 (default:
+    exact, split in exports within the curve tolerance)."""
 
     icon: ClassVar[str] = "arc"
 

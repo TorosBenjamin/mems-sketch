@@ -15,8 +15,9 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QColor, QCursor, QKeySequence
+import shiboken6
+from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QCloseEvent, QColor, QCursor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -35,7 +36,7 @@ from mems_sketch.core.errors import explain
 from mems_sketch.core.shapes import CornersModifier, NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
-from mems_sketch.export.base import available_exporters, options_of, title_of
+from mems_sketch.export.base import available_exporters, cell_name_notes, options_of, title_of
 from mems_sketch.gui import component_picker, icons, motion, recent_projects, theme
 from mems_sketch.gui.actions import Actions, make_action
 from mems_sketch.gui.canvas import LayoutCanvas
@@ -91,7 +92,7 @@ from mems_sketch.gui.tools import TOOLS, AlignTool, Tool
 from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import ComponentView, EditorArea, builds
 from mems_sketch.gui.welcome import WelcomeWindow
-from mems_sketch.gui.widgets import MenuTidier
+from mems_sketch.gui.widgets import AccessibleNames, FocusRing, MenuTidier, TypeAhead
 
 PANEL_HELP = {  # the "?" in each tool window's header
     "components": "Every component, each listed once: the project's and each library's, "
@@ -181,6 +182,20 @@ CANVAS_OPTIONS = {
 # after a change: the editor goes on, showing the last result until the new one is
 # there (requirement QS-8). A quicker one is built at once.
 BACKGROUND_BUILD_S = 0.15
+REFUSAL_NOTE_S = 6  # how long a note about a refused value stays
+# The keys that show or hide each tool window (Alt+0 and Alt+9: Commit and Git,
+# as in JetBrains IDEs).
+PANEL_KEYS = {
+    "components": "Alt+1",
+    "shapes": "Alt+2",
+    "properties": "Alt+3",
+    "parameters": "Alt+4",
+    "points": "Alt+5",
+    "layers": "Alt+6",
+    "messages": "Alt+7",
+    "git": "Alt+9",
+    "commit": "Alt+0",
+}
 # A background build says so (and greys out what shows built geometry) only when it
 # takes longer than this (ms): a quick one does not make the window flicker.
 UPDATING_SHOWN_MS = 200
@@ -197,6 +212,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.document = document or EditSession()
         self._problems: list[str] = []
+        self._built_clean = False  # the last build had no problems (see _refresh_built)
         self._corner_errors: list[tuple[float, float]] = []  # corners whose radius does not fit
         # The longest each component has taken to build since the project was opened:
         # one that can take long is built in the background, even when a change
@@ -268,6 +284,7 @@ class MainWindow(QMainWindow):
             lambda p, e: self._run(lambda: self.document.nodes.set_enabled(p, e))
         )
         self.tree.itemDoubleClicked.connect(self._tree_double_clicked)
+        self.tree.moved.connect(self._tree_moved)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(
             lambda at: self.show_menu(
@@ -286,19 +303,14 @@ class MainWindow(QMainWindow):
         self.document.changed.connect(self.state_changed)  # e.g. trial values
         self.messages.zoom_requested.connect(self._zoom_to_bbox)
         self.messages.counts_changed.connect(self._show_problem_count)
+        self.messages.lines_changed.connect(lambda px: self.tool_windows.fit_bottom("messages", px))
         self.messages.waive_requested.connect(self.waive)
         self.messages.unwaive_requested.connect(self.unwaive)
         self.settings.changed.connect(self._setting_changed)
-        for panel in (
-            self.properties,
-            self.parameters,
-            self.layers,
-            self.points,
-            self.components,
-            self.commit_panel,
-            self.git,
-        ):
+        for panel in (self.parameters, self.layers, self.components, self.commit_panel, self.git):
             panel.error.connect(self.report_error)
+        for panel in (self.properties, self.points):  # the field says why too (#325)
+            panel.error.connect(self.report_refusal)
         self.properties.previewed.connect(self._preview_node)
         self.properties.pick_corners.connect(lambda: self.set_tool("corners"))
         self.properties.pick_alignment.connect(self._pick_alignment)
@@ -311,6 +323,12 @@ class MainWindow(QMainWindow):
         if not hasattr(app, "_menu_tidier"):  # once for every window and menu
             app._menu_tidier = MenuTidier(app)
             app.installEventFilter(app._menu_tidier)
+            app._type_ahead = TypeAhead(app)
+            app.installEventFilter(app._type_ahead)
+            app._focus_ring = FocusRing(app)
+            app.installEventFilter(app._focus_ring)
+            app._accessible_names = AccessibleNames(app)
+            app.installEventFilter(app._accessible_names)
 
         self.setWindowIcon(icons.icon("component"))
         self.resize(1500, 950)
@@ -334,6 +352,10 @@ class MainWindow(QMainWindow):
     @property
     def canvas(self) -> LayoutCanvas:
         return self.view.canvas
+
+    def focus_editor(self) -> None:
+        """Keyboard focus back on the canvas (Esc in a panel whose edit is done)."""
+        self.canvas.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     @property
     def selection(self) -> list[NodePath]:
@@ -529,14 +551,45 @@ class MainWindow(QMainWindow):
                 action.blockSignals(False)
         self.prompt(self.tool.hint())
 
+    def open_user_guide(self) -> None:
+        """Help → User guide: the guide on the project's site, in the browser."""
+        QDesktopServices.openUrl(QUrl(USER_GUIDE))
+
+    def show_about(self) -> None:
+        """Help → About: the version, and the libraries this copy runs on."""
+        import PySide6
+
+        from mems_sketch import __version__
+
+        QMessageBox.about(
+            self,
+            "About MEMS Sketch",
+            f"<b>MEMS Sketch {__version__}</b><p>Parametric MEMS layout design: components, "
+            f"rule checks and pluggable export.</p><p>Python {sys.version.split()[0]} · "
+            f"Qt {PySide6.QtCore.qVersion()} · PySide6 {PySide6.__version__}</p>"
+            f'<p><a href="{USER_GUIDE}">User guide</a></p>',
+        )
+
     def show_settings(self, page: str | None = None) -> None:
         """The settings dialog (Ctrl+Alt+S); ``page`` opens a page, e.g. ``Keymap``."""
         native = QKeySequence.SequenceFormat.NativeText
-        shortcuts = [
-            (action.text().replace("&", "").rstrip("…"), action.shortcut().toString(native), path)
-            for path, action in menu_actions(self.actions_.root)
-            if not action.shortcut().isEmpty()
-        ]
+        fixed = {self.actions_.undo: "Undo", self.actions_.redo: "Redo"}  # not "Undo Add …"
+
+        def name(action) -> str:
+            return fixed.get(action) or action.text().partition("\t")[0].replace("&", "").rstrip(
+                "…"
+            )
+
+        def keys(action) -> str:
+            # Every key of a command (Redo: Ctrl+Y and Ctrl+Shift+Z), else the one
+            # written after a tab ("Shift Shift", a drawing tool's key; #327).
+            found = [k.toString(native) for k in action.shortcuts() if not k.isEmpty()]
+            return ", ".join(found) or action.text().partition("\t")[2]
+
+        # Every command, those without a key too: the keymap is where to look for one.
+        listed = [(path, action) for path, action in menu_actions(self.actions_.root)]
+        listed += [("", action) for action in self.actions_.unlisted]
+        shortcuts = [(name(action), keys(action), path) for path, action in listed]
         dialog = PreferencesDialog(self.settings, shortcuts, self)
         if page is not None:
             names = [dialog.pages.item(i).text() for i in range(dialog.pages.count())]
@@ -544,6 +597,11 @@ class MainWindow(QMainWindow):
                 dialog.pages.setCurrentRow(names.index(page))
         self._preferences = dialog
         dialog.show()
+
+    def start_commit(self) -> None:
+        """Ctrl+K, as in JetBrains IDEs: the Commit panel, its message to type (#327)."""
+        self.tool_windows.open("commit")
+        self.commit_panel.message.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def search(self, scope: str = ALL) -> None:
         """Search Everywhere (Shift twice): components, shapes, parameters, commands."""
@@ -558,6 +616,15 @@ class MainWindow(QMainWindow):
         center = self.geometry().center()
         dialog.move(center.x() - dialog.width() // 2, self.geometry().top() + 90)
         self._find_dialog = dialog
+        # Closed, the focus goes back where it was (the canvas), not to a panel (#324).
+        before = QApplication.focusWidget() or self.canvas
+        dialog.finished.connect(
+            lambda *_: (
+                before.setFocus(Qt.FocusReason.OtherFocusReason)
+                if shiboken6.isValid(before) and before.isVisible()
+                else self.focus_editor()
+            )
+        )
         dialog.show()
         dialog.search.setFocus()
 
@@ -838,7 +905,15 @@ class MainWindow(QMainWindow):
         self.tool.release(x, y, modifiers)
 
     def escape(self) -> None:
-        """Esc: stop what the tool is doing; if it was idle, go back to Select."""
+        """Esc: stop what the tool is doing; if it was idle, go back to Select. In a
+        panel, Esc goes back to the canvas first, as in JetBrains IDEs (#324)."""
+        focused = QApplication.focusWidget()
+        if (
+            focused is not None
+            and self.isAncestorOf(focused)
+            and not self.area.isAncestorOf(focused)
+        ):
+            self.focus_editor()  # and what the tool is doing stops too, below
         once = getattr(self.tool, "once", False)  # Add › a shape: Esc ends it too
         if (not self.tool.cancel() or once) and self.tool.name != "select":
             self.set_tool("select")
@@ -851,7 +926,7 @@ class MainWindow(QMainWindow):
     def start_align(self) -> None:
         """The Align tool; with one shape selected, it starts with that shape."""
         if len(self.selection) != 1:
-            self.report_error("select the one shape to align first")
+            self.ask_selection("Select the one shape to align first")
             return
         self.set_tool("align")
 
@@ -936,6 +1011,12 @@ class MainWindow(QMainWindow):
             action.setCheckable(True)
             action.setChecked(self.tool_windows.is_open(name))
             self.tool_windows.button(name).toggled.connect(action.setChecked)
+            key = PANEL_KEYS.get(name)
+            if key:  # Alt+number, as in JetBrains IDEs (#324); shown on the stripe button
+                action.setShortcut(QKeySequence(key))
+                button = self.tool_windows.button(name)
+                button.setToolTip(f"{self.tool_windows.title(name)} ({key})")
+                self.addAction(action)  # the keys work anywhere in the window
             actions.panels.addAction(action)
         # The names the rest of the window (and its tests) use.
         self.save_action, self.undo_action, self.redo_action = (
@@ -1011,31 +1092,33 @@ class MainWindow(QMainWindow):
         self.zoom_label.setText(f"{canvas.pixels_per_um():.3g} px/µm")
 
     def waive(self, violation) -> None:
-        """Accept a rule violation of the shown component, asking why."""
-        reason, ok = QInputDialog.getText(
-            self, "Waive a violation", f"Why is this {violation.rule} violation accepted?"
-        )
+        """Accept a rule violation of the shown component (or several, with one
+        reason), asking why."""
+        several = list(violation) if isinstance(violation, list) else [violation]
+        if len(several) == 1:
+            question = f"Why is this {several[0].rule} violation accepted?"
+        else:
+            question = f"Why are these {len(several)} violations accepted?"
+        reason, ok = QInputDialog.getText(self, "Waive", question)
         if ok:
-            self._run(lambda: self.document.process.waive(violation, reason, self.view.component))
+            component = self.view.component
+            self._run(lambda: self.document.process.waive_all(several, reason, component))
 
     def unwaive(self, violation) -> None:
-        self._run(
-            lambda: self.document.process.unwaive(
-                violation.rule, violation.bbox_um, self.view.component
-            )
-        )
+        """Remove the waiver that accepts a violation, in the component that keeps it."""
+        component, box = violation.waiver or (self.view.component, violation.bbox_um)
+        self._run(lambda: self.document.process.unwaive(violation.rule, box, component))
 
-    def _show_problem_count(self, errors: int, violations: int) -> None:
-        if errors:
-            icons.bind(self.problems_button, "error")
-            text = f"{errors} error{'s' if errors > 1 else ''}"
-        elif violations:
-            icons.bind(self.problems_button, "warning")
-            text = f"{violations} violation{'s' if violations > 1 else ''}"
-        else:
-            icons.bind(self.problems_button, "ok")
-            text = "No problems"
-        self.problems_button.setText(text)
+    def _show_problem_count(self, errors: int, warnings: int) -> None:
+        """Errors (build errors and rule errors) and warnings counted apart (#298), the
+        icon the worst of them."""
+        parts = [
+            f"{n} {word}{'s' if n > 1 else ''}"
+            for n, word in ((errors, "error"), (warnings, "warning"))
+            if n
+        ]
+        icons.bind(self.problems_button, "error" if errors else "warning" if warnings else "ok")
+        self.problems_button.setText(", ".join(parts) or "No problems")
 
     def _show_messages_panel(self) -> None:
         self.tool_windows.open("messages")
@@ -1130,9 +1213,20 @@ class MainWindow(QMainWindow):
         self.area.update_titles()
         self.draw_rulers()
         self._problems = self.document.results.problems()
+        # Edits a slow design took without checking that it still builds (see _took):
+        # one that broke a design that built is taken back now, as it would have been.
+        unchecked, self.document.unchecked_edits = self.document.unchecked_edits, 0
+        if unchecked and self._problems and self._built_clean:
+            QTimer.singleShot(0, lambda: self._take_back(unchecked, self._problems[0]))
+        else:
+            self._built_clean = not self._problems
         self._corner_errors = self._failing_corners()
         self._took(self.document.results.build_seconds)
         self._refresh_panels()
+
+    def _take_back(self, count: int, problem: str) -> None:
+        self.document.take_back_unchecked(count)
+        self.report_error(f"Not applied: {problem}")
 
     def _build_in_background(self) -> None:
         """Build the open tabs on another thread; show the result when it is there.
@@ -1158,7 +1252,8 @@ class MainWindow(QMainWindow):
             return
         for view in self.area.views():
             self._caption(view)
-        self.properties.setEnabled(False)
+        # A read-only component's interface is information, not a form: never greyed.
+        self.properties.setEnabled(self.document.read_only)
         self.points.setEnabled(False)
 
     def _report_build(self, future) -> None:
@@ -1226,8 +1321,13 @@ class MainWindow(QMainWindow):
 
     def _show_messages(self, *extra: str) -> None:
         view = self.view
-        errors = [*extra, *view.errors, *(p for p in self._problems if p not in view.errors)]
-        self.messages.show_messages(errors, view.violations, checking=view.checking)
+        # A build problem the tab already says, but with its component in front
+        # ("top: …"), is listed once.
+        shown = {*view.errors, *(f"{view.component}: {e}" for e in view.errors)}
+        errors = [*extra, *view.errors, *(p for p in self._problems if p not in shown)]
+        self.messages.show_messages(
+            errors, view.violations, checking=view.checking, component=view.component
+        )
 
     def _failing_corners(self) -> list[tuple[float, float]]:
         """Rounded corners of the open component whose radius does not fit (when the
@@ -1244,7 +1344,11 @@ class MainWindow(QMainWindow):
 
     def update_overlay(self) -> None:
         view = self.view
-        markers = [v.bbox_um for v in view.violations if v.bbox_um and not v.waived]
+        markers = [
+            (tuple(v.bbox_um), (v.outline, v.holes), v.severity)
+            for v in view.violations
+            if v.bbox_um and not v.waived
+        ]
         reach = CORNER_ERROR_MARK_PX / self.canvas.pixels_per_um()
         markers += [(x - reach, y - reach, x + reach, y + reach) for x, y in self._corner_errors]
         results = self.document.results
@@ -1411,10 +1515,11 @@ class MainWindow(QMainWindow):
         project = self.document.project
         where = str(self.document.path) if self.document.path else "not saved"
         star = "*" if self.document.dirty else ""
-        doing = "viewing" if self.document.read_only else "editing"
-        self.setWindowTitle(
-            f"{star}{project.name} — {doing} {self.document.active} — {where} — MEMS Sketch"
-        )
+        if self.document.active is None:  # a library of processes only
+            doing = "processes"
+        else:
+            doing = f"{'viewing' if self.document.read_only else 'editing'} {self.document.active}"
+        self.setWindowTitle(f"{star}{project.name} — {doing} — {where} — MEMS Sketch")
         self.project_label.setText(f"{star}{project.name}")
         self.project_label.setToolTip(where)
 
@@ -1426,8 +1531,13 @@ class MainWindow(QMainWindow):
         if picked and not self._quiet_selection:  # chosen in a panel, search or history
             regions = dict(getattr(self.view, "node_regions", ()))
             self.canvas.pulse(*(regions[p] for p in picked if p in regions))
-        self.properties.show_node(paths[0] if len(paths) == 1 else None)
+        if len(paths) > 1:
+            self.properties.show_several(len(paths))
+        else:
+            self.properties.show_node(paths[0] if paths else None)
         self.update_overlay()
+        if picked and not self._quiet_selection and not self.tool.busy:
+            self.tool.chosen_in_panel(paths)  # Align, Corners: start from it (#251)
         if not self.tool.busy:  # its hint may depend on what is selected (#251)
             self.prompt(self.tool.hint())
         self.state_changed()
@@ -1467,7 +1577,7 @@ class MainWindow(QMainWindow):
     def zoom_to_selection(self) -> None:
         """Glide to show the selected shapes as large as they fit (View › Zoom to selection)."""
         if not self.selection:
-            self.report_error("select the shapes to zoom to first")
+            self.ask_selection("Select the shapes to zoom to first")
             return
         regions = dict(getattr(self.view, "node_regions", ()))
         self.canvas.frame(*(regions.get(p) for p in self.selection))
@@ -1475,7 +1585,7 @@ class MainWindow(QMainWindow):
     def rename_selection(self) -> None:
         """Start renaming the selected shape: its name in Properties, ready to type over."""
         if len(self.selection) != 1:
-            self.report_error("select one shape to rename")
+            self.ask_selection("Select one shape to rename")
             return
         self.tool_windows.open("properties")
         name = self.properties.findChild(QLineEdit, "title-edit")
@@ -1582,6 +1692,12 @@ class MainWindow(QMainWindow):
         hit = self._hit(view, x, y)
         if hit is not None:
             self._open_reference(hit, view.component)
+
+    def _tree_moved(self, paths: list[NodePath], parent, slot: int, index: int) -> None:
+        """Shapes dragged in the Shapes panel: moved there, and still selected."""
+        ok, moved = self._run(lambda: self.document.nodes.move(paths, parent, slot, index))
+        if ok and moved:
+            self._select_quietly(moved)
 
     def _tree_double_clicked(self, item, _column: int) -> None:
         inside = item.data(0, INSIDE_ROLE)
@@ -1769,8 +1885,19 @@ class MainWindow(QMainWindow):
         key: str = "",
     ) -> Toast:
         """A note over the editor about what just happened (see :mod:`toast`):
-        ``kind`` is info, success, warning or error (which stays until closed)."""
+        ``kind`` is info, success, warning or error (which stays longest)."""
         return self.toasts.show_toast(text, kind, action, seconds, key)
+
+    def ask_selection(self, message: str) -> None:
+        """A command that needs a selection was used without one: a hint, not an
+        error (#326)."""
+        self.notify(message, "info", seconds=3, key="selection")
+
+    def report_refusal(self, message: str) -> None:
+        """A value typed in a field was not applied: a note, and the field marked with
+        why. Not a problem of the design, so not in Messages or the problem count.
+        The latest replaces the one before: they do not stack up (#303)."""
+        self.notify(message, "error", seconds=REFUSAL_NOTE_S, key="refusal")
 
     def report_error(self, message: str) -> None:
         self.notify(message, "error", ("Show messages", self._show_messages_panel))
@@ -1804,8 +1931,12 @@ class MainWindow(QMainWindow):
         if ok and path:
             self._select_quietly([path])  # just made where the user is looking
 
-    def add_primitive(self, kind: str) -> None:
-        self._select_result(lambda: self.document.nodes.add_primitive(kind))
+    def add_primitive(self, kind: str, at: tuple[float, float] | None = None) -> None:
+        """Add a default ``kind`` on the drawing layer, centred at ``at`` µm (a
+        right-click, put on the grid) or at the origin."""
+        x, y = (0.0, 0.0) if at is None else self.on_grid(*at)
+        layer = self.draw_layer or "device"
+        self._select_result(lambda: self.document.nodes.add_primitive(kind, layer, x, y))
 
     def add_component(self, name: str) -> None:
         self._select_result(lambda: self.document.nodes.add_component(name))
@@ -1825,7 +1956,7 @@ class MainWindow(QMainWindow):
         if at is None:
             popup.chosen.connect(self.start_placing)
         else:
-            popup.chosen.connect(lambda name: self.place_component_at(name, *at))
+            popup.chosen.connect(lambda name: self.place_component_at(name, *self.on_grid(*at)))
         popup.browse.connect(lambda: self.search("Components"))
         if near is None:
             cursor = QCursor.pos()
@@ -1851,7 +1982,14 @@ class MainWindow(QMainWindow):
             self.report_error("a component cannot be placed inside itself")
             return
         component_picker.remember(name)
+        x, y = round(x, 6) + 0.0, round(y, 6) + 0.0  # no float noise in the file
         self._select_result(lambda: self.document.nodes.add_component(name, x, y))
+
+    def on_grid(self, x: float, y: float) -> tuple[float, float]:
+        """``(x, y)`` µm on the canvas grid, unless grid snapping is off."""
+        if not self.settings.get("snapping/grid"):
+            return x, y
+        return self.canvas.on_grid(x, y)
 
     def wrap(self, operation: str) -> None:
         self._select_result(lambda: self.document.nodes.wrap(self.selection, operation))
@@ -1862,7 +2000,14 @@ class MainWindow(QMainWindow):
 
     def make_component(self) -> None:
         if not self.selection:
-            self.report_error("select the shapes to turn into a component first")
+            self.ask_selection("Select the shapes to turn into a component first")
+            return
+        # What would refuse it, before asking for a name (#297).
+        if self.document.read_only:
+            self.report_error(f"'{self.document.active}' is read-only")
+            return
+        ok, _ = self._run(lambda: self.document.nodes.siblings(list(self.selection)))
+        if not ok:
             return
         name, ok = QInputDialog.getText(self, "Make component", "Name of the new component:")
         if ok and name.strip():
@@ -1881,7 +2026,7 @@ class MainWindow(QMainWindow):
     def move_by(self) -> None:
         """Move the selection by an exact amount, typed as ``dx, dy``."""
         if not self.selection:
-            self.report_error("select the shapes to move first")
+            self.ask_selection("Select the shapes to move first")
             return
         text, ok = QInputDialog.getText(self, "Move by", "dx, dy in µm (e.g. 10, -2.5):")
         if not ok or not text.strip():
@@ -1900,22 +2045,24 @@ class MainWindow(QMainWindow):
         """Rotate the selection about the centre of its bounding box."""
         center = self.document.results.selection_center(self.selection) if self.selection else None
         if center is None:
-            self.report_error("select the shapes to rotate first")
+            self.ask_selection("Select the shapes to rotate first")
             return
         paths = list(self.selection)
-        self._run(lambda: self.document.moves.rotate(paths, angle, center))
+        if self._run(lambda: self.document.moves.rotate(paths, angle, center))[0]:
+            self._did(f"Rotated {_shapes(len(paths))} by {angle:g}°")
 
     def mirror_selection(self, left_right: bool) -> None:
         center = self.document.results.selection_center(self.selection) if self.selection else None
         if center is None:
-            self.report_error("select the shapes to mirror first")
+            self.ask_selection("Select the shapes to mirror first")
             return
         paths = list(self.selection)
-        self._run(lambda: self.document.moves.mirror(paths, left_right, center))
+        if self._run(lambda: self.document.moves.mirror(paths, left_right, center))[0]:
+            self._did(f"Mirrored {_shapes(len(paths))}")
 
     def remove_alignment(self) -> None:
         if len(self.selection) != 1:
-            self.report_error("select one shape to remove its alignment")
+            self.ask_selection("Select one shape to remove its alignment")
             return
         path = self.selection[0]
         node = self.document.node(path)
@@ -1926,29 +2073,34 @@ class MainWindow(QMainWindow):
 
     def unpack(self) -> None:
         if len(self.selection) != 1:
-            self.report_error("select one placed component to unpack")
+            self.ask_selection("Select one placed component to unpack")
             return
         self._select_result(lambda: self.document.components.unpack(self.selection[0]))
 
     def unwrap(self) -> None:
         if len(self.selection) != 1:
-            self.report_error("select one operation to unwrap")
+            self.ask_selection("Select one operation to unpack")
             return
         self._run(lambda: self.document.nodes.unwrap(self.selection[0]))
 
     def duplicate(self) -> None:
         """A copy of each selected shape (one step to undo), selected."""
         if not self.selection:
-            self.report_error("select the shapes to duplicate first")
+            self.ask_selection("Select the shapes to duplicate first")
             return
-        if len(self.selection) == 1:
-            self._select_result(lambda: self.document.nodes.duplicate(self.selection[0]))
+        count = len(self.selection)
+        if count == 1:
+            ok, path = self._run(lambda: self.document.nodes.duplicate(self.selection[0]))
+            if ok and path:
+                self._select_quietly([path])
+                self._did(f"Duplicated {_shapes(1)}")
             return
         paths = list(self.selection)
         clipboard = self.document.clipboard
         ok, pasted = self._run(lambda: clipboard.paste(clipboard.copy(paths)))
         if ok and pasted:
             self._select_quietly(list(pasted))
+            self._did(f"Duplicated {_shapes(count)}")
 
     def delete(self) -> None:
         if getattr(self.tool, "delete_chosen", lambda: False)():
@@ -1958,6 +2110,12 @@ class MainWindow(QMainWindow):
             ok, _ = self._run(lambda: self.document.nodes.remove(paths))
             if not ok:  # refused: what was selected still is (#251)
                 self._select_quietly(paths)
+            else:
+                self._did(f"Deleted {_shapes(len(paths))}", undo=True)
+
+    def _did(self, text: str, undo: bool = False) -> None:
+        """What a command did, as a short note (with Undo for one that removes), #326."""
+        self.notify(text, seconds=3, action=("Undo", self.undo) if undo else None, key="did")
 
     def copy(self) -> None:
         """The selected shapes onto the clipboard, as text (other windows can paste them)."""
@@ -1974,6 +2132,7 @@ class MainWindow(QMainWindow):
             ok, text = self._run(lambda: self.document.clipboard.cut(paths))
             if ok:
                 QApplication.clipboard().setText(text)
+                self._did(f"Cut {_shapes(len(paths))}", undo=True)
             else:
                 self._select_quietly(paths)
 
@@ -1989,6 +2148,7 @@ class MainWindow(QMainWindow):
         ok, pasted = self._run(lambda: self.document.clipboard.paste(text))
         if ok and pasted:
             self._select_quietly(list(pasted))
+            self._did(f"Pasted {_shapes(len(list(pasted)))}")
             for note in pasted.notes:
                 self.notify(note, "warning")
 
@@ -2072,7 +2232,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return False
         self.save_editor_state()
-        opened = self._run(lambda: self._open(path))[0]
+        opened = self._open_finding_libraries(path)
         if opened:
             self._remember_dir(path)
             self._remember_project()
@@ -2110,6 +2270,56 @@ class MainWindow(QMainWindow):
             command = [sys.executable, "-m", "mems_sketch.gui", path]
         subprocess.Popen(command, start_new_session=sys.platform != "win32")
 
+    def _open_finding_libraries(self, path: str) -> bool:
+        """Open ``path``; a library that is not where the project says is asked for
+        ("Locate library…"), and the project then points at where it is (#310)."""
+        from mems_sketch.storage.project_files import MissingLibraryError
+
+        while True:
+            try:
+                self._open(path)
+                return True
+            except MissingLibraryError as missing:
+                if not self.locate_library(path, missing):
+                    self.report_error(explain(missing))
+                    return False
+            except Exception as exc:  # noqa: BLE001 - reported to the user
+                self.report_error(explain(exc))
+                return False
+
+    def locate_library(self, path: str, missing) -> bool:
+        """Ask where the library ``missing.name`` is, and point the project at it.
+        False if the user cancels."""
+        from mems_sketch.storage.project_files import PROJECT_FILE, relocate_library
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Library not found")
+        box.setText(
+            f"The project uses the library '{missing.name}', which is not at {missing.folder}."
+        )
+        box.setInformativeText(
+            "A library kept outside the project's repository is not in a clone of it. "
+            "Locate the library's folder to open the project: the project then points there."
+        )
+        locate = box.addButton("Locate library…", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        while box.clickedButton() is locate:
+            folder = QFileDialog.getExistingDirectory(
+                self, f"Locate the library '{missing.name}'", str(Path(path).parent)
+            )
+            if not folder:
+                return False
+            if not (Path(folder) / PROJECT_FILE).is_file():
+                self.report_error(f"{folder} is not a library folder (it has no {PROJECT_FILE})")
+                continue
+            ok, _ = self._run(lambda f=folder: relocate_library(path, missing.name, f))
+            if ok:
+                self.notify(f"Library '{missing.name}' found at {folder}", "success")
+            return ok
+        return False
+
     def _open(self, path: str) -> None:
         self._restoring = True
         try:
@@ -2123,13 +2333,18 @@ class MainWindow(QMainWindow):
             self.tree.collapsed = {}
             self.refresh()
             self.restore_editor_state()
+            if self.document.active is None:  # a library of processes only: edit them
+                self.open_process()
         finally:
             self._restoring = False
 
     def save_project(self) -> bool:
         if self.document.path is None:
             return self.save_project_as()
-        return self._run(self.document.save)[0]
+        saved = self._run(self.document.save)[0]
+        if saved:
+            self._did(f"Saved {self.document.project.name}")
+        return saved
 
     def save_project_as(self) -> bool:
         folder = QFileDialog.getExistingDirectory(
@@ -2171,8 +2386,27 @@ class MainWindow(QMainWindow):
         filters = {
             f"{title_of(cls)} (*{cls.file_extension})": name for name, cls in exporters.items()
         }
+        trials = self.document.trials_for(self.document.active)
+        if trials:  # a value tried out goes into the file: say so first (#305)
+            tried = ", ".join(f"{name} = {value}" for name, value in sorted(trials.items()))
+            answer = QMessageBox.question(
+                self,
+                "Export",
+                f"Trial values are set ({tried}). The file is made with them, not with "
+                "the saved values.\n\nExport with the trial values?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                return
+        # A name to start from: the component, as the first format writes it (#305).
+        first = next(iter(exporters.values()), None)
+        suggested = Path(self._last_dir()) / (
+            f"{self.document.active or self.document.project.name}"
+            f"{first.file_extension if first else ''}"
+        )
         path, chosen = QFileDialog.getSaveFileName(
-            self, "Export", self._last_dir(), ";;".join(filters)
+            self, "Export", str(suggested), ";;".join(filters)
         )
         if not path:
             return
@@ -2196,7 +2430,12 @@ class MainWindow(QMainWindow):
                 return
             values = dialog.values()
             remember(self.settings, format_name, options, values, start, scope)
-        ok, result = self._run(lambda: self.document.export_with_report(path, format_name, values))
+        with cell_name_notes() as warned:
+            ok, result = self._run(
+                lambda: self.document.export_with_report(path, format_name, values)
+            )
+        for note in warned:
+            self.notify(note, "warning")
         if ok:
             self._remember_dir(path)
             written = result[1]
@@ -2281,11 +2520,30 @@ def _path(steps) -> NodePath:
     return tuple((int(slot), int(index)) for slot, index in steps)
 
 
+USER_GUIDE = "https://github.com/TorosBenjamin/mems-sketch/blob/main/docs/user/README.md"
+
+USAGE = """usage: mems-sketch [PROJECT]
+
+Open the MEMS Sketch editor: PROJECT (a project folder or its project.yaml)
+in a window, or without one the Welcome window.
+
+options:
+  -h, --help   show this message
+  --version    print the version
+  --self-test  check that the installation works, without a window
+
+The command-line tools (check, export, info, …) are mems-sketch-cli --help."""
+
+
 def main(argv: list[str] | None = None) -> int:
     # First: in a bundled app the rule-check process starts as another copy of
     # the program, which must run its task, not open a window.
     multiprocessing.freeze_support()
     argv = sys.argv if argv is None else argv
+    if len(argv) > 1 and argv[1].startswith("-") and argv[1] not in ("--version", "--self-test"):
+        known = argv[1] in ("-h", "--help")
+        print(USAGE if known else f"mems-sketch: unknown option {argv[1]}\n\n{USAGE}")
+        return 0 if known else 2
     if len(argv) > 1 and argv[1] in ("--version", "--self-test"):
         from mems_sketch import __version__
 
@@ -2316,6 +2574,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 _windows: list[QWidget] = []  # the windows shown from here, kept while they are open
+
+
+def _shapes(count: int) -> str:
+    return f"{count} shape{'s' if count != 1 else ''}"
 
 
 def show_welcome() -> WelcomeWindow:

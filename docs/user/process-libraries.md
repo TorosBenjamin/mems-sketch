@@ -14,15 +14,21 @@ use them to learn, to sketch, and as a start for your own.
 
 | Process | What it is | Levels (bottom to top) |
 |---|---|---|
-| `mems.surface` | One released structural layer over a sacrificial oxide | device (anchor), metal |
+| `mems.surface` | One released structural layer over a sacrificial oxide, with wiring under it | wiring, device (anchor), metal |
 | `mems.polysilicon` | Two-poly surface micromachining: a poly0 ground layer, poly1 over oxide1, poly2 over oxide2, metal on poly2 | poly0, poly1 (anchor: anchor1, dimple), poly2 (anchor: anchor2, via: via12), metal |
 | `mems.soi` | Silicon on insulator: a 25 µm device layer etched through, released by etching the buried oxide, with metal pads and an optional back-side cavity | cavity, device (anchor), metal |
 
 Choose one under **Process** at the top of the Process tab. Each has width and
-spacing rules per layer, enclosures (anchors and vias inside the layers they
-join, metal on its layer), and the **anchored** and **release** checks, as
-warnings, with the undercut a constant (`process.undercut`). Thicknesses are
-constants too (`process.t_poly1`), for expressions and for what reads them
+spacing rules and the **anchored** and **release** checks (as warnings, with
+the undercut a constant, `process.undercut`). `mems.polysilicon` and `mems.soi`
+also have enclosures (anchors and vias inside the layers they join, metal on
+its layer); `mems.surface`, the simplest, has only width and spacing rules
+(device and wiring) and the device layer's anchored and release rules, so a
+process copied from it starts without enclosures. Its `wiring` layer, under
+the sacrificial oxide, reaches anchors that the structure boxes in: a folded
+flexure's anchor has a port on it (`anchor`). For a pad that stays put at
+release, use `mems.bond_pad` (`std.bond_pad` is not anchored). Thicknesses
+are constants too (`process.t_poly1`), for expressions and for what reads them
 later.
 
 The `mems` components draw on `level` and `level.anchor`, so they work on any

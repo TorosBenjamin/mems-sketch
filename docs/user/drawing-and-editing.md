@@ -7,7 +7,12 @@
   drag in any tool; **F** (or a two-finger double tap) fits the design. The
   buttons in the bottom-right corner zoom and fit too. *Preferences → Canvas →
   Scrolling* says what scrolling does if your device is taken for the other
-  kind (a mouse wheel zooms, a touchpad pans).
+  kind (a mouse wheel zooms, a touchpad pans). To pan with a touchpad's
+  tap-and-drag, set *Preferences → Canvas → Dragging on empty canvas* to
+  **Pan**: in the Select tool a drag on empty space then pans and keeps the
+  selection, a click there still clears it, and Shift + drag draws the
+  selection box (a tap-and-drag reaches the app as a left-button drag, so this
+  applies to a mouse too).
 - The **canvas modes** float in the top-right corner: Select, Hand, Move,
   Rotate, Align, Corners, Measure.
 - The selection is outlined in orange; the shape under the cursor is outlined
@@ -24,8 +29,8 @@
 ## Tools
 
 A tool stays active until another is chosen; **Esc** cancels what it is doing
-and, pressed again, returns to Select. A shape added from **Add** (in
-**Insert** or the right-click menu) is drawn once, then the editor returns to
+and, pressed again, returns to Select. A shape added from **Add** (in the ☰
+menu, the toolbar or the right-click menu) is drawn once, then the editor returns to
 Select; choose the drawing tool in the toolbar, or press its key, to draw
 several.
 
@@ -40,7 +45,7 @@ several.
 | **Measure** | D, N | Two modes, switched in the status bar (**Distance** / **Angle**): D measures a distance (two clicks: the length, dx and dy), N an angle (the vertex, then a point on each arm: two arms and an arc with the angle; Shift: 15° steps). Points snap to the shapes' points, then to the corners and edges of everything drawn, placed components included, then to the grid (Ctrl: no snapping); a dot shows where, ringed on a point and following the cursor along an edge. Rulers stay until **Tools → Clear rulers**. |
 | **Rectangle**, **Circle** | B, C | Drag, or click corner and opposite corner (centre and radius). Shift: a square. |
 | **Polygon**, **Path** | P, W | Click the points; double-click, Enter or (polygon) the first point finishes; Backspace takes back a point. Shift: 0°, 45°, 90° segments. |
-| **Route** | E | A wire from port to port (the ports are marked): click a port, any via points, then another port. It runs along x and y between ports along x and y, else straight; as wide as its ports, or the path **Width** when they differ. With a route selected, drag its via points. See [Routes](shapes-and-operations.md#routes). |
+| **Route** | E | A wire from port to port (the ports are marked): click a port, any via points, then another port; over the end port it shows the route as it will be built. It runs along x and y between ports along x and y, else straight; as wide as its ports, or the path **Width** when they differ. With a route selected, drag its via points. See [Routes](shapes-and-operations.md#routes). |
 | **Guide** | G | A construction line: draws nothing, but has points and can be mirrored about. |
 
 The drawing tools draw on the layer chosen in the status bar (or by clicking a
@@ -170,7 +175,12 @@ between them when an offset sets them apart.
 In **Properties**, *Align to another shape's point* has a pick button beside
 **Point** and beside **To**: it picks just that end on the canvas and keeps
 the other end and the offset (Esc changes nothing). The **To** list groups
-the points of each shape together.
+the points of each shape together. Point and To can be chosen in either
+order: nothing applies until both are set.
+
+Mirroring or turning an aligned shape turns its offset with it: a spring
+kept 3 µm into the shuttle's top, duplicated and mirrored up-down, is kept
+3 µm into the bottom once its **To** is the bottom.
 
 In **Shapes**, a link icon marks an aligned shape; hover it for e.g. `bottom
 at spring.end`.
@@ -225,17 +235,35 @@ its points, stay where they are.
 - **A long expression** (`abs(width - rim_width)`) opens a wider editor over
   its field when you edit it, as wide as the panel, wrapping onto more lines
   (Shift+Enter opens it for any field). Enter applies, Esc keeps the old value.
-- **Leaving a field applies it**, as Enter does: click another field, the
-  canvas or another shape and the edit is kept. Esc in the wider editor is the
-  way to drop an edit.
+- **Every field applies by itself**: Enter, or leaving it (click another
+  field, the canvas or another shape and the edit is kept); a list or a tick
+  box when you choose. A box of several lines (a polygon's points, a layer
+  map) applies when you leave it or press Ctrl+Enter. There is no Apply
+  button. **Esc** drops an edit (the stored value comes back); pressed again,
+  it goes back to the canvas. A value that is refused is outlined in red
+  with why in its tooltip, and stays in its field to be corrected: Esc, or
+  leaving the field as it is, puts the stored value back.
+- **The panel stays where it was scrolled to** when a field applies.
+- **An empty optional field shows its default** greyed in it: a perforation's
+  row pitch, hole height and corner radius, a polar array's angle step
+  (360 / copies), *auto* for segments and for a hole's position (the grid
+  centred). The default is in the text's colour with *default* beside it.
+- **Lengths show µm** at the end of their field.
+- **Fields that do nothing** with the others as they are set are greyed out:
+  a mirror's line at y when it mirrors x, a route's radius with
+  sharp bends.
 - **The layer** is picked from a list with each layer's colour: the layers
   relative to the component's level first, each saying where it lands
   (`level+1 · metal`), then the layers by name.
 - **Drag a number** left or right to change it, as in Blender (Shift: finer,
   Ctrl: round steps; counts go in whole numbers). The canvas follows live and
   the change is one undo step. A click without dragging edits the text.
-- For a placed component, its parameters are listed with their defaults as
-  placeholders.
+- For a placed component, its parameters are listed by name (as expressions
+  write them), with their defaults as placeholders; a **?** by the name shows
+  the parameter's description.
+- **A connection's ends** are ports: type them, or add one from the **+**
+  list. A route's start and end offer every port but its own.
+- With **several shapes selected**, Properties says how many.
 - **Modifiers** are cards (array, polar array, mirror, corners): switch one
   on or off, reorder, apply or remove it. See
   [modifiers](shapes-and-operations.md#modifiers).
@@ -245,9 +273,13 @@ its points, stay where they are.
 **Shapes** lists the shapes of the component being edited, one line each: the
 name, then what it is in grey (a primitive's layer, the component a reference
 places). The eye hides a shape without deleting it; operations show
-their operands under them. A placed component expands to show what is inside
-it, read-only (changing it would change every copy); double-click such a row
-to open the component with that shape selected.
+their operands under them, named for what they do (a subtract's *Keep* and
+*Cut away*). Drag shapes to reorder them, or into and out of an operand (one
+step to undo); a duplicate goes right after its original. Right-click offers
+what the editor's right-click menu does for the selection; Enter (or a double
+click) on a placed component opens it. A placed component expands to show
+what is inside it, read-only (changing it would change every copy);
+double-click such a row to open the component with that shape selected.
 
 **Layers** shows the layers with their colours and GDS numbers; the eye shows
 or hides one, and clicking one makes it the drawing layer.

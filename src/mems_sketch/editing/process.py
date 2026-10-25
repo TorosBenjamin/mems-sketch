@@ -199,6 +199,22 @@ class ProcessEdits(Commands):
 
     # -- the process used ------------------------------------------------------
 
+    def changes_lost_by_switching(self) -> int:
+        """How many changes to the library's process in use (constants, changed and
+        added rules) using another process drops; 0 for a process of the project's
+        own, which stays in the project."""
+        from mems_sketch.core.process import changes_between
+
+        project = self.session.project
+        base = project.base_process
+        if base is None:
+            return 0
+        try:
+            constants, changed, added = changes_between(base, project.process)
+        except ValueError:
+            return 1  # changed in a way it cannot say (but something is lost)
+        return len(constants) + len(changed) + len(added)
+
     def use(self, name: str) -> None:
         """Use another process: one of the project's own, or a library's
         (``std.polymumps``), whose layers then stay as they are there."""
@@ -233,10 +249,46 @@ class ProcessEdits(Commands):
 
     # -- waivers -------------------------------------------------------------
 
+    def waive_all(self, violations, reason: str, component: str | None = None) -> None:
+        """Accept several violations for one ``reason``, as one undoable step."""
+        violations = list(violations)
+        if len(violations) == 1:
+            self.waive(violations[0], reason, component)
+            return
+        from mems_sketch.core.user_component import Waiver
+        from mems_sketch.process.rules import fingerprint
+
+        component = component or self.session.active
+        if not reason.strip():
+            raise ValueError("a waiver needs a reason")
+        geometry = self.session.results.checked(component)
+        waivers = [
+            Waiver(
+                rule=v.rule,
+                box=tuple(v.bbox_um),
+                reason=reason.strip(),
+                fingerprint=fingerprint(v, geometry),
+            )
+            for v in violations
+            if v.bbox_um is not None
+        ]
+
+        def change(project) -> None:
+            definition = project.components.get(component)
+            if definition is None:
+                raise ValueError(f"'{component}' is read-only: its violations cannot be waived")
+            replaced = {(w.rule, w.box) for w in waivers}
+            definition.waivers = [
+                w for w in definition.waivers if (w.rule, w.box) not in replaced
+            ] + waivers
+
+        self.session.edit(f"Waive {len(waivers)} violations", change)
+
     def waive(self, violation, reason: str, component: str | None = None) -> None:
         """Accept one violation of the active (or given) component, for ``reason``
-        (requirement DRC-13). It is kept with the component and lapses when the
-        geometry around it changes."""
+        (requirement DRC-13). It is kept with the component, follows the violation
+        when what is around it moves as one, accepts it too wherever the component
+        is placed, and lapses when the geometry around it changes."""
         from mems_sketch.core.user_component import Waiver
         from mems_sketch.process.rules import fingerprint
 
@@ -245,7 +297,9 @@ class ProcessEdits(Commands):
             raise ValueError("a waiver needs a reason")
         if violation.bbox_um is None:
             raise ValueError("only a violation with a place can be waived")
-        geometry = self.session.results.geometry(component=component)
+        # The geometry the check sees (on the grid, curves within tolerance), as the
+        # check compares it: the editor's own can differ where curves are (#286).
+        geometry = self.session.results.checked(component)
         waiver = Waiver(
             rule=violation.rule,
             box=tuple(violation.bbox_um),
@@ -264,7 +318,8 @@ class ProcessEdits(Commands):
         self.session.edit(f"Waive {violation.rule}", change)
 
     def unwaive(self, rule: str, box, component: str | None = None) -> None:
-        """Remove the waiver of ``rule`` at ``box``."""
+        """Remove the waiver of ``rule`` at ``box`` (where it was made: a violation's
+        ``waiver`` says which component keeps it, and where)."""
         from mems_sketch.process.rules import BOX_TOLERANCE_UM
 
         component = component or self.session.active
@@ -275,7 +330,9 @@ class ProcessEdits(Commands):
             )
 
         def change(project) -> None:
-            definition = project.components[component]
+            definition = project.components.get(component)
+            if definition is None:
+                raise ValueError(f"'{component}' is read-only: its waivers cannot be removed")
             kept = [w for w in definition.waivers if not matches(w)]
             if len(kept) == len(definition.waivers):
                 raise ValueError(f"no waiver of {rule} there")

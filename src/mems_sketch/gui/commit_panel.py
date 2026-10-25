@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -78,6 +79,7 @@ FILE_WORDS = {
     git.DELETED: "deleted",
     git.UNTRACKED: "new file",
 }
+CHANGES_ROWS = 6  # the change list's least height, in rows
 MESSAGE_LINES = 4  # the message box's height, in lines
 DETAIL_MAX_CHARS = 80  # a longer detail is cut off with "…" (the tooltip has it whole)
 
@@ -174,8 +176,12 @@ class CommitPanel(_Panel):
         self.count.setObjectName("muted")
         self.message = QPlainTextEdit()
         self.message.setObjectName("commit-message")
-        lines = self.message.fontMetrics().lineSpacing() * MESSAGE_LINES
-        self.message.setFixedHeight(lines + 2 * theme.metric("space_m"))
+        # Up to MESSAGE_LINES high, down to two when the panel is short: the
+        # list of changes keeps the room (at least a few rows).
+        line, margin = self.message.fontMetrics().lineSpacing(), 2 * theme.metric("space_m")
+        self.message.setMinimumHeight(2 * line + margin)
+        self.message.setMaximumHeight(MESSAGE_LINES * line + margin)
+        self.message.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.message.textChanged.connect(self._update_button)
         self.commit_button = QPushButton("Commit")
         self.commit_button.setDefault(True)
@@ -210,10 +216,31 @@ class CommitPanel(_Panel):
         line_row.setContentsMargins(space, space, space, 0)
         line_row.addWidget(rule)
 
+        # A library kept outside the repository: a clone will not have it (#310).
+        self.outside = QWidget()
+        outside = QVBoxLayout(self.outside)
+        outside.setContentsMargins(space, space, space, 0)
+        outside.setSpacing(theme.metric("space_s"))
+        self.outside_note = QLabel()
+        self.outside_note.setObjectName("warning-note")
+        self.outside_note.setWordWrap(True)
+        self.copy_in = QPushButton("Copy into the project")
+        self.copy_in.setToolTip(
+            "Copy the library's folder into the project's libraries/ folder and use the copy, "
+            "so that it is committed with the project"
+        )
+        self.copy_in.clicked.connect(self.copy_libraries_in)
+        outside.addWidget(self.outside_note)
+        outside.addWidget(self.copy_in, 0, Qt.AlignmentFlag.AlignLeft)
+        self.outside.hide()
+
         self.body = QWidget()
         body = QVBoxLayout(self.body)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
+        body.addWidget(self.outside)
+        # Room for a few changes before the message and the buttons take it (#303).
+        self.tree.setMinimumHeight(CHANGES_ROWS * theme.metric("row_height") + 2 * space)
         body.addWidget(self.tree, 1)
         body.addWidget(self.no_changes, 1)
         body.addWidget(line_host)
@@ -253,9 +280,31 @@ class CommitPanel(_Panel):
                 self.note.set_text(_rich(f"Cannot read the last commit: {exc}"))
                 self.note.show()
         self.header_context.setText(self._branch_text() if available else "")
+        self._show_outside(available)
         self._geometry.clear()
         self._fill()
         self.comparison_changed.emit()
+
+    def _show_outside(self, available: bool) -> None:
+        """Warn of libraries outside the repository (#310)."""
+        outside = self.document.components.outside_repository() if available else []
+        self.outside.setVisible(bool(outside))
+        if outside:
+            listed = ", ".join(f"'{name}' ({folder})" for name, folder in outside)
+            many = len(outside) > 1
+            self.outside_note.setText(
+                f"The {'libraries' if many else 'library'} {listed} {'are' if many else 'is'} "
+                "outside the repository: a clone of it will not have "
+                f"{'them' if many else 'it'}, and will not open without "
+                f"{'them' if many else 'it'}."
+            )
+
+    def copy_libraries_in(self) -> None:
+        """Copy each library outside the repository into the project (#310)."""
+        for name, _folder in self.document.components.outside_repository():
+            if not self._guard(lambda n=name: self.document.components.copy_library_in(n)):
+                break
+        self.reload()
 
     def _branch_text(self) -> str:
         history = self.document.history
@@ -282,14 +331,14 @@ class CommitPanel(_Panel):
         tracked = [f for f in local.files if f.tracked]
         untracked = [f for f in local.files if not f.tracked]
         if local.groups or tracked:
-            heading = self._heading(CHANGES, f"Changes · {len(local.groups) + len(tracked)}")
+            heading = self._heading(CHANGES, f"Changes  {len(local.groups) + len(tracked)}")
             for group in local.groups:
                 self._group(heading, group)
             for status in tracked:
                 self._file(heading, status, ("file", status.path) not in self._left_out)
             self._settle(heading)
         if untracked:
-            heading = self._heading(UNTRACKED, f"Unversioned files · {len(untracked)}")
+            heading = self._heading(UNTRACKED, f"Unversioned files  {len(untracked)}")
             for status in untracked:
                 self._file(heading, status, status.path in self._taken)
             self._settle(heading)
@@ -304,13 +353,13 @@ class CommitPanel(_Panel):
         self._update_box()
 
     def _heading(self, which: str, text: str) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([text.upper()])
+        # A heading as everywhere else (#319): sentence case, semibold, the text colour.
+        item = QTreeWidgetItem([text])
         item.setData(0, ROW_ROLE, ("heading", which))
         font = QFont(self.tree.font())
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() * 0.85)
+        font.setWeight(QFont.Weight.DemiBold)
         item.setFont(0, font)
-        item.setForeground(0, theme.color("muted"))
+        item.setForeground(0, theme.color("text"))
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         self.tree.addTopLevelItem(item)
         item.setFirstColumnSpanned(True)  # (only once it is in the tree)

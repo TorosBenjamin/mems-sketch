@@ -11,7 +11,7 @@ parameters:
   gap: {default: 2, min: 0, min_exclusive: true, description: Lateral finger gap (µm)}
   overlap: {default: 20, min: 0, max: finger_length, max_exclusive: true, description: Initial finger overlap (µm)}
   travel: {default: 10, min: 0, min_exclusive: true, max: finger_length - overlap, max_exclusive: true, description: How far the moving comb can move towards the fixed one (µm)}
-  stop_size: {default: 10, min: 4, min_exclusive: true, description: Stop posts' anchor pads (µm)}
+  stop_size: {default: 10, min: 4, min_exclusive: true, description: "Stop posts' anchor pads (µm); more than 4 plus twice the process's undercut, or the etch frees them"}
   side_gap: {default: 4, min: 2, description: Between the comb and the stops (µm)}
   moving_spine_width: {default: 4, min: 0, min_exclusive: true, internal: true}
   total: {default: (2 * fingers + 1) * finger_width + 2 * fingers * gap, internal: true, description: Width of the spines (µm)}

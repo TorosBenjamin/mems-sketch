@@ -16,7 +16,7 @@ parameters:
   far_gap: {default: 6, min: gap, description: "The gap on the other side, that opens (µm)"}
   spine_width: {default: 4, min: 0, min_exclusive: true, description: Moving spine width (µm)}
   clearance: {default: 4, min: 0, min_exclusive: true, description: "Between the moving fingers' tips and the fixed anchors, and between the fixed fingers and the moving spine (µm)"}
-  anchor_size: {default: 9, min: 4, min_exclusive: true, max: pitch - 2, description: "Fixed fingers' anchor pads (µm); neighbours stay 2 µm apart"}
+  anchor_size: {default: 9, min: 4, min_exclusive: true, max: pitch - 2, description: "Fixed fingers' anchor pads (µm); neighbours stay 2 µm apart; more than 4 plus twice the process's undercut, or the etch frees them"}
   pitch: {default: 2 * finger_width + gap + far_gap, internal: true, description: From one moving finger to the next (µm)}
   x_start: {default: -fingers * pitch / 2, internal: true}
 points:

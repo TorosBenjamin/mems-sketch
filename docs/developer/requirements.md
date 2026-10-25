@@ -136,7 +136,7 @@ but should not have to program. Scripting is there for those who want it.
   geometry: it is evaluated from its parameters.
 - **CMP-2** (Must, exists) **Bundled libraries** ship with the tool, one
   per domain, and every project has them without a path (listed as
-  `mems: bundled@2`, with the version saved with). `mems` has anchors,
+  `mems: bundled@3`, with the version saved with). `mems` has anchors,
   springs (with their stiffness as a derived parameter), electrodes, masses
   and two devices, each with the points things attach at, and the example
   processes `surface`, `polysilicon`
@@ -517,12 +517,15 @@ behaviours every frontend must keep.
   (DRC-4); warnings are listed and do so only with `--strict`.
 - **DRC-13** (Could, exists) **Waivers:** a single violation can be accepted
   with a reason, saved with the component and listed in the check's
-  results. A waiver lapses when the geometry it covers changes.
+  results. It follows the violation when what is around it moves with it,
+  and holds in each placement of the component. A waiver lapses when the
+  geometry it covers changes.
 
 ### Import
 
-- **IMP-1** (Must, exists) Import **one cell of a GDS or OASIS file**, with
-  its sub-cells flattened, as a read-only component.
+- **IMP-1** (Must, exists) Import **one cell of a GDS file**, with its
+  sub-cells flattened, as a read-only component. OASIS and DXF are only
+  written: importing one says to save the cell as GDS.
 - **IMP-2** (Must, exists) Import a **geometry document** (JSON, XML, `.mat`),
   read leniently: a polygon may be a bare N×2 matrix or `{hull, holes}`.
 - **IMP-3** (Must, exists) Each imported layer goes to the project layer with
@@ -805,7 +808,7 @@ ten times larger than that, so the numbers hold with room to spare.
 - **C-2** The geometry backend is **C++**: a geometry library on **Open
   CASCADE**, with the mems-sketch engine on top
   ([core architecture](core-architecture.md)).
-- **C-3** GDS, OASIS and DXF are read and written in plain Python
+- **C-3** GDS is read and written, OASIS and DXF written, in plain Python
   (`mems_sketch.layout`); rule checks use the geometry library's grid
   booleans and offsets (Clipper2). No layout library is a dependency.
 - **C-4** **Licences:** a GPL dependency (gmsh) is optional, as an extra or

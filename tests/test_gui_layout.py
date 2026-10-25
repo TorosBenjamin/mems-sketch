@@ -101,7 +101,7 @@ def test_one_toolbar_row_and_no_menu_bar(window):
 
 def test_the_main_menu_holds_every_menu(window):
     titles = [a.text() for a in window.actions_.root.actions()]
-    assert titles == ["&File", "&Edit", "&Tools", "&Insert", "&Operations", "&View", "&Help"]
+    assert titles == ["&File", "&Edit", "&Tools", "&Add", "&Operations", "&View", "&Check", "&Help"]
 
 
 def test_every_menu_shortcut_is_registered_on_the_window(window):
@@ -121,7 +121,7 @@ def test_a_shortcut_works_without_the_menu_bar(window, qtbot):
 
 
 def test_add_starts_the_drawing_tool_and_adds_an_arc(window):
-    add = {a.text(): a for a in window.actions_.add.actions()}
+    add = {a.text().partition("\t")[0]: a for a in window.actions_.add.actions()}
     add["Rectangle"].trigger()
     assert window.tool.name == "rect"
     add["Arc / ring"].trigger()
@@ -171,9 +171,9 @@ def menus(window, monkeypatch):
     def record(menu, at):
         entries = {}
         for action in menu.actions():
-            entries[action.text()] = action
+            entries[action.text().partition("\t")[0]] = action
             if action.menu() is not None:
-                entries.update({a.text(): a for a in action.menu().actions()})
+                entries.update({a.text().partition("\t")[0]: a for a in action.menu().actions()})
         opened.append(entries)
 
     monkeypatch.setattr(window, "show_menu", record)
@@ -279,7 +279,8 @@ def test_the_process_tab_opens_from_the_tree_and_the_menu_once(window):
     assert view is not None and window.area.panes[0].currentWidget() is view
     assert window.view.component == "top"  # the panels keep showing the component
     assert window.area.views() == [window.view]  # the Process tab is not a component view
-    menu_entry = next(a for a in window.actions_.view.actions() if a.text() == "Process")
+    entries = window.actions_.check.actions()
+    menu_entry = next(a for a in entries if a.text() == "Process and rules")
     menu_entry.trigger()
     assert window.area.process_view is view and window.area.panes[0].count() == 2
     window.area.close_view(view)
@@ -389,8 +390,11 @@ def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, q
     image = window.grab().toImage()
     bottom_left = canvas.mapTo(window, QPoint(0, canvas.height() - 1))
     assert image.pixelColor(bottom_left).name() == tokens(name)["frame"]  # rounded off
-    inside = canvas.mapTo(window, QPoint(12, canvas.height() - 12))
-    assert image.pixelColor(inside).name() == canvas.theme["background"]
+    insides = [
+        canvas.mapTo(window, QPoint(x, canvas.height() - y))
+        for x, y in ((12, 12), (13, 70), (17, 90), (23, 110))
+    ]  # (one may lie on a grid line or the scale bar, which move with the canvas's size)
+    assert canvas.theme["background"] in {image.pixelColor(p).name() for p in insides}
 
 
 @pytest.mark.parametrize("name", ["light", "dark"])
@@ -444,6 +448,19 @@ def test_the_process_panel_sets_the_fabs_grid(window):
     assert process.grid_um == pytest.approx(0.002)
     window.document.undo()
     assert window.area.process_view.layers.grid.value() == pytest.approx(0.001)
+    assert panel.grid.isVisible() and not panel.grid_text.isVisible()
+    text = panel.grid.textFromValue(panel.grid.value()) + panel.grid.suffix()
+    room = panel.grid.width() - 24  # less the arrows
+    assert panel.grid.fontMetrics().horizontalAdvance(text) <= room  # "µm" is not cut off
+
+
+def test_a_library_process_shows_its_grid_as_text(window):
+    """#230: values a library's process sets are text in full, not greyed fields."""
+    window.document.process.use("mems.surface")
+    window.open_process()
+    panel = window.area.process_view.layers
+    assert not panel.grid.isVisible() and panel.grid_text.isVisible()
+    assert panel.grid_text.text() == "0.001 µm" and panel.chord_text.text() == "0.005 µm"
 
 
 def test_the_rules_panel_chooses_the_process_and_gives_reasons(window, tmp_path):
@@ -506,7 +523,7 @@ def test_the_minus_button_hides_its_panel(window, qtbot):
     tw = window.tool_windows
     name = next(n for n in tw.names() if tw.is_open(n))
     host = tw._hosts[tw._windows[name].anchor]
-    minus = next(b for b in host.findChildren(QToolButton) if b.toolTip() == "Hide")
+    minus = next(b for b in host.findChildren(QToolButton) if b.toolTip().startswith("Hide"))
     qtbot.mouseClick(minus, Qt.MouseButton.LeftButton)
     assert not tw.is_open(name) and not host.isVisible()
     tw.toggle(name)  # the View menu and the stripe bring it back

@@ -12,8 +12,8 @@ parameters:
   rows: {default: 16, min: 1, integer: true, description: Holes up (y)}
   pitch: {default: 10, min: web, min_exclusive: true, description: Hole pitch (µm)}
   web: {default: 2.5, min: 0, min_exclusive: true, description: "Between holes, and the rim (µm); where four webs meet the nearest hole is 0.71 webs away: keep that under the undercut"}
-  attach: {default: 6, min: 0, description: Width of the attachment zones (µm)}
-  attach_depth: {default: 2.5, min: 0, description: "Depth of the attachment zones (µm); a web deep, they keep the rim"}
+  attach: {default: 6, min: 0, max: "min(width, height)", description: "Width of the attachment zones (µm); at most the mass's shorter edge"}
+  attach_depth: {default: 2.5, min: 0, max: "min(width, height) / 2", description: "Depth of the attachment zones (µm); a web deep, they keep the rim"}
   width: {default: columns * pitch + web, internal: true, description: Mass width (µm)}
   height: {default: rows * pitch + web, internal: true, description: Mass height (µm)}
 points:

@@ -34,10 +34,11 @@ import re
 from collections.abc import Sequence
 
 import shiboken6
-from PySide6.QtCore import QPoint, QRect, QSize, QStringListModel, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QStringListModel, Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPalette, QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
+    QApplication,
     QCompleter,
     QLineEdit,
     QMenu,
@@ -200,6 +201,9 @@ class ValueEdit(QLineEdit):
         self.offered = list(offered)  # completed too, though without a value here
         self.parameters = list(parameters or [])  # the component's own, listed first
         self.prefix = prefix
+        self.unit = ""  # drawn muted at the end, e.g. "µm"
+        self.help = ""  # what the field is for (see set_help), shown on hovering it
+        self._value_tip = ""  # what the tooltip says of the value, when it says anything
         self.optional = optional
         self.integer = False  # whole numbers only (counts), when dragged
         self.minimum: float | None = None
@@ -209,6 +213,8 @@ class ValueEdit(QLineEdit):
         self.expanded: ExpandedEdit | None = None  # the wider editor, while open
         self._back_from_expanded = False  # focus returning from it: do not open it again
         self._hint = ""
+        self._stored = self.text()  # the text when the edit began: Esc puts it back
+        self._rejected = ""  # text that was refused, kept to be corrected (see reject)
         self.setProperty("expression", False)
         self.setProperty("invalid", False)
         # A click must not focus the field before it sees the press (Qt does that for
@@ -230,6 +236,12 @@ class ValueEdit(QLineEdit):
         self.textEdited.connect(self._suggest)
         self.textEdited.connect(self._overflowed)
         self._update()
+
+    def set_unit(self, unit: str) -> None:
+        """Show ``unit`` (e.g. "µm") muted at the field's end."""
+        self.unit = unit
+        self._layout()
+        self.update()
 
     # -- reading -------------------------------------------------------------
 
@@ -255,10 +267,9 @@ class ValueEdit(QLineEdit):
             except Exception as exc:  # noqa: BLE001 - shown on the field
                 invalid, tip = True, f"cannot evaluate: {exc}"
         elif not text and self.optional:
-            tip = "empty: the default"
-        if text and not tip:
-            tip = text
-        self.setToolTip(tip)
+            default = self.placeholderText().strip()
+            tip = f"empty: the default ({default})" if default else "empty: the default"
+        self._value_tip = tip  # a plain number that is readable says nothing (see _show_tip)
         if self.property("expression") != expression or self.property("invalid") != invalid:
             self.setProperty("expression", expression)
             self.setProperty("invalid", invalid)
@@ -281,13 +292,46 @@ class ValueEdit(QLineEdit):
             right = self.width()
         elif self._hint and self._fits(with_hint=True):
             right = metrics.horizontalAdvance(self._hint) + 6
+        if self.unit and not self._elided():
+            right += metrics.horizontalAdvance(self.unit) + 6
         if self.textMargins().left() != left or self.textMargins().right() != right:
             self.setTextMargins(left, 0, right, 0)
+        self._show_tip()
+
+    def setPlaceholderText(self, text: str) -> None:
+        """For an optional field, the default it stands for: shown in the text's
+        colour with "default" beside it, so it reads as the value it is rather
+        than as an empty field."""
+        super().setPlaceholderText(text)
+        if self.property("default") != self._shows_default():
+            self.setProperty("default", self._shows_default())  # the theme colours it as text
+            self.style().unpolish(self)
+            self.style().polish(self)
+        self._update()
+
+    def _shows_default(self) -> bool:
+        return self.optional and bool(self.placeholderText().strip())
+
+    def set_help(self, text: str) -> None:
+        """What the field is for, shown on hovering it (with its value when that adds
+        something: an expression's value, why it is invalid, a text cut off)."""
+        self.help = text
+        self._show_tip()
+
+    def _show_tip(self) -> None:
+        """The tooltip only says what the field does not show: a readable number
+        needs none."""
+        value = self._value_tip
+        if not value and self._elided():
+            value = self.text().strip()
+        self.setToolTip("\n".join(t for t in (self.help, value) if t))
 
     def _room(self) -> QRect:
         rect = self.contentsRect().adjusted(7, 0, -7, 0)
         if self._bind.isVisible():
             rect.setRight(rect.right() - 20)
+        if self.unit:
+            rect.setRight(rect.right() - self.fontMetrics().horizontalAdvance(self.unit) - 6)
         return rect
 
     def _fits(self, with_hint: bool) -> bool:
@@ -308,7 +352,7 @@ class ValueEdit(QLineEdit):
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
         painter = QPainter(self)
-        muted = self.palette().placeholderText().color()
+        muted = QApplication.palette().placeholderText().color()  # (ours may be the text's)
         rect = self._room()
         middle = Qt.AlignmentFlag.AlignVCenter
         metrics = self.fontMetrics()
@@ -316,7 +360,15 @@ class ValueEdit(QLineEdit):
             painter.setPen(muted)
             painter.drawText(rect, int(middle | Qt.AlignmentFlag.AlignLeft), self.prefix)
             rect.setLeft(rect.left() + metrics.horizontalAdvance(self.prefix) + 6)
+        if self.unit:
+            painter.setPen(muted)
+            width = metrics.horizontalAdvance(self.unit)
+            unit = QRect(rect.right() + 6, rect.top(), width + 1, rect.height())
+            painter.drawText(unit, int(middle | Qt.AlignmentFlag.AlignLeft), self.unit)
         hint = self._hint if self._fits(with_hint=True) else ""
+        if not self.text() and self._shows_default():  # the default, said to be one
+            needed = metrics.horizontalAdvance(f"{self.placeholderText()}  {DEFAULT_TAG}")
+            hint = DEFAULT_TAG if needed <= rect.width() else ""
         if hint:
             painter.setPen(muted)
             painter.drawText(rect, int(middle | Qt.AlignmentFlag.AlignRight), hint)
@@ -330,9 +382,14 @@ class ValueEdit(QLineEdit):
         super().focusInEvent(event)
         self._layout()
         self._update_cursor()
+        # (The parameter button stays a hover affordance: shown on focus it would narrow
+        # the field and open the wider editor. From the keyboard, Alt+Enter or the
+        # context menu offers the same, #324.)
         if self._back_from_expanded:
             self._back_from_expanded = False
-        elif not self._fits(with_hint=False):
+            return
+        self._stored = self.text()
+        if not self._fits(with_hint=False):
             QTimer.singleShot(0, self.expand)  # after the click has placed the cursor
 
     def expand(self) -> None:
@@ -342,10 +399,60 @@ class ValueEdit(QLineEdit):
         self.expanded = ExpandedEdit(self)
         self.expanded.open()
 
+    def reject(self, text: str) -> None:
+        """Show ``text``, which was refused, to be corrected: Esc or leaving the field
+        unchanged puts the stored value back."""
+        self._stored = self.text()
+        self._rejected = text
+        self.setText(text)
+        self.selectAll()
+
+    def event(self, event) -> bool:
+        if (
+            event.type() == QEvent.Type.ShortcutOverride
+            and event.key() == Qt.Key.Key_Escape
+            and not event.modifiers()
+        ):
+            event.accept()  # Esc is the field's (see keyPressEvent), not the window's Cancel
+            return True
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:
-        enter = event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        expanded = self.expanded
+        if expanded is not None and shiboken6.isValid(expanded) and not expanded.forwarding:
+            # Typed quickly, keys already on their way here when the wider editor
+            # opened: they go on there, in order (#293).
+            expanded.forwarding = True
+            try:
+                expanded.keyPressEvent(event)
+            finally:
+                expanded.forwarding = False
+            return
+        key = event.key()
+        enter = key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
         if enter and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
             self.expand()
+            return
+        if enter and event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            if not self.isReadOnly():
+                self._bind_menu()  # the parameter menu, from the keyboard
+            return
+        if enter:
+            super().keyPressEvent(event)
+            self._stored = self.text()  # applied (or put back by the panel): the new start
+            return
+        if key == Qt.Key.Key_Escape and not event.modifiers():
+            if self._completer.popup().isVisible():
+                self._completer.popup().hide()
+            elif self.text() != self._stored:  # Esc: put the stored value back
+                self.setText(self._stored)
+                self.selectAll()
+            else:  # a second Esc: back to the canvas
+                editor = getattr(self.window(), "focus_editor", None)
+                if editor is not None:
+                    editor()
+                else:
+                    self.clearFocus()
             return
         super().keyPressEvent(event)
 
@@ -422,6 +529,9 @@ class ValueEdit(QLineEdit):
             super().focusOutEvent(event)
             return
         self._bind.setVisible(False)
+        if self._rejected and self.text() == self._rejected:  # left uncorrected
+            self.setText(self._stored)
+        self._rejected = ""
         super().focusOutEvent(event)
         self.setCursorPosition(0)  # next time, start at the beginning
         self._layout()
@@ -469,6 +579,17 @@ class ValueEdit(QLineEdit):
 
     # -- the parameter button ---------------------------------------------------------
 
+    def contextMenuEvent(self, event) -> None:
+        """Right-click: the parameter menu's entries, then the usual Undo, Cut, Copy…"""
+        menu = self.createStandardContextMenu()
+        if not self.isReadOnly() and self.isEnabled():
+            first = menu.actions()[0] if menu.actions() else None
+            for action in self.parameter_menu().actions():
+                action.setParent(menu)
+                menu.insertAction(first, action)
+            menu.insertSeparator(first)
+        menu.exec(event.globalPos())
+
     def _bind_menu(self) -> None:
         menu = self.parameter_menu()
         corner = QPoint(max(0, self.width() - menu.sizeHint().width()), self.height())
@@ -490,9 +611,12 @@ class ValueEdit(QLineEdit):
                 action.triggered.connect(lambda _=False, n=name: self._use(n))
         if not menu.isEmpty():
             menu.addSeparator()  # a line only between groups
-        make = menu.addAction(icons.icon("add"), "Make a parameter from this value…")
-        make.triggered.connect(self._make_parameter)
-        make.setEnabled(bool(self.text().strip()))
+        if self.isSignalConnected(
+            self.metaObject().method(self.metaObject().indexOfSignal("make_parameter(PyObject)"))
+        ):
+            make = menu.addAction(icons.icon("add"), "Make a parameter from this value…")
+            make.triggered.connect(self._make_parameter)
+            make.setEnabled(self._value_or_default() is not None)
         if self._hint:
             value = menu.addAction(f"Use the value ({self._hint})")
             value.triggered.connect(lambda: self._use(self._hint))
@@ -503,11 +627,21 @@ class ValueEdit(QLineEdit):
         self.returnPressed.emit()  # apply, like Enter
 
     def _make_parameter(self) -> None:
+        value = self._value_or_default()
+        if value is not None:
+            self.make_parameter.emit(value)
+
+    def _value_or_default(self):
+        """The value, or for an empty field the default its placeholder shows (when
+        that is a number): what a parameter made from the field starts at."""
         try:
             value = self.value()
         except ValueError:
-            return
-        self.make_parameter.emit(value)
+            return None
+        if value is None:
+            default = self.placeholderText().split(" ")[0].strip()
+            return float(default) if is_number(default) else None
+        return value
 
 
 class ExpandedEdit(QTextEdit):
@@ -522,6 +656,7 @@ class ExpandedEdit(QTextEdit):
         self.setObjectName("expanded-value")
         self.field = field
         self._done = False
+        self.forwarding = False  # a key the field passed on (it may come back: its parent)
         self.setAcceptRichText(False)
         self.setTabChangesFocus(True)
         self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
@@ -629,3 +764,38 @@ class ExpandedEdit(QTextEdit):
         cursor.setPosition(start + len(token), QTextCursor.MoveMode.KeepAnchor)
         cursor.insertText(name)
         self.setTextCursor(cursor)
+
+
+DEFAULT_TAG = "default"  # beside an empty optional field's default
+
+
+def ask_parameter_name(parent, component: str, taken: set[str], value, suggestion: str):
+    """Ask the name of a new parameter of ``component`` made from ``value``: the
+    suggestion, made unique, is offered. None when cancelled; ValueError for a
+    name that is not valid or is already a parameter (which would silently change
+    that one's default and every field that uses it)."""
+    from PySide6.QtWidgets import QInputDialog
+
+    from mems_sketch.editing.naming import fresh_name
+
+    base = re.sub(r"\W", "_", suggestion).strip("_") or "param"
+    if not base[0].isalpha():
+        base = f"p_{base}"
+    offered = fresh_name(base, taken) if base in taken else base
+    name, ok = QInputDialog.getText(
+        parent,
+        "Make a parameter",
+        f"Name of the new parameter of {component} (default {_format(value)}):",
+        text=offered,
+    )
+    name = name.strip()
+    if not ok or not name:
+        return None
+    if not name.isidentifier():
+        raise ValueError(f"'{name}' is not a valid parameter name")
+    if name in taken:
+        raise ValueError(
+            f"{component} already has a parameter '{name}': choose another name "
+            "(to use that one, pick it from the field's parameter button)"
+        )
+    return name

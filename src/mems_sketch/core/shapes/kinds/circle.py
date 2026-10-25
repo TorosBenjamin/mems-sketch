@@ -20,8 +20,9 @@ from mems_sketch.core.shapes.handles import (
 
 class CircleShape(Primitive):
     """Circle on ``layer`` centred at (``x``, ``y``) with ``radius``. ``segments``
-    sets how many straight edges approximate it in exports (default: enough to
-    stay within the curve tolerance)."""
+    makes it a regular polygon of that many straight edges, 3 to 4096 (3 a
+    triangle, 6 a hexagon); by default it stays a circle, split in exports
+    within the curve tolerance."""
 
     icon: ClassVar[str] = "circle"
 

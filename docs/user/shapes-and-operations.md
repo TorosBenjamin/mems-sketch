@@ -20,8 +20,8 @@ input, so a subtraction stays editable and parametric.
 | Construction | `guide` | A line that draws nothing, but has points and can be aligned and mirrored about |
 
 **Operations** (Operations ▾ or the right-click menu) wrap the selected shapes
-in a new operation; **Edit → Unwrap** reverses it. There is no union: shapes
-on one layer are merged anyway.
+in a new operation; **Operations → Unpack operation** reverses it. There is no
+union: shapes on one layer are merged anyway.
 
 - **Booleans, offsets and fillets act per layer.** Subtracting a device-layer
   hole only affects the device layer. To combine layers, bring them onto one
@@ -30,9 +30,9 @@ on one layer are merged anyway.
   shape in two pieces; the Shapes list says so ("2 pieces · subtract"). Its
   points come from the box around all the pieces, drawn dashed while it is
   selected.
-- **Make component** (Ctrl+K) moves the selection into a new component; the
+- **Make component** (Ctrl+Alt+M) moves the selection into a new component; the
   parameters it uses become the new component's, so nothing moves. **Unpack
-  component** (Ctrl+Shift+K) does the opposite.
+  component** (Ctrl+Alt+N) does the opposite.
 - **Transform or component?** Make a component when something is reused or
   deserves its own parameters; use a transform to move or mirror a few shapes
   together once.
@@ -147,8 +147,10 @@ They are cards in Properties (**Add modifier**).
   mirrors a half across its own left edge). An array's spacing then reads
   `dx: self.width + 5` (5 µm gaps), `dx: self.width` (copies touching) or
   `dx: 20` (a fixed pitch).
-- Modifiers work before the shape's alignment moves it, so a mirror about the
-  mass's centre stays put when the part moves.
+- Modifiers work before the shape's alignment moves it, except a mirror: an
+  aligned shape is aligned as it is before its first mirror, then mirrored
+  (and the modifiers after it applied). So a mirror about the mass's centre
+  stays put wherever the part is aligned, and the image lands opposite it.
 - **Apply** turns the first modifier into real shapes, as Blender's Apply does.
 
 Example: two combs, mirrored about the plate's centre, three of each:
@@ -187,6 +189,12 @@ plate:
 - **The holes follow the shape:** resize or reshape it and they refill.
 - **Centred:** the grid is centred on the shape, so the pattern stays
   symmetric; `x`, `y` put a hole's centre at a chosen place instead.
+- **Webs and rim:** the webs between holes are `pitch − hole_size` wide; the
+  rim is at least `margin`, and wider where the holes do not fill the shape
+  exactly. For a rim as wide as the webs, tick **Even rim** (`even_rim:
+  true`, square grid): the pitch then stretches a little along x and y so the
+  holes fill the shape's box, every web and the rim the same width (`margin`,
+  `x` and `y` are then not used). Each field's **?** in Properties explains it.
 - **Hole shapes:** `hole_size` × `hole_height` with the corners rounded by
   `corner_radius`: round by default (half the size), square at 0, a rounded
   square in between, a slot when oblong.

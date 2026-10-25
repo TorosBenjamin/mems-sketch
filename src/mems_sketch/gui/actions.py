@@ -47,8 +47,15 @@ OPERATIONS = [
     ("layer_map", "Layer map"),
 ]
 BOOLEANS = ("subtract", "intersect", "xor")  # under Operations › Combine
-# The ☰ menu's entries' icons: File, Edit, Tools, Insert, Operations, View, Help.
-ROOT_ICONS = ("folder", "edit", "select", "add", "subtract", "eye", "help")
+# The ☰ menu's entries' icons: File, Edit, Tools, Add, Operations, View, Help.
+ROOT_ICONS = ("folder", "edit", "select", "add", "subtract", "eye", "recompile", "help")
+
+
+def _with(standard: QKeySequence.StandardKey, extra: str) -> list[QKeySequence]:
+    """The platform's keys for ``standard``, and ``extra`` if it is not among them."""
+    keys = QKeySequence.keyBindings(standard)
+    wanted = QKeySequence(extra)
+    return keys if wanted in keys else [*keys, wanted]
 
 
 def make_action(
@@ -56,7 +63,9 @@ def make_action(
 ) -> QAction:
     """An action calling ``slot``, with its shortcut in the tooltip, added to ``menu``."""
     action = QAction(text, parent)
-    action.triggered.connect(slot)
+    # only a checkable action passes its state on: Qt's ``checked`` would land in
+    # a slot's optional first argument (``search(scope)``) otherwise
+    action.triggered.connect(lambda checked: slot(checked) if action.isCheckable() else slot())
     if shortcut is not None:
         action.setShortcut(QKeySequence(shortcut))
     if icon is not None:
@@ -81,6 +90,7 @@ class Actions:
         act("Open project…", w.open_project, QKeySequence.StandardKey.Open, file, "open")
         self.save = act("Save", w.save_project, QKeySequence.StandardKey.Save, file, "save")
         act("Save as…", w.save_project_as, QKeySequence.StandardKey.SaveAs, file)
+        self.commit = act("Commit…", w.start_commit, "Ctrl+K", file, "commit")
         act("Close project", w.close_project, None, file)
         file.addSeparator()
         act("Import…", lambda: w.components.import_gds(), "Ctrl+I", file, "import")
@@ -88,14 +98,17 @@ class Actions:
         file.addSeparator()
         self.settings = act("Settings…", w.show_settings, "Ctrl+Alt+S", file, "settings")
         file.addSeparator()
-        act("Quit", w.close, QKeySequence.StandardKey.Quit, file)
+        quit_ = act("Quit", w.close, QKeySequence.StandardKey.Quit, file)
+        quit_.setShortcuts(_with(QKeySequence.StandardKey.Quit, "Ctrl+Q"))
 
         edit = self.edit = QMenu("&Edit", w)
         self.undo = act("Undo", w.undo, QKeySequence.StandardKey.Undo, edit, "undo")
         self.redo = act("Redo", w.redo, QKeySequence.StandardKey.Redo, edit, "redo")
+        # Ctrl+Shift+Z too, as in JetBrains IDEs (the platform's Redo may be Ctrl+Y only)
+        self.redo.setShortcuts(_with(QKeySequence.StandardKey.Redo, "Ctrl+Shift+Z"))
         edit.addSeparator()
         self.cut = act("Cut", w.cut, QKeySequence.StandardKey.Cut, edit, "cut")
-        self.copy = act("Copy", w.copy, QKeySequence.StandardKey.Copy, edit, "duplicate")
+        self.copy = act("Copy", w.copy, QKeySequence.StandardKey.Copy, edit, "copy")
         self.paste = act("Paste", w.paste, QKeySequence.StandardKey.Paste, edit, "paste")
         self.duplicate = act("Duplicate", w.duplicate, "Ctrl+D", edit, "duplicate")
         self.delete = act("Delete", w.delete, QKeySequence.StandardKey.Delete, edit, "delete")
@@ -103,11 +116,19 @@ class Actions:
             "Select all", w.select_all, QKeySequence.StandardKey.SelectAll, edit, "select"
         )
         self.rename = act("Rename…", w.rename_selection, "F2", edit, "edit")
-        self.unwrap = act("Unwrap operation", w.unwrap, "Ctrl+Shift+U", edit)
+        # Making and unpacking are in Operations only (#328); one verb for taking
+        # an operation or a placed component apart: unpack.
+        self.unwrap = act("Unpack operation", w.unwrap, "Ctrl+Shift+U")
+        # Keys as JetBrains IDEs have them: Ctrl+K commits there (#327), so making a
+        # component takes Extract's Ctrl+Alt+M and unpacking Inline's Ctrl+Alt+N.
         self.make = act(
-            "Make component from selection…", w.make_component, "Ctrl+K", edit, "make_component"
+            "Make component from selection…",
+            w.make_component,
+            "Ctrl+Alt+M",
+            None,
+            "make_component",
         )
-        self.unpack = act("Unpack component", w.unpack, "Ctrl+Shift+K", edit, "unpack")
+        self.unpack = act("Unpack component", w.unpack, "Ctrl+Alt+N", None, "unpack")
         edit.addSeparator()
         self.move_by = act("Move by…", w.move_by, "Ctrl+Shift+M", edit, "move")
         self.rotate_left = act(
@@ -121,19 +142,28 @@ class Actions:
             "rotate_right",
         )
         self.mirror_h = act(
-            "Mirror left-right", lambda: w.mirror_selection(True), None, edit, "mirror_h"
+            "Mirror about y axis (left-right)",
+            lambda: w.mirror_selection(True),
+            None,
+            edit,
+            "mirror_h",
         )
         self.mirror_v = act(
-            "Mirror up-down", lambda: w.mirror_selection(False), None, edit, "mirror_v"
+            "Mirror about x axis (up-down)",
+            lambda: w.mirror_selection(False),
+            None,
+            edit,
+            "mirror_v",
         )
         edit.addSeparator()
-        act("Align…", w.start_align, "Ctrl+L", edit, "align")
+        self.align = act("Align…", w.start_align, "Ctrl+L", edit, "align")
         self.remove_alignment = act("Remove alignment", w.remove_alignment, None, edit)
         # Shown greyed out where they cannot apply; their keys work again once it
         # closes, and say why (#253).
         edit.aboutToShow.connect(self.show_what_applies)
         edit.aboutToHide.connect(lambda: self.show_what_applies(everything=True))
-        act("Cancel", w.escape, "Esc", edit)
+        # Esc: a key, not a menu entry (#328); in the keymap with the others.
+        self.unlisted = [act("Cancel", w.escape, "Esc")]
 
         tools_menu = self.tools_menu = QMenu("&Tools", w)
         self.tools: dict[str, QAction] = {}
@@ -169,8 +199,10 @@ class Actions:
         tools_menu.addSeparator()
         act("Clear rulers", w.clear_rulers, None, tools_menu, "clear")
 
-        insert = self.insert = QMenu("&Insert", w)
-        self.add = insert.addMenu("Add")
+        # ☰ › Add holds the shapes themselves, then Place (one level, as the toolbar's
+        # Add ▾ and Place ▾; #328). self.add is the shapes alone, for the toolbar.
+        insert = self.insert = QMenu("&Add", w)
+        self.add = QMenu("Add", w)
         icons.bind(self.add.menuAction(), "rect")
         for kind, label in PRIMITIVES:
             # Drawn shapes start their drawing tool, for one shape; an arc is added
@@ -180,7 +212,14 @@ class Actions:
                 if kind in w.tools
                 else (lambda _=False, k=kind: w.add_primitive(k))
             )
-            act(label, slot, menu=self.add, icon=kind)
+            key = w.tools[kind].shortcut if kind in w.tools else ""
+            # The drawing tool's key, shown after a tab (it is the tool's shortcut, not
+            # this entry's; #327).
+            action = act(f"{label}\t{key}" if key else label, slot, menu=self.add, icon=kind)
+            if key:
+                action.setToolTip(f"{label} ({key})")
+            insert.addAction(action)
+        insert.addSeparator()
         # A popup that searches the components (see mems_sketch.gui.component_picker).
         self.place = act("Place component…", lambda: w.place_popup(), "Shift+A", insert, "place")
 
@@ -194,17 +233,17 @@ class Actions:
         self.connect = act("Connect", lambda: w.connect(), menu=operations, icon="connection")
         self.connect.setToolTip("Join the selected shapes' ends (their ports) with a connection")
         operations.addSeparator()
+        operations.addAction(self.unwrap)
         operations.addAction(self.make)
         operations.addAction(self.unpack)
 
         view = self.view = QMenu("&View", w)
         self.fit = act("Fit", lambda: w.canvas.fit(animated=True), "F", view, "fit")
         self.zoom_selection = act(
-            "Zoom to selection", w.zoom_to_selection, "Shift+F", view, "zoom_in"
+            "Zoom to selection", w.zoom_to_selection, "Shift+F", view, "zoom_selection"
         )
         act("Zoom in", lambda: w.canvas.zoom_by(1.25, animated=True), "Ctrl+=", view, "zoom_in")
         act("Zoom out", lambda: w.canvas.zoom_by(0.8, animated=True), "Ctrl+-", view, "zoom_out")
-        act("Recompile and check", w.refresh, "F5", view, "recompile")
         view.addSeparator()
         overlays = view.addMenu("Overlays")
         icons.bind(overlays.menuAction(), "eye")
@@ -230,19 +269,30 @@ class Actions:
         self.settings_toggles["editor/show_implementation"] = implementation
         view.addSeparator()
         act("Open top component", w._edit_top, "Ctrl+T", view, "top")
-        act("Process", w.open_process, None, view, "layers")
-        self.split = act("Split view", w.split_view, "Ctrl+\\", view, "split")
-        act("Merge split view", w.area.unsplit, None, view)
-        act("Close tab", w.close_tab, QKeySequence.StandardKey.Close, view, "close")
+        self.split = act("Split right", w.split_view, "Ctrl+\\", view, "split")
+        act("Merge panes", w.area.unsplit, None, view)
+        self.close_tab = act(
+            "Close tab", w.close_tab, QKeySequence.StandardKey.Close, view, "close"
+        )
+        self.close_tab.setShortcuts(_with(QKeySequence.StandardKey.Close, "Ctrl+W"))
         self.panels = view.addMenu("Panels")
 
+        # Checking the design, and the process it is checked against (#328).
+        check = self.check = QMenu("&Check", w)
+        act("Recompile and check", w.refresh, "F5", check, "recompile")
+        act("Process and rules", w.open_process, None, check, "process")
+
         help_menu = self.help = QMenu("&Help", w)
-        self.search = act("Search everywhere…", w.search, None, help_menu, "search")
+        # "Shift Shift" is no key sequence: written after a tab, menus show it as one.
+        self.search = act("Search everywhere…\tShift Shift", w.search, None, help_menu, "search")
         self.search.setToolTip("Search everywhere (press Shift twice)")
         self.find = act("Find action…", w.find_action, "Ctrl+Shift+A", help_menu, "search")
         act("Keyboard shortcuts", lambda: w.show_settings("Keymap"), None, help_menu)
+        help_menu.addSeparator()
+        act("User guide", w.open_user_guide, None, help_menu, "help")
+        act("About MEMS Sketch", w.show_about, None, help_menu)
 
-        self.root_menus = [file, edit, tools_menu, insert, operations, view, help_menu]
+        self.root_menus = [file, edit, tools_menu, insert, operations, view, check, help_menu]
         self.root = QMenu(w)  # the ☰ button's menu
         for menu, icon_name in zip(self.root_menus, ROOT_ICONS, strict=True):
             self.root.addMenu(menu)
@@ -266,6 +316,7 @@ class Actions:
             self.mirror_v: bool(paths),
             self.make: bool(paths),
             self.rename: node is not None,
+            self.align: node is not None,
             self.unwrap: node is not None and any(node.child_lists()),
             self.unpack: isinstance(node, RefShape),
             self.remove_alignment: node is not None and node.align is not None,
@@ -305,6 +356,8 @@ class Actions:
                     found.setdefault(id(action), action)
 
         visit(self.root)
+        for action in self.unlisted:
+            found.setdefault(id(action), action)
         return list(found.values())
 
     def context_menu(self, x: float, y: float) -> QMenu:
@@ -333,9 +386,12 @@ class Actions:
         if not selection:
             add = menu.addMenu(self.add.menuAction().icon(), "Add")
             for source in self.add.actions():
-                kind = next(k for k, label in PRIMITIVES if label == source.text())
+                text = source.text().partition("\t")[0]  # (its key is after a tab)
+                kind = next(k for k, label in PRIMITIVES if label == text)
                 slot = (
-                    (lambda _=False, k=kind: w.start_drawing(k, x, y)) if kind in w.tools else None
+                    (lambda _=False, k=kind: w.start_drawing(k, x, y))
+                    if kind in w.tools
+                    else (lambda _=False, k=kind: w.add_primitive(k, at=(x, y)))
                 )
                 item(add, source, slot)
             # The Place popup, by the cursor; the component lands where the click was.
@@ -347,7 +403,16 @@ class Actions:
             item(menu, self.fit).setEnabled(True)
             return menu
 
+        self._selection_items(item, menu, selection)
+        return menu
+
+    def _selection_items(self, item, menu: QMenu, selection: list) -> None:
+        """What can be done to the selected shapes, for a right-click menu (the
+        canvas's and the Shapes panel's)."""
+        w = self.window
+        editable = not w.document.read_only
         one, several = len(selection) == 1, len(selection) > 1
+        node = w.document.node(selection[0]) if one and w._exists(selection[0]) else None
         reference = one and w.document.reference_target(selection[0]) is not None
         combine = menu.addMenu(self.combine.menuAction().icon(), "Combine")
         for op in BOOLEANS:
@@ -358,17 +423,18 @@ class Actions:
         item(menu, self.connect, enabled=several)
         item(menu, self.make)
         item(menu, self.unpack, enabled=reference)
+        item(menu, self.unwrap, enabled=node is not None and any(node.child_lists()))
         orient = menu.addMenu(self.rotate_left.icon(), "Rotate && mirror")
         for source in (self.rotate_left, self.rotate_right, self.mirror_h, self.mirror_v):
             item(orient, source)
         orient.setEnabled(editable)
+        item(menu, self.remove_alignment, enabled=node is not None and node.align is not None)
         menu.addSeparator()
         item(menu, self.zoom_selection).setEnabled(True)
         if one:
             item(menu, self.rename)
         menu.addSeparator()
         self._edit_items(item, menu, True, one)
-        return menu
 
     def _edit_items(self, item, menu: QMenu, some: bool, one: bool) -> None:
         """Cut, copy, paste, duplicate and delete, for a right-click menu."""
@@ -376,7 +442,7 @@ class Actions:
         copy = item(menu, self.copy, enabled=some)
         copy.setEnabled(some)  # copying changes nothing: also in a read-only component
         item(menu, self.paste, enabled=self.window.can_paste())
-        item(menu, self.duplicate, enabled=one)
+        item(menu, self.duplicate, enabled=some)  # several: one step (#253)
         item(menu, self.delete, enabled=some)
 
     def shapes_menu(self) -> QMenu:
@@ -385,8 +451,8 @@ class Actions:
         editable = not w.document.read_only
         menu = QMenu(w)
 
-        def item(target: QMenu, source: QAction, enabled: bool = True) -> QAction:
-            action = make_action(menu, source.text(), source.trigger, menu=target)
+        def item(target: QMenu, source: QAction, slot=None, enabled: bool = True) -> QAction:
+            action = make_action(menu, source.text(), slot or source.trigger, menu=target)
             action.setIcon(source.icon())
             action.setShortcut(source.shortcut())
             action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)  # shown, not active
@@ -394,7 +460,10 @@ class Actions:
             return action
 
         selection = list(w.selection)
-        self._edit_items(item, menu, bool(selection), len(selection) == 1)
+        if selection:  # as on the canvas: what can be done to them
+            self._selection_items(item, menu, selection)
+        else:
+            self._edit_items(item, menu, False, False)
         return menu
 
     def tab_menu(self, view) -> QMenu:

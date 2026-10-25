@@ -88,6 +88,34 @@ class ProjectFormatError(ValueError):
     pass
 
 
+class MissingLibraryError(ProjectFormatError):
+    """A library the project lists is not where it says: kept outside the project's
+    repository, say, and missing from a clone (#310). ``name`` is the library,
+    ``folder`` where it was looked for."""
+
+    def __init__(self, name: str, folder: Path) -> None:
+        super().__init__(
+            f"library '{name}': {folder} is not a project or library folder (no {PROJECT_FILE})"
+        )
+        self.name, self.folder = name, folder
+
+
+def relocate_library(project: str | Path, name: str, folder: str | Path) -> None:
+    """Point the project in ``project`` (its folder or project.yaml) at ``folder`` for
+    its library ``name``: written relative to the project, as saving does."""
+    project = project_folder(project)
+    folder = Path(folder)
+    if not (folder / PROJECT_FILE).is_file():
+        raise ProjectFormatError(f"{folder} is not a project or library folder (no {PROJECT_FILE})")
+    manifest = _manifest(project)
+    libraries = manifest.get("libraries") or {}
+    if name not in libraries:
+        raise ProjectFormatError(f"the project lists no library '{name}'")
+    libraries[name] = _relative(folder, project)
+    manifest["libraries"] = libraries
+    _write(project / PROJECT_FILE, yaml_format.dump(manifest))
+
+
 # -- saving ----------------------------------------------------------------
 
 
@@ -405,7 +433,23 @@ def rule_data(rule: Rule) -> dict[str, Any]:
 
 
 def rule_from_data(name: str, entry: dict[str, Any]) -> Rule:
-    values = {str(k): _value(v) for k, v in entry.items() if k not in RULE_FIELDS}
+    if not isinstance(entry, dict):
+        raise ProjectFormatError(f"rule '{name}': expected its fields (kind, layers, …)")
+    values = {}
+    for key, value in entry.items():
+        if key in RULE_FIELDS:
+            continue
+        if value is None:  # "{value: 2, 5}" reads as a key "5" with no value
+            raise ProjectFormatError(
+                f"rule '{name}': '{key}' has no value (inside {{ }}, a comma starts a new "
+                "key: put text with commas in quotes)"
+            )
+        try:
+            values[str(key)] = _value(value)
+        except (TypeError, ValueError):
+            raise ProjectFormatError(
+                f"rule '{name}': '{key}' must be a number, text, yes/no or a list, not {value!r}"
+            ) from None
     return Rule(
         name=str(name),
         kind=str(entry.get("kind", "")),
@@ -536,9 +580,7 @@ def load_library(name: str, folder: str | Path) -> Library:
     """A project folder as a library: its components and processes, read-only."""
     folder = Path(folder)
     if not (folder / PROJECT_FILE).is_file():
-        raise ProjectFormatError(
-            f"library '{name}': {folder} is not a project or library folder (no {PROJECT_FILE})"
-        )
+        raise MissingLibraryError(name, folder)
     manifest = _manifest(folder)
     processes, components, _ = _contents(folder, manifest)
     version = manifest.get("version")
@@ -592,7 +634,7 @@ def _contents(
         path = folder / str(rel) / PROCESS_FILE
         try:
             processes[str(name)] = process_from_data(_read(path) or {})
-        except ProjectFormatError as error:
+        except (ProjectFormatError, ValueError, TypeError) as error:  # say which file
             raise ProjectFormatError(f"{path}: {error}") from None
 
     def open_component(rel: Any, where: Path) -> tuple[Any, Path]:

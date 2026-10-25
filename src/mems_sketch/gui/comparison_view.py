@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QSizePolicy,
     QSplitter,
     QToolButton,
     QVBoxLayout,
@@ -177,6 +178,7 @@ class ComparisonView(QWidget):
         self._fitted = False
         self._syncing = False
         self._card_mark: Mark | None = None
+        self._what = ""  # what is compared with what, in full (shown shortened)
 
         self.what = QLabel()  # what is compared with what
         self.what.setObjectName("muted")
@@ -201,7 +203,12 @@ class ComparisonView(QWidget):
         self.counter = QLabel()  # "2 of 5"
         self.counter.setObjectName("muted")
 
-        bar = QWidget()
+        # The bar never sets the window's width (#314): what is compared is
+        # shortened, and the legend gives way when there is no room for it.
+        self.what.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.what.setMinimumWidth(0)
+        bar = self.bar = QWidget()
+        bar.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         bar.setObjectName("comparison-bar")
         bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         row = QHBoxLayout(bar)
@@ -277,7 +284,7 @@ class ComparisonView(QWidget):
         return "history"
 
     def tooltip(self) -> str:
-        return f"{self.component}: {self.what.text()}" if self.component else "Changes"
+        return f"{self.component}: {self._what}" if self.component else "Changes"
 
     def canvases(self) -> list[LayoutCanvas]:
         return [self.old_canvas, self.canvas]
@@ -364,7 +371,7 @@ class ComparisonView(QWidget):
         """Work out the comparison again (``recompare``) and draw it."""
         if recompare:
             self.comparison = self._comparison()
-        self.what.setText(self._describe())
+        self._set_what(self._describe())
         self._fill_components()
         comparison = self.comparison
         old = new = None
@@ -601,8 +608,37 @@ class ComparisonView(QWidget):
             self._card_mark = None
         return False
 
+    def _set_what(self, text: str) -> None:
+        self._what = text
+        self.what.setToolTip(text)
+        self._fit_bar()
+
+    def _fit_bar(self) -> None:
+        """What is compared, shortened to the room left; the legend only if it fits."""
+        text = self._what
+        self.legend.show()
+        others = sum(
+            w.sizeHint().width()
+            for w in (
+                self.component_box,
+                self.overlay_button,
+                self.side_button,
+                self.counter,
+                self.previous_button,
+                self.next_button,
+            )
+        )
+        room = self.bar.width() - others - 8 * theme.metric("space_m")
+        if room - self.legend.sizeHint().width() < 80:  # keep a little of the text
+            self.legend.hide()
+        else:
+            room -= self.legend.sizeHint().width()
+        metrics = self.what.fontMetrics()
+        self.what.setText(metrics.elidedText(text, Qt.TextElideMode.ElideRight, max(room, 0)))
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._fit_bar()
         if self._card_mark is not None:
             self._place_card(self._card_mark)
 

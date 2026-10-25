@@ -7,9 +7,9 @@ as x and y sit side by side. The name is the panel's title, edited in place,
 with an eye that switches the shape off or on at once. Long texts are cut
 with "…" so they never widen the panel. For a component reference the
 component's own parameter
-schema is shown, with defaults as placeholders. Edits are applied with the
-Apply button or Enter and go through the document, so invalid input is
-rejected without changing the design.
+schema is shown, with defaults as placeholders. Every field applies by itself
+(Enter, leaving it, choosing) and goes through the document, so invalid input
+is rejected without changing the design.
 
 Modifiers are cards, as in Blender: each has its own settings (applied with
 the rest), and buttons that act at once: switch on or off, move up or down,
@@ -25,6 +25,7 @@ import typing
 
 import shiboken6
 from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -33,12 +34,10 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
     QPlainTextEdit,
-    QPushButton,
     QScrollArea,
     QSizePolicy,
     QToolButton,
@@ -63,7 +62,12 @@ from mems_sketch.gui.canvas import layer_color
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import component_icon, parse_value, read_only_kind, swatch_icon
 from mems_sketch.gui.settings import APPLICATION, ORGANIZATION
-from mems_sketch.gui.value_edit import ElidedLineEdit, ExpandedEdit, ValueEdit
+from mems_sketch.gui.value_edit import (
+    ElidedLineEdit,
+    ExpandedEdit,
+    ValueEdit,
+    ask_parameter_name,
+)
 
 # Fields edited by dedicated widgets, or not at all (children are edited in the tree).
 _SPECIAL = {
@@ -86,7 +90,7 @@ _LABELS = {
     "y0": "y₀",
     "x1": "x₁",
     "y1": "y₁",
-    "mirror_x": "Mirror about x",
+    "mirror_x": "Mirror about x axis",
     "keep_unmapped": "Keep unmapped layers",
     "inner_radius": "Inner radius",
     "outer_radius": "Outer radius",
@@ -125,11 +129,37 @@ MODIFIER_LABELS = {  # per kind, then per field
         "row_pitch": "Row pitch",
         "hole_size": "Hole size",
         "hole_height": "Hole height",
-        "corner_radius": "Corner radius",
+        "corner_radius": "Hole corner radius",  # apart from the shape's own (#301)
         "margin": "Margin",
         "keep_out": "Keep clear of",
         "keep_out_margin": "Keep-out margin",
+        "even_rim": "Even rim",
     },
+}
+# What a field does, behind a "?" by its name: (kind, field) -> explanation.
+FIELD_HELP = {
+    ("perforate", "grid"): "*square*: rows of holes straight above each other. *hex*: every "
+    "other row shifted by half a pitch, rows pitch × √3/2 apart.",
+    ("perforate", "pitch"): "From one hole's centre to the next along a row. The webs "
+    "between holes are *pitch − hole size* wide.",
+    ("perforate", "row_pitch"): "From one row's centre to the next. Empty: the pitch (on a "
+    "hex grid, pitch × √3/2).",
+    ("perforate", "hole_size"): "How wide each hole is. Bigger holes make the webs "
+    "(pitch − hole size) narrower.",
+    ("perforate", "hole_height"): "How high each hole is. Empty: as high as it is wide.",
+    ("perforate", "corner_radius"): "How round the holes' corners are. Empty: half the "
+    "shorter side, so round holes; 0: square holes.",
+    ("perforate", "margin"): "The narrowest the solid rim between the outline and the holes "
+    "gets. A hole goes only where it fits whole, so the rim comes out wider where the "
+    "holes do not fill the shape exactly.\n\nFor a rim as wide as the webs, tick *Even rim*.",
+    ("perforate", "keep_out"): "Shapes the holes keep clear of, by name: an anchor, or "
+    "where a spring lands on the plate.",
+    ("perforate", "keep_out_margin"): "How far the holes stay from the shapes to keep clear "
+    "of. Empty: the margin.",
+    ("perforate", "x"): "A hole's centre goes here. Empty: the grid is centred on the shape.",
+    ("perforate", "even_rim"): "Every web and the rim the same width: the pitch stretches a "
+    "little, along x and y, so that the holes fill the shape's box. Square grid only; the "
+    "margin and the hole position are then not used.",
 }
 MODIFIER_TIPS = {
     "array": "Copies on a grid; i and j are each copy's column and row",
@@ -171,6 +201,85 @@ PAIR_LABELS = {  # (kind, first field) -> row label, where the default does not 
 }
 
 
+# What a field means, where its name does not say: (kind, field) -> tooltip.
+FIELD_TIPS = {
+    ("ref", "mirror_x"): "Mirrored about the x axis (y → −y), before it is turned",
+    ("transform", "mirror_x"): "Mirrored about the x axis (y → −y), before it is turned",
+    ("route", "style"): "manhattan: along x and y only; l: along the start's direction, then "
+    "the end's, with one bend; straight: straight lines through the via points",
+    ("route", "bend"): "sharp; round: an arc of the radius; chamfer: cut by the radius along "
+    "each side",
+    ("route", "radius"): "The bends' radius (round) or cut (chamfer); not used by sharp bends",
+    ("route", "width"): "0: the ports' width",
+    ("fillet", "radius"): "For the corners that turn out (convex); 0: sharp",
+    ("fillet", "inner_radius"): "For the corners that turn in (concave); 0: sharp",
+    ("connection", "radius"): "Where it turns out; 0: sharp",
+    ("connection", "inner_radius"): "Where it turns in, between the beams (the usual case); "
+    "0: sharp",
+    ("connection", "width"): "For an end whose port has no width",
+    ("mirror", "axis"): "x: mirrors x, across the vertical line at x; y: mirrors y, across "
+    "the horizontal line at y; both: four copies",
+}
+# The choices of a list in words: (kind, field) -> {value: text}.
+LITERAL_TEXTS: dict[tuple[str, str], dict[str, str]] = {}
+# Fields measured in µm: they show it at their end.
+LENGTH_FIELDS = {
+    "radius",
+    "inner_radius",
+    "outer_radius",
+    "width",
+    "distance",
+    "pitch",
+    "row_pitch",
+    "hole_size",
+    "hole_height",
+    "corner_radius",
+    "margin",
+    "keep_out_margin",
+}
+LENGTH_PAIRS = {("x0", "y0"), ("x1", "y1"), ("x", "y"), ("dx", "dy")}
+
+
+def default_hint(kind: str, field: str, model, scope: dict[str, float]) -> str:
+    """What an empty optional field stands for, shown greyed in it: a number when it
+    can be worked out, else in words."""
+
+    def value(name: str, fallback: float | None = None) -> float | None:
+        written = getattr(model, name, None)
+        if written is None:
+            return fallback
+        try:
+            return float(written) if isinstance(written, int | float) else evaluate(written, scope)
+        except (ValueError, KeyError):
+            return None
+
+    def shown(number: float | None, words: str) -> str:
+        return f"{number:g}" if number is not None else words
+
+    if field == "segments":
+        return "auto (curve tolerance)"
+    if (kind, field) == ("polar_array", "step"):
+        count = value("count")
+        return shown(360 / count if count else None, "360 / count")
+    if kind == "perforate":
+        pitch, size = value("pitch"), value("hole_size")
+        if field == "row_pitch":
+            hex_rows = getattr(model, "grid", "square") == "hex" and pitch is not None
+            return shown(pitch * 3**0.5 / 2 if hex_rows else pitch, "pitch")
+        if field == "hole_height":
+            return shown(size, "hole size")
+        if field == "corner_radius":
+            height = value("hole_height", size)
+            if size is None or height is None:
+                return "round"
+            return f"{min(size, height) / 2:g} (round)"
+        if field == "keep_out_margin":
+            return shown(value("margin"), "margin")
+        if field in ("x", "y"):
+            return "auto"
+    return ""
+
+
 # Fields holding a count: dragged in whole numbers, never below 1.
 COUNT_FIELDS = {"columns", "rows", "count", "segments", "turns", "fingers"}
 
@@ -194,6 +303,8 @@ class PropertyEditor(QScrollArea):
         # scrolls sideways, so nothing is ever cut off out of reach.
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.path: NodePath | None = None
+        self._shown: NodePath | None = None  # the node the form shows (to keep its scroll)
+        self._shows = 0  # how many times the content was replaced (see _show)
         self.hide_implementation = False  # a read-only component: show its interface
         self._editors: dict[str, typing.Callable[[], object]] = {}
         self._scope: dict[str, float] = {}
@@ -201,6 +312,7 @@ class PropertyEditor(QScrollArea):
         # The tool window's header says what the shape is ("Rectangle").
         self.header_context = widgets.header_context()
         self._show_placeholder("Select a shape to edit its properties.")
+        self.fade = widgets.ScrollFade(self)  # more below: the bottom edge fades (#318)
         # Leaving a text field applies it, as Enter does: an edit is never lost by
         # clicking elsewhere (another field, the canvas, another shape).
         QApplication.instance().focusChanged.connect(self._focus_changed)
@@ -209,6 +321,11 @@ class PropertyEditor(QScrollArea):
 
     def show_node(self, path: NodePath | None) -> None:
         self.path = path
+        if self.document.active is None:  # a library of processes only (#285)
+            self._show_placeholder(
+                "This library has no components: its processes are in the Process tab."
+            )
+            return
         if path is None and self.hide_implementation:
             self._show_interface()
             return
@@ -258,7 +375,27 @@ class PropertyEditor(QScrollArea):
         form = _form(main)
         layout.addWidget(main)
 
-        self._add_fields(form, node, node.kind, "", skip=_SPECIAL)
+        fields_shown = self._add_fields(form, node, node.kind, "", skip=_SPECIAL)
+        if node.align is not None and type(node).placed:  # the alignment places it (#304)
+            for name in ("x", "y"):
+                widget = fields_shown.get(name)
+                if widget is not None:
+                    _set_active(form, widget, False)
+                    why = (
+                        "Not used while the shape is aligned: the alignment places it "
+                        "(Edit → Remove alignment keeps it where it is)"
+                    )
+                    widget.set_help(why) if isinstance(widget, ValueEdit) else widget.setToolTip(
+                        why
+                    )
+        bend = fields_shown.get("bend")
+        if isinstance(bend, QComboBox) and "radius" in fields_shown:  # a route: sharp has none
+
+            def update_radius(*_) -> None:
+                _set_active(form, fields_shown["radius"], bend.currentData() != "sharp")
+
+            bend.currentIndexChanged.connect(update_radius)
+            update_radius()
 
         fields = type(node).model_fields
         if form.rowCount() == 0:  # nothing of its own to set (e.g. an operation)
@@ -272,13 +409,19 @@ class PropertyEditor(QScrollArea):
         if "params" in fields:
             layout.addWidget(self._params_editor(node))
         layout.addWidget(self._align_editor(node, path))
-        # Fields apply on Enter, lists and boxes when changed; only text boxes of
-        # several lines and modifier stacks keep an Apply button.
-        needs_apply = bool(node.modifiers) or bool({"points", "via", "mapping"} & fields.keys())
-        layout.addWidget(self._modifiers_editor(node, path, needs_apply))
+        # Every field applies by itself: Enter or leaving it (text boxes of several
+        # lines: leaving them or Ctrl+Enter), lists and boxes when changed.
+        layout.addWidget(self._modifiers_editor(node, path))
         layout.addStretch()
         _line_up(body)
-        self._show(body)
+        # The same node again (a field applied): stay where the panel was scrolled to.
+        if self._show(body, keep_scroll=path == self._shown):
+            self._shown = path
+
+    def show_several(self, count: int) -> None:
+        """Several shapes selected: say how many (one at a time is edited here)."""
+        self.path = None
+        self._show_placeholder(f"{count} shapes selected. Select one to edit its properties.")
 
     def _enabled_toggle(self, node: Shape) -> QToolButton:
         """The eye in the title row: whether the shape is drawn (applied at once)."""
@@ -303,13 +446,16 @@ class PropertyEditor(QScrollArea):
         self._editors["enabled"] = toggle.isChecked
         return toggle
 
-    def _field_editor(self, field: str, annotation, value) -> QWidget:
+    def _field_editor(self, field: str, annotation, value, kind: str = "") -> QWidget:
         args = typing.get_args(annotation)
+        bare = field.rpartition(":")[2]
         if typing.get_origin(annotation) is typing.Literal:
             combo = _combo()
-            combo.addItems([str(a) for a in args])
-            combo.setCurrentText(str(value))
-            self._editors[field] = combo.currentText
+            texts = LITERAL_TEXTS.get((kind, bare), {})
+            for choice in args:
+                combo.addItem(texts.get(choice, str(choice)), choice)
+            combo.setCurrentIndex(max(combo.findData(value), 0))
+            self._editors[field] = combo.currentData
             return self._applies(combo)
         if annotation is bool:
             box = QCheckBox()
@@ -322,35 +468,61 @@ class PropertyEditor(QScrollArea):
             self._editors[field] = lambda: combo.currentData()
             return self._applies(combo)
         if field in ("start", "end") and annotation is str:  # a route's ports
-            combo = _combo()
-            combo.setEditable(True)
+            combo = _editable(_combo(), "A port of a shape beside it: shape.port.name")
             with contextlib.suppress(Exception):  # it does not build: type one in
-                combo.addItems(sorted(self.document.results.all_ports()))
+                combo.addItems(self._ports_beside())
             combo.setCurrentText(value)
-            combo.setToolTip("A port of a shape beside it: shape.port.name")
             self._editors[field] = lambda: combo.currentText().strip()
             return self._applies(combo)
         if field == "level":  # where a placed component is
             combo = _combo()
             combo.setEditable(True)
             levels = [lv.layer for lv in self.document.project.process.levels]
-            combo.addItems(["", "level+1", "level-1", *levels] if levels else [""])
-            combo.setCurrentText(value or "")
+            # The first entry, no level set, in words rather than blank (#328).
+            combo.addItems(
+                [DEFAULT_LEVEL, "level+1", "level-1", *levels] if levels else [DEFAULT_LEVEL]
+            )
+            combo.setCurrentText(value or DEFAULT_LEVEL)
             combo.setToolTip(
                 "The level of the layer stack it is placed on: a level, or one relative to "
-                "this component's (level+1). Empty: its own default level, else this one's"
+                "this component's (level+1). Its default level: the component's own, else "
+                "this one's"
             )
-            self._editors[field] = lambda: combo.currentText().strip() or None
+            self._editors[field] = lambda: (
+                None
+                if combo.currentText().strip() in ("", DEFAULT_LEVEL)
+                else combo.currentText().strip()
+            )
             return self._applies(combo)
         if field == "component":
             return self._component_field(field, value)
         if typing.get_origin(annotation) is list and args == (str,):  # names, e.g. keep_out
             edit = QLineEdit(", ".join(value))
-            edit.setPlaceholderText("shape names, comma-separated")
             edit.returnPressed.connect(self.apply)
             edit.setReadOnly(self.document.read_only)
             self._editors[field] = lambda: [n.strip() for n in edit.text().split(",") if n.strip()]
-            return edit
+            if bare != "ends":
+                edit.setPlaceholderText("shape names, comma-separated")
+                return edit
+            # A connection's ends are ports: typed, or added from a list of them.
+            edit.setPlaceholderText("ports, comma-separated: beam.port.end, …")
+            add = QToolButton()
+            icons.bind(add, "add")
+            add.setToolTip("Add a port")
+            add.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            add.setEnabled(not self.document.read_only)
+            menu = QMenu(add)
+            with contextlib.suppress(Exception):  # it does not build: type them in
+                for port in self._ports_beside():
+
+                    def append(_=False, port=port) -> None:
+                        names = [n.strip() for n in edit.text().split(",") if n.strip()]
+                        edit.setText(", ".join([*names, port]))
+                        self.apply()
+
+                    menu.addAction(port, append)
+            add.setMenu(menu)
+            return _with_button(edit, add)
         optional = type(None) in args
         return self._value_editor(field, value, optional)
 
@@ -391,6 +563,14 @@ class PropertyEditor(QScrollArea):
         self._editors[field] = lambda: chosen[0]
         return row
 
+    def _ports_beside(self) -> list[str]:
+        """The ports a route or connection can join: every port but its own."""
+        own = None
+        with contextlib.suppress(KeyError, TypeError):
+            own = self.document.node(self.path).name
+        ports = self.document.results.all_ports()
+        return sorted(p for p in ports if own is None or not p.startswith(f"{own}.port."))
+
     def _layer_picker(self, value: str | None, optional: bool = False) -> QComboBox:
         """The layers a shape can be on, each with the colour of the layer it lands
         on: relative ones first (``level+1 · metal``), then the layers by name.
@@ -400,14 +580,15 @@ class PropertyEditor(QScrollArea):
         stack = Stack.of(process.levels, process.default_level)
         definition = self.document.active_definition
         try:
-            current = stack.top_level(getattr(definition, "default_level", None))
+            current = stack.top_level(getattr(definition, "level", None))  # its own level
         except ValueError:
             current = None
         colors = {name: layer_color(i) for i, name in enumerate(project.layers)}
         combo = _combo()
         if optional:
             combo.addItem(icons.icon("layers"), "ports' layer", None)
-        choices = [*layer_choices(process.levels), *project.layers]
+        relative = layer_choices(process.levels)
+        choices = [*relative, *project.layers]
         if value and value not in choices:  # kept as it is, whatever it is
             choices.append(value)
         for spec in choices:
@@ -415,6 +596,8 @@ class PropertyEditor(QScrollArea):
                 lands = stack.layer(spec, current)
             except ValueError:
                 lands = None
+            if lands is None and current is not None and spec in relative and spec != value:
+                continue  # e.g. level-1 on the bottom level: no such layer (#297)
             label = spec if lands in (None, spec) else f"{spec} · {lands}"
             color = colors.get(lands)
             icon = swatch_icon(color) if color is not None else icons.icon("layers")
@@ -446,6 +629,7 @@ class PropertyEditor(QScrollArea):
         edit.returnPressed.connect(self.apply)
         edit.scrubbed.connect(self._preview)
         edit.scrub_finished.connect(self.apply)  # one step to undo, however long the drag
+        edit.setProperty("field", field.rpartition(":")[2])  # the name a new parameter gets
         edit.make_parameter.connect(lambda v, e=edit: self._make_parameter(e, v))
         edit.setReadOnly(self.document.read_only)
         self._editors[field] = edit.value
@@ -475,32 +659,55 @@ class PropertyEditor(QScrollArea):
                 line.setContentsMargins(0, 0, 0, 0)
                 line.setSpacing(4)
                 for name, prefix in zip(pair, prefixes, strict=True):
-                    edit = self._value_editor(key + name, getattr(model, name), prefix=prefix)
+                    optional = type(None) in typing.get_args(
+                        type(model).model_fields[name].annotation
+                    )
+                    value = getattr(model, name)
+                    edit = self._value_editor(key + name, value, optional=optional, prefix=prefix)
+                    hint = default_hint(kind, name, model, self._scope) if value is None else ""
+                    if optional and value is None:
+                        edit.setPlaceholderText(hint)
+                    if pair in LENGTH_PAIRS and not hint.isalpha():  # a word needs the room
+                        edit.set_unit("µm")
                     line.addWidget(edit, 1)
                     widgets[name] = edit
                     done.add(name)
-                form.addRow(label, row)
+                help_text = FIELD_HELP.get((kind, field))
+                form.addRow(_label_with_help(label, help_text) if help_text else label, row)
                 continue
             label = labels.get(field) or _LABELS.get(field, field.replace("_", " ").capitalize())
-            widget = self._field_editor(key + field, info.annotation, getattr(model, field))
+            value = getattr(model, field)
+            widget = self._field_editor(key + field, info.annotation, value, kind)
+            if isinstance(widget, ValueEdit) and field in LENGTH_FIELDS:
+                widget.set_unit("µm")
+            if isinstance(widget, ValueEdit) and value is None:
+                hint = default_hint(kind, field, model, self._scope)
+                if hint:
+                    widget.setPlaceholderText(hint)
+            tip = FIELD_TIPS.get((kind, field))
+            help_text = FIELD_HELP.get((kind, field))
+            shown = _label_with_help(label, help_text) if help_text else _label(label)
+            if tip:
+                if isinstance(widget, ValueEdit):
+                    widget.set_help(tip)
+                else:
+                    widget.setToolTip(tip)
+                shown.setToolTip(tip)
             widgets[field] = widget
-            form.addRow(_label(label), widget)
+            form.addRow(shown, widget)
         return widgets
 
     def _make_parameter(self, edit: ValueEdit, value) -> None:
         """Make a parameter with this value as its default, and use it in the field."""
-        suggestion = "param"
-        name, ok = QInputDialog.getText(
-            self,
-            "Make a parameter",
-            f"Name of the new parameter of {self.document.active} (default {_format(value)}):",
-            text=suggestion,
-        )
-        name = name.strip()
-        if not ok or not name:
+        taken = {p.name for p in self.document.active_definition.parameters}
+        try:
+            name = ask_parameter_name(
+                self, self.document.active, taken, value, edit.property("field") or "param"
+            )
+        except ValueError as exc:
+            self.error.emit(str(exc))
             return
-        if not name.isidentifier():
-            self.error.emit(f"'{name}' is not a valid parameter name")
+        if name is None:
             return
         edit.setText(name)
         try:
@@ -511,10 +718,22 @@ class PropertyEditor(QScrollArea):
         except Exception as exc:  # noqa: BLE001 - reported to the user
             self.error.emit(_message(exc))
 
+    def _multiline(self, edit: QPlainTextEdit) -> QPlainTextEdit:
+        """A text box of several lines: Enter is a new line, so leaving it or
+        Ctrl+Enter applies it; Tab moves on."""
+        edit.setTabChangesFocus(True)
+        edit.setReadOnly(self.document.read_only)
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            shortcut = QShortcut(QKeySequence(keys), edit)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(self.apply)
+        edit.setToolTip("Leaving the box or Ctrl+Enter applies it")
+        return edit
+
     def _points_editor(self, points, field: str = "points") -> QWidget:
         edit = QPlainTextEdit("\n".join(f"{_format(x)}, {_format(y)}" for x, y in points))
         edit.setFixedHeight(110)
-        edit.setTabChangesFocus(True)  # Tab moves on; leaving applies it
+        self._multiline(edit)
 
         def read():
             rows = [line.split(",") for line in edit.toPlainText().splitlines() if line.strip()]
@@ -528,7 +747,7 @@ class PropertyEditor(QScrollArea):
     def _mapping_editor(self, mapping: dict[str, str]) -> QWidget:
         edit = QPlainTextEdit("\n".join(f"{a} -> {b}" for a, b in mapping.items()))
         edit.setFixedHeight(80)
-        edit.setTabChangesFocus(True)  # Tab moves on; leaving applies it
+        self._multiline(edit)
 
         def read():
             result = {}
@@ -590,21 +809,36 @@ class PropertyEditor(QScrollArea):
                     for bound in ("le", "lt"):
                         if getattr(limit, bound, None) is not None:
                             widget.maximum = getattr(limit, bound)
-            label = info.description or field
+            widget.setMinimumWidth(PARAMETER_FIELD_MIN_PX)
             if field in component.internal:
-                label = f"{field} (internal)"
+                label = _label(f"{field} (internal)")
                 widget.setProperty("invalid", True)
-                widget.setToolTip(
+                internal = (
                     f"'{field}' is internal to {node.component}: clear it (it cannot be set here)"
                 )
-            form.addRow(_label(label), widget)
+                if isinstance(widget, ValueEdit):
+                    widget.set_help(internal)
+                else:
+                    widget.setToolTip(internal)
+            elif info.description:
+                # Its description as the label ("Moving fingers"), the name as
+                # expressions write it in the tooltip (#329).
+                label = _label_with_help(parameter_label(field, info.description), info.description)
+                label.setToolTip(f"{field}: {info.description}")
+                unit = re.search(r"\((µm|nm|mm|°)\)", info.description)
+                if unit and isinstance(widget, ValueEdit):  # "Hole pitch (µm)": in the field
+                    widget.set_unit(unit[1])
+            else:
+                label = _label(field)
+            form.addRow(label, widget)
 
         def read():
             values = {field: reader() for field, reader in readers.items()}
             return {field: value for field, value in values.items() if value is not None}
 
         self._editors["params"] = read
-        box.setVisible(bool(shown))  # e.g. an imported cell has no parameters
+        if not shown:  # e.g. an imported cell has no parameters
+            box.hide()  # (showing it here, before it has a parent, would open it as a window)
         return box
 
     def _align_editor(self, node: Shape, path: NodePath) -> QWidget:
@@ -641,9 +875,13 @@ class PropertyEditor(QScrollArea):
             )
             return button
 
+        # Point first, To second, or the other way round: nothing applies until To is chosen
+        # (applying before would find nothing to align to and untick the section, #288).
+        own.activated.connect(lambda _index: self.apply() if target.currentText().strip() else None)
+        own.setEnabled(editable)
         form.addRow(
             "Point",
-            _with_button(self._applies(own), picker("point", "Pick the point on the canvas")),
+            _with_button(own, picker("point", "Pick the point on the canvas")),
         )
         explain = (
             "Moves the shape so that its *Point* lands on *To* (another shape's point), "
@@ -667,7 +905,9 @@ class PropertyEditor(QScrollArea):
         line.setSpacing(4)
         for field in ("dx", "dy"):
             value = getattr(align, field) if align else 0.0
-            line.addWidget(self._value_editor(f"align:{field}", value, prefix=field[1]), 1)
+            offset = self._value_editor(f"align:{field}", value, prefix=field[1])
+            offset.set_unit("µm")
+            line.addWidget(offset, 1)
             offsets[field] = self._editors.pop(f"align:{field}")
         form.addRow("Offset", row)
 
@@ -686,8 +926,8 @@ class PropertyEditor(QScrollArea):
         self._editors["align"] = read
         return box
 
-    def _modifiers_editor(self, node: Shape, path: NodePath, with_apply: bool) -> QWidget:
-        """The modifier stack: one card each, then "Add modifier" (and Apply, for the form)."""
+    def _modifiers_editor(self, node: Shape, path: NodePath) -> QWidget:
+        """The modifier stack: one card each, then "Add modifier"."""
         box = _section("Modifiers", node.kind)
         column = QVBoxLayout(box)
         column.setContentsMargins(0, 6, 0, 4)
@@ -717,15 +957,6 @@ class PropertyEditor(QScrollArea):
         row = QHBoxLayout()
         row.addWidget(add)
         row.addStretch()
-        self.apply_button = None
-        if with_apply:
-            apply = QPushButton("Apply")
-            apply.setDefault(True)
-            apply.setToolTip("Apply the changed fields (Enter in a field does too)")
-            apply.clicked.connect(self.apply)
-            apply.setEnabled(not read_only)
-            row.addWidget(apply)
-            self.apply_button = apply
         column.addLayout(row)
         self._editors["modifiers"] = lambda: [read() for read in readers]
         return box
@@ -816,20 +1047,38 @@ class PropertyEditor(QScrollArea):
             k[len(key) :]: self._editors.pop(k) for k in list(self._editors) if k.startswith(key)
         }
         layout.addLayout(form)
+        if kind == "perforate":  # an even rim places the holes itself
+
+            def update_rim(*_) -> None:
+                even = widgets["even_rim"].isChecked()
+                for field in ("margin", "x", "y"):
+                    _set_active(form, widgets[field], not even)
+
+            widgets["even_rim"].toggled.connect(update_rim)
+            update_rim()
+            hint = self._release_hint(modifier)
+            if hint:  # webs too wide to release in this process (#301)
+                note = QLabel(hint)
+                note.setObjectName("warning-note")
+                note.setWordWrap(True)
+                layout.addWidget(note)
         if kind == "mirror":  # a line or point given by "about" replaces axis, x and y
             about = widgets["about"].findChild(QComboBox) or widgets["about"]
+            axis = widgets["axis"]
 
-            def update_axis(text: str) -> None:
-                for field in ("axis", "x", "y"):
-                    widget = widgets[field]
-                    row = widget if form.labelForField(widget) else widget.parentWidget()
-                    row.setEnabled(not text.strip())
-                    label = form.labelForField(row)
-                    if label is not None:
-                        label.setEnabled(not text.strip())
+            def update_axis(*_) -> None:
+                free = not about.currentText().strip()
+                lines = {"x": ("x",), "y": ("y",), "both": ("x", "y")}[axis.currentData() or "x"]
+                for field, on in (
+                    ("axis", free),
+                    ("x", free and "x" in lines),  # the line at x only mirrors across x
+                    ("y", free and "y" in lines),
+                ):
+                    _set_active(form, widgets[field], on)
 
             about.currentTextChanged.connect(update_axis)
-            update_axis(about.currentText())
+            axis.currentIndexChanged.connect(update_axis)
+            update_axis()
 
         def read() -> dict:
             return {"kind": kind, "enabled": modifier.enabled} | {
@@ -837,6 +1086,33 @@ class PropertyEditor(QScrollArea):
             }
 
         return card, read
+
+    def _release_hint(self, modifier) -> str:
+        """Why a perforation's webs do not release, if the process has a release
+        rule and they are wider than twice its undercut; empty otherwise."""
+        process = self.document.project.process
+        try:
+            constants = process.scope()
+            undercuts = [
+                _evaluate_in(rule.values.get("undercut"), constants)
+                for rule in process.rules_of("release")
+            ]
+            scope = {**constants, **self._scope}
+            pitch = _evaluate_in(modifier.pitch, scope)
+            hole = _evaluate_in(modifier.hole_size, scope)
+        except Exception:  # noqa: BLE001 - not worked out: no hint
+            return ""
+        undercuts = [u for u in undercuts if u is not None]
+        if not undercuts or pitch is None or hole is None or modifier.even_rim:
+            return ""
+        limit = 2 * min(undercuts)
+        web = pitch - hole
+        if web <= limit + 1e-9:
+            return ""
+        return (
+            f"The webs are {web:g} µm wide, more than {limit:g} µm (2 × the process's "
+            f"undercut): they will not release. Make pitch − hole size at most {limit:g} µm."
+        )
 
     def _corners_editor(
         self, key: str, modifier: CornersModifier, path: NodePath, read_only: bool
@@ -858,6 +1134,7 @@ class PropertyEditor(QScrollArea):
             reader = self._editors.pop(f"{key}corner{index}")
             style = _combo()
             style.addItems(["round", "chamfer"])
+            style.setMinimumWidth(CORNER_STYLE_MIN_PX)  # "round" in full, not "roı" (#318)
             style.setCurrentText(corner.style)
             style.setEnabled(not read_only)
             style.activated.connect(lambda _=0: self.apply())
@@ -888,7 +1165,7 @@ class PropertyEditor(QScrollArea):
             rows.addWidget(none)
         pick = QToolButton()
         pick.setText("Pick on the canvas")
-        icons.bind(pick, "fillet")
+        icons.bind(pick, "pick_corner")
         pick.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         pick.setToolTip("The Corners tool (O): click a corner to round it, drag to set its radius")
         pick.setEnabled(not read_only)
@@ -899,8 +1176,9 @@ class PropertyEditor(QScrollArea):
 
     def _about_editor(self, key: str, value: str | None, path: NodePath) -> QWidget:
         """Where a mirror mirrors: nothing (use the axis), a guide, or a point."""
-        combo = _combo()
-        combo.setEditable(True)
+        combo = _editable(
+            _combo(), "A guide's name (mirror across it), or a point (mirror through it)"
+        )
         combo.addItem("")
         guides = [name for p, name, *_ in self.document.results.guides() if p != path]
         combo.addItems(guides)
@@ -909,7 +1187,6 @@ class PropertyEditor(QScrollArea):
         combo.setCurrentText(value or "")
         self._applies(combo)
         combo.lineEdit().setPlaceholderText("the axis below")
-        combo.setToolTip("A guide's name (mirror across it), or a point (mirror through it)")
         self._editors[key] = lambda: combo.currentText().strip() or None
         return combo
 
@@ -924,6 +1201,7 @@ class PropertyEditor(QScrollArea):
     def _show_interface(self) -> None:
         """What a component offers whoever places it, as text: its description,
         public parameters and declared points (for one that cannot be edited)."""
+        self._editors = {}  # the fields shown before are gone
         self.header_context.setText("")
         name = self.document.active
         definition = self.document.definition_of(name)
@@ -970,9 +1248,7 @@ class PropertyEditor(QScrollArea):
         title.addWidget(HelpButton(explain))
         layout.addLayout(title)
         if definition.description:
-            about = QLabel(definition.description)
-            about.setWordWrap(True)
-            layout.addWidget(about)
+            layout.addWidget(widgets.markdown_label(definition.description))
         parameters = [p for p in definition.parameters if not p.internal]
         box = _section("Parameters")
         form = _form(box)
@@ -1003,19 +1279,43 @@ class PropertyEditor(QScrollArea):
         layout.addStretch()
         self._show(body)
 
-    def _show(self, content: QWidget) -> None:
+    def _show(self, content: QWidget, keep_scroll: bool = False) -> bool:
         """Replace the panel's content. The old content is deleted later, not now: the
         change may come from one of its own fields or buttons (Enter in a field,
-        the eye), which Qt is still delivering an event to."""
+        the eye), which Qt is still delivering an event to. ``keep_scroll``: the
+        new content is scrolled as the old was (the same node, built again).
+        False: the panel was built again meanwhile, and ``content`` was not kept."""
+        bar = self.verticalScrollBar()
+        scrolled = bar.value() if keep_scroll else 0
+        if not keep_scroll:
+            self._shown = None
+        self._shows += 1
+        shows = self._shows
         old = self.takeWidget()
         if old is not None:
             old.hide()
             old.deleteLater()
+        if self._shows != shows:
+            # Hiding the old content took the focus from one of its fields, which
+            # applied itself and built the panel again: that content is newer, and
+            # the panel's fields (name_edit, the eye…) are its own. Keep it.
+            content.deleteLater()
+            return False
         self.setWidget(content)
+        if not scrolled:
+            bar.setValue(0)  # another node: from its top
+        if scrolled:
+            content.adjustSize()  # its height now, so the scroll bar can reach as far
+            bar.setValue(scrolled)
+            QTimer.singleShot(  # once laid out, unless replaced meanwhile
+                0, lambda: bar.setValue(scrolled) if self.widget() is content else None
+            )
+        return True
 
     def _show_component(self) -> None:
         """Nothing selected: the open component's own settings (its description),
         when it is one of the project's, then how to see a shape's."""
+        self._editors = {}  # the fields shown before are gone
         name = self.document.active
         if self.document.read_only or name not in self.document.project.components:
             self._show_placeholder("Select a shape to edit its properties.")
@@ -1038,12 +1338,13 @@ class PropertyEditor(QScrollArea):
         layout.addSpacing(4)
         part = _section("Component", "component")
         form = _form(part)
-        description = QLineEdit(definition.description)
+        description = widgets.DescriptionEdit(definition.description)
         description.setObjectName("component-description")
         description.setPlaceholderText("What it is, shown when placing it")
         description.setToolTip(
             "A sentence or two on what the component is: the Place popup and Search "
-            "Everywhere show it"
+            "Everywhere show it. `code` and *emphasis* are shown as such. Leaving the "
+            "box or Ctrl+Enter applies it"
         )
 
         def describe() -> None:
@@ -1058,17 +1359,25 @@ class PropertyEditor(QScrollArea):
         description.editingFinished.connect(describe)
         form.addRow("Description", description)
         layout.addWidget(part)
-        hint = QLabel("Select a shape to edit its properties.")
+        # An empty component: how to start, not which shape to select (#329).
+        hint = QLabel(
+            "Select a shape to edit its properties."
+            if definition.shapes
+            else "Draw a shape (Rectangle B, Circle C, Path W) or place a component "
+            "(Shift+A) to start."
+        )
+        hint.setWordWrap(True)
         hint.setObjectName("muted")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setContentsMargins(0, 12, 0, 0)
         layout.addWidget(hint)
         layout.addStretch(1)
         self.description_edit = description
-        self._show(body)
-        self.header_context.setText("Component")
+        if self._show(body):
+            self.header_context.setText("Component")
 
     def _show_placeholder(self, text: str) -> None:
+        self._editors = {}  # the fields shown before are gone
         self.header_context.setText("")
         body = QWidget()
         body.setObjectName("properties-body")  # the island's colour, as with a shape shown
@@ -1119,24 +1428,31 @@ class PropertyEditor(QScrollArea):
         # again once applied, and the focus goes back to the same place.
         fields = _focusable(body)
         at = fields.index(new) if new in fields else None
+        left = fields.index(old) if old in fields else None  # the field that was edited
         try:
             node = self._collect()
         except Exception as exc:  # noqa: BLE001 - reported, as Enter would
-            self.error.emit(_message(exc))
-            QTimer.singleShot(0, lambda: self._rejected(path, at))
+            if _gone(exc):
+                return
+            message = _message(exc)
+            self.error.emit(message)
+            QTimer.singleShot(0, lambda: self._rejected(path, at, left, message))
             return
         with contextlib.suppress(KeyError):
             if node == self.document.node(path):
                 return
         # After the focus has moved, not inside the focus change being delivered.
-        QTimer.singleShot(0, lambda: self._apply_left(path, node, at))
+        QTimer.singleShot(0, lambda: self._apply_left(path, node, at, left))
 
-    def _apply_left(self, path: NodePath, node: Shape, at: int | None) -> None:
+    def _apply_left(self, path: NodePath, node: Shape, at: int | None, left: int | None) -> None:
         try:
             self.document.nodes.replace(path, node)
         except Exception as exc:  # noqa: BLE001 - reported to the user
-            self.error.emit(_message(exc))
-            self._rejected(path, at)
+            if _gone(exc):
+                return
+            message = _message(exc)
+            self.error.emit(message)
+            self._rejected(path, at, left, message)
             return
         self.applied.emit()
         self._focus_field(path, at)
@@ -1152,19 +1468,48 @@ class PropertyEditor(QScrollArea):
         try:
             self.document.nodes.replace(path, self._collect())
         except Exception as exc:  # noqa: BLE001 - reported to the user
-            self.error.emit(_message(exc))
-            self._rejected(path, at)
+            if _gone(exc):
+                return
+            message = _message(exc)
+            self.error.emit(message)
+            self._rejected(path, at, at, message)
             return
         self.applied.emit()
         self._focus_field(path, at)
 
-    def _rejected(self, path: NodePath, at: int | None) -> None:
-        """A value was refused: show the node as it is (the value stored, not the
-        one typed), so the refused text cannot block the next edit."""
+    def _rejected(
+        self, path: NodePath, at: int | None, culprit: int | None = None, message: str = ""
+    ) -> None:
+        """A value was refused: show the node as it is (the value stored), and mark
+        the field it was typed in (field number ``culprit``) with why. If that field
+        still has the focus, the refused text stays in it to be corrected; Esc or
+        leaving it puts the stored value back, so it cannot block the next edit."""
         if self.path != path:
             return
+        body = self.widget()
+        fields = _focusable(body) if body is not None else []
+        typed = (
+            fields[culprit].text()
+            if culprit is not None
+            and culprit < len(fields)
+            and isinstance(fields[culprit], ValueEdit)
+            else None
+        )
         self.show_node(path)
         self._focus_field(path, at)
+        body = self.widget()
+        fields = _focusable(body) if body is not None else []
+        if culprit is not None and culprit < len(fields) and message:
+            field = fields[culprit]
+            if isinstance(field, ValueEdit) and typed is not None and culprit == at:
+                field.reject(typed)  # still being edited: keep the text (first: it re-checks)
+            field.setProperty("invalid", True)
+            if isinstance(field, ValueEdit):
+                field.set_help(f"Not applied: {message}")
+            else:
+                field.setToolTip(f"Not applied: {message}")
+            field.style().unpolish(field)
+            field.style().polish(field)
 
     def _focus_field(self, path: NodePath, at: int | None) -> None:
         """Put the focus on the form's field number ``at`` (the form was built again)."""
@@ -1213,6 +1558,7 @@ def _focusable(body: QWidget) -> list[QWidget]:
 
 
 COMBO_MIN_PX = 64  # the narrowest a list of the form gets
+CORNER_STYLE_MIN_PX = 88  # a corner's round/chamfer list
 
 
 def _combo() -> QComboBox:
@@ -1223,6 +1569,32 @@ def _combo() -> QComboBox:
     combo.setMinimumContentsLength(4)
     combo.setMinimumWidth(COMBO_MIN_PX)  # below its hint, which counts the placeholder too
     combo.view().setTextElideMode(Qt.TextElideMode.ElideNone)
+    return combo
+
+
+class _StartEdit(QLineEdit):
+    """An editable list's text: when not being edited it shows its start (the
+    shape of a point reference, not the middle of it, #227)."""
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.setCursorPosition(0)
+
+
+def _editable(combo: QComboBox, tip: str = "") -> QComboBox:
+    """Let ``combo`` take typed text, shown from its start; its tooltip has all of
+    the text, then ``tip``."""
+    edit = _StartEdit()
+    combo.setEditable(True)
+    combo.setLineEdit(edit)
+
+    def changed(text: str) -> None:
+        if not edit.hasFocus():
+            edit.setCursorPosition(0)
+        combo.setToolTip("\n".join(t for t in (text, tip) if t))
+
+    combo.currentTextChanged.connect(changed)
+    changed(combo.currentText())
     return combo
 
 
@@ -1312,7 +1684,7 @@ class Section(QGroupBox):
 
     def _show_toggle(self) -> None:
         icons.bind(self._toggle, "down" if self._collapsed else "up")
-        self._toggle.setToolTip("Show this section" if self._collapsed else "Fold this section")
+        self._toggle.setToolTip(f"{'Show' if self._collapsed else 'Fold'} {self._title}")  # #328
 
     def showEvent(self, event) -> None:
         if not self._restored:  # its contents are made by now
@@ -1381,13 +1753,16 @@ def _form(parent: QWidget | None = None) -> QFormLayout:
 
 def _numeric(model, pair) -> bool:
     """Both fields of a pair hold values (not e.g. a mirror's axis letter)."""
-    return all(isinstance(getattr(model, f), float | int | str) for f in pair) and not any(
+    return all(isinstance(getattr(model, f), float | int | str | None) for f in pair) and not any(
         f == "axis" for f in pair
     )
 
 
 def _format(value) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
+
+
+DEFAULT_LEVEL = "its default level"  # a placement's level left unset
 
 
 def layer_choices(levels) -> list[str]:
@@ -1409,9 +1784,40 @@ def _limit(limit, relation: str, values: dict[str, float]) -> str:
     return text
 
 
+def _evaluate_in(value, scope: dict) -> float | None:
+    """A number, or an expression worked out in ``scope``; None for nothing."""
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    from mems_sketch.core.expressions import evaluate
+
+    return float(evaluate(str(value), scope))
+
+
+def _gone(exc: Exception) -> bool:
+    """Whether ``exc`` says a field of a form built again meanwhile is gone (#292):
+    nothing the user did wrong, and the new form shows the node as it is."""
+    return isinstance(exc, RuntimeError) and "already deleted" in str(exc)
+
+
 def _message(exc: Exception) -> str:
     """A readable message; validation errors list each field with its problem."""
     return explain(exc)
+
+
+def _set_active(form: QFormLayout, widget: QWidget, on: bool) -> None:
+    """Enable or grey out a field that does nothing as the others are set (its label
+    too, when it has a row of its own; one of a pair greys out alone)."""
+    widget.setEnabled(on)
+    label = form.labelForField(widget)
+    if label is not None:
+        label.setEnabled(on)
+        return
+    row = widget.parentWidget()
+    if row is not None and form.labelForField(row) is not None:
+        siblings = [w for w in row.findChildren(QWidget) if isinstance(w, ValueEdit)]
+        form.labelForField(row).setEnabled(any(w.isEnabled() for w in siblings))
 
 
 def _with_button(widget: QWidget, button: QToolButton) -> QWidget:
@@ -1425,7 +1831,8 @@ def _with_button(widget: QWidget, button: QToolButton) -> QWidget:
     return row
 
 
-LINE_UP_MAX_PX = 110  # the widest the labels of a form are made to line up to
+LINE_UP_MAX_PX = 110  # the labels' column: one width for every kind of shape (#316)
+PARAMETER_FIELD_MIN_PX = 60  # a placed component's parameter field never narrower
 
 
 def _line_up(body: QWidget) -> None:
@@ -1438,12 +1845,56 @@ def _line_up(body: QWidget) -> None:
         for row in range(form.rowCount())
         if (item := form.itemAt(row, QFormLayout.ItemRole.LabelRole)) and item.widget()
     ]
-    if labels:
-        # Up to a point: one very long label ("Initial finger overlap") would
-        # otherwise narrow every field of the form.
-        width = min(max(label.sizeHint().width() for label in labels), LINE_UP_MAX_PX)
-        for label in labels:
-            label.setMinimumWidth(width)
+    # One width, whatever is shown: the fields start at the same place for a
+    # rectangle and a path, so they do not jump when the selection changes. A
+    # longer label ("Initial finger overlap") takes what it needs.
+    for label in labels:
+        label.setMinimumWidth(LINE_UP_MAX_PX)
+    for form in forms:  # each field named after its label, for screen readers (#323)
+        for row in range(form.rowCount()):
+            label = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            field = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+            if label is None or field is None or label.widget() is None:
+                continue
+            text = _label_text(label.widget())
+            target = field.widget() or (field.layout() and field.layout().itemAt(0).widget())
+            if not text or target is None:
+                continue
+            editors = [
+                w
+                for w in [target, *target.findChildren(QWidget)]
+                if w.focusPolicy() != Qt.FocusPolicy.NoFocus and not isinstance(w, QToolButton)
+            ]
+            for index, editor in enumerate(editors[:2]):  # a pair: "Position x", "Position y"
+                suffix = (
+                    f" {getattr(editor, 'prefix', '') or ''}".rstrip() if len(editors) > 1 else ""
+                )
+                editor.setAccessibleName(f"{text}{suffix}")
+                helper = label.widget().findChild(HelpButton)
+                if helper is not None:
+                    editor.setAccessibleDescription(helper.text_)
+            # (no label.setBuddy: it crashed when the panel's content was replaced)
+
+
+def _label_text(widget: QWidget) -> str:
+    """A label's words: the text of a label, or of the label in a label-with-help."""
+    label = widget if isinstance(widget, QLabel) else widget.findChild(QLabel)
+    if label is None:
+        return ""
+    return re.sub(r"<[^>]+>", "", label.text()).replace("&", "").strip()
+
+
+PARAMETER_LABEL_MAX = 32  # characters: a longer description is not a label
+
+
+def parameter_label(name: str, description: str) -> str:
+    """A placed component's parameter as Properties labels it: the start of its
+    description, up to a colon or semicolon, without its unit ("Initial finger
+    overlap" for ``overlap``), when that is a short phrase; else its name (#329)."""
+    short = re.split(r"[:;]", description, maxsplit=1)[0]
+    short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()  # the unit is in the field
+    words = re.search(r"[^\W\d_]{2}", short)
+    return short if words and len(short) <= PARAMETER_LABEL_MAX else name
 
 
 def _label_with_help(text: str, help_text: str) -> QWidget:
@@ -1454,6 +1905,8 @@ def _label_with_help(text: str, help_text: str) -> QWidget:
     line.setContentsMargins(0, 0, 0, 0)
     line.setSpacing(2)
     line.addWidget(_label(text))
-    line.addWidget(HelpButton(help_text))
+    help_button = HelpButton(help_text)
+    help_button.setAccessibleName(f"Help: {re.sub(r'<[^>]+>', '', text)}")
+    line.addWidget(help_button)
     line.addStretch(1)
     return row

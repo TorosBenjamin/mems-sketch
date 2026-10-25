@@ -5,14 +5,16 @@ description: >-
   so it stays linear over large travel. Sideways (x) the inner and outer
   pairs are in series: 2 E t w³ / (L³ + Lo³) (`stiffness`), L the inner
   beams' length and Lo the outer ones'. Point: attach, the middle of the
-  shuttle bar's bottom edge.
+  shuttle bar's bottom edge. Port: anchor, at the anchor, which the beams and
+  the shuttle bar box in on its own level: reach it with a route on the level
+  below (`wiring` in `mems.surface`, `poly0` in `mems.polysilicon`).
 tags: [spring, folded flexure, folded beam, suspension, resonator, flexure]
 parameters:
   length: {default: 100, min: 0, min_exclusive: true, description: "Inner beam length, L (µm)"}
   beam_width: {default: 2, min: 0, min_exclusive: true, description: "Beam width, w (µm)"}
   gap: {default: 4, min: 0, min_exclusive: true, description: "Between neighbouring beams, and between the anchor and the shuttle bar (µm)"}
   truss: {default: 3, min: 0, min_exclusive: true, description: Width of the truss and of the shuttle bar (µm)}
-  anchor_size: {default: 20, min: "max(4, 2 * beam_width)", min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure"}
+  anchor_size: {default: 20, min: "max(4, 2 * beam_width)", min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure, and more than 4 plus twice the process's undercut or the etch frees it"}
   youngs_modulus: {default: 160, min: 0, min_exclusive: true, description: "Young's modulus of the structural layer, E (GPa; 160 for polysilicon)"}
   thickness: {default: 2, min: 0, min_exclusive: true, description: "Thickness of the structural layer, t (µm)"}
   inner_x: {default: anchor_size / 2 - beam_width / 2, internal: true, description: Centre of the inner beams (µm)}
@@ -26,6 +28,12 @@ parameters:
     description: "Sideways stiffness at the shuttle bar (N/m)"
 points:
   attach: {y: bottom - truss}
+ports:
+  anchor:
+    at: pad.center
+    direction: down
+    width: anchor_size / 2
+    description: The anchor, to reach with a route on the level below (wiring)
 shapes:
   pad: {ref: anchor, size: anchor_size}
   inner_beams:

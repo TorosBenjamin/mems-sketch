@@ -1,8 +1,8 @@
-"""Importing layouts: one cell of a GDS or OASIS file, or the geometry in a
+"""Importing layouts: one cell of a GDS file, or the geometry in a
 geometry document (.json, .xml, .mat: see :mod:`mems_sketch.storage.document`),
 as a read-only component (see :mod:`mems_sketch.core.imports`).
 
-A geometry document is kept as an OASIS file with one cell, ``TOP``, and its
+A geometry document is kept as a GDS file with one cell, ``TOP``, and its
 layers' names and GDS numbers; a newer version of the document re-imports
 like a newer GDS file."""
 

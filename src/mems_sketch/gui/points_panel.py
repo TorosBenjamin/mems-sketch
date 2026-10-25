@@ -22,19 +22,20 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QStyledItemDelegate,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from mems_sketch.core.shapes import BBOX_POINTS
+from mems_sketch.core.shapes import BBOX_POINTS, walk
 from mems_sketch.core.user_component import DIRECTIONS
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import _Panel
-from mems_sketch.gui.value_edit import ValueEdit
+from mems_sketch.gui.value_edit import ValueEdit, ask_parameter_name
 
 # ("declared", name) / ("port", name) / ("default", name) / (shape, name)
 KEY_ROLE = Qt.ItemDataRole.UserRole + 20
@@ -64,6 +65,13 @@ HINT_HEIGHT_PX = 32  # the form's place while no point is chosen
 QWIDGETSIZE_MAX = (1 << 24) - 1
 
 
+class _NoEditor(QStyledItemDelegate):
+    """A column shown, not edited in place."""
+
+    def createEditor(self, parent, option, index):
+        return None
+
+
 class PointsPanel(_Panel):
     """See the module docstring."""
 
@@ -82,6 +90,9 @@ class PointsPanel(_Panel):
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
         )
+        # Only the name is edited in the list; a position is set in the form below,
+        # so its cell opens no editor that would drop what is typed (#297).
+        self.tree.setItemDelegateForColumn(1, _NoEditor(self.tree))
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemEntered.connect(lambda item, _: self.hovered.emit(self._marker(item)))
@@ -158,15 +169,20 @@ class PointsPanel(_Panel):
                 f"{built.angle:g}°, {built.width:g} µm wide, on {built.layer}" if built else "error"
             )
             item.setToolTip(0, f"{port.description}\nPort: {how}; double-click to rename".strip())
-        groups = [("default", "Default", "Every component has these: of the box around it")]
+        groups = [("default", "Its box", "Every component has these: of the box around it")]
         groups += [(name, name, f"The points of shape {name}") for name in shapes]
         opened = self._expanded.setdefault(self.document.active, set())
+        kinds = {  # each shape's own icon, as in the Shapes panel (#317)
+            node.name: node.icon_name() for node in walk(self.document.shapes) if node.name
+        }
         for group, title, tip in groups:
             holder = QTreeWidgetItem(self.tree, [title])
             holder.setData(0, GROUP_ROLE, group)
             holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
             holder.setToolTip(0, tip)
-            holder.setIcon(0, icons.icon("shapes" if group != "default" else "component"))
+            holder.setIcon(
+                0, icons.icon(kinds.get(group, "shapes") if group != "default" else "component")
+            )
             points = defaults if group == "default" else shapes[group]
             for name, xy in points.items():
                 self._item(holder, (group, name), xy).setForeground(0, QBrush(theme.color("muted")))
@@ -264,6 +280,7 @@ class PointsPanel(_Panel):
         names = []
         if self._guard(lambda: names.append(self.document.ports.add(at=reference(key), name=name))):
             self.select(("port", names[0]))
+            self.rename(("port", names[0]))  # the name is offered, as for a point (#297)
 
     def name_point(self, key: Key) -> None:
         """Re-export a default or shape point: declare one right there, measured from
@@ -398,7 +415,7 @@ class PointsPanel(_Panel):
         parameters = [p.name for p in self.document.active_definition.parameters]
         x = ValueEdit(point.x, scope, parameters, prefix="x")
         y = ValueEdit(point.y, scope, parameters, prefix="y")
-        description = QLineEdit(point.description)
+        description = widgets.DescriptionEdit(point.description)
         description.setPlaceholderText("What it is for")
 
         def apply(*_) -> None:
@@ -419,6 +436,7 @@ class PointsPanel(_Panel):
         for edit in (x, y):
             edit.returnPressed.connect(apply)
             edit.scrub_finished.connect(apply)
+            self._offer_parameters(edit, f"{name}_{edit.prefix}", apply)
         description.editingFinished.connect(apply)
         layout.addRow("At", at)
         layout.addRow("X", x)
@@ -426,6 +444,23 @@ class PointsPanel(_Panel):
         layout.addRow("Description", description)
         layout.addRow("Position", QLabel(_position(self._positions.get(("declared", name)))))
         self.at_edit, self.x_edit, self.y_edit = at, x, y
+
+    def _offer_parameters(self, edit: ValueEdit, suggestion: str, apply) -> None:
+        """The field's "Make a parameter from this value": the parameter is made with
+        the value as its default, then the field uses it."""
+
+        def make(value) -> None:
+            taken = {p.name for p in self.document.active_definition.parameters}
+            try:
+                name = ask_parameter_name(self, self.document.active, taken, value, suggestion)
+            except ValueError as exc:
+                self.error.emit(str(exc))
+                return
+            if name is not None and self._guard(lambda: self.document.parameters.set(name, value)):
+                edit.setText(name)
+                apply()
+
+        edit.make_parameter.connect(make)
 
     def _port_form(self, layout: QFormLayout, name: str) -> None:
         port = next(p for p in self.document.active_definition.ports if p.name == name)
@@ -467,7 +502,7 @@ class PointsPanel(_Panel):
         )
         layer.setCurrentText(port.layer or "")
         layer.setToolTip("The layer the wire runs on, like a shape's. Empty: inherited, else level")
-        description = QLineEdit(port.description)
+        description = widgets.DescriptionEdit(port.description)
         description.setPlaceholderText("What it is for")
 
         def number_or_text(text: str):
@@ -504,6 +539,7 @@ class PointsPanel(_Panel):
         for edit in (x, y):
             edit.returnPressed.connect(apply)
             edit.scrub_finished.connect(apply)
+            self._offer_parameters(edit, f"{name}_{edit.prefix}", apply)
         width.editingFinished.connect(apply)
         description.editingFinished.connect(apply)
         layout.addRow("At", at)

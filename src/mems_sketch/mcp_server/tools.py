@@ -21,7 +21,7 @@ from mems_sketch.core.shapes.registry import kind_class
 from mems_sketch.core.user_component import ComponentDef, PointDef
 from mems_sketch.editing import EditSession
 from mems_sketch.engine import Build
-from mems_sketch.export.base import export_with_report
+from mems_sketch.export.base import cell_name_notes, export_with_report
 from mems_sketch.mcp_server import kinds, reference
 from mems_sketch.process import rules
 from mems_sketch.storage import yaml_format
@@ -225,9 +225,21 @@ class DesignTools:
         """Place another component (``mems.comb_drive``, a project component)."""
         if not self.session.exists(place):
             raise ValueError(f"there is no component '{place}': see list_components")
+        into = self._component(component)
+        roles = (
+            f"`place` is the component to place ('{place}'), `component` the one to place "
+            f"it in ('{into}'), `name` the new shape's name ('{name}')"
+        )
+        if place == into:  # the arguments mixed up, most likely (#311)
+            raise ValueError(f"'{place}' cannot be placed inside itself: {roles}")
         shape = {"ref": place, **(params or {}), "x": x, "y": y, "rotation": rotation}
-        self.add_shape(component, name, shape)
-        return f"placed {place} as {name}"
+        try:
+            self.add_shape(component, name, shape)
+        except Exception as error:
+            if "circular" in str(error).lower():
+                raise ValueError(f"{error}: {roles}") from error
+            raise
+        return f"placed {place} as {name} in {into}"
 
     def new_component(self, name: str, description: str = "") -> str:
         """A new, empty component, made the one edited."""
@@ -295,6 +307,8 @@ class DesignTools:
         project = self.session.project
         geometry = rules.checked_geometry(project, name, params or {})
         violations = rules.check(project, geometry, name)
+        records = rules.records_of(project, name, params or {})
+        violations = rules.name_shapes(violations, project, name, records)
         return {
             "component": name,
             "errors": len(rules.errors(violations)),
@@ -316,18 +330,26 @@ class DesignTools:
         options: dict[str, Any] | None = None,
     ) -> str:
         """Write a component to GDS, OASIS, DXF (or JSON, XML, MAT): by the file's
-        extension unless ``format`` is given."""
+        extension unless ``format`` is given. A relative path is in the project's
+        folder (the working directory before it is saved)."""
         name = self._component(component)
-        written, output = export_with_report(
-            self.session.project,
-            Path(path),
-            format_name=format,
-            component=name,
-            params=params or {},
-            options=options,
-        )
-        note = output.describe() if output is not None and hasattr(output, "describe") else ""
-        return f"wrote {written}" + (f" ({note})" if note else "")
+        target = Path(path).expanduser()
+        if not target.is_absolute() and self.session.path is not None:
+            target = Path(self.session.path) / target
+        with cell_name_notes() as warned:
+            written, output = export_with_report(
+                self.session.project,
+                target.resolve(),
+                format_name=format,
+                component=name,
+                params=params or {},
+                options=options,
+            )
+        notes = output.describe() if output is not None and hasattr(output, "describe") else []
+        reply = f"wrote {written}"
+        if notes:
+            reply += "; snapping to the grid changed:\n" + "\n".join(f"- {n}" for n in notes)
+        return reply + "".join(f"\nwarning: {w}" for w in warned)
 
     # -- for rendering -------------------------------------------------------
 
@@ -418,6 +440,10 @@ def _violation(v) -> dict[str, Any]:
     }
     if v.bbox_um:
         entry["bbox_um"] = [_round(x) for x in v.bbox_um]
+    if v.shapes:
+        entry["shapes"] = list(v.shapes)
+    if v.measured is not None:
+        entry["measured_um"] = _round(v.measured)
     if v.waived:
         entry["waived"] = v.waived
     return entry

@@ -25,11 +25,23 @@ Sizes come from the theme's metrics (:func:`mems_sketch.gui.theme.metric`).
 from __future__ import annotations
 
 import html
+import re
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QModelIndex, QObject, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPalette
+from PySide6 import QtGui
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QModelIndex,
+    QObject,
+    QRect,
+    QSize,
+    Qt,
+    Signal,
+)
+from PySide6.QtGui import QColor, QFontMetrics, QKeySequence, QPainter, QPalette, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
     QApplication,
     QComboBox,
@@ -42,6 +54,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -96,13 +109,59 @@ def header_actions(*actions: Action) -> Actions:
     return Actions(actions)
 
 
+SCROLL_FADE_PX = 22  # the fade at the bottom of a panel with more below
+
+
+class ScrollFade(QWidget):
+    """A fade over the bottom edge of a scroll area while there is more below it:
+    the cue that the panel scrolls (#318). It takes no clicks."""
+
+    def __init__(self, area: QScrollArea, color_key: str = "island") -> None:
+        super().__init__(area)
+        self.area, self.color_key = area, color_key
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        bar = area.verticalScrollBar()
+        bar.valueChanged.connect(self.update_shown)
+        bar.rangeChanged.connect(self.update_shown)
+        area.installEventFilter(self)
+        self.update_shown()
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.LayoutRequest):
+            self.update_shown()
+        return False
+
+    def update_shown(self, *_) -> None:
+        bar = self.area.verticalScrollBar()
+        viewport = self.area.viewport().geometry()
+        height = min(SCROLL_FADE_PX, viewport.height() // 3)
+        self.setGeometry(viewport.left(), viewport.bottom() - height + 1, viewport.width(), height)
+        self.setVisible(bar.maximum() > 0 and bar.value() < bar.maximum())
+        self.raise_()
+
+    def paintEvent(self, event) -> None:
+        solid = QColor(theme.color(self.color_key))
+        clear = QColor(solid)
+        clear.setAlpha(0)
+        gradient = QtGui.QLinearGradient(0, 0, 0, self.height())
+        gradient.setColorAt(0, clear)
+        gradient.setColorAt(1, solid)
+        QPainter(self).fillRect(self.rect(), gradient)
+
+
 class ElidedLabel(QLabel):
     """One line of plain text, cut off with "…" (and shown whole as the tooltip)
-    when it does not fit."""
+    when it does not fit: at its end, or (``mode``) in the middle, for a path."""
 
-    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        text: str = "",
+        parent: QWidget | None = None,
+        mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
+    ) -> None:
         super().__init__(parent)
         self._text = ""
+        self._mode = mode
         self.setTextFormat(Qt.TextFormat.PlainText)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setText(text)
@@ -119,7 +178,9 @@ class ElidedLabel(QLabel):
         self._elide()
 
     def _elide(self) -> None:
-        shown = self.fontMetrics().elidedText(self._text, Qt.TextElideMode.ElideRight, self.width())
+        # The room inside its margins and padding: cut short of the edge, never at it.
+        room = self.contentsRect().width() - 2 * self.margin() - 2
+        shown = self.fontMetrics().elidedText(self._text, self._mode, max(room, 0))
         super().setText(shown)
         self.setToolTip(self._text if shown != self._text else "")
 
@@ -155,6 +216,48 @@ class _ElidedTooltip(QStyledItemDelegate):
                     QToolTip.showText(event.globalPos(), str(text), view)
                     return True
         return super().helpEvent(event, view, option, index)
+
+
+class IconAfterText(_ElidedTooltip):
+    """A column whose icon (a lock, say) follows the text, so that the text starts
+    at the column's edge like the other columns' (#254)."""
+
+    def initStyleOption(self, option, index) -> None:
+        super().initStyleOption(option, index)
+        option.decorationPosition = QStyleOptionViewItem.Position.Right
+
+
+TOOLTIP_CHARACTERS = 60  # a tooltip's lines wrap at about this many characters
+
+
+def wrapped_tooltip(text: str) -> str | None:
+    """``text`` as a tooltip that wraps (rich text, which Qt wraps at its width),
+    or None when it is short or already rich."""
+    if len(text) <= TOOLTIP_CHARACTERS or QtGui.Qt.mightBeRichText(text):
+        return None
+    lines = "<br>".join(html.escape(line) for line in text.split("\n"))
+    width = QFontMetrics(QToolTip.font()).averageCharWidth() * TOOLTIP_CHARACTERS
+    return f'<p style="white-space: pre-wrap" width="{width}">{lines}</p>'
+
+
+class WrappedTooltips(QObject):
+    """Installed on the application: a long plain tooltip, a widget's or a list
+    row's (a component's description), wraps at about ``TOOLTIP_CHARACTERS``
+    characters instead of running across the window (#233)."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() != QEvent.Type.ToolTip or not isinstance(watched, QWidget):
+            return False
+        text = watched.toolTip()
+        view = watched.parent()
+        if isinstance(view, QAbstractItemView) and watched is view.viewport():
+            index = view.indexAt(event.pos())
+            text = str(index.data(Qt.ItemDataRole.ToolTipRole) or "") if index.isValid() else ""
+        wrapped = wrapped_tooltip(text) if text else None
+        if wrapped is None:
+            return False
+        QToolTip.showText(event.globalPos(), wrapped, watched)
+        return True
 
 
 def tidy_header(header: QHeaderView, stretch: int) -> None:
@@ -488,6 +591,68 @@ class MenuTidier(QObject):
         return False
 
 
+class FocusRing(QObject):
+    """Installed on the application: a button, tick box or list reached with the
+    keyboard (Tab) gets the property ``keyfocus``, which the style sheet draws as
+    a ring (#323); a click does not, so the mouse leaves no rings behind."""
+
+    REASONS = (
+        Qt.FocusReason.TabFocusReason,
+        Qt.FocusReason.BacktabFocusReason,
+        Qt.FocusReason.ShortcutFocusReason,
+    )
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        kind = event.type()
+        if kind in (QEvent.Type.FocusIn, QEvent.Type.FocusOut) and isinstance(
+            watched, QAbstractButton | QAbstractItemView
+        ):
+            on = kind == QEvent.Type.FocusIn and event.reason() in self.REASONS
+            if bool(watched.property("keyfocus")) != on:
+                watched.setProperty("keyfocus", on)
+                watched.style().unpolish(watched)
+                watched.style().polish(watched)
+                watched.update()
+        return False
+
+
+class AccessibleNames(QObject):
+    """Installed on the application: a button without a name of its own (an icon
+    button) is named for screen readers after its tooltip, less the shortcut in
+    brackets, or its text (#323)."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() in (QEvent.Type.Polish, QEvent.Type.ToolTipChange) and isinstance(
+            watched, QAbstractButton
+        ):
+            given = watched.property("auto_name")
+            if not watched.accessibleName() or watched.accessibleName() == given:
+                text = watched.toolTip() or watched.text()
+                name = re.sub(r"\s*\([^()]*\)\s*$", "", re.sub(r"<[^>]+>", "", text))
+                name = name.replace("&", "").strip()
+                if name:
+                    watched.setAccessibleName(name)
+                    watched.setProperty("auto_name", name)
+        return False
+
+
+class TypeAhead(QObject):
+    """Installed on the application: a plain letter or digit typed in a list or a
+    tree goes to it (jump to the item starting with it), not to a window shortcut
+    such as the canvas tools' C or H (#322)."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            event.type() == QEvent.Type.ShortcutOverride
+            and isinstance(watched, QAbstractItemView)
+            and not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+            and len(event.text()) == 1
+            and event.text().isalnum()
+        ):
+            event.accept()
+        return False
+
+
 # -- qualified names ------------------------------------------------------------
 # A name from somewhere else is written with where it is from: ``std.perforated_plate``
 # (a library's component), ``base.top`` (a shape's point), ``device.anchor`` (a
@@ -651,3 +816,78 @@ class QualifiedCombo(QComboBox):
         group = QPalette.ColorGroup.Normal if self.isEnabled() else QPalette.ColorGroup.Disabled
         color = self.palette().color(group, QPalette.ColorRole.ButtonText)
         draw_qualified(painter, rect.adjusted(1, 0, 0, 0), text, color, theme.color("muted"))
+
+
+class DescriptionEdit(QPlainTextEdit):
+    """A description: a text box that wraps, grows with its text up to a few lines
+    and then scrolls. Enter is a new line; leaving it or Ctrl+Enter finishes it
+    (``editingFinished``, as a one-line field has)."""
+
+    editingFinished = Signal()
+
+    MIN_LINES, MAX_LINES = 2, 6
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setTabChangesFocus(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            shortcut = QShortcut(QKeySequence(keys), self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(self.editingFinished)
+        self.document().contentsChanged.connect(self._fit)
+        self._fit()
+
+    def text(self) -> str:
+        return self.toPlainText()
+
+    def setText(self, text: str) -> None:
+        self.setPlainText(text)
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.editingFinished.emit()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit()
+
+    def _fit(self) -> None:
+        """As tall as its lines (as wrapped now), between MIN_LINES and MAX_LINES."""
+        line = self.fontMetrics().lineSpacing()
+        layout = self.document().documentLayout()
+        lines = max(1, round(layout.documentSize().height()))  # lines, in a plain text edit
+        shown = min(max(lines, self.MIN_LINES), self.MAX_LINES)
+        margins = self.contentsMargins()
+        frame = 2 * self.document().documentMargin() + margins.top() + margins.bottom()
+        self.setFixedHeight(round(shown * line + frame))
+
+
+_CODE = re.compile(r"`([^`]+)`")
+_STRONG = re.compile(r"\*\*([^*]+)\*\*")
+_EMPHASIS = re.compile(r"(?<![\w*])\*([^*]+)\*(?![\w*])")
+
+
+def markdown_html(text: str) -> str:
+    """A description's markdown (code spans, **bold**, *emphasis*, paragraphs) as the
+    rich text labels and tooltips show: code in the monospace font. Rich text, so a
+    tooltip of it wraps instead of running across the window."""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
+    out = []
+    for paragraph in paragraphs:
+        escaped = html.escape(" ".join(paragraph.split()), quote=False)
+        escaped = _CODE.sub(r"<code>\1</code>", escaped)
+        escaped = _STRONG.sub(r"<b>\1</b>", escaped)
+        escaped = _EMPHASIS.sub(r"<i>\1</i>", escaped)
+        out.append(f"<p>{escaped}</p>")
+    return "<qt>" + "".join(out) + "</qt>"
+
+
+def markdown_label(text: str) -> QLabel:
+    """A label showing a description written in markdown (see :func:`markdown_html`)."""
+    label = QLabel(markdown_html(text))
+    label.setTextFormat(Qt.TextFormat.RichText)
+    label.setWordWrap(True)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    return label

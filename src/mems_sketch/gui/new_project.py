@@ -26,9 +26,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mems_sketch.core.project import new_project
 from mems_sketch.editing.components import library_name
 from mems_sketch.gui import icons, theme, widgets
-from mems_sketch.storage.project_files import PROJECT_FILE
+from mems_sketch.storage.project_files import PROJECT_FILE, load_library
 
 KINDS = {  # what the wizard makes: label, icon, what it is
     "project": ("Project", "folder", "A design with a top component, exported as a chip."),
@@ -49,6 +50,7 @@ class NewProjectDialog(QDialog):
         self.setWindowTitle("New Project")
         self.resize(720, 460)
         self.process_from: str | None = None
+        self._library_processes: dict[str, list[str]] = {}  # by library folder
 
         self.side = widgets.SideList([(icon, label) for label, icon, _about in KINDS.values()])
         self.kinds = self.side.list
@@ -77,16 +79,17 @@ class NewProjectDialog(QDialog):
         self.target.setWordWrap(True)
 
         self.process = QComboBox()
-        self.process.addItems([DEFAULT_PROCESS, COPY_PROCESS])
         self.process.activated.connect(self._process_chosen)
 
         self.libraries = QListWidget()
         self.libraries.setObjectName("library-list")
         self.libraries.setMinimumHeight(90)
         self.libraries.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.libraries.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.libraries.itemSelectionChanged.connect(self._validate)
         widgets.placeholder(
-            self.libraries, "No libraries of your own: the bundled ones (mems) are always there."
+            self.libraries,
+            "No libraries of your own yet. The bundled ones (mems) are always included.",
         )
         add = widgets.action_button(
             "plus",
@@ -141,6 +144,7 @@ class NewProjectDialog(QDialog):
         layout.addWidget(self.side)
         layout.addWidget(right, 1)
 
+        self._fill_processes()
         self._named_by_user = False
         self.kinds.setCurrentRow(1 if library else 0)
         self.name.setFocus()
@@ -165,6 +169,7 @@ class NewProjectDialog(QDialog):
             "library": self.making == "library",
             "libraries": [self.libraries.item(i).toolTip() for i in range(self.libraries.count())],
             "process_from": self.process_from,
+            "process": self.chosen_process(),
         }
 
     def problem(self) -> str | None:
@@ -222,9 +227,45 @@ class NewProjectDialog(QDialog):
         if folder:
             self.location.setText(folder)
 
+    # -- the process -----------------------------------------------------------
+    # Each entry's data: ("default", None), ("library", "mems.surface"),
+    # ("copy", None) to choose a project, or ("from", folder).
+
+    def chosen_process(self) -> str | None:
+        """The library's process chosen (``mems.surface``), if one is."""
+        kind, value = self.process.currentData() or ("default", None)
+        return value if kind == "library" else None
+
+    def _fill_processes(self) -> None:
+        """The default layers, every library's process (the bundled ones and those
+        of the libraries added), copying another project's, and the copy chosen."""
+        current = self.process.currentData()
+        self.process.clear()
+        self.process.addItem(DEFAULT_PROCESS, ("default", None))
+        names = [n for n in new_project("processes").process_names() if "." in n]
+        for folder in (self.libraries.item(i).toolTip() for i in range(self.libraries.count())):
+            names += self._library_processes.get(folder, [])
+        for name in names:
+            self.process.addItem(icons.icon("process"), name, ("library", name))
+        self.process.addItem(COPY_PROCESS, ("copy", None))
+        if self.process_from is not None:
+            self.process.addItem(
+                icons.icon("folder"),
+                f"From {Path(self.process_from).name}",
+                ("from", self.process_from),
+            )
+            self.process.setItemData(
+                self.process.count() - 1, self.process_from, Qt.ItemDataRole.ToolTipRole
+            )
+        found = self.process.findData(current) if current is not None else -1
+        self.process.setCurrentIndex(max(found, 0))
+
     def _process_chosen(self, index: int) -> None:
-        if self.process.itemText(index) == DEFAULT_PROCESS:
-            self.process_from = None
+        kind, _value = self.process.itemData(index)
+        if kind != "copy":
+            if kind != "from":
+                self.process_from = None
+                self._fill_processes()
             return
         folder = QFileDialog.getExistingDirectory(
             self, "Copy the process of the project in folder", self.location.text().strip()
@@ -234,14 +275,10 @@ class NewProjectDialog(QDialog):
     def set_process_from(self, folder: str | None) -> None:
         """Copy the process of the project in ``folder`` (None: the default layers)."""
         self.process_from = folder
-        while self.process.count() > 2:
-            self.process.removeItem(2)
-        if folder is None:
-            self.process.setCurrentIndex(0)
-            return
-        self.process.addItem(icons.icon("folder"), f"From {Path(folder).name}")
-        self.process.setItemData(2, folder, Qt.ItemDataRole.ToolTipRole)
-        self.process.setCurrentIndex(2)
+        self.process.setCurrentIndex(0)
+        self._fill_processes()
+        if folder is not None:
+            self.process.setCurrentIndex(self.process.count() - 1)
 
     def add_library(self, folder: str | None = None) -> None:
         if folder is None:
@@ -251,14 +288,21 @@ class NewProjectDialog(QDialog):
         if not folder:
             return
         name = library_name(folder)
+        try:
+            processes = list(load_library(name, Path(folder)).processes)
+        except (OSError, ValueError):
+            processes = []  # creating says what is wrong with it
+        self._library_processes[folder] = [f"{name}.{p}" for p in processes]
         item = QListWidgetItem(icons.icon("library"), f"{name}  ·  {folder}")
         item.setToolTip(folder)
         self.libraries.addItem(item)
+        self._fill_processes()
         self._validate()
 
     def _remove_library(self) -> None:
         for item in self.libraries.selectedItems():
             self.libraries.takeItem(self.libraries.row(item))
+        self._fill_processes()
         self._validate()
 
 

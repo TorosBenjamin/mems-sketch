@@ -12,12 +12,14 @@ server never stops on one. Needs the ``mcp`` extra (and ``gui`` for pictures).
 from __future__ import annotations
 
 import functools
+import inspect
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import Field
 
 from mems_sketch.gui.pictures import Picture, render_png
 from mems_sketch.mcp_server.tools import DesignTools, explain
@@ -40,10 +42,30 @@ with the reason; undo goes back one edit.
 """
 
 
+class _StrictServer(MCPServer):
+    """A server that refuses arguments a tool does not take, saying which and what it
+    takes: they were ignored, so ``get_component {"name": …}`` read the top component
+    (#311)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.accepted: dict[str, list[str]] = {}  # tool -> its arguments, in order
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context=None):
+        known = self.accepted.get(name)
+        unknown = sorted(set(arguments or {}) - set(known)) if known is not None else []
+        if unknown:
+            takes = ", ".join(known) or "no arguments"
+            raise ToolError(
+                f"{name} has no argument {', '.join(repr(u) for u in unknown)}; it takes {takes}"
+            )
+        return await super().call_tool(name, arguments, context)
+
+
 def create_server(tools: DesignTools | None = None) -> MCPServer:
     """A server with every tool, on ``tools`` (a new, empty project by default)."""
     tools = tools or DesignTools()
-    server = MCPServer("mems-sketch", instructions=INSTRUCTIONS)
+    server = _StrictServer("mems-sketch", instructions=INSTRUCTIONS)
 
     def tool(fn: Callable) -> Callable:
         """Register ``fn`` as a tool: its errors become tool errors, dicts JSON."""
@@ -61,6 +83,7 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
             return result
 
         server.add_tool(run, structured_output=False)
+        server.accepted[fn.__name__] = list(inspect.signature(fn).parameters)
         return fn
 
     # -- project ---------------------------------------------------------------
@@ -195,16 +218,26 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
 
     @tool
     def place_component(
-        name: str,
-        place: str,
-        params: dict[str, Any] | None = None,
+        name: Annotated[str, Field(description="The new shape's name, e.g. comb_left")],
+        place: Annotated[
+            str,
+            Field(description="The component to place: mems.comb_drive, or the project's"),
+        ],
+        params: Annotated[
+            dict[str, Any] | None,
+            Field(description='Values for its parameters, e.g. {"fingers": 12}'),
+        ] = None,
         x: float | str = 0.0,
         y: float | str = 0.0,
         rotation: float | str = 0.0,
-        component: str | None = None,
+        component: Annotated[
+            str | None,
+            Field(description="The component to place it in; default: the one edited"),
+        ] = None,
     ) -> str:
-        """Place a component (``mems.comb_drive``, or one of the project's) as a shape
-        called ``name``, with parameter values and a position."""
+        """Place the component ``place`` (``mems.comb_drive``, or one of the project's)
+        inside ``component`` (default: the one being edited) as a shape called
+        ``name``, with parameter values and a position."""
         return tools.place_component(component, name, place, params, x, y, rotation)
 
     @tool
@@ -303,7 +336,8 @@ def create_server(tools: DesignTools | None = None) -> MCPServer:
         options: dict[str, Any] | None = None,
     ) -> str:
         """Export a component to a file: GDS, OASIS or DXF (also JSON, XML, MAT), by its
-        extension unless ``format`` is given."""
+        extension unless ``format`` is given. A relative path is in the project's
+        folder; missing folders are made. Replies with the file's full path."""
         return tools.export(path, component, format, params, options)
 
     return server

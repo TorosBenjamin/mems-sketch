@@ -22,7 +22,7 @@ GRID = ExportOption(
     minimum=DBU_UM,
     maximum=1.0,
     suffix=" µm",
-    decimals=4,
+    decimals=3,  # whole nanometres: 0.001 µm, not 0.0010 (#305)
 )
 CHORD = ExportOption(
     "chord_um",

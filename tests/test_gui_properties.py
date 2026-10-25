@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QComboBox,
     QGroupBox,
@@ -199,7 +200,8 @@ def test_shapes_and_placements_offer_relative_layers_and_levels(window):
         c for c in window.properties.findChildren(QComboBox) if c.currentData() == "device"
     )
     items = [layer.itemData(k) for k in range(layer.count())]
-    assert items[:4] == ["level", "level+1", "level-1", "level.anchor"]
+    # level-1 is left out: the component is on the bottom level, nothing is below (#297)
+    assert items[:3] == ["level", "level+1", "level.anchor"]
     assert "metal" in items
     doc.project.define_component(
         ComponentDef(name="post", shapes=[RectShape(x0=0, y0=0, x1=5, y1=5)])
@@ -217,11 +219,39 @@ def test_shapes_and_placements_offer_relative_layers_and_levels(window):
     assert doc.project.components["post"].level == "device"
 
 
+def shown(widget) -> bool:
+    """Whether a widget of the panel is still there and shown: the panel is built again
+    when a background build finishes, deleting the widgets it had."""
+    import shiboken6
+
+    return shiboken6.isValid(widget) and widget.isVisibleTo(widget.window())
+
+
+def test_a_rebuild_while_the_panel_is_replaced_keeps_the_newer_one(window):
+    """Hiding the old content can make its focused field apply itself, which builds
+    the panel again from inside the rebuild: the panel's fields are then the inner
+    rebuild's, so its content must be the one shown (with the fonts on CI the name
+    field did this, and the eye clicked was already deleted)."""
+    editor = window.properties
+    take, nested = editor.takeWidget, []
+
+    def take_widget():
+        old = take()
+        if not nested:  # as the old name field's focus-out would
+            nested.append(True)
+            editor.show_node(((0, 0),))
+        return old
+
+    editor.takeWidget = take_widget
+    editor.show_node(((0, 0),))
+    assert nested and shown(editor.enabled_toggle) and shown(editor.name_edit)
+    assert editor.widget().isAncestorOf(editor.enabled_toggle)
+
+
 def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window, qtbot):
     """Enter in a field, or a click on the eye or a card button, rebuilds the panel
     from inside that widget's own event: the old widgets must outlive the event."""
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QToolButton
 
     from mems_sketch import ArrayModifier
 
@@ -236,10 +266,15 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
         qtbot.wait(1)
     bar = window.document.shapes[0]
     assert (bar.x0, bar.y1) == (3, "pitch")
+    qtbot.waitUntil(lambda: not window.view.updating)  # a slow machine builds later
     qtbot.keyClicks(editor.name_edit, "_2")
     qtbot.keyClick(editor.name_edit, Qt.Key.Key_Return)
     qtbot.wait(1)
     assert window.document.shapes[0].name.endswith("_2")
+    # On a slow machine the design builds in the background, and the panel is built
+    # again when it is done: take the eye of the panel as it is then.
+    qtbot.waitUntil(lambda: not window.view.updating)
+    qtbot.waitUntil(lambda: shown(editor.enabled_toggle))
     qtbot.mouseClick(editor.enabled_toggle, Qt.MouseButton.LeftButton)
     qtbot.wait(1)
     assert window.document.shapes[0].enabled is False
@@ -247,8 +282,14 @@ def test_real_key_presses_and_clicks_that_rebuild_the_panel_do_not_crash(window,
         ((0, 0),), window.document.shapes[0].model_copy(update={"modifiers": [ArrayModifier()]})
     )
     window.tree.select_paths([((0, 0),)])
-    remove = next(b for b in window.properties.findChildren(QToolButton) if b.toolTip() == "Remove")
-    qtbot.mouseClick(remove, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: not window.view.updating)
+
+    def remove():
+        buttons = window.properties.findChildren(QToolButton)
+        return next((b for b in buttons if shown(b) and b.toolTip() == "Remove"), None)
+
+    qtbot.waitUntil(lambda: remove() is not None)
+    qtbot.mouseClick(remove(), Qt.MouseButton.LeftButton)
     qtbot.wait(1)
     assert window.document.shapes[0].modifiers == []
 
@@ -384,17 +425,14 @@ def test_dragging_a_default_with_a_real_mouse(window, qtbot):
     assert window.document.active_definition.parameter("pitch").default != 13
 
 
-def test_apply_sits_beside_add_modifier_and_only_when_needed(window):
-    assert window.properties.apply_button is None  # a rectangle without modifiers
+def test_there_is_no_apply_button_even_with_modifiers(window):
     bar = window.document.shapes[0]
     window.document.nodes.replace(
         ((0, 0),), bar.model_copy(update={"modifiers": [ArrayModifier()]})
     )
     window.tree.select_paths([((0, 0),)])
-    apply = window.properties.apply_button
-    add = next(b for b in window.properties.findChildren(QToolButton) if b.text() == "Add modifier")
-    assert apply is not None and apply.parentWidget() is add.parentWidget()
-    assert abs(apply.geometry().center().y() - add.geometry().center().y()) <= 2
+    texts = {b.text() for b in window.properties.findChildren(QAbstractButton)}
+    assert "Apply" not in texts and "Add modifier" in texts
 
 
 def test_choosing_from_a_list_applies_at_once(window):
@@ -507,15 +545,18 @@ def test_leaving_a_field_that_cannot_be_evaluated_says_why(window, qtbot):
 
 
 def test_a_refused_value_goes_back_and_does_not_block_the_next_edit(window, qtbot):
-    """#247: the refused text is replaced by the value stored, so the next edit
-    (another field, the name) applies."""
+    """#247: the refused text stays to be corrected (#325), and leaving the field
+    puts the stored value back, so the next edit (another field) applies."""
     messages = []
     window.properties.error.connect(messages.append)
     edits = fields(window)
     _focus(qtbot, edits["To x"])
     edits["To x"].setText("nonexistent + 1")
     qtbot.keyClick(edits["To x"], Qt.Key.Key_Return)
-    assert messages and fields(window)["To x"].text() == "pitch * 2"
+    assert messages and fields(window)["To x"].text() == "nonexistent + 1"
+    to_y = fields(window)["To y"]
+    _focus(qtbot, to_y)
+    assert fields(window)["To x"].text() == "pitch * 2"
     to_y = fields(window)["To y"]
     to_y.setText("9")
     qtbot.keyClick(to_y, Qt.Key.Key_Return)

@@ -155,3 +155,19 @@ TEST_CASE("ports turn with a placement, copies have theirs by index, and a port 
     CHECK(back.at.x == doctest::Approx(154));  // the wire: 4 wide, from the port
     CHECK(back.width == 0);
 }
+
+TEST_CASE("a circle's segments are as given, from 3 to 4096, and refused otherwise") {
+    const char* text = R"({
+      "name": "s", "top": "tri",
+      "components": {
+        "tri": {"name": "tri", "parameters": [{"name": "n", "default": 3}],
+                "shapes": [{"kind": "circle", "layer": "device", "radius": 1, "segments": "n"}]}}
+    })";
+    const Project project = Project::from_json(text);
+    Builder builder(project);
+    // A triangle in a unit circle: 3 √3 / 4; a hexagon: 3 √3 / 2 (not the octagon they gave before).
+    CHECK(builder.build("tri")->flat().at("device").area() == doctest::Approx(3 * std::sqrt(3.0) / 4));
+    CHECK(builder.build("tri", {{"n", 6.0}})->flat().at("device").area() ==
+          doctest::Approx(3 * std::sqrt(3.0) / 2));
+    for (const double n : {2.0, 4097.0, 6.5}) CHECK_THROWS_AS(builder.build("tri", {{"n", n}}), mems::BuildError);
+}

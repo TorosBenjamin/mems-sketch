@@ -50,7 +50,7 @@ def test_the_list_holds_declared_default_and_shape_points(window):
     assert found[("declared", "beam_right")].flags() & Qt.ItemFlag.ItemIsEditable
     assert not found[("default", "center")].flags() & Qt.ItemFlag.ItemIsEditable
     groups = [window.points.tree.topLevelItem(i).text(0) for i in range(1, 3)]
-    assert groups == ["Default", "beam"]
+    assert groups == ["Its box", "beam"]
 
 
 def test_hovering_a_point_shows_it_on_the_canvas(window):

@@ -5,7 +5,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -19,6 +29,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -45,8 +56,17 @@ from mems_sketch.gui.value_edit import (
 )
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
-VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message
-SLOT_LABELS = {"boolean": ("A", "B")}
+VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message (a list: a group)
+GROUP_ROLE = Qt.ItemDataRole.UserRole + 51  # a group's key (see _group_key)
+GROUP_AT = 4  # this many violations of a rule on the same shapes are one line
+PARAMETER_COLUMN_MIN_PX = 44  # no column of the Parameters table gets narrower ("Default")
+
+
+def _group_key(v) -> tuple:
+    """What groups violations: the rule, its severity and the shapes it is on."""
+    return (v.rule, v.layer, v.severity, tuple(v.shapes))
+
+
 IMPORT_FILTER = (
     "Layouts (*.gds *.gds2 *.gdsii *.json *.xml *.mat);;"
     "GDS (*.gds *.gds2 *.gdsii);;"
@@ -206,6 +226,25 @@ class ComponentsPanel(_Panel):
         )
         self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.tree)
+        self._tree_keys()
+
+    def _tree_keys(self) -> None:
+        """F2, Ctrl+D and Delete on the current component, as its menu offers (#324)."""
+
+        def on_current(do) -> None:
+            item = self.tree.currentItem()
+            name = item.data(0, self.NAME_ROLE) if item is not None else None
+            if name is not None and name in self.document.project.components:
+                do(name)
+
+        for key, do in (
+            ("F2", self._rename),
+            ("Ctrl+D", lambda n: self._guard(lambda: self.document.components.copy(n))),
+            ("Del", self._delete),
+        ):
+            shortcut = QShortcut(QKeySequence(key), self.tree)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(lambda d=do: on_current(d))
 
     # -- building ------------------------------------------------------------
 
@@ -223,7 +262,7 @@ class ComponentsPanel(_Panel):
         local = self._group(project.name, "project", "folder", "Project components")
         process = QTreeWidgetItem(local, ["Process"])
         process.setData(0, self.PROCESS_ROLE, True)
-        process.setIcon(0, icons.icon("layers"))
+        process.setIcon(0, icons.icon("process"))
         process.setToolTip(0, "The process's layers and constants (opens in a tab)")
         shared = [n for n in project.components if "/" not in n]
         for name in sorted(shared, key=lambda n: n != project.top):  # top first
@@ -303,11 +342,10 @@ class ComponentsPanel(_Panel):
         drag = Qt.ItemFlag.ItemIsDragEnabled  # onto the canvas, where it may be placed
         placeable = self._placeable(name)
         item.setFlags(item.flags() | drag if placeable else item.flags() & ~drag)
-        if name == self.document.active:  # the tab being edited
+        if name == self.document.active:  # the tab being edited: bold, its icon kept (#317)
             font = QFont()
             font.setBold(True)
             item.setFont(0, font)
-            item.setIcon(0, icons.icon("eye" if self.document.read_only else "edit", "blue"))
         library_internals = "." in name and self.hide_implementation
         for child in [] if library_internals else project.private_components(name):
             self._component(item, child)
@@ -398,6 +436,17 @@ class ComponentsPanel(_Panel):
         items = self.tree.selectedItems()
         return items[0].data(0, self.NAME_ROLE) if items else None
 
+    def select_component(self, name: str) -> None:
+        """Select (and show) the row of the component ``name``."""
+        pending = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        while pending:
+            item = pending.pop()
+            if item.data(0, self.NAME_ROLE) == name:
+                self.tree.setCurrentItem(item)
+                self.tree.scrollToItem(item)
+                return
+            pending.extend(item.child(i) for i in range(item.childCount()))
+
     def _is_local(self, name: str | None) -> bool:
         return name is not None and name in self.document.project.components
 
@@ -431,7 +480,7 @@ class ComponentsPanel(_Panel):
         if item is None:
             self._project_actions(menu)
         elif item.data(0, self.PROCESS_ROLE):
-            _menu_action(menu, "Open the process", self.process_requested.emit, "layers")
+            _menu_action(menu, "Open the process", self.process_requested.emit, "process")
         elif item.data(0, self.GROUP_ROLE) is not None:
             group = item.data(0, self.GROUP_ROLE)
             if group == "project":
@@ -479,14 +528,21 @@ class ComponentsPanel(_Panel):
             _menu_action(menu, "New private component…", lambda: self._new(owner=name), "component")
             self._ownership_actions(menu, name)
             menu.addSeparator()
-            _menu_action(menu, "Rename…", lambda: self._rename(name), "edit")
-            _menu_action(
-                menu,
-                "Duplicate",
-                lambda: self._guard(lambda: self.document.components.copy(name)),
-                "duplicate",
-            )
-            _menu_action(menu, "Delete", lambda: self._delete(name), "delete")
+            for action, key in (
+                (_menu_action(menu, "Rename…", lambda: self._rename(name), "edit"), "F2"),
+                (
+                    _menu_action(
+                        menu,
+                        "Duplicate",
+                        lambda: self._guard(lambda: self.document.components.copy(name)),
+                        "duplicate",
+                    ),
+                    "Ctrl+D",
+                ),
+                (_menu_action(menu, "Delete", lambda: self._delete(name), "delete"), "Del"),
+            ):  # the keys that do it in the tree (see _tree_keys), shown
+                action.setShortcut(QKeySequence(key))
+                action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
             self._level_actions(menu, name)
             menu.addSeparator()
             if name == project.top:
@@ -567,7 +623,9 @@ class ComponentsPanel(_Panel):
         title = f"New component private to {owner}" if owner else "New component"
         name, ok = QInputDialog.getText(self, title, "Component name:")
         if ok and name.strip():
-            self._guard(lambda: self.document.components.new(name.strip(), owner))
+            made = f"{owner}/{name.strip()}" if owner else name.strip()
+            if self._guard(lambda: self.document.components.new(name.strip(), owner)):
+                QTimer.singleShot(0, lambda: self.select_component(made))  # after its tab opens
 
     def add_library(self, folder: str | None = None) -> None:
         """Load a folder of components (a library or another project) as a library."""
@@ -577,7 +635,7 @@ class ComponentsPanel(_Panel):
             self._guard(lambda: self.document.components.add_library(folder))
 
     def import_gds(self, path: str | None = None) -> str | None:
-        """Choose a layout (GDS, OASIS or a geometry document) and how to import it;
+        """Choose a layout (GDS or a geometry document) and how to import it;
         returns the new component's name."""
         from mems_sketch.gui.import_dialog import ImportDialog
 
@@ -619,8 +677,18 @@ class ComponentsPanel(_Panel):
 
     def _delete(self, name: str | None = None) -> None:
         name = name or self.selected()
-        if self._is_local(name):
-            self._guard(lambda: self.document.components.delete(name))
+        if not self._is_local(name):
+            return
+        if name == self.document.project.top:  # the whole design: ask first (#260)
+            answer = QMessageBox.question(
+                self,
+                "Delete the top component",
+                f"'{name}' is the top component: the design itself. Deleting it makes "
+                "the project a library (Undo brings it back). Delete it?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._guard(lambda: self.document.components.delete(name))
 
     def _set_top(self) -> None:
         name = self.selected()
@@ -628,8 +696,15 @@ class ComponentsPanel(_Panel):
             self._guard(lambda: self.document.components.set_top(name))
 
     def _place(self) -> None:
-        name = self.selected()
-        if name is not None:
+        """Place the selected component in the one being edited, or say why not."""
+        name, active = self.selected(), self.document.active
+        if name is None:
+            self.error.emit("select a component to place")
+        elif name == active:
+            self.error.emit(f"'{name}' cannot be placed in itself")
+        elif not self._placeable(name):
+            self.error.emit(f"'{name}' cannot be placed in '{active}'")
+        else:
             self.place_requested.emit(name)
 
 
@@ -640,6 +715,10 @@ class _ComponentTree(QTreeWidget):
         super().__init__()
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+
+    def keyPressEvent(self, event) -> None:
+        """Enter opens the current row, as a double click does (#256)."""
+        _enter_opens(self, event) or super().keyPressEvent(event)
 
     def mimeTypes(self) -> list[str]:
         return [COMPONENT_MIME]
@@ -652,6 +731,15 @@ class _ComponentTree(QTreeWidget):
             data.setData(COMPONENT_MIME, names[0].encode())
             data.setText(names[0])
         return data
+
+
+def _enter_opens(tree: QTreeWidget, event) -> bool:
+    """Enter or Return on a tree's current row: as a double click; True if used."""
+    item = tree.currentItem()
+    if event.key() not in (Qt.Key.Key_Return, Qt.Key.Key_Enter) or item is None:
+        return False
+    tree.itemDoubleClicked.emit(item, 0)
+    return True
 
 
 def _described(description: str) -> str:
@@ -685,6 +773,7 @@ def _menu_action(menu, text: str, slot, icon: str | None = None):
 DETAIL_ROLE = Qt.ItemDataRole.UserRole + 5  # muted text drawn after an item's name
 PLACES_ROLE = Qt.ItemDataRole.UserRole + 6  # a shape row placing a component: its name
 INSIDE_ROLE = Qt.ItemDataRole.UserRole + 7  # a row inside a placed component: (owner, path)
+OPERAND_ROLE = Qt.ItemDataRole.UserRole + 8  # an operand's row: (the operation's path, slot)
 
 
 DETAIL_LEAST_CHARS = 6  # a detail shortened to fewer letters is left out
@@ -739,6 +828,9 @@ class ShapeTree(QTreeWidget):
     selection_changed_paths = Signal(list)
     enabled_toggled = Signal(tuple, bool)
     collapse_changed = Signal()
+    # Shapes dragged to a place in the tree: their paths, and where they go (the
+    # operation's path or None, its child list, the index there).
+    moved = Signal(list, object, int, int)
 
     STATUS = 1  # the narrow column with the alignment icon
     MODIFIERS = 2  # ... and the one with the modifier icon
@@ -762,12 +854,69 @@ class ShapeTree(QTreeWidget):
         self._rebuilding = False
         self.hide_implementation = False  # a read-only component: its interface only
         self.show_implementation = False  # the setting: what placed library parts hold
+        self.empty = widgets.placeholder(  # an empty component says how to start (#319)
+            self,
+            "No shapes yet. Draw with B (rectangle), C (circle), P (polygon) or W (path), "
+            "or place a component with Shift+A.",
+        )
         # Per component: collapsed operations (others are open) and opened
         # placed components (others are closed).
         self.collapsed: dict[str, set[NodePath]] = {}
         self.opened: dict[str, set[NodePath]] = {}
         self.itemCollapsed.connect(lambda item: self._set_collapsed(item, True))
         self.itemExpanded.connect(self._expanded)
+        # Drag shapes to reorder them, or into and out of an operation (#256).
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDropIndicatorShown(True)
+
+    def keyPressEvent(self, event) -> None:
+        """Enter opens a placed component, as a double click does (#256)."""
+        _enter_opens(self, event) or super().keyPressEvent(event)
+
+    def drop_target(self, item: QTreeWidgetItem | None, place) -> tuple | None:
+        """Where shapes dropped at ``item`` go: (operation path or None, child
+        list, index), or None where they cannot (inside a placed component)."""
+        Position = QAbstractItemView.DropIndicatorPosition
+        if item is None or place == Position.OnViewport:
+            return None, 0, len(self.document.shapes)
+        if item.data(0, INSIDE_ROLE) is not None:
+            return None
+        operand = item.data(0, OPERAND_ROLE)
+        if operand is not None:  # into that operand: at its start, or its end
+            parent, slot = operand
+            children = child_lists(self.document.node(parent))[slot]
+            return parent, slot, 0 if place == Position.AboveItem else len(children)
+        path = item.data(0, PATH_ROLE)
+        if path is None:
+            return None
+        parent, (slot, index) = (path[:-1] or None), path[-1]
+        node = self.document.node(path)
+        lists = child_lists(node)
+        if place == Position.OnItem and len(lists) == 1 and not node.operand_labels():
+            return path, 0, len(lists[0])  # into an operation with one list of children
+        return parent, slot, index if place == Position.AboveItem else index + 1
+
+    def dragMoveEvent(self, event) -> None:
+        super().dragMoveEvent(event)
+        item = self.itemAt(event.position().toPoint())
+        if (
+            event.source() is not self
+            or self.drop_target(item, self.dropIndicatorPosition()) is None
+        ):
+            event.ignore()
+
+    def dropEvent(self, event) -> None:
+        """Move the dragged shapes in the document (one step to undo); the tree is
+        built again from it, so Qt does not move its rows itself."""
+        item = self.itemAt(event.position().toPoint())
+        target = self.drop_target(item, self.dropIndicatorPosition())
+        paths = self.selected_paths()
+        event.setDropAction(Qt.DropAction.IgnoreAction)
+        event.accept()
+        if event.source() is self and target is not None and paths:
+            # Later: moving rebuilds this tree, which Qt is still delivering the drop to.
+            QTimer.singleShot(0, lambda: self.moved.emit(paths, *target))
 
     def _expanded(self, item: QTreeWidgetItem) -> None:
         self._fill_placed(item)
@@ -800,6 +949,7 @@ class ShapeTree(QTreeWidget):
             self._rebuilding = False
             self.select_paths([])
             return
+        self.setDragEnabled(not self.document.read_only)
         for index, shape in enumerate(self.document.shapes):
             self._add(self.invisibleRootItem(), shape, ((0, index),))
         collapsed = self.collapsed.get(self.document.active, set())
@@ -882,13 +1032,15 @@ class ShapeTree(QTreeWidget):
         if not shape.enabled:
             item.setForeground(0, QBrush(theme.color("muted")))
         self._placeholder(item, shape, self.document.active)
-        labels = SLOT_LABELS.get(shape.kind)
+        labels = shape.operand_labels()
         for slot, children in enumerate(child_lists(shape)):
             holder = item
             if labels:
                 holder = QTreeWidgetItem(item, [labels[slot]])
                 holder.setData(0, DETAIL_ROLE, "operand")
-                holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                holder.setData(0, OPERAND_ROLE, (path, slot))
+                holder.setToolTip(0, "Drag shapes here to add them to this operand")
+                holder.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled)
             for index, child in enumerate(children):
                 self._add(holder, child, (*path, (slot, index)))
 
@@ -948,7 +1100,7 @@ class ShapeTree(QTreeWidget):
             item.setIcon(self.MODIFIERS, icons.icon(glyph))
             item.setToolTip(self.MODIFIERS, f"Modifiers: {modifier_stack(shape)}")
         self._placeholder(item, shape, context)
-        labels = SLOT_LABELS.get(shape.kind)
+        labels = shape.operand_labels()
         for slot, children in enumerate(child_lists(shape)):
             holder = item
             if labels:
@@ -1015,9 +1167,18 @@ class ParametersPanel(_Panel):
         self.document = document
         self.title = self.header_context = widgets.header_context()  # the component
         self.table = widgets.make_table(self.COLUMNS, stretch=self.COLUMNS.index("Default"))
+        # The name shares the room with the default (both cut with "…", the whole in
+        # the tooltip), so the trial value and the value always fit (#303).
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setMinimumSectionSize(PARAMETER_COLUMN_MIN_PX)
+        self.table.setItemDelegateForColumn(0, widgets.IconAfterText(self.table))  # the lock
         self.table.itemChanged.connect(self._changed)
         self.table.viewport().installEventFilter(self)
         self.table.setMouseTracking(True)  # for the drag cursor
+        # A row's menu: its description and whether it is a whole number (#308).
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
         self._drag: dict | None = None  # the cell being dragged, see eventFilter
         self.hide_implementation = False  # a read-only component: public parameters only
         layout = QVBoxLayout(self)
@@ -1031,6 +1192,11 @@ class ParametersPanel(_Panel):
         )
         self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.table)
+        self.empty = widgets.placeholder(  # what to do when there is none yet (#303)
+            self.table,
+            "No parameters yet. + adds one; or right-click a value in Properties and "
+            "choose Make a parameter from this value.",
+        )
         self._names: list[str] = []
 
     def _clear_trials(self) -> None:
@@ -1072,13 +1238,15 @@ class ParametersPanel(_Panel):
                 QTableWidgetItem(_format(trials.get(p.name))),
                 _readonly("error" if value is None else f"{value:g}"),
             ]
-            cells[0].setIcon(icons.icon("lock") if p.internal else _blank_icon())  # aligned
+            if p.internal:
+                cells[0].setIcon(icons.icon("lock"))
             access = (
                 "Internal: only this component uses it"
                 if p.internal
                 else "Public: can be set where the component is placed"
             )
-            cells[0].setToolTip("\n".join(t for t in (p.description, access) if t))
+            whole = "A whole number" if p.integer else ""
+            cells[0].setToolTip("\n".join(t for t in (p.description, whole, access) if t))
             cells[self.TRIAL].setToolTip("Try a value without changing the design (not saved)")
             for column, limit in ((2, p.min), (3, p.max)):
                 tip = "A number or an expression; start with > or < to exclude the limit itself"
@@ -1181,6 +1349,62 @@ class ParametersPanel(_Panel):
                 self._guard(lambda: self.document.parameters.update(name, default=value))
             return True
         return False
+
+    def context_menu(self, row: int) -> QMenu | None:
+        """The menu of the parameter in ``row``: its description, whether it is a
+        whole number, internal or public, removing it (#308)."""
+        if row < 0 or row >= len(self._names) or self.document.read_only:
+            return None
+        name = self._names[row]
+        definition = {p.name: p for p in self.document.active_definition.parameters}[name]
+        menu = QMenu(self)
+        _menu_action(menu, "Description…", lambda: self.describe(name), "edit")
+        whole = _menu_action(
+            menu,
+            "Whole number",
+            lambda: self._guard(
+                lambda: self.document.parameters.update(name, integer=not definition.integer)
+            ),
+        )
+        whole.setCheckable(True)
+        whole.setChecked(definition.integer)
+        whole.setToolTip("Only whole values: a count, such as a number of fingers")
+        internal = _menu_action(
+            menu,
+            "Internal",
+            lambda: self._guard(
+                lambda: self.document.parameters.set_internal([name], not definition.internal)
+            ),
+        )
+        internal.setCheckable(True)
+        internal.setChecked(definition.internal)
+        menu.addSeparator()
+        _menu_action(
+            menu, "Remove", lambda: self._guard(lambda: self.document.parameters.remove(name))
+        )
+        return menu
+
+    def _context_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if row >= 0:
+            widgets.select_row(self.table, row)
+        menu = self.context_menu(row)
+        if menu is not None:
+            menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def describe(self, name: str) -> None:
+        """Ask for the description of the parameter ``name``: shown in its tooltips
+        and behind the "?" where the component is placed."""
+        current = {p.name: p for p in self.document.active_definition.parameters}[name]
+        text, ok = QInputDialog.getText(
+            self,
+            "Description",
+            f'What {name} is (shown in its tooltip, and by its "?" where the component '
+            'is placed; a unit in brackets, "Finger width (µm)", goes into the field):',
+            text=current.description,
+        )
+        if ok and text.strip() != current.description:
+            self._guard(lambda: self.document.parameters.update(name, description=text.strip()))
 
     def _toggle_internal(self) -> None:
         """Make the selected parameters internal, or public if they all are already."""
@@ -1350,14 +1574,24 @@ class LayerDefinitionsPanel(_Panel):
         # export writes it, and layout exports start from it.
         self.grid = QDoubleSpinBox()
         self.chord = QDoubleSpinBox()
+        # A library's process sets them: shown as text, in full, not as fields
+        # that cannot be changed (#230).
+        self.grid_text, self.chord_text = QLabel(), QLabel()
         fields = QHBoxLayout()
         fields.setSpacing(theme.metric("space_s"))
         fields.addWidget(QLabel("Top components on level"))
         fields.addWidget(self.default_level)
-        for box, label, tip, minimum in (
-            (self.grid, "Grid", "The fab's grid: rule checks round the design onto it", 0.001),
+        for box, text, label, tip, minimum in (
+            (
+                self.grid,
+                self.grid_text,
+                "Grid",
+                "The fab's grid: rule checks round the design onto it",
+                0.001,
+            ),
             (
                 self.chord,
+                self.chord_text,
                 "Curve tolerance",
                 "How far the straight segments that curves become may stray from them",
                 0.0005,
@@ -1369,11 +1603,14 @@ class LayerDefinitionsPanel(_Panel):
             box.setSuffix(" µm")
             box.setToolTip(tip)
             box.setKeyboardTracking(False)
-            box.setMinimumWidth(90)
+            # Room for the number and its unit, and the arrows' space.
+            box.setMinimumWidth(box.fontMetrics().horizontalAdvance("0.0000 µm") + 32)
             box.editingFinished.connect(self._output_changed)
+            text.setToolTip(f"{tip} (set by the library's process)")
             fields.addSpacing(theme.metric("space_l"))
             fields.addWidget(QLabel(label))
             fields.addWidget(box)
+            fields.addWidget(text)
         fields.addStretch(1)
         card.body.addLayout(fields)
         layout = QVBoxLayout(self)
@@ -1409,11 +1646,17 @@ class LayerDefinitionsPanel(_Panel):
         self.default_level.setCurrentText(default or "(the first level)")
         self.default_level.setEnabled(bool(levels))
         process = self.document.project.process
-        for box, value in ((self.grid, process.grid_um), (self.chord, process.chord_um)):
+        own = self.document.project.base_process is None
+        for box, text, value in (
+            (self.grid, self.grid_text, process.grid_um),
+            (self.chord, self.chord_text, process.chord_um),
+        ):
             box.blockSignals(True)
             box.setValue(value)
             box.blockSignals(False)
-            box.setEnabled(self.document.project.base_process is None)
+            box.setVisible(own)
+            text.setText(f"{value:g} µm")
+            text.setVisible(not own)
         widgets.fit_to_rows(self.layers)
 
     def _layer_changed(self, item: QTableWidgetItem) -> None:
@@ -1522,6 +1765,9 @@ class ConstantsPanel(_Panel):
 # -- messages ------------------------------------------------------------------
 
 
+MESSAGES_FIT_ROWS = 4  # an empty or short Messages panel opens as tall as these
+
+
 class MessagesPanel(QListWidget):
     """Errors and rule violations. Clicking a violation zooms to it; its context
     menu waives it (accepts it, with a reason) or removes its waiver."""
@@ -1536,14 +1782,32 @@ class MessagesPanel(QListWidget):
         self.itemClicked.connect(self._activated)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._context_menu)
+        # Several at once can be waived with one reason (#300); a long message wraps.
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setWordWrap(True)
         size = theme.metric("icon_size")
         self.setIconSize(QSize(size, size))
+        self._expanded: set[tuple] = set()  # groups shown one violation per line
+        self._shown: tuple = ([], [], False, None)  # what show_messages was last given
 
-    counts_changed = Signal(int, int)  # errors, violations not waived
+    counts_changed = Signal(int, int)  # errors, warnings (not waived)
+    lines_changed = Signal(int)  # px the lines take (see content_height)
 
-    def show_messages(self, errors: list[str], violations, checking: bool = False) -> None:
-        """Errors and rule violations; ``checking`` while the rules are still
-        being checked in the background."""
+    def content_height(self) -> int:
+        """The height its lines take, at most :data:`MESSAGES_FIT_ROWS` of them: an
+        empty or short list needs no more room than that (#318)."""
+        rows = min(self.count(), MESSAGES_FIT_ROWS)
+        lines = sum(max(self.sizeHintForRow(i), 0) for i in range(rows))
+        return lines + 2 * self.frameWidth() + 2 * self.spacing()
+
+    def show_messages(
+        self, errors: list[str], violations, checking: bool = False, component: str | None = None
+    ) -> None:
+        """Errors and rule violations of ``component``; ``checking`` while the
+        rules are still being checked in the background. Many violations of one
+        rule on the same shapes are one line (see :meth:`context_menu` to list
+        them one by one)."""
+        self._shown = (list(errors), list(violations), checking, component)
         self.clear()
         for text in errors:
             item = QListWidgetItem(icons.icon("error"), text)
@@ -1551,48 +1815,136 @@ class MessagesPanel(QListWidget):
             self.addItem(item)
         open_ = [v for v in violations if not v.waived]
         waived = len(violations) - len(open_)
-        if violations:
-            text = f"{len(open_)} rule violation(s) — click one to zoom to it"
+        failing = sum(1 for v in open_ if v.is_error)
+        warnings = len(open_) - failing
+        if open_:
+            counted = [
+                f"{n} {word}{'' if n == 1 else 's'}"
+                for n, word in ((failing, "error"), (warnings, "warning"))
+                if n
+            ]
+            text = f"Rule violations: {', '.join(counted)} — click one to zoom to it"
             if waived:
                 text += f"; {waived} waived"
+        elif waived:
+            text = f"No open rule violations; {waived} waived"
+        else:
+            text = ""
+        if text:
             summary = QListWidgetItem(text)
             font = QFont()
             font.setBold(True)
             summary.setFont(font)
             self.addItem(summary)
-        for v in sorted(violations, key=lambda v: bool(v.waived)):  # waived ones last
-            x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
-            where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
-            if v.waived:
-                label = f"Waived: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
-                item = QListWidgetItem(icons.icon("ok"), label)
-                item.setForeground(QBrush(theme.color("muted")))
+        groups: dict[tuple, list] = {}
+        for v in open_:
+            groups.setdefault(_group_key(v), []).append(v)
+        for key, members in groups.items():
+            if len(members) >= GROUP_AT and key not in self._expanded:
+                self.addItem(self._group_item(key, members))
             else:
-                prefix = "" if v.is_error else "Warning: "
-                label = f"{prefix}[{v.rule}] {v.layer}: {v.message}{where}"
-                item = QListWidgetItem(icons.icon("warning"), label)
-            item.setData(PATH_ROLE, v.bbox_um)
-            item.setData(VIOLATION_ROLE, v)
-            self.addItem(item)
+                for v in members:
+                    self.addItem(self._violation_item(v, component))
+        for v in violations:
+            if v.waived:
+                self.addItem(self._violation_item(v, component))  # waived ones last
         if checking:
             self.addItem(QListWidgetItem("Checking the design rules…"))
         elif not errors and not violations:
             self.addItem(QListWidgetItem(icons.icon("ok"), "No rule violations."))
-        self.counts_changed.emit(len(errors), len(open_))
+        self.counts_changed.emit(len(errors) + failing, warnings)
+        self.lines_changed.emit(self.content_height())
+
+    def _violation_item(self, v, component) -> QListWidgetItem:
+        x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
+        where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
+        if v.shapes:
+            where += f" on {', '.join(v.shapes)}"
+        if v.waived:
+            kept = v.waiver[0] if v.waiver else component
+            title = "Waived" if kept == component else f"Waived in {kept}"
+            label = f"{title}: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
+            item = QListWidgetItem(icons.icon("ok"), label)
+            item.setForeground(QBrush(theme.color("muted")))
+        else:
+            prefix = "Error: " if v.is_error else "Warning: "
+            label = f"{prefix}[{v.rule}] {v.layer}: {v.message}{where}"
+            item = QListWidgetItem(icons.icon("error" if v.is_error else "warning"), label)
+        item.setToolTip(label)
+        item.setData(PATH_ROLE, v.bbox_um)
+        item.setData(VIOLATION_ROLE, v)
+        return item
+
+    def _group_item(self, key: tuple, members: list) -> QListWidgetItem:
+        """One line for many violations of a rule on the same shapes, e.g. every web
+        of a perforation: how many, the smallest measured, and a box around them."""
+        first = members[0]
+        prefix = "Error: " if first.is_error else "Warning: "
+        on = f" on {', '.join(first.shapes)}" if first.shapes else ""
+        measured = [v.measured for v in members if v.measured is not None]
+        least = f", smallest {min(measured):g} µm" if measured else ""
+        label = (
+            f"{prefix}[{first.rule}] {first.layer}: {len(members)} places{on}{least} "
+            f"(e.g. {first.message}) — right-click to list them"
+        )
+        item = QListWidgetItem(icons.icon("error" if first.is_error else "warning"), label)
+        item.setToolTip(label)
+        boxes = [v.bbox_um for v in members if v.bbox_um]
+        if boxes:
+            item.setData(
+                PATH_ROLE,
+                (
+                    min(b[0] for b in boxes),
+                    min(b[1] for b in boxes),
+                    max(b[2] for b in boxes),
+                    max(b[3] for b in boxes),
+                ),
+            )
+        item.setData(VIOLATION_ROLE, list(members))
+        item.setData(GROUP_ROLE, key)
+        return item
+
+    def _toggle_group(self, key: tuple) -> None:
+        self._expanded ^= {key}
+        self.show_messages(*self._shown)
+
+    def _selected_violations(self, item: QListWidgetItem | None) -> list:
+        """The violations of the selected lines (with ``item``), groups as their members."""
+        items = self.selectedItems()
+        if item is not None and item not in items:
+            items = [item]
+        found = []
+        for chosen in items:
+            data = chosen.data(VIOLATION_ROLE)
+            found += data if isinstance(data, list) else [data] if data is not None else []
+        return [v for v in found if v.bbox_um is not None]
 
     def context_menu(self, item: QListWidgetItem | None) -> QMenu | None:
-        violation = item.data(VIOLATION_ROLE) if item is not None else None
-        if violation is None or violation.bbox_um is None:
+        data = item.data(VIOLATION_ROLE) if item is not None else None
+        if data is None:
             return None
         menu = QMenu(self)
-        if violation.waived or violation.stale_waiver:
+        key = item.data(GROUP_ROLE)
+        if key is not None:
+            action = menu.addAction(f"List the {len(data)} one by one")
+            action.triggered.connect(lambda: self._toggle_group(key))
+        elif _group_key(data) in self._expanded:
+            action = menu.addAction("Group them again")
+            action.triggered.connect(lambda: self._toggle_group(_group_key(data)))
+        chosen = self._selected_violations(item)
+        open_ = [v for v in chosen if not v.waived and not v.stale_waiver]
+        if not isinstance(data, list) and (data.waived or data.stale_waiver):
             action = menu.addAction("Remove the waiver")
-            action.triggered.connect(lambda: self.unwaive_requested.emit(violation))
-        else:
+            action.triggered.connect(lambda: self.unwaive_requested.emit(data))
+        elif len(open_) > 1:
+            action = menu.addAction(f"Waive these {len(open_)}…")
+            action.setToolTip("Accept these violations, with one reason")
+            action.triggered.connect(lambda: self.waive_requested.emit(open_))
+        elif open_:
             action = menu.addAction("Waive…")
             action.setToolTip("Accept this violation, with a reason")
-            action.triggered.connect(lambda: self.waive_requested.emit(violation))
-        return menu
+            action.triggered.connect(lambda: self.waive_requested.emit(open_[0]))
+        return menu if not menu.isEmpty() else None
 
     def _context_menu(self, position) -> None:
         menu = self.context_menu(self.itemAt(position))

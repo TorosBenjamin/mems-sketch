@@ -77,6 +77,11 @@ SCROLLING = {  # canvas/scrolling: value -> label
     "pan": "Scrolling pans (Ctrl zooms)",
 }
 
+EMPTY_DRAG = {  # canvas/empty_drag: value -> label
+    "box": "Draws a selection box",
+    "pan": "Pans the view (Shift: a selection box)",
+}
+
 BOX_SELECTION = {  # editor/box_selection: value -> label
     "touching": "What the box touches",
     "inside": "What is entirely inside the box",
@@ -237,6 +242,18 @@ SETTINGS: tuple[Setting, ...] = (
         "other.",
         choices=SCROLLING,
         keywords=("touchpad", "trackpad", "pinch", "pan", "wheel", "mouse"),
+    ),
+    Setting(
+        "canvas/empty_drag",
+        "box",
+        "Dragging on empty canvas",
+        "Canvas",
+        "Navigation",
+        "In the Select tool. Pan suits a touchpad's tap-and-drag, which reaches the app "
+        "as a left-button drag; Shift+drag then draws the selection box. Panning also "
+        "works with the middle button, Space+drag, the Hand tool and two fingers.",
+        choices=EMPTY_DRAG,
+        keywords=("touchpad", "trackpad", "tap", "drag", "pan", "box", "select"),
     ),
     Setting(
         "canvas/zoom_step",
@@ -458,7 +475,7 @@ class PreferencesDialog(QDialog):
         theme.load()  # themes added to the folder since the window opened
         self.settings = settings
         self.setWindowTitle("Settings")
-        self.resize(780, 540)
+        self.resize(860, 620)  # every page fits without scrolling (#318)
         self._editors: dict[str, QWidget] = {}
         self._rows: dict[str, tuple[QWidget, ...]] = {}
         self._headings: dict[str, QLabel] = {}  # by "page/group"
@@ -489,6 +506,14 @@ class PreferencesDialog(QDialog):
         reset.setToolTip("Restore this page's defaults")
         reset.clicked.connect(self._reset_page)
         buttons.addButton(reset, QDialogButtonBox.ButtonRole.ResetRole)
+
+        def show_reset(row: int) -> None:  # a page with nothing to reset has no Reset (#327)
+            item = self.pages.item(row)
+            page = item.text() if item is not None else ""
+            reset.setVisible(any(setting.page == page for setting in SETTINGS))
+
+        self.pages.currentRowChanged.connect(show_reset)
+        show_reset(self.pages.currentRow())
         right = QVBoxLayout()
         pad = theme.metric("space_xl")
         right.setContentsMargins(0, 0, pad, pad)
@@ -571,16 +596,16 @@ class PreferencesDialog(QDialog):
         line = QHBoxLayout()
         line.setSpacing(theme.metric("space_m"))
         folder = theme.user_folder()
-        label = QLabel(str(folder))
+        # A long path is cut in the middle, not off the dialog's edge (#260).
+        label = widgets.ElidedLabel(str(folder), mode=Qt.TextElideMode.ElideMiddle)
         label.setObjectName("muted")
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        line.addWidget(label)
+        line.addWidget(label, 1)
         button = QPushButton("Open folder")
         button.setAutoDefault(False)
         button.setToolTip("Put a theme's .json file here; it shows in Interface theme")
         button.clicked.connect(lambda: open_folder(folder))
         line.addWidget(button)
-        line.addStretch(1)
         column.addLayout(line)
         for problem in theme.problems():
             text = QLabel(problem)

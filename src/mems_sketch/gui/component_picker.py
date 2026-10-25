@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mems_sketch.gui import icons, theme
+from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.settings import APPLICATION, ORGANIZATION
 
 THIS_PROJECT = "This project"
@@ -192,9 +192,17 @@ def entry_item(
     item.setData(QUALIFIED_ROLE, qualified)
     item.setData(SOURCE_ROLE, source)
     item.setData(MATCH_ROLE, match)
-    item.setToolTip(f"{entry.name}\n{entry.description}".strip())
+    item.setToolTip(_tooltip(entry))
     item.setSizeHint(QSize(0, ROW_HEIGHT))
     return item
+
+
+def _tooltip(entry: Entry) -> str:
+    """A component's name and its description (markdown, wrapped)."""
+    name = html.escape(entry.name)
+    if not entry.description:
+        return name
+    return widgets.markdown_html(entry.description).replace("<qt>", f"<qt><b>{name}</b>", 1)
 
 
 class RowDelegate(QStyledItemDelegate):
@@ -289,7 +297,7 @@ class RowDelegate(QStyledItemDelegate):
             draw(entry.short, text)
         if self.descriptions and entry.description:
             x += 10
-            draw(entry.description, muted)
+            draw(entry.description.replace("`", ""), muted)  # its markdown, as plain text
         painter.restore()
 
 
@@ -591,6 +599,7 @@ class ComponentPreview(QWidget):
         self.description = QLabel()
         self.description.setObjectName("muted")
         self.description.setWordWrap(True)
+        self.description.setTextFormat(Qt.TextFormat.RichText)  # its markdown, rendered
         self.details = QLabel()
         self.details.setTextFormat(Qt.TextFormat.RichText)
         self.details.setWordWrap(True)
@@ -657,7 +666,7 @@ class ComponentPreview(QWidget):
             f"<span style='font-size:15px; font-weight:600'>{_html(name)}</span>"
             f"&nbsp;&nbsp;<span style='color:{muted}'>{_html(info.source.lower() if info.source == IMPORTED else info.source)}</span>"
         )
-        self.description.setText(info.description or "No description.")
+        self.description.setText(widgets.markdown_html(info.description or "No description."))
         rows = []
         if info.parameters:
             rows.append(f"<p style='color:{muted}; font-weight:600; margin:0'>Parameters</p>")

@@ -2,8 +2,8 @@ description: >-
   U-spring: two parallel beams along +y joined at the top, the left one on an
   anchor at the origin, the right one free at the bottom, where the mass
   attaches. Its two guided beams are in series: sideways (x) it is a spring
-  of stiffness E t w³ / (2 L³) (`stiffness`), a quarter of a guided beam of
-  the same length for half the space. Point: attach, the middle of the
+  of stiffness E t w³ / (2 L³) (`stiffness`), half that of a guided beam of
+  the same length, in half the space. Point: attach, the middle of the
   free leg's end.
 tags: [spring, u-spring, folded, flexure]
 parameters:
@@ -11,7 +11,7 @@ parameters:
   beam_width: {default: 2, min: 0, min_exclusive: true, description: "Beam width, w (µm)"}
   spread: {default: 18, min: anchor_size / 2 + beam_width / 2, min_exclusive: true, description: "Between the beams' centres; the free one clears the anchor pad (µm)"}
   truss: {default: 3, min: 0, min_exclusive: true, description: Width of the bar that joins them at the top (µm)}
-  anchor_size: {default: 20, min: 4, min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure"}
+  anchor_size: {default: 20, min: 4, min_exclusive: true, description: "Anchor pad edge length (µm); more than twice the anchor's 2 µm enclosure, and more than 4 plus twice the process's undercut or the etch frees it"}
   youngs_modulus: {default: 160, min: 0, min_exclusive: true, description: "Young's modulus of the structural layer, E (GPa; 160 for polysilicon)"}
   thickness: {default: 2, min: 0, min_exclusive: true, description: "Thickness of the structural layer, t (µm)"}
   top: {default: anchor_size / 2 + length, internal: true, description: Where the beams meet the bar (µm)}

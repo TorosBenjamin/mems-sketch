@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -28,7 +29,9 @@ from mems_sketch.core.process import changes_between
 from mems_sketch.core.project import Project, new_project
 from mems_sketch.engine import Build, Engine
 from mems_sketch.export.base import (
+    PROCESS_DEFAULTS,
     available_exporters,
+    cell_name_notes,
     export_with_report,
     exporter_class,
     format_for,
@@ -44,6 +47,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
+    except BrokenPipeError:  # `info | head` stopped reading: nothing went wrong here
+        sys.stdout = open(os.devnull, "w")  # noqa: SIM115 - Python flushes it on exit
+        return 0
     except Exception as exc:  # noqa: BLE001 - reported as a CLI error
         print(f"error: {explain(exc)}", file=sys.stderr)
         return 2
@@ -58,6 +64,11 @@ def _parser() -> argparse.ArgumentParser:
     new.add_argument("--name", help="project name (default: folder name)")
     new.add_argument(
         "--library", action="store_true", help="a library: components only, no top component"
+    )
+    new.add_argument(
+        "--process",
+        help="a bundled library's process to use (mems.surface, mems.polysilicon, mems.soi); "
+        "default: a process of its own with device, anchor and metal layers",
     )
     new.set_defaults(handler=_new)
 
@@ -81,7 +92,9 @@ def _parser() -> argparse.ArgumentParser:
     mcp.set_defaults(handler=_mcp)
 
     info = commands.add_parser("info", help="list components, parameters and layers")
-    info.add_argument("project", type=Path)
+    info.add_argument("project", type=Path, help="project folder, project.yaml or one file")
+    info.add_argument("--component", help="only this component (also a library's: mems.anchor)")
+    info.add_argument("--json", action="store_true", help="print it as JSON")
     info.set_defaults(handler=_info)
 
     check = commands.add_parser("check", help="run design-rule checks (exit 1 on violations)")
@@ -150,10 +163,19 @@ def _parameters(assignments: list[str]) -> dict[str, float | str]:
 
 def _build(project: Project, component: str | None, params: dict[str, Any]) -> Build:
     """``component``, or the top component when none is named."""
-    component = component or project.top
-    if component is None:
-        raise ValueError("this project has no top component: name the component")
-    return Engine().load(project).build(component, params)
+    return Engine().load(project).build(_component(project, component), params)
+
+
+def _component(project: Project, component: str | None) -> str:
+    """``component``, or the top component; a library's must be named."""
+    name = component or project.top
+    if name is None:
+        names = ", ".join(sorted(project.components)) or "none yet"
+        raise ValueError(
+            f"'{project.name}' is a library, with no top component: name one with "
+            f"--component (its components: {names})"
+        )
+    return name
 
 
 def _values(project: Project, component: str | None, assignments: list[str]) -> dict[str, float]:
@@ -162,9 +184,7 @@ def _values(project: Project, component: str | None, assignments: list[str]) -> 
     params = _parameters(assignments)
     if not params:
         return {}
-    name = component or project.top
-    if name is None:
-        raise ValueError("this project has no top component: name the component")
+    name = _component(project, component)
     resolved = Engine().load(project).variables(name, params)
     return {key: resolved[key] for key in params}
 
@@ -177,6 +197,10 @@ def _new(args: argparse.Namespace) -> int:
     if (args.folder / "project.yaml").exists():
         raise FileExistsError(f"{args.folder} already contains a project")
     project = new_project(args.name or args.folder.name, library=args.library)
+    if args.process:
+        if args.process not in [n for n in project.process_names() if "." in n]:
+            raise ValueError(f"no process '{args.process}' ({_process_list(project)})")
+        project.use_process(args.process)
     save(project, args.folder)
     print(f"created {args.folder}")
     return 0
@@ -204,7 +228,9 @@ def _new_process(args: argparse.Namespace) -> int:
             library not in source.libraries
             or process_name not in source.libraries[library].processes
         ):
-            raise ValueError(f"no process '{args.start}' to start from")
+            raise ValueError(
+                f"no process '{args.start}' to start from ({_process_list(source)}, or empty)"
+            )
         process = copy.deepcopy(source.libraries[library].processes[process_name])
         process.description = f"Started as a copy of {args.start}: make it your fab's process."
     project = Project(
@@ -213,6 +239,11 @@ def _new_process(args: argparse.Namespace) -> int:
     save(project, args.folder)
     print(f"created {args.folder}: edit processes/{name}/process.yaml, then add it as a library")
     return 0
+
+
+def _process_list(project: Project) -> str:
+    """The bundled libraries' processes, to choose from."""
+    return "the processes: " + ", ".join(n for n in project.process_names() if "." in n)
 
 
 def _mcp(args: argparse.Namespace) -> int:
@@ -228,15 +259,24 @@ def _mcp(args: argparse.Namespace) -> int:
 
 def _info(args: argparse.Namespace) -> int:
     project = load(args.project)
+    if args.component:
+        return _component_info(project, args.component, args.json)
+    if args.json:
+        print(json.dumps(_project_data(project), indent=2))
+        return 1 if project.validate() else 0
     kind = f"top: {project.top}" if project.top else "library, no top component"
     print(f"project {project.name} ({kind})")
     for note in project.load_notes:
         print(f"note: {note}")
-    print(f"process: {project.process_name}")
+    process = project.process
+    print(
+        f"process: {project.process_name} (grid {_number(process.grid_um)} µm, "
+        f"curves within {_number(process.chord_um)} µm)"
+    )
     if project.base_process is not None:
         constants, changed, added = changes_between(project.base_process, project.process)
         for name, value in constants.items():
-            print(f"  changed process.{name} = {value}")
+            print(f"  changed process.{name} = {_number(value)}")
         for name in [*changed, *added]:
             reason = project.reasons.get(name)
             print(
@@ -253,7 +293,7 @@ def _info(args: argparse.Namespace) -> int:
     if project.process.constants:
         print("process constants:")
         for name, value in project.process.constants.items():
-            print(f"  process.{name} = {value}")
+            print(f"  process.{name} = {_number(value)}")
     print("components:")
     for name, definition in project.components.items():
         params = ", ".join(f"{p.name}={_number(p.default)}" for p in definition.parameters)
@@ -275,16 +315,99 @@ def _print_rule(name: str, rule, note: str = "") -> None:
     )
 
 
+def _project_data(project: Project) -> dict[str, Any]:
+    process = project.process
+    return {
+        "name": project.name,
+        "top": project.top,
+        "notes": project.load_notes,
+        "process": {
+            "name": project.process_name,
+            "grid_um": process.grid_um,
+            "chord_um": process.chord_um,
+            "constants": dict(process.constants),
+            "layers": {
+                n: [layer.gds_layer, layer.gds_datatype] for n, layer in project.layers.items()
+            },
+            "rules": {
+                n: {"kind": r.kind, "layers": list(r.layers), "values": dict(r.values)}
+                for n, r in process.rules.items()
+            },
+        },
+        "components": {
+            name: {p.name: p.default for p in definition.parameters}
+            for name, definition in project.components.items()
+        },
+        "libraries": {name: list(lib.components) for name, lib in project.libraries.items()},
+        "problems": project.validate(),
+    }
+
+
+def _component_info(project: Project, component: str, as_json: bool) -> int:
+    """One component: its parameters (default, limits, what they are), points and ports."""
+    found = project.definition(project.qualify(component))
+    if found is None:
+        raise ValueError(f"'{component}' is an imported cell: it has no parameters")
+    definition, _ = found
+    parameters = {
+        p.name: {
+            "default": p.default,
+            "min": p.min,
+            "max": p.max,
+            "internal": p.internal,
+            "description": p.description,
+        }
+        for p in definition.parameters
+    }
+    if as_json:
+        data = {
+            "name": component,
+            "description": definition.description,
+            "parameters": parameters,
+            "points": [point.name for point in definition.points],
+            "ports": [port.name for port in definition.ports],
+        }
+        print(json.dumps(data, indent=2))
+        return 0
+    print(
+        f"component {component}" + (f": {definition.description}" if definition.description else "")
+    )
+    for name, p in parameters.items():
+        definition_of = next(d for d in definition.parameters if d.name == name)
+        limits = ", ".join(
+            f"{sign} {_number(value)}"
+            for sign, value in (
+                (">" if definition_of.min_exclusive else "≥", p["min"]),
+                ("<" if definition_of.max_exclusive else "≤", p["max"]),
+            )
+            if value is not None
+        )
+        extra = " (derived)" if p["internal"] else ""
+        print(
+            f"  {name} = {_number(p['default'])}{extra}"
+            + (f" [{limits}]" if limits else "")
+            + (f": {p['description']}" if p["description"] else "")
+        )
+    if definition.points:
+        print(f"points: {', '.join(point.name for point in definition.points)}")
+    if definition.ports:
+        print(f"ports: {', '.join(port.name for port in definition.ports)}")
+    return 0
+
+
 def _number(value: float | str) -> str:
     return f"{value:g}" if isinstance(value, float | int) else str(value)
 
 
 def _check(args: argparse.Namespace) -> int:
     project = load(args.project)
-    checked = rules.checked_geometry(
-        project, args.component, _values(project, args.component, args.set)
+    name = _component(project, args.component)
+    values = _values(project, name, args.set)
+    checked = rules.checked_geometry(project, name, values)
+    violations = rules.check(project, checked, name)
+    violations = rules.name_shapes(
+        violations, project, name, rules.records_of(project, name, values)
     )
-    violations = rules.check(project, checked, args.component)
     if args.json:
         print(
             json.dumps(
@@ -296,6 +419,8 @@ def _check(args: argparse.Namespace) -> int:
                         "layer": v.layer,
                         "message": v.message,
                         "bbox_um": v.bbox_um,
+                        "measured_um": v.measured,
+                        "shapes": list(v.shapes),
                         "values": v.values,
                         "waived": v.waived or None,
                     }
@@ -310,6 +435,8 @@ def _check(args: argparse.Namespace) -> int:
             if v.bbox_um:
                 x0, y0, x1, y1 = v.bbox_um
                 where = f" at ({(x0 + x1) / 2:.3f}, {(y0 + y1) / 2:.3f}) µm"
+            if v.shapes:
+                where += f" on {', '.join(v.shapes)}"
             state = f"waived ({v.waived})" if v.waived else v.severity
             print(f"{state}: {v.rule} {v.layer}: {v.message}{where}")
         errors, warnings = len(rules.errors(violations)), len(rules.warnings(violations))
@@ -335,18 +462,24 @@ def _export(args: argparse.Namespace) -> int:
     options = _options(format_name, args.option)
     project = load(args.project)
     params = _values(project, args.component, args.set)
+    name = _component(project, args.component)
+    print(f"building {name}…", file=sys.stderr, flush=True)  # a big design takes a while
     build = _build(project, args.component, params)
-    path, written = export_with_report(
-        project,
-        args.output,
-        format_name=format_name,
-        geometry=build.geometry,
-        component=args.component,
-        params=params,
-        options=options,
-        build=build,
-    )
+    print(f"writing {args.output}…", file=sys.stderr, flush=True)
+    with cell_name_notes() as notes:
+        path, written = export_with_report(
+            project,
+            args.output,
+            format_name=format_name,
+            geometry=build.geometry,
+            component=args.component,
+            params=params,
+            options=options,
+            build=build,
+        )
     print(f"wrote {path}")
+    for note in notes:
+        print(f"warning: {note}", file=sys.stderr)
     changes = written.describe() if hasattr(written, "describe") else []
     if changes:
         print("snapping to the grid changed the shape:")
@@ -363,6 +496,8 @@ def _options(format_name: str, assignments: list[str]) -> dict[str, object]:
         name = name.strip()
         if not sep or not name:
             raise ValueError(f"--option expects NAME=VALUE, got '{assignment}'")
+        if name not in declared and f"{name}_um" in declared:
+            name = f"{name}_um"  # grid, chord: as the process calls them
         if name not in declared:
             known = ", ".join(declared) or "none"
             raise ValueError(f"'{format_name}' has no option '{name}' (its options: {known})")
@@ -376,6 +511,10 @@ def _formats(args: argparse.Namespace) -> int:
         for option in options_of(cls):
             default = option.default if option.default != "" else '""'
             unit = f" {option.suffix.strip()}" if option.suffix.strip() else ""
+            if option.name in PROCESS_DEFAULTS:  # what export uses unless it is given
+                field = option.name.removesuffix("_um")
+                print(f"    {option.name}={default}{unit} (default: the process's {field})")
+                continue
             print(f"    {option.name}={default}{unit}")
             if option.help:
                 print(f"        {option.help}")

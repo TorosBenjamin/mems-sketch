@@ -260,8 +260,11 @@ class MenuPolisher(QObject):
                 watched.setContentsMargins(SHADOW, SHADOW, SHADOW, SHADOW)
                 watched.setProperty("mems_shadow", True)
             watched.setStyle(menu_style())
-        elif event.type() == QEvent.Type.Show and _shadowed(watched) and not _is_submenu(watched):
-            watched.move(watched.pos() - QPoint(SHADOW, SHADOW - 2))
+        elif event.type() == QEvent.Type.Show and _shadowed(watched):
+            if _is_submenu(watched):
+                line_up_submenu(watched)
+            else:
+                watched.move(watched.pos() - QPoint(SHADOW, SHADOW - 2))
         return False
 
 
@@ -307,6 +310,30 @@ def _is_submenu(menu: QMenu) -> bool:
         isinstance(owner, QMenu) and owner is not menu and owner.isVisible()
         for owner in menu.menuAction().associatedObjects()
     )
+
+
+def line_up_submenu(menu: QMenu) -> None:
+    """Move a submenu so that its first entry is level with the entry that opened
+    it, as in other apps (#229): where the platform puts the window, its shadow's
+    margin can leave it lower. Not where that would take it off the screen (Qt
+    moved it up to fit)."""
+    owner = next(
+        (
+            m
+            for m in menu.menuAction().associatedObjects()
+            if isinstance(m, QMenu) and m is not menu and m.isVisible()
+        ),
+        None,
+    )
+    first = next((a for a in menu.actions() if a.isVisible() and not a.isSeparator()), None)
+    if owner is None or first is None:
+        return
+    opened_by = owner.mapToGlobal(owner.actionGeometry(menu.menuAction()).topLeft()).y()
+    dy = opened_by - menu.mapToGlobal(menu.actionGeometry(first).topLeft()).y()
+    screen = menu.screen().availableGeometry() if menu.screen() else None
+    moved = menu.geometry().translated(0, dy)
+    if dy and (screen is None or screen.contains(moved.adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW))):
+        menu.move(moved.topLeft())
 
 
 _style: MenuStyle | None = None

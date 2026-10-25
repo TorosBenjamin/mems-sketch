@@ -76,7 +76,7 @@ def test_the_commit_panel_sits_on_the_left_and_lists_changes_by_component(window
     assert panel.no_changes.isVisible() and not panel.tree.isVisible()
     resize(window, x1=50, y1=8)
     assert rows(panel.tree) == [
-        "CHANGES · 1",
+        "Changes  1",
         "  top | 1 change",
         "    beam | 2 changes",  # two fields: a line each
         "      x1 40 → 50",
@@ -84,6 +84,17 @@ def test_the_commit_panel_sits_on_the_left_and_lists_changes_by_component(window
     ]
     resize(window, y1=4)
     assert rows(panel.tree)[2] == "    beam | x1 40 → 50"  # one field: on its row
+
+
+def test_a_short_panel_keeps_room_for_the_changes(window, panel):
+    """#259: the message box gives way to the list (it used to be about a row and a
+    half high), down to two lines of its own."""
+    resize(window, x1=50, y1=8)
+    window.resize(1200, 600)
+    rows_high = panel.tree.height() / panel.tree.fontMetrics().height()
+    assert rows_high >= 4
+    lines = panel.message.height() / panel.message.fontMetrics().lineSpacing()
+    assert lines >= 2
 
 
 def test_names_are_coloured_by_what_happened(window, panel):
@@ -98,7 +109,7 @@ def test_names_are_coloured_by_what_happened(window, panel):
 def test_other_files_and_untracked_ones(window, panel, git_repo):
     (git_repo / "notes.md").write_text("ideas")
     panel.reload()
-    assert rows(panel.tree) == ["UNVERSIONED FILES · 1", "  notes.md | new file"]
+    assert rows(panel.tree) == ["Unversioned files  1", "  notes.md | new file"]
     notes = row(panel.tree, "notes.md")
     assert notes.checkState(0) == Qt.CheckState.Unchecked  # not committed unless chosen
     assert notes.foreground(0).color() == theme.color("vcs_untracked")

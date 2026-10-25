@@ -48,10 +48,11 @@ and the [Commit and Git](git.md) panels show what changed between versions.
 ## A first edit
 
 1. Open the example (above) and select **comb_top** in **Shapes**.
-2. In **Properties**, set *Moving fingers* to `12`. The comb redraws; the
-   alignment keeps it on the plate.
-3. Open **Parameters** (the sliders icon on the right edge) and drag the
-   `plate` default from 160 to 200: the plate grows, the combs and springs
+2. In **Properties**, set **Moving fingers** (under *Parameters of
+   mems.comb_drive*; its tooltip gives the name expressions use, `fingers`)
+   to `12`. The comb redraws; the alignment keeps it on the plate.
+3. Open **Parameters** (the sliders icon on the right edge, or Alt+4) and
+   drag the `plate` default from 162.5 to 200: the plate grows, the combs and springs
    move with it.
 4. **Messages** (bottom) lists any design-rule violation, with a red box on
    the canvas; click one to go there.

@@ -59,5 +59,8 @@ def test_the_shapes_tree_offers_the_clipboard(window):
     window.selection = [((0, 0),)]
     menu = window.actions_.shapes_menu()
     texts = [a.text() for a in menu.actions()]
-    assert texts[:3] == ["Cut", "Copy", "Paste"]
+    clipboard = [t for t in texts if t in ("Cut", "Copy", "Paste")]
+    assert clipboard == ["Cut", "Copy", "Paste"]
+    # ... and what the editor's right-click menu offers for a selection (#256)
+    assert {"Combine", "Rename…", "Unpack operation", "Remove alignment"} <= set(texts)
     menu.deleteLater()

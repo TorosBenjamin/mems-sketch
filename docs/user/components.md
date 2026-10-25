@@ -45,7 +45,7 @@ A component is **shared** or **private** to another one, like a nested class:
 `comb/finger` is `finger`, made for `comb` and placed only inside it. It is
 listed under its owner. This says what belongs to what, not where things are
 used; hover a component to see what it places and where it is placed. **Make
-component** (Ctrl+K) on a selection makes a private component of the one you
+component** (Ctrl+Alt+M) on a selection makes a private component of the one you
 are editing.
 
 ## Parameters
@@ -65,6 +65,9 @@ min, max, a trial value and the resolved value.
 - A parameter is **public** (whoever places the component can set it) or
   **internal** (the lock button): used only inside, typically a derived value.
   Where the component is placed, internal parameters are not offered.
+- **Right-click a parameter** for its **Description…** (shown in its tooltip
+  and as its label where the component is placed: "Moving fingers") and
+  **Whole number**, for a count such as a number of fingers.
 - A **trial** value shows the component with another value without changing
   the design: it is not saved or undone and only affects that component's own
   tab. It also works on library components, so you can try a
@@ -156,7 +159,7 @@ the Components panel's **+** or listed in `project.yaml`:
 
 ```yaml
 libraries:
-  mems: bundled@2        # a bundled one, and the version the project was saved with
+  mems: bundled@3        # a bundled one, and the version the project was saved with
   fab: ../fab-library    # a folder of your own
 ```
 
@@ -168,6 +171,12 @@ so. Libraries are read-only:
 to change a library component for one project, right-click it and **Copy into
 the project**; the copy is editable and keeps using the library's other
 components.
+
+**A library outside the project's repository** (`../../acme_fab`) is not in
+a clone of it. The Commit panel says so and offers **Copy into the project**,
+which copies the library into the project's `libraries/` folder and uses the
+copy. Opening a project whose library is not where it says asks for it
+(**Locate library…**) and points the project there.
 
 A project without a top component is itself a library: just components, meant
 to be placed elsewhere (**File → New library**, or **Make the project a
@@ -186,8 +195,8 @@ changes those to `mems.anchor` and so on, and says so once.
 
 ## The process
 
-**Process** (the first item under the project in Components, or **View →
-Process**) is a tab with the process the project uses at the top, then a card
+**Process** (the first item under the project in Components, or **Check →
+Process and rules**) is a tab with the process the project uses at the top, then a card
 each for the process constants, available in every expression as
 `process.<name>`, the layers with their GDS layer and datatype, and the design
 rules.
@@ -240,7 +249,7 @@ the value (`2`); one with several, `name=value` separated by commas.
 | Separation | first, second | the layers are at least `value` apart and do not overlap |
 | Inside, not overlapping | two | one layer inside the other; the two never overlap |
 | Anchored | layer, anchor | every piece touches an anchor, so nothing floats away at release |
-| Release | layer, anchor | away from anchors no part is wider than twice the `undercut` (or the etch cannot free it: add release holes), and anchors are wider than that (or the undercut frees them too) |
+| Release | layer, anchor | away from anchors no part is wider than twice the `undercut` (or the etch cannot free it: add release holes), and anchors are wider than that (or the undercut frees them too). Widths allow for rounding onto the process grid, so a beam exactly twice the undercut wide passes at any angle; material only along an anchor's edge counts as the anchor's |
 
 A new project starts with minimum width and spacing on the device layer and
 the **anchored** and **release** rules (as warnings, with a `process.undercut`
@@ -251,7 +260,12 @@ under it: its **Note**, shown with its violations (e.g. why the rule exists),
 and where it comes from.
 
 Rules are checked on the final geometry after every change; **Messages**
-lists the violations and the canvas boxes them in red. More kinds can be
+lists the violations and the canvas boxes them in red. Each says what was
+measured against the limit (*1.5 µm wide < 2 µm*, *4.05 µm wide > 4 µm (2 × 2
+µm undercut)*), so a borderline case shows as one, and the shapes or placed
+components it is on (*on beam*). A part that does not release is told both
+ways out: narrow it or add release holes if it should move, anchor it if it
+should stay fixed (a pad, a wire, a frame). More kinds can be
 installed as plugins (`mems-sketch-cli rules` lists them).
 
 ### Processes from a library
@@ -285,7 +299,12 @@ with a reason. It stays listed, greyed and marked *Waived* with the reason,
 but no longer counts as a problem, is not boxed on the canvas, and does not
 fail `check`. The waiver is saved with the component.
 
-A waiver covers that violation as it is: when the geometry around it changes,
-the waiver lapses and the violation shows again, marked *waiver lapsed*. A
-waiver that no longer matches any violation is listed as a warning to remove
-(right-click, **Remove the waiver**).
+A waiver covers that violation as it is, wherever it is: move the waived
+part together with what is around it and the waiver goes with it. Where the
+component is placed, its waivers accept the same violation in every placement
+(turned or mirrored too), listed as *Waived in* the component. When the
+geometry around a violation changes, or something is placed close enough to
+it, it is no longer the one waived: in the component itself the waiver lapses
+and the violation shows again, marked *waiver lapsed*. A waiver that no
+longer matches any violation is listed as a warning to remove (right-click,
+**Remove the waiver**, which works from a component that places it too).

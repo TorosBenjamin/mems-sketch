@@ -15,10 +15,12 @@ from mems_sketch.core.shapes import (
     child_lists,
     container_of,
     default_shape,
+    node_at,
     translated,
     walk,
     wrap_shapes,
 )
+from mems_sketch.core.shapes import paths as node_paths
 from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
 
@@ -52,8 +54,14 @@ class NodeEdits(Commands):
         self.session.edit(f"Add {shape.name}", change)
         return ((0, len(self.session.shapes) - 1),)
 
-    def add_primitive(self, kind: str, layer: str = "device") -> NodePath:
-        return self.add(default_shape(kind, layer))
+    def add_primitive(
+        self, kind: str, layer: str = "device", x: float = 0.0, y: float = 0.0
+    ) -> NodePath:
+        """Add a default ``kind`` on ``layer``, moved by ``(x, y)`` µm."""
+        shape = default_shape(kind, layer)
+        if x or y:
+            shape = shape.model_copy(update=shape.moved(lambda v: v + x, lambda v: v + y, None))
+        return self.add(shape)
 
     def add_component(self, component: str, x: float = 0.0, y: float = 0.0) -> NodePath:
         """Place a component (its origin at ``x, y``) in the active component.
@@ -75,7 +83,7 @@ class NodeEdits(Commands):
         stem = written.rsplit(".", 1)[-1].rsplit("/", 1)[-1].split("_")[0]
         return self.add(RefShape(name=self.session.unique_name(stem), component=written, x=x, y=y))
 
-    def replace(self, path: NodePath, new: Shape) -> None:
+    def replace(self, path: NodePath, new: Shape, description: str | None = None) -> None:
         """Replace a node. A new name is also used by alignments and point expressions."""
         old_name = self.session.node(path).name
         had = {n.name for n in walk([self.session.node(path)]) if n.name}
@@ -90,9 +98,11 @@ class NodeEdits(Commands):
             container[index] = new
             check_shape_names(self.session.shapes_in(project))
 
-        self.session.edit(f"Edit {new.name or new.kind}", change)
+        self.session.edit(description or f"Edit {new.name or new.kind}", change)
 
-    def remove(self, paths: list[NodePath]) -> None:
+    def remove(self, paths: list[NodePath], description: str = "Delete") -> None:
+        """Delete nodes, as one step (``description``: what undo calls it)."""
+
         def change(project: Project) -> None:
             # Resolve all targets before removing anything, so indices stay valid.
             targets = [container_of(self.session.shapes_in(project), p) for p in paths]
@@ -105,23 +115,63 @@ class NodeEdits(Commands):
         doomed_nodes = [n for p in paths for n in walk([self.session.node(p)])]
         names = {n.name for n in doomed_nodes if n.name}
         try:
-            self.session.edit("Delete", change)
+            self.session.edit(f"{description} {_count_of(self.session, paths)}", change)
         except ValueError as error:
             kept = [n for n in walk(self.session.shapes) if all(n is not d for d in doomed_nodes)]
             raise ValueError(_refused_delete(str(error), names, kept)) from None
 
     def duplicate(self, path: NodePath) -> NodePath:
+        """A copy of the node with fresh names, right after it (in the same operand)."""
         copy_ = self.session.node(path).model_copy(deep=True)
         taken = {s.name for s in walk(self.session.shapes) if s.name}
         for node in walk([copy_]):
             if node.name:
                 node.name = fresh_name(node.name, taken)
                 taken.add(node.name)
-        return self.add(copy_)
+
+        def change(project: Project) -> None:
+            container, index = container_of(self.session.shapes_in(project), path)
+            container.insert(index + 1, copy_)
+
+        self.session.edit(f"Duplicate {copy_.name or copy_.kind}", change)
+        return (*path[:-1], (path[-1][0], path[-1][1] + 1))
+
+    def move(
+        self, paths: list[NodePath], parent: NodePath | None, slot: int, index: int
+    ) -> list[NodePath]:
+        """Move nodes, in their order, to position ``index`` of child list ``slot`` of
+        the node at ``parent`` (None: the component's own list), as one step: to
+        reorder them, or to put them into or out of an operation's operand.
+        Returns where they are now."""
+        chosen = set(paths)  # a node inside another one chosen goes with it
+        ordered = sorted(p for p in chosen if not any(q != p and p[: len(q)] == q for q in chosen))
+        if not ordered:
+            return []
+        if parent is not None and any(parent[: len(p)] == p for p in ordered):
+            raise ValueError("a shape cannot be moved into itself")
+        moving: list[Shape] = []
+
+        def change(project: Project) -> None:
+            shapes = self.session.shapes_in(project)
+            moving[:] = [node_at(shapes, p) for p in ordered]
+            target = shapes if parent is None else child_lists(node_at(shapes, parent))[slot]
+            at = index
+            for node in reversed(moving):  # deepest-last paths: indices stay valid
+                container, where = _locate(shapes, node)
+                if container is target and where < at:
+                    at -= 1
+                del container[where]
+            target[at:at] = moving
+
+        what = _count_of(self.session, ordered)
+        self.session.edit(f"Move {what}", change)
+        found = {id(node): path for path, node in node_paths(self.session.shapes)}
+        return [found[id(node)] for node in moving]
 
     def set_enabled(self, path: NodePath, enabled: bool) -> None:
         node = self.session.node(path)
-        self.replace(path, node.model_copy(update={"enabled": enabled}))
+        what = f"{'Show' if enabled else 'Hide'} {node.name or node.kind}"
+        self.replace(path, node.model_copy(update={"enabled": enabled}), what)
 
     def siblings(self, paths: list[NodePath]) -> tuple[list[NodePath], int, list[Shape]]:
         if not paths:
@@ -149,7 +199,7 @@ class NodeEdits(Commands):
             target[:] = kept[:first] + [wrapper] + kept[first:]
 
         self.session.edit(
-            f"{operation.replace('_', ' ').capitalize()} {len(nodes)} shape(s)", change
+            f"{operation.replace('_', ' ').capitalize()} {_plural(len(nodes), 'shape')}", change
         )
         return (*ordered[0][:-1], (ordered[0][-1][0], first))
 
@@ -241,3 +291,27 @@ def _uses(node: Shape, name: str) -> bool:
     """Whether ``node`` itself (not its children) uses a point of the shape ``name``."""
     own = node.model_dump(exclude=set(node.child_fields))
     return re.search(rf"(?<![\w.]){re.escape(name)}\.", repr(own)) is not None
+
+
+def _count_of(session, paths: list[NodePath]) -> str:
+    """What a step changes, for its undo text: a shape's name, or "3 shapes"."""
+    if len(paths) == 1:
+        node = session.node(paths[0])
+        return node.name or node.kind
+    return _plural(len(paths), "shape")
+
+
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}" + ("" if count == 1 else "s")
+
+
+def _locate(shapes: list[Shape], node: Shape) -> tuple[list[Shape], int]:
+    """The list holding ``node`` (by identity) and its index there."""
+    pending = [shapes]
+    while pending:
+        container = pending.pop()
+        for where, candidate in enumerate(container):
+            if candidate is node:
+                return container, where
+            pending.extend(child_lists(candidate))
+    raise KeyError("the node is not in the tree")

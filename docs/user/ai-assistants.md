@@ -60,6 +60,10 @@ Edits go through the same edit session as the editor:
 - **Every edit can be undone** with `undo`.
 - **Library components are read-only.** The assistant can read and place
   them, but not change them.
+- **An argument a tool does not take is an error** that names the arguments
+  it does take, rather than being ignored.
+- **Limits are written as in the Parameters panel:** `set_parameter` with
+  `min: "> 20"` sets an exclusive minimum of 20.
 
 Nothing is written to disk until the assistant calls `save` (or `export`).
 `save` into a folder that holds another project is refused unless the

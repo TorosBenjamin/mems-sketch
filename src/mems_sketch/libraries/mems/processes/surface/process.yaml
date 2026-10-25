@@ -1,17 +1,23 @@
 description: >-
   An example single-layer surface-micromachining process: one released
-  structural layer over a sacrificial oxide, its anchors, and metal. Typical,
-  round values, not any foundry's rules.
+  structural layer over a sacrificial oxide, its anchors, metal on it, and a
+  wiring layer under the oxide to reach anchors the structure boxes in.
+  Typical, round values, not any foundry's rules.
 constants: {undercut: 2, min_gap: 2}
 layers:
   device: {gds: [1, 0]}
   anchor: {gds: [2, 0]}
   metal: {gds: [3, 0]}
+  wiring: {gds: [4, 0]}
 levels:
+- {layer: wiring}
 - layer: device
   roles: {anchor: anchor}
 - {layer: metal}
+default_level: device
 rules:
+  wiring_min_width: {kind: min_width, layers: [wiring], value: 2}
+  wiring_min_space: {kind: min_space, layers: [wiring], value: 2}
   device_min_width: {kind: min_width, layers: [device], value: 2}
   device_min_space: {kind: min_space, layers: [device], value: 2}
   device_anchored: {kind: anchored, layers: [device, anchor], severity: warning}

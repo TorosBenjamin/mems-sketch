@@ -60,12 +60,18 @@ def test_a_slow_design_shows_the_last_result_until_the_new_one_is_built(window, 
     assert "updating…" not in view.canvas.caption_details.text()
 
 
-def test_a_quick_change_to_a_slow_design_is_built_in_the_background_too(window, qtbot):
+def test_a_quick_change_to_a_slow_design_is_built_in_the_background_too(window, qtbot, monkeypatch):
     slow(window)
     window._took({window.view.component: 0.001})  # this one was quick, others were not
     assert not window.document.check_builds
+    # The build waits until the test lets it go: one this small could be done before
+    # the window asks to hear of it, and then it is shown at once.
+    held, builder = threading.Event(), ThreadPoolExecutor(max_workers=1)
+    builder.submit(held.wait)
+    monkeypatch.setattr(app, "builds", lambda: builder)
     window.run(lambda: window.document.parameters.update("width", default=9.0))
     assert window.view.updating
+    held.set()
     qtbot.waitUntil(lambda: not window.view.updating, timeout=10_000)
 
 

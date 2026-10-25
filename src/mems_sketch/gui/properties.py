@@ -129,7 +129,7 @@ MODIFIER_LABELS = {  # per kind, then per field
         "row_pitch": "Row pitch",
         "hole_size": "Hole size",
         "hole_height": "Hole height",
-        "corner_radius": "Corner radius",
+        "corner_radius": "Hole corner radius",  # apart from the shape's own (#301)
         "margin": "Margin",
         "keep_out": "Keep clear of",
         "keep_out_margin": "Keep-out margin",
@@ -374,6 +374,15 @@ class PropertyEditor(QScrollArea):
         layout.addWidget(main)
 
         fields_shown = self._add_fields(form, node, node.kind, "", skip=_SPECIAL)
+        if node.align is not None and type(node).placed:  # the alignment places it (#304)
+            for name in ("x", "y"):
+                widget = fields_shown.get(name)
+                if widget is not None:
+                    _set_active(form, widget, False)
+                    widget.setToolTip(
+                        "Not used while the shape is aligned: the alignment places it "
+                        "(Edit → Remove alignment keeps it where it is)"
+                    )
         bend = fields_shown.get("bend")
         if isinstance(bend, QComboBox) and "radius" in fields_shown:  # a route: sharp has none
 
@@ -1029,6 +1038,12 @@ class PropertyEditor(QScrollArea):
 
             widgets["even_rim"].toggled.connect(update_rim)
             update_rim()
+            hint = self._release_hint(modifier)
+            if hint:  # webs too wide to release in this process (#301)
+                note = QLabel(hint)
+                note.setObjectName("warning-note")
+                note.setWordWrap(True)
+                layout.addWidget(note)
         if kind == "mirror":  # a line or point given by "about" replaces axis, x and y
             about = widgets["about"].findChild(QComboBox) or widgets["about"]
             axis = widgets["axis"]
@@ -1053,6 +1068,34 @@ class PropertyEditor(QScrollArea):
             }
 
         return card, read
+
+    def _release_hint(self, modifier) -> str:
+        """Why a perforation's webs do not release, if the process has a release
+        rule and they are wider than twice its undercut; empty otherwise."""
+        process = self.document.project.process
+        try:
+            constants = process.scope()
+            undercuts = [
+                _evaluate_in(rule.values.get("undercut"), constants)
+                for rule in process.rules.values()
+                if rule.enabled and rule.kind == "release"
+            ]
+            scope = {**constants, **self._scope}
+            pitch = _evaluate_in(modifier.pitch, scope)
+            hole = _evaluate_in(modifier.hole_size, scope)
+        except Exception:  # noqa: BLE001 - not worked out: no hint
+            return ""
+        undercuts = [u for u in undercuts if u is not None]
+        if not undercuts or pitch is None or hole is None or modifier.even_rim:
+            return ""
+        limit = 2 * min(undercuts)
+        web = pitch - hole
+        if web <= limit + 1e-9:
+            return ""
+        return (
+            f"The webs are {web:g} µm wide, more than {limit:g} µm (2 × the process's "
+            f"undercut): they will not release. Make pitch − hole size at most {limit:g} µm."
+        )
 
     def _corners_editor(
         self, key: str, modifier: CornersModifier, path: NodePath, read_only: bool
@@ -1700,6 +1743,17 @@ def _limit(limit, relation: str, values: dict[str, float]) -> str:
         with contextlib.suppress(ValueError):
             text += f" = {evaluate(limit, values):g}"
     return text
+
+
+def _evaluate_in(value, scope: dict) -> float | None:
+    """A number, or an expression worked out in ``scope``; None for nothing."""
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    from mems_sketch.core.expressions import evaluate
+
+    return float(evaluate(str(value), scope))
 
 
 def _gone(exc: Exception) -> bool:

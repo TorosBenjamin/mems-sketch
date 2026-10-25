@@ -131,6 +131,8 @@ DRAFT_ABOVE_MS = 25.0  # draft quality only when a full-quality frame takes long
 OUTLINE_PX = 1.0
 SELECTION_HALO_PX = 4.0  # the soft band around a selected shape's outline
 AXIS_ALPHA = 90  # the x and y axes, drawn faintly
+CHIP_ROW_MARGIN_PX = 60  # a row of parameter labels wraps this far from the right edge
+CHIP_LINE_PX = 22  # and its lines are this far apart
 ALIGN_LABEL_GAP_PX = 14  # an alignment's names sit this far beyond the arrow's ends
 ALIGN_APART_PX = 4  # an alignment's point and target closer than this are drawn as one
 CURSOR_LABEL_OFFSET = 16  # px: a label by the cursor starts this far right and below it
@@ -1819,7 +1821,7 @@ class LayoutCanvas(QGraphicsView):
         plain = QColor(self.theme["overlay"])
         plain.setAlpha(170)
         boxes, ends = [], []
-        rows: dict[tuple[int, int], float] = {}  # how far each row of labels reaches
+        rows: dict[tuple[int, int], tuple[float, int]] = {}  # each row: how far, which line
         editing = self._editing_dimension
         for index, d in enumerate(self._dimensions):
             typing = editing is not None and editing[0] == index
@@ -1833,10 +1835,15 @@ class LayoutCanvas(QGraphicsView):
             a, b = px(d.a), px(d.b)
             if d.style == "chip":  # a placement's value with no size: in a row under it
                 key = (round(a.x()), round(a.y()))
-                left = rows.get(key, 0.0)
+                left, line = rows.get(key, (0.0, 0))
                 width = self._label_width(label)
-                center = a + QPointF(left + width / 2, DIMENSION_GAP_PX * 0.75)
-                rows[key] = left + width + 6
+                # The row wraps at the view's right edge (and the zoom buttons) (#299).
+                room = self.viewport().width() - max(a.x(), 0.0) - CHIP_ROW_MARGIN_PX
+                if left > 0 and left + width > room:
+                    left, line = 0.0, line + 1
+                down = DIMENSION_GAP_PX * 0.75 + line * CHIP_LINE_PX
+                center = QPointF(max(a.x(), 4.0), a.y()) + QPointF(left + width / 2, down)
+                rows[key] = (left + width + 6, line)
                 ends.append(None)
                 boxes.append(self._dimension_label(painter, center, label, hovered, None, typing))
                 continue

@@ -604,6 +604,7 @@ QFrame#card {{
 QLabel#card-heading {{ font-weight: 600; }}
 QWidget#empty-state QLabel {{ color: {muted}; }}
 QLabel#muted[error="true"] {{ color: {error}; }}
+QLabel#warning-note {{ color: {warning}; }}
 QLabel#heading {{ font-weight: 600; font-size: {font_heading}px; }}
 QWidget#view-header {{ background: {editor}; border-bottom: 1px solid {border}; }}
 QWidget#view-header QLabel {{ color: {muted}; }}

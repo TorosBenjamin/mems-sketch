@@ -43,11 +43,13 @@ def main_sizes(width: int) -> list[int]:
     """[left, editor, right] for a window ``width`` px wide: the side panels a share
     of it (narrower in a small window, wider in a big one), the editor the rest (#318)."""
     left = max(SIDE_LEAST_PX, min(round(width * 0.19), SIDE_MOST_PX))
-    right = max(SIDE_LEAST_PX, min(round(width * 0.22), SIDE_MOST_PX + 40))
+    # Properties, on the right, needs room for a label and two fields side by side.
+    right = max(RIGHT_LEAST_PX, min(round(width * 0.25), SIDE_MOST_PX + 40))
     return [left, max(width - left - right, 200), right]
 
 
 SIDE_LEAST_PX = 220
+RIGHT_LEAST_PX = 310
 SIDE_MOST_PX = 380
 
 
@@ -102,9 +104,9 @@ class _Host(QFrame):
         self.title.setObjectName("dock-title-label")
         row.addWidget(self.title)
         row.addSpacing(theme.metric("space_m"))
-        close = QToolButton()
+        close = self.hide_button = QToolButton()
         close.setAutoRaise(True)
-        close.setToolTip("Hide")
+        close.setToolTip("Hide")  # "Hide Shapes" once it shows a window
         icons.bind(close, "minimize")
         close.clicked.connect(lambda _checked=False: hide())  # not the flag as an argument
         row.addWidget(close)
@@ -287,6 +289,7 @@ class ToolWindows(QWidget):
         host.current = window
         host.stack.setCurrentWidget(window.widget)
         host.title.setText(window.title)
+        host.hide_button.setToolTip(f"Hide {window.title}")  # which one (#328)
         window.header_buttons.show()
         window.button.setChecked(True)
         self._update()

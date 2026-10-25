@@ -506,6 +506,14 @@ class PreferencesDialog(QDialog):
         reset.setToolTip("Restore this page's defaults")
         reset.clicked.connect(self._reset_page)
         buttons.addButton(reset, QDialogButtonBox.ButtonRole.ResetRole)
+
+        def show_reset(row: int) -> None:  # a page with nothing to reset has no Reset (#327)
+            item = self.pages.item(row)
+            page = item.text() if item is not None else ""
+            reset.setVisible(any(setting.page == page for setting in SETTINGS))
+
+        self.pages.currentRowChanged.connect(show_reset)
+        show_reset(self.pages.currentRow())
         right = QVBoxLayout()
         pad = theme.metric("space_xl")
         right.setContentsMargins(0, 0, pad, pad)

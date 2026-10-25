@@ -1650,7 +1650,7 @@ class Section(QGroupBox):
 
     def _show_toggle(self) -> None:
         icons.bind(self._toggle, "down" if self._collapsed else "up")
-        self._toggle.setToolTip("Show this section" if self._collapsed else "Fold this section")
+        self._toggle.setToolTip(f"{'Show' if self._collapsed else 'Fold'} {self._title}")  # #328
 
     def showEvent(self, event) -> None:
         if not self._restored:  # its contents are made by now
@@ -1813,6 +1813,38 @@ def _line_up(body: QWidget) -> None:
     # longer label ("Initial finger overlap") takes what it needs.
     for label in labels:
         label.setMinimumWidth(LINE_UP_MAX_PX)
+    for form in forms:  # each field named after its label, for screen readers (#323)
+        for row in range(form.rowCount()):
+            label = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            field = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+            if label is None or field is None or label.widget() is None:
+                continue
+            text = _label_text(label.widget())
+            target = field.widget() or (field.layout() and field.layout().itemAt(0).widget())
+            if not text or target is None:
+                continue
+            editors = [
+                w
+                for w in [target, *target.findChildren(QWidget)]
+                if w.focusPolicy() != Qt.FocusPolicy.NoFocus and not isinstance(w, QToolButton)
+            ]
+            for index, editor in enumerate(editors[:2]):  # a pair: "Position x", "Position y"
+                suffix = (
+                    f" {getattr(editor, 'prefix', '') or ''}".rstrip() if len(editors) > 1 else ""
+                )
+                editor.setAccessibleName(f"{text}{suffix}")
+                helper = label.widget().findChild(HelpButton)
+                if helper is not None:
+                    editor.setAccessibleDescription(helper.text_)
+            # (no label.setBuddy: it crashed when the panel's content was replaced)
+
+
+def _label_text(widget: QWidget) -> str:
+    """A label's words: the text of a label, or of the label in a label-with-help."""
+    label = widget if isinstance(widget, QLabel) else widget.findChild(QLabel)
+    if label is None:
+        return ""
+    return re.sub(r"<[^>]+>", "", label.text()).replace("&", "").strip()
 
 
 def _label_with_help(text: str, help_text: str) -> QWidget:
@@ -1823,6 +1855,8 @@ def _label_with_help(text: str, help_text: str) -> QWidget:
     line.setContentsMargins(0, 0, 0, 0)
     line.setSpacing(2)
     line.addWidget(_label(text))
-    line.addWidget(HelpButton(help_text))
+    help_button = HelpButton(help_text)
+    help_button.setAccessibleName(f"Help: {re.sub(r'<[^>]+>', '', text)}")
+    line.addWidget(help_button)
     line.addStretch(1)
     return row

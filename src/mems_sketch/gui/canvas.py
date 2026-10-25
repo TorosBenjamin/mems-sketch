@@ -717,10 +717,14 @@ class LayoutCanvas(QGraphicsView):
         box = self._overlay_box(Qt.Orientation.Horizontal)
         layout = box.layout()
         for name, tip, slot in (
-            ("zoom_in", "Zoom in", lambda: self.zoom_by(self.options["zoom_step"], animated=True)),
+            (
+                "zoom_in",
+                "Zoom in (Ctrl+=)",
+                lambda: self.zoom_by(self.options["zoom_step"], animated=True),
+            ),
             (
                 "zoom_out",
-                "Zoom out",
+                "Zoom out (Ctrl+-)",
                 lambda: self.zoom_by(1 / self.options["zoom_step"], animated=True),
             ),
             ("fit", "Fit (F)", lambda: self.fit(animated=True)),

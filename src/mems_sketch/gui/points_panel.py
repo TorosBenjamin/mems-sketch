@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QStyledItemDelegate,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -64,6 +65,13 @@ HINT_HEIGHT_PX = 32  # the form's place while no point is chosen
 QWIDGETSIZE_MAX = (1 << 24) - 1
 
 
+class _NoEditor(QStyledItemDelegate):
+    """A column shown, not edited in place."""
+
+    def createEditor(self, parent, option, index):
+        return None
+
+
 class PointsPanel(_Panel):
     """See the module docstring."""
 
@@ -82,6 +90,9 @@ class PointsPanel(_Panel):
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
         )
+        # Only the name is edited in the list; a position is set in the form below,
+        # so its cell opens no editor that would drop what is typed (#297).
+        self.tree.setItemDelegateForColumn(1, _NoEditor(self.tree))
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemEntered.connect(lambda item, _: self.hovered.emit(self._marker(item)))
@@ -269,6 +280,7 @@ class PointsPanel(_Panel):
         names = []
         if self._guard(lambda: names.append(self.document.ports.add(at=reference(key), name=name))):
             self.select(("port", names[0]))
+            self.rename(("port", names[0]))  # the name is offered, as for a point (#297)
 
     def name_point(self, key: Key) -> None:
         """Re-export a default or shape point: declare one right there, measured from

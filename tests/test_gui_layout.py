@@ -101,7 +101,7 @@ def test_one_toolbar_row_and_no_menu_bar(window):
 
 def test_the_main_menu_holds_every_menu(window):
     titles = [a.text() for a in window.actions_.root.actions()]
-    assert titles == ["&File", "&Edit", "&Tools", "&Insert", "&Operations", "&View", "&Help"]
+    assert titles == ["&File", "&Edit", "&Tools", "&Add", "&Operations", "&View", "&Help"]
 
 
 def test_every_menu_shortcut_is_registered_on_the_window(window):
@@ -121,7 +121,7 @@ def test_a_shortcut_works_without_the_menu_bar(window, qtbot):
 
 
 def test_add_starts_the_drawing_tool_and_adds_an_arc(window):
-    add = {a.text(): a for a in window.actions_.add.actions()}
+    add = {a.text().partition("\t")[0]: a for a in window.actions_.add.actions()}
     add["Rectangle"].trigger()
     assert window.tool.name == "rect"
     add["Arc / ring"].trigger()
@@ -171,9 +171,9 @@ def menus(window, monkeypatch):
     def record(menu, at):
         entries = {}
         for action in menu.actions():
-            entries[action.text()] = action
+            entries[action.text().partition("\t")[0]] = action
             if action.menu() is not None:
-                entries.update({a.text(): a for a in action.menu().actions()})
+                entries.update({a.text().partition("\t")[0]: a for a in action.menu().actions()})
         opened.append(entries)
 
     monkeypatch.setattr(window, "show_menu", record)
@@ -389,8 +389,11 @@ def test_the_canvas_fills_the_editor_island_with_rounded_corners(window, name, q
     image = window.grab().toImage()
     bottom_left = canvas.mapTo(window, QPoint(0, canvas.height() - 1))
     assert image.pixelColor(bottom_left).name() == tokens(name)["frame"]  # rounded off
-    inside = canvas.mapTo(window, QPoint(12, canvas.height() - 12))
-    assert image.pixelColor(inside).name() == canvas.theme["background"]
+    insides = [
+        canvas.mapTo(window, QPoint(x, canvas.height() - y))
+        for x, y in ((12, 12), (13, 70), (17, 90), (23, 110))
+    ]  # (one may lie on a grid line or the scale bar, which move with the canvas's size)
+    assert canvas.theme["background"] in {image.pixelColor(p).name() for p in insides}
 
 
 @pytest.mark.parametrize("name", ["light", "dark"])
@@ -519,7 +522,7 @@ def test_the_minus_button_hides_its_panel(window, qtbot):
     tw = window.tool_windows
     name = next(n for n in tw.names() if tw.is_open(n))
     host = tw._hosts[tw._windows[name].anchor]
-    minus = next(b for b in host.findChildren(QToolButton) if b.toolTip() == "Hide")
+    minus = next(b for b in host.findChildren(QToolButton) if b.toolTip().startswith("Hide"))
     qtbot.mouseClick(minus, Qt.MouseButton.LeftButton)
     assert not tw.is_open(name) and not host.isVisible()
     tw.toggle(name)  # the View menu and the stripe bring it back

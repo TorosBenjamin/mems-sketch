@@ -5,7 +5,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -216,6 +226,25 @@ class ComponentsPanel(_Panel):
         )
         self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.tree)
+        self._tree_keys()
+
+    def _tree_keys(self) -> None:
+        """F2, Ctrl+D and Delete on the current component, as its menu offers (#324)."""
+
+        def on_current(do) -> None:
+            item = self.tree.currentItem()
+            name = item.data(0, self.NAME_ROLE) if item is not None else None
+            if name is not None and name in self.document.project.components:
+                do(name)
+
+        for key, do in (
+            ("F2", self._rename),
+            ("Ctrl+D", lambda n: self._guard(lambda: self.document.components.copy(n))),
+            ("Del", self._delete),
+        ):
+            shortcut = QShortcut(QKeySequence(key), self.tree)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(lambda d=do: on_current(d))
 
     # -- building ------------------------------------------------------------
 
@@ -499,14 +528,21 @@ class ComponentsPanel(_Panel):
             _menu_action(menu, "New private component…", lambda: self._new(owner=name), "component")
             self._ownership_actions(menu, name)
             menu.addSeparator()
-            _menu_action(menu, "Rename…", lambda: self._rename(name), "edit")
-            _menu_action(
-                menu,
-                "Duplicate",
-                lambda: self._guard(lambda: self.document.components.copy(name)),
-                "duplicate",
-            )
-            _menu_action(menu, "Delete", lambda: self._delete(name), "delete")
+            for action, key in (
+                (_menu_action(menu, "Rename…", lambda: self._rename(name), "edit"), "F2"),
+                (
+                    _menu_action(
+                        menu,
+                        "Duplicate",
+                        lambda: self._guard(lambda: self.document.components.copy(name)),
+                        "duplicate",
+                    ),
+                    "Ctrl+D",
+                ),
+                (_menu_action(menu, "Delete", lambda: self._delete(name), "delete"), "Del"),
+            ):  # the keys that do it in the tree (see _tree_keys), shown
+                action.setShortcut(QKeySequence(key))
+                action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
             self._level_actions(menu, name)
             menu.addSeparator()
             if name == project.top:

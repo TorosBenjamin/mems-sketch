@@ -380,8 +380,13 @@ QToolBar::separator {{ background: {border_strong}; width: 1px; height: 1px; mar
 QToolButton#window-button, QToolButton#window-close {{ padding: 4px 10px; margin: 0; border-radius: 0; }}
 QToolButton#window-close:hover {{ background: #c42b1c; }}
 QToolButton {{
-    background: transparent; border: none; border-radius: {radius_control}px; padding: 4px;
+    background: transparent; border: 1px solid transparent; border-radius: {radius_control}px;
+    padding: 3px;
 }}
+QToolButton[keyfocus="true"], QCheckBox[keyfocus="true"], QPushButton[keyfocus="true"] {{
+    border: 1px solid {accent};  /* reached with Tab (widgets.FocusRing) */
+}}
+QAbstractItemView[keyfocus="true"] {{ border: 1px solid {accent}; border-radius: {radius_small}px; }}
 QToolButton:hover {{ background: {hover}; }}
 QToolButton:pressed {{ background: {pressed}; }}
 QToolButton:checked {{ background: {selected}; }}

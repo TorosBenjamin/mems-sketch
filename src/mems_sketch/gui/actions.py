@@ -47,8 +47,15 @@ OPERATIONS = [
     ("layer_map", "Layer map"),
 ]
 BOOLEANS = ("subtract", "intersect", "xor")  # under Operations › Combine
-# The ☰ menu's entries' icons: File, Edit, Tools, Insert, Operations, View, Help.
+# The ☰ menu's entries' icons: File, Edit, Tools, Add, Operations, View, Help.
 ROOT_ICONS = ("folder", "edit", "select", "add", "subtract", "eye", "help")
+
+
+def _with(standard: QKeySequence.StandardKey, extra: str) -> list[QKeySequence]:
+    """The platform's keys for ``standard``, and ``extra`` if it is not among them."""
+    keys = QKeySequence.keyBindings(standard)
+    wanted = QKeySequence(extra)
+    return keys if wanted in keys else [*keys, wanted]
 
 
 def make_action(
@@ -90,11 +97,14 @@ class Actions:
         file.addSeparator()
         self.settings = act("Settings…", w.show_settings, "Ctrl+Alt+S", file, "settings")
         file.addSeparator()
-        act("Quit", w.close, QKeySequence.StandardKey.Quit, file)
+        quit_ = act("Quit", w.close, QKeySequence.StandardKey.Quit, file)
+        quit_.setShortcuts(_with(QKeySequence.StandardKey.Quit, "Ctrl+Q"))
 
         edit = self.edit = QMenu("&Edit", w)
         self.undo = act("Undo", w.undo, QKeySequence.StandardKey.Undo, edit, "undo")
         self.redo = act("Redo", w.redo, QKeySequence.StandardKey.Redo, edit, "redo")
+        # Ctrl+Shift+Z too, as in JetBrains IDEs (the platform's Redo may be Ctrl+Y only)
+        self.redo.setShortcuts(_with(QKeySequence.StandardKey.Redo, "Ctrl+Shift+Z"))
         edit.addSeparator()
         self.cut = act("Cut", w.cut, QKeySequence.StandardKey.Cut, edit, "cut")
         self.copy = act("Copy", w.copy, QKeySequence.StandardKey.Copy, edit, "copy")
@@ -123,13 +133,21 @@ class Actions:
             "rotate_right",
         )
         self.mirror_h = act(
-            "Mirror left-right", lambda: w.mirror_selection(True), None, edit, "mirror_h"
+            "Mirror about y axis (left-right)",
+            lambda: w.mirror_selection(True),
+            None,
+            edit,
+            "mirror_h",
         )
         self.mirror_v = act(
-            "Mirror up-down", lambda: w.mirror_selection(False), None, edit, "mirror_v"
+            "Mirror about x axis (up-down)",
+            lambda: w.mirror_selection(False),
+            None,
+            edit,
+            "mirror_v",
         )
         edit.addSeparator()
-        act("Align…", w.start_align, "Ctrl+L", edit, "align")
+        self.align = act("Align…", w.start_align, "Ctrl+L", edit, "align")
         self.remove_alignment = act("Remove alignment", w.remove_alignment, None, edit)
         # Shown greyed out where they cannot apply; their keys work again once it
         # closes, and say why (#253).
@@ -171,8 +189,10 @@ class Actions:
         tools_menu.addSeparator()
         act("Clear rulers", w.clear_rulers, None, tools_menu, "clear")
 
-        insert = self.insert = QMenu("&Insert", w)
-        self.add = insert.addMenu("Add")
+        # ☰ › Add holds the shapes themselves, then Place (one level, as the toolbar's
+        # Add ▾ and Place ▾; #328). self.add is the shapes alone, for the toolbar.
+        insert = self.insert = QMenu("&Add", w)
+        self.add = QMenu("Add", w)
         icons.bind(self.add.menuAction(), "rect")
         for kind, label in PRIMITIVES:
             # Drawn shapes start their drawing tool, for one shape; an arc is added
@@ -182,7 +202,14 @@ class Actions:
                 if kind in w.tools
                 else (lambda _=False, k=kind: w.add_primitive(k))
             )
-            act(label, slot, menu=self.add, icon=kind)
+            key = w.tools[kind].shortcut if kind in w.tools else ""
+            # The drawing tool's key, shown after a tab (it is the tool's shortcut, not
+            # this entry's; #327).
+            action = act(f"{label}\t{key}" if key else label, slot, menu=self.add, icon=kind)
+            if key:
+                action.setToolTip(f"{label} ({key})")
+            insert.addAction(action)
+        insert.addSeparator()
         # A popup that searches the components (see mems_sketch.gui.component_picker).
         self.place = act("Place component…", lambda: w.place_popup(), "Shift+A", insert, "place")
 
@@ -235,11 +262,15 @@ class Actions:
         act("Process", w.open_process, None, view, "process")
         self.split = act("Split right", w.split_view, "Ctrl+\\", view, "split")
         act("Merge panes", w.area.unsplit, None, view)
-        act("Close tab", w.close_tab, QKeySequence.StandardKey.Close, view, "close")
+        self.close_tab = act(
+            "Close tab", w.close_tab, QKeySequence.StandardKey.Close, view, "close"
+        )
+        self.close_tab.setShortcuts(_with(QKeySequence.StandardKey.Close, "Ctrl+W"))
         self.panels = view.addMenu("Panels")
 
         help_menu = self.help = QMenu("&Help", w)
-        self.search = act("Search everywhere…", w.search, None, help_menu, "search")
+        # "Shift Shift" is no key sequence: written after a tab, menus show it as one.
+        self.search = act("Search everywhere…\tShift Shift", w.search, None, help_menu, "search")
         self.search.setToolTip("Search everywhere (press Shift twice)")
         self.find = act("Find action…", w.find_action, "Ctrl+Shift+A", help_menu, "search")
         act("Keyboard shortcuts", lambda: w.show_settings("Keymap"), None, help_menu)
@@ -271,6 +302,7 @@ class Actions:
             self.mirror_v: bool(paths),
             self.make: bool(paths),
             self.rename: node is not None,
+            self.align: node is not None,
             self.unwrap: node is not None and any(node.child_lists()),
             self.unpack: isinstance(node, RefShape),
             self.remove_alignment: node is not None and node.align is not None,
@@ -338,7 +370,8 @@ class Actions:
         if not selection:
             add = menu.addMenu(self.add.menuAction().icon(), "Add")
             for source in self.add.actions():
-                kind = next(k for k, label in PRIMITIVES if label == source.text())
+                text = source.text().partition("\t")[0]  # (its key is after a tab)
+                kind = next(k for k, label in PRIMITIVES if label == text)
                 slot = (
                     (lambda _=False, k=kind: w.start_drawing(k, x, y))
                     if kind in w.tools

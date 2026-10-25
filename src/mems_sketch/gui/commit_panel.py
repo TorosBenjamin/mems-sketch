@@ -216,10 +216,29 @@ class CommitPanel(_Panel):
         line_row.setContentsMargins(space, space, space, 0)
         line_row.addWidget(rule)
 
+        # A library kept outside the repository: a clone will not have it (#310).
+        self.outside = QWidget()
+        outside = QVBoxLayout(self.outside)
+        outside.setContentsMargins(space, space, space, 0)
+        outside.setSpacing(theme.metric("space_s"))
+        self.outside_note = QLabel()
+        self.outside_note.setObjectName("warning-note")
+        self.outside_note.setWordWrap(True)
+        self.copy_in = QPushButton("Copy into the project")
+        self.copy_in.setToolTip(
+            "Copy the library's folder into the project's libraries/ folder and use the copy, "
+            "so that it is committed with the project"
+        )
+        self.copy_in.clicked.connect(self.copy_libraries_in)
+        outside.addWidget(self.outside_note)
+        outside.addWidget(self.copy_in, 0, Qt.AlignmentFlag.AlignLeft)
+        self.outside.hide()
+
         self.body = QWidget()
         body = QVBoxLayout(self.body)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
+        body.addWidget(self.outside)
         # Room for a few changes before the message and the buttons take it (#303).
         self.tree.setMinimumHeight(CHANGES_ROWS * theme.metric("row_height") + 2 * space)
         body.addWidget(self.tree, 1)
@@ -261,9 +280,31 @@ class CommitPanel(_Panel):
                 self.note.set_text(_rich(f"Cannot read the last commit: {exc}"))
                 self.note.show()
         self.header_context.setText(self._branch_text() if available else "")
+        self._show_outside(available)
         self._geometry.clear()
         self._fill()
         self.comparison_changed.emit()
+
+    def _show_outside(self, available: bool) -> None:
+        """Warn of libraries outside the repository (#310)."""
+        outside = self.document.components.outside_repository() if available else []
+        self.outside.setVisible(bool(outside))
+        if outside:
+            listed = ", ".join(f"'{name}' ({folder})" for name, folder in outside)
+            many = len(outside) > 1
+            self.outside_note.setText(
+                f"The {'libraries' if many else 'library'} {listed} {'are' if many else 'is'} "
+                "outside the repository: a clone of it will not have "
+                f"{'them' if many else 'it'}, and will not open without "
+                f"{'them' if many else 'it'}."
+            )
+
+    def copy_libraries_in(self) -> None:
+        """Copy each library outside the repository into the project (#310)."""
+        for name, _folder in self.document.components.outside_repository():
+            if not self._guard(lambda n=name: self.document.components.copy_library_in(n)):
+                break
+        self.reload()
 
     def _branch_text(self) -> str:
         history = self.document.history

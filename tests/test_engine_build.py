@@ -116,6 +116,15 @@ def set_back(components, defaults) -> None:
                 parameter.default = values[parameter.name]
 
 
+def stack_as_recorded(project: Project) -> None:
+    """Give ``project``'s process the layer stack it was recorded with: mems.surface
+    has had a wiring level under the device since (#309), which the example does
+    not use."""
+    process = project.process
+    process.levels = [level for level in process.levels if level.layer != "wiring"]
+    process.default_level = None  # the first level: device, as then
+
+
 def _as_recorded(value):
     if isinstance(value, dict):
         kind = value.get("kind")
@@ -262,8 +271,10 @@ def test_the_example_project():
     project = load(EXAMPLES / "resonator")
     set_back(project.components, RECORDED_EXAMPLE)
     set_back(project.libraries["mems"].components, RECORDED_DEFAULTS)
+    stack_as_recorded(project)
     recorded_as = load(EXAMPLES / "resonator")
     set_back(recorded_as.components, RECORDED_EXAMPLE)
+    stack_as_recorded(recorded_as)
     recorded_as.libraries.pop("std")  # bundled now, the example library then
     recorded_as.libraries["std"] = Library("std", {"perforated_plate": recorded_plate()})
     for name in project.components:

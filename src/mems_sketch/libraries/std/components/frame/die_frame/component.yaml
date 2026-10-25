@@ -3,7 +3,11 @@ description: >-
   ring at its edge, L-shaped marks in its four inner corners, and a label
   area on the level above near the bottom left corner (for the die's name;
   text will come as a shape of its own). Point: label, the middle of the
-  label area.
+  label area. Made for processes without a release etch: in a released one
+  (the `mems` examples) the ring, the marks and the label area are not
+  anchored and the rule check says they float; anchor them (`mems.anchor`
+  under each) or waive those warnings. The label area is on the level above,
+  so it needs the frame's level under it where a process asks for that.
 tags: [frame, die, scribe lane, dicing, chip, label]
 parameters:
   width: {default: 5000, min: 2 * (lane + mark + 2 * inset) + label_width, min_exclusive: true, description: "Die width, x (µm); the label area fits between the lower corner marks"}

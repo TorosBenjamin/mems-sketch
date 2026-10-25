@@ -30,6 +30,8 @@ from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
 from mems_sketch.storage.project_files import load_library
 
+LIBRARIES_DIR = "libraries"  # where a library copied into a project goes
+
 
 class ComponentEdits(Commands):
     """Components of the project, its top component and its libraries."""
@@ -132,6 +134,49 @@ class ComponentEdits(Commands):
             raise ValueError(f"{folder} has no components or processes")
         self.session.edit(f"Add library {name}", lambda p: p.libraries.__setitem__(name, library))
         return name
+
+    def outside_repository(self) -> list[tuple[str, Path]]:
+        """The libraries kept in folders outside the project's git repository, with
+        their folders: a clone of the repository will not have them (#310)."""
+        from mems_sketch.storage import git
+
+        if self.session.path is None:
+            return []
+        root = git.repository(self.session.path)
+        if root is None:
+            return []
+        root = root.resolve()
+        found = []
+        for name, library in self.session.project.libraries.items():
+            if library.bundled or library.path is None:
+                continue
+            folder = Path(library.path).resolve()
+            if root != folder and root not in folder.parents:
+                found.append((name, folder))
+        return found
+
+    def copy_library_in(self, name: str) -> Path:
+        """Copy the folder of the library ``name`` into the project (``libraries/name``)
+        and use the copy: it is then in the project's repository (#310). Saving
+        writes where it is now; undo goes back to the folder outside."""
+        import shutil
+
+        project = self.session.project
+        if self.session.path is None:
+            raise ValueError("save the project first: the library is copied into its folder")
+        library = project.libraries.get(name)
+        if library is None or library.bundled or library.path is None:
+            raise ValueError(f"'{name}' is not a library kept in a folder")
+        target = Path(self.session.path) / LIBRARIES_DIR / name
+        if target.exists():
+            raise ValueError(f"{target} already exists: move it away or use it as the library")
+        shutil.copytree(library.path, target, ignore=shutil.ignore_patterns(".git", ".mems-sketch"))
+        copied = load_library(name, target)
+        self.session.edit(
+            f"Copy library {name} into the project",
+            lambda p: p.libraries.__setitem__(name, copied),
+        )
+        return target
 
     def remove_library(self, name: str) -> None:
         project = self.session.project

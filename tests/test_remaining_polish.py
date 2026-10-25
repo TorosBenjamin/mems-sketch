@@ -83,7 +83,8 @@ def test_the_layer_list_offers_only_levels_that_exist(window, tmp_path):
 
     from mems_sketch import RectShape
 
-    window.document.create(tmp_path / "p", "p", process="mems.surface")  # device, metal
+    window.document.create(tmp_path / "p", "p", process="mems.surface")  # wiring, device, metal
+    window.document.components.set_level("top", "wiring")  # the bottom level
     path = window.document.nodes.add(RectShape(name="r", layer="level", x0=0, y0=0, x1=10, y1=10))
     window.tree.select_paths([path])
     combos = window.properties.findChildren(QComboBox)

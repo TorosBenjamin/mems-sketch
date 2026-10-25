@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from mems_sketch.core.project import Project
@@ -10,10 +11,37 @@ from mems_sketch.editing.commands import Commands
 from mems_sketch.editing.naming import fresh_name
 
 
+def with_limits(fields: dict[str, Any]) -> dict[str, Any]:
+    """``min: "> 20"`` and ``max: "< size / 2"`` as the Parameters panel writes them:
+    the limit, exclusive. The GUI, the MCP server and scripts take the same forms
+    (#311)."""
+    fields = dict(fields)
+    for key, mark in (("min", ">"), ("max", "<")):
+        value = fields.get(key)
+        if isinstance(value, str) and value.strip().startswith(mark):
+            text = value.strip().removeprefix(mark).strip()
+            if not text:
+                raise ValueError(f"{key} '{value}': a value is needed after '{mark}'")
+            fields[key] = _number(text)
+            fields[f"{key}_exclusive"] = True
+    return fields
+
+
+def _number(text: str) -> float | str:
+    """A number if ``text`` is a finite one, else the text as an expression."""
+    try:
+        value = float(text)
+    except ValueError:
+        return text
+    return value if math.isfinite(value) else text
+
+
 class ParameterEdits(Commands):
     """The parameters of the active component."""
 
     def set(self, name: str, default: float | str, **limits: Any) -> None:
+        limits = with_limits(limits)
+
         def change(project: Project) -> None:
             self.session.local(project)
             project.set_parameter(name, default, self.session.active, **limits)
@@ -25,6 +53,7 @@ class ParameterEdits(Commands):
         description). A new name is followed by the expressions that use it and
         by the placements that pass it a value."""
         new = fields.pop("name", name)
+        fields = with_limits(fields)
 
         def change(project: Project) -> None:
             self.session.local(project)

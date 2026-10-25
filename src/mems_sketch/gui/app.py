@@ -2232,7 +2232,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return False
         self.save_editor_state()
-        opened = self._run(lambda: self._open(path))[0]
+        opened = self._open_finding_libraries(path)
         if opened:
             self._remember_dir(path)
             self._remember_project()
@@ -2269,6 +2269,56 @@ class MainWindow(QMainWindow):
         else:
             command = [sys.executable, "-m", "mems_sketch.gui", path]
         subprocess.Popen(command, start_new_session=sys.platform != "win32")
+
+    def _open_finding_libraries(self, path: str) -> bool:
+        """Open ``path``; a library that is not where the project says is asked for
+        ("Locate library…"), and the project then points at where it is (#310)."""
+        from mems_sketch.storage.project_files import MissingLibraryError
+
+        while True:
+            try:
+                self._open(path)
+                return True
+            except MissingLibraryError as missing:
+                if not self.locate_library(path, missing):
+                    self.report_error(explain(missing))
+                    return False
+            except Exception as exc:  # noqa: BLE001 - reported to the user
+                self.report_error(explain(exc))
+                return False
+
+    def locate_library(self, path: str, missing) -> bool:
+        """Ask where the library ``missing.name`` is, and point the project at it.
+        False if the user cancels."""
+        from mems_sketch.storage.project_files import PROJECT_FILE, relocate_library
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Library not found")
+        box.setText(
+            f"The project uses the library '{missing.name}', which is not at {missing.folder}."
+        )
+        box.setInformativeText(
+            "A library kept outside the project's repository is not in a clone of it. "
+            "Locate the library's folder to open the project: the project then points there."
+        )
+        locate = box.addButton("Locate library…", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        while box.clickedButton() is locate:
+            folder = QFileDialog.getExistingDirectory(
+                self, f"Locate the library '{missing.name}'", str(Path(path).parent)
+            )
+            if not folder:
+                return False
+            if not (Path(folder) / PROJECT_FILE).is_file():
+                self.report_error(f"{folder} is not a library folder (it has no {PROJECT_FILE})")
+                continue
+            ok, _ = self._run(lambda f=folder: relocate_library(path, missing.name, f))
+            if ok:
+                self.notify(f"Library '{missing.name}' found at {folder}", "success")
+            return ok
+        return False
 
     def _open(self, path: str) -> None:
         self._restoring = True

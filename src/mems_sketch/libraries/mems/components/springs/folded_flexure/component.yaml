@@ -5,7 +5,9 @@ description: >-
   so it stays linear over large travel. Sideways (x) the inner and outer
   pairs are in series: 2 E t w³ / (L³ + Lo³) (`stiffness`), L the inner
   beams' length and Lo the outer ones'. Point: attach, the middle of the
-  shuttle bar's bottom edge.
+  shuttle bar's bottom edge. Port: anchor, at the anchor, which the beams and
+  the shuttle bar box in on its own level: reach it with a route on the level
+  below (`wiring` in `mems.surface`, `poly0` in `mems.polysilicon`).
 tags: [spring, folded flexure, folded beam, suspension, resonator, flexure]
 parameters:
   length: {default: 100, min: 0, min_exclusive: true, description: "Inner beam length, L (µm)"}
@@ -26,6 +28,12 @@ parameters:
     description: "Sideways stiffness at the shuttle bar (N/m)"
 points:
   attach: {y: bottom - truss}
+ports:
+  anchor:
+    at: pad.center
+    direction: down
+    width: anchor_size / 2
+    description: The anchor, to reach with a route on the level below (wiring)
 shapes:
   pad: {ref: anchor, size: anchor_size}
   inner_beams:

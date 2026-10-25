@@ -65,6 +65,9 @@ min, max, a trial value and the resolved value.
 - A parameter is **public** (whoever places the component can set it) or
   **internal** (the lock button): used only inside, typically a derived value.
   Where the component is placed, internal parameters are not offered.
+- **Right-click a parameter** for its **Description…** (shown in its tooltip
+  and as its label where the component is placed: "Moving fingers") and
+  **Whole number**, for a count such as a number of fingers.
 - A **trial** value shows the component with another value without changing
   the design: it is not saved or undone and only affects that component's own
   tab. It also works on library components, so you can try a
@@ -168,6 +171,12 @@ so. Libraries are read-only:
 to change a library component for one project, right-click it and **Copy into
 the project**; the copy is editable and keeps using the library's other
 components.
+
+**A library outside the project's repository** (`../../acme_fab`) is not in
+a clone of it. The Commit panel says so and offers **Copy into the project**,
+which copies the library into the project's `libraries/` folder and uses the
+copy. Opening a project whose library is not where it says asks for it
+(**Locate library…**) and points the project there.
 
 A project without a top component is itself a library: just components, meant
 to be placed elsewhere (**File → New library**, or **Make the project a

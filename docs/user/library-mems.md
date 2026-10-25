@@ -23,6 +23,25 @@ Square pad on the component's level, centred on the origin, fixed to the substra
 
 *Tags: anchor, pad, support*
 
+### `mems.bond_pad`
+
+![mems.bond_pad](../images/gallery/mems/bond_pad.png)
+
+Bond or probe pad that stays put at release: a square pad on the component's level held to the substrate by an anchor opening (`level.anchor`) inset by `enclosure`, with an opening on the level above (metal on the pad) inset by `margin`; set `opening` to 0 for a pad without one. Unlike `std.bond_pad`, the release etch does not free it. Place it on the level under the metal (`poly2` in `mems.polysilicon`): the opening is on the level above. Port: signal, on its right edge.
+
+| Parameter | Default | Limits | |
+|---|---|---|---|
+| `size` | `100` | > 2 * margin | Pad edge length (µm) |
+| `margin` | `8` | ≥ 0 | Pad around the opening on the level above (µm) |
+| `enclosure` | `2` | ≥ 0, < size / 2 | Overlap of the pad around its anchor (µm) |
+| `opening` | `1` | ≥ 0, ≤ 1, whole | 1: an opening on the level above; 0: none |
+
+| Port | At | Direction | Width | |
+|---|---|---|---|---|
+| `signal` | `pad.right` | `right` | `size / 4` | Where a wire leaves the pad; turn the pad to leave another side |
+
+*Tags: pad, bond pad, probe, wire bond, contact, anchor, anchored*
+
 ## Springs
 
 Flexures that suspend masses.
@@ -100,7 +119,7 @@ U-spring: two parallel beams along +y joined at the top, the left one on an anch
 
 ![mems.folded_flexure](../images/gallery/mems/folded_flexure.png)
 
-Folded flexure: two beams rise from an anchor at the origin to a truss, and two outer beams come back down from it, past the anchor, to a shuttle bar below, where the mass attaches. The truss takes up the beams' shortening, so it stays linear over large travel. Sideways (x) the inner and outer pairs are in series: 2 E t w³ / (L³ + Lo³) (`stiffness`), L the inner beams' length and Lo the outer ones'. Point: attach, the middle of the shuttle bar's bottom edge.
+Folded flexure: two beams rise from an anchor at the origin to a truss, and two outer beams come back down from it, past the anchor, to a shuttle bar below, where the mass attaches. The truss takes up the beams' shortening, so it stays linear over large travel. Sideways (x) the inner and outer pairs are in series: 2 E t w³ / (L³ + Lo³) (`stiffness`), L the inner beams' length and Lo the outer ones'. Point: attach, the middle of the shuttle bar's bottom edge. Port: anchor, at the anchor, which the beams and the shuttle bar box in on its own level: reach it with a route on the level below (`wiring` in `mems.surface`, `poly0` in `mems.polysilicon`).
 
 | Parameter | Default | Limits | |
 |---|---|---|---|
@@ -117,6 +136,10 @@ Folded flexure: two beams rise from an anchor at the origin to a truss, and two 
 | `bottom` | `-anchor_size / 2 - gap` |  | *(derived)* Where the outer beams meet the shuttle bar (µm) |
 | `outer_length` | `top - bottom` |  | *(derived)* Outer beam length, Lo (µm) |
 | `stiffness` | `2 * youngs_modulus * 1000 * thickness * beam_width ** 3 / (length ** 3 + outer_length ** 3)` |  | *(derived)* Sideways stiffness at the shuttle bar (N/m) |
+
+| Port | At | Direction | Width | |
+|---|---|---|---|---|
+| `anchor` | `pad.center` | `down` | `anchor_size / 2` | The anchor, to reach with a route on the level below (wiring) |
 
 *Tags: spring, folded flexure, folded beam, suspension, resonator, flexure*
 

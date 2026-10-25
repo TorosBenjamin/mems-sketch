@@ -1032,29 +1032,33 @@ class MainWindow(QMainWindow):
         self.zoom_label.setText(f"{canvas.pixels_per_um():.3g} px/µm")
 
     def waive(self, violation) -> None:
-        """Accept a rule violation of the shown component, asking why."""
-        reason, ok = QInputDialog.getText(
-            self, "Waive a violation", f"Why is this {violation.rule} violation accepted?"
-        )
+        """Accept a rule violation of the shown component (or several, with one
+        reason), asking why."""
+        several = list(violation) if isinstance(violation, list) else [violation]
+        if len(several) == 1:
+            question = f"Why is this {several[0].rule} violation accepted?"
+        else:
+            question = f"Why are these {len(several)} violations accepted?"
+        reason, ok = QInputDialog.getText(self, "Waive", question)
         if ok:
-            self._run(lambda: self.document.process.waive(violation, reason, self.view.component))
+            component = self.view.component
+            self._run(lambda: self.document.process.waive_all(several, reason, component))
 
     def unwaive(self, violation) -> None:
         """Remove the waiver that accepts a violation, in the component that keeps it."""
         component, box = violation.waiver or (self.view.component, violation.bbox_um)
         self._run(lambda: self.document.process.unwaive(violation.rule, box, component))
 
-    def _show_problem_count(self, errors: int, violations: int) -> None:
-        if errors:
-            icons.bind(self.problems_button, "error")
-            text = f"{errors} error{'s' if errors > 1 else ''}"
-        elif violations:
-            icons.bind(self.problems_button, "warning")
-            text = f"{violations} violation{'s' if violations > 1 else ''}"
-        else:
-            icons.bind(self.problems_button, "ok")
-            text = "No problems"
-        self.problems_button.setText(text)
+    def _show_problem_count(self, errors: int, warnings: int) -> None:
+        """Errors (build errors and rule errors) and warnings counted apart (#298), the
+        icon the worst of them."""
+        parts = [
+            f"{n} {word}{'s' if n > 1 else ''}"
+            for n, word in ((errors, "error"), (warnings, "warning"))
+            if n
+        ]
+        icons.bind(self.problems_button, "error" if errors else "warning" if warnings else "ok")
+        self.problems_button.setText(", ".join(parts) or "No problems")
 
     def _show_messages_panel(self) -> None:
         self.tool_windows.open("messages")
@@ -1280,7 +1284,11 @@ class MainWindow(QMainWindow):
 
     def update_overlay(self) -> None:
         view = self.view
-        markers = [v.bbox_um for v in view.violations if v.bbox_um and not v.waived]
+        markers = [
+            (tuple(v.bbox_um), (v.outline, v.holes), v.severity)
+            for v in view.violations
+            if v.bbox_um and not v.waived
+        ]
         reach = CORNER_ERROR_MARK_PX / self.canvas.pixels_per_um()
         markers += [(x - reach, y - reach, x + reach, y + reach) for x, y in self._corner_errors]
         results = self.document.results

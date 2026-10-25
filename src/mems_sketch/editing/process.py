@@ -249,6 +249,41 @@ class ProcessEdits(Commands):
 
     # -- waivers -------------------------------------------------------------
 
+    def waive_all(self, violations, reason: str, component: str | None = None) -> None:
+        """Accept several violations for one ``reason``, as one undoable step."""
+        violations = list(violations)
+        if len(violations) == 1:
+            self.waive(violations[0], reason, component)
+            return
+        from mems_sketch.core.user_component import Waiver
+        from mems_sketch.process.rules import fingerprint
+
+        component = component or self.session.active
+        if not reason.strip():
+            raise ValueError("a waiver needs a reason")
+        geometry = self.session.results.checked(component)
+        waivers = [
+            Waiver(
+                rule=v.rule,
+                box=tuple(v.bbox_um),
+                reason=reason.strip(),
+                fingerprint=fingerprint(v, geometry),
+            )
+            for v in violations
+            if v.bbox_um is not None
+        ]
+
+        def change(project) -> None:
+            definition = project.components.get(component)
+            if definition is None:
+                raise ValueError(f"'{component}' is read-only: its violations cannot be waived")
+            replaced = {(w.rule, w.box) for w in waivers}
+            definition.waivers = [
+                w for w in definition.waivers if (w.rule, w.box) not in replaced
+            ] + waivers
+
+        self.session.edit(f"Waive {len(waivers)} violations", change)
+
     def waive(self, violation, reason: str, component: str | None = None) -> None:
         """Accept one violation of the active (or given) component, for ``reason``
         (requirement DRC-13). It is kept with the component, follows the violation

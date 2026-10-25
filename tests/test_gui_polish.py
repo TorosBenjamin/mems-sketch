@@ -279,7 +279,7 @@ def test_status_bar_shows_problems_zoom_and_grid(window):
         window.document.process.enable_rule(rule, False)
     assert window.problems_button.text() == "No problems"
     window.document.nodes.add(RectShape(name="bad", layer="device", x0=50, y0=0, x1=51, y1=5))
-    assert "violation" in window.problems_button.text()
+    assert "1 error" in window.problems_button.text()  # counted apart from warnings
     assert window.grid_label.text() == f"grid {window.canvas.grid_step():g} µm"
     assert "px/µm" in window.zoom_label.text()
 

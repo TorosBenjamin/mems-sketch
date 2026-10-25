@@ -34,8 +34,16 @@ def _outline(piece: IntPolygon) -> tuple[tuple[int, int], ...]:
     return tuple((int(x), int(y)) for x, y in piece.hull.tolist())
 
 
+def _holes(piece: IntPolygon) -> tuple[tuple[tuple[int, int], ...], ...]:
+    """And its holes (a ring's inside is not where it is, #300)."""
+    return tuple(tuple((int(x), int(y)) for x, y in hole.tolist()) for hole in piece.holes)
+
+
 def _pieces(polygons: Iterable[IntPolygon], dbu: float, message: str) -> list[Finding]:
-    return [Finding(message, _box(p.bbox(), dbu), outline=_outline(p)) for p in polygons]
+    return [
+        Finding(message, _box(p.bbox(), dbu), outline=_outline(p), holes=_holes(p))
+        for p in polygons
+    ]
 
 
 MEASURED_MAX = 64  # pieces measured one by one; more are reported without their size
@@ -65,7 +73,9 @@ def _measured(polygons: Sequence[IntPolygon], dbu: float, message, inset: int = 
         width = None
         if index < MEASURED_MAX:
             width = round(2 * (inset + _half_width(piece) + 1) * dbu, 6)
-        found.append(Finding(message(width), _box(piece.bbox(), dbu), width, _outline(piece)))
+        found.append(
+            Finding(message(width), _box(piece.bbox(), dbu), width, _outline(piece), _holes(piece))
+        )
     return found
 
 
@@ -150,7 +160,7 @@ class MinSpace(_Kind):
         return _measured(
             _real(gaps),
             dbu,
-            lambda w: f"{_um(w)} µm gap < {value:g} µm" if w else f"spacing < {value:g} µm",
+            lambda w: f"{_um(w)} µm gap < {value:g} µm" if w else f"gap < {value:g} µm",
         )
 
 

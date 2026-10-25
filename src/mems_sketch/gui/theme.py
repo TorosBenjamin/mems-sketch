@@ -101,9 +101,10 @@ class CanvasColors(_Colors):
     grid_alpha: tuple[int, int, int]  # minor lines, every fifth line, the axes (0-255)
     highlight: str  # the selection
     hover: str
-    violation: str  # rule violations
+    violation: str  # rule violations: errors
+    violation_warning: str = "#c98200"  # and warnings
     added: str  # history: material a version added
-    removed: str  # and removed (hatched: it is not there any more)
+    removed: str  # and removed (hatched: it is not there any more; grey, not a problem's red)
     declared: str  # points: the edited component's own
     selected: str  # of the selected shape
     pick: str  # candidates while aligning

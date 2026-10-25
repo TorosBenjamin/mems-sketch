@@ -71,6 +71,7 @@ from PySide6.QtWidgets import (
 )
 
 from mems_sketch.core.component import Geometry
+from mems_sketch.core.region import DBU_UM
 from mems_sketch.core.transform import Transform
 from mems_sketch.gui import icons, motion
 from mems_sketch.gui import theme as themes
@@ -128,6 +129,8 @@ DRAFT_ABOVE_MS = 25.0  # draft quality only when a full-quality frame takes long
 # Outlines of shapes are 1 px: Qt draws those with a fast rasterizer, while any wider
 # line is ~100x slower on a shape with thousands of holes (0.6 s instead of 7 ms).
 OUTLINE_PX = 1.0
+SELECTION_HALO_PX = 4.0  # the soft band around a selected shape's outline
+AXIS_ALPHA = 90  # the x and y axes, drawn faintly
 ALIGN_LABEL_GAP_PX = 14  # an alignment's names sit this far beyond the arrow's ends
 ALIGN_APART_PX = 4  # an alignment's point and target closer than this are drawn as one
 CURSOR_LABEL_OFFSET = 16  # px: a label by the cursor starts this far right and below it
@@ -988,18 +991,26 @@ class LayoutCanvas(QGraphicsView):
                 for layer, region in leaf.own.items():
                     if region.is_empty():
                         continue
-                    item = ShapeItem(own_path(leaf, layer))
-                    item.setTransform(qtransform(at))
-                    pen = QPen(QColor(self.theme["highlight"]), OUTLINE_PX)
-                    pen.setCosmetic(True)
-                    item.setPen(pen)
-                    tint = QColor(self.theme["highlight"])
-                    tint.setAlpha(60)  # a stronger tint makes up for the thin outline
-                    item.setBrush(QBrush(tint))
-                    item.setZValue(1000)
-                    self._highlight_band.add(item)
-                    self.scene().addItem(item)
-                    self._overlay.append(item)
+                    # An outline with a soft halo, the layer's colour left as it is: a
+                    # tint would mix with it (selected device read as anchor, #312).
+                    path = own_path(leaf, layer)
+                    halo_color = QColor(self.theme["highlight"])
+                    halo_color.setAlpha(80)
+                    for color, width, z in (
+                        (halo_color, OUTLINE_PX + SELECTION_HALO_PX, 999),
+                        (QColor(self.theme["highlight"]), OUTLINE_PX + 1, 1000),
+                    ):
+                        item = ShapeItem(path)
+                        item.setTransform(qtransform(at))
+                        pen = QPen(color, width)
+                        pen.setCosmetic(True)
+                        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                        item.setPen(pen)
+                        item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+                        item.setZValue(z)
+                        self._highlight_band.add(item)
+                        self.scene().addItem(item)
+                        self._overlay.append(item)
         self._highlight_band.changed(
             item for item in self._overlay if getattr(item, "band", None) is self._highlight_band
         )
@@ -1011,12 +1022,30 @@ class LayoutCanvas(QGraphicsView):
             item.setZValue(1000)
             self.scene().addItem(item)
             self._overlay.append(item)
-        for x0, y0, x1, y1 in markers:
-            pad = 0.5
-            item = QGraphicsRectItem(
-                QRectF(x0 - pad, y0 - pad, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad)
-            )
-            pen = QPen(QColor(self.theme["violation"]), 2)
+        for marker in markers:
+            # A box (x0, y0, x1, y1), or (box, (outline, holes), severity): the outline
+            # (database units) is where the violation is exactly, drawn instead (#313).
+            if len(marker) == 3 and isinstance(marker[0], tuple | list):
+                (x0, y0, x1, y1), (outline, holes), severity = marker
+            else:
+                (x0, y0, x1, y1), outline, holes, severity = marker, (), (), "error"
+            color = QColor(self.theme["violation" if severity == "error" else "violation_warning"])
+            if outline:
+                path = QPainterPath()
+                path.setFillRule(Qt.FillRule.OddEvenFill)
+                for ring in (outline, *holes):
+                    path.addPolygon(QPolygonF([QPointF(x * DBU_UM, y * DBU_UM) for x, y in ring]))
+                    path.closeSubpath()
+                item = QGraphicsPathItem(path)
+                fill = QColor(color)
+                fill.setAlpha(70)
+                item.setBrush(QBrush(fill))
+            else:
+                pad = 0.5
+                item = QGraphicsRectItem(
+                    QRectF(x0 - pad, y0 - pad, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad)
+                )
+            pen = QPen(color, 2)
             pen.setCosmetic(True)
             item.setPen(pen)
             item.setZValue(1001)
@@ -2088,8 +2117,8 @@ class LayoutCanvas(QGraphicsView):
                 ("axis_y", (QPointF(0, rect.top()), QPointF(0, rect.bottom()))),
             ):
                 color = QColor(self.theme[key])
-                color.setAlpha(150)
-                pen = QPen(color, 1.5)
+                color.setAlpha(AXIS_ALPHA)  # quiet: red is for problems (#313)
+                pen = QPen(color, 1)
                 pen.setCosmetic(True)
                 painter.setPen(pen)
                 painter.drawLine(*line)

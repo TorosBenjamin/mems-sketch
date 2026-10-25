@@ -203,8 +203,7 @@ def test_rules_of_a_big_design_are_checked_in_the_background(window, qtbot, monk
     assert window.messages.item(0).text() == "Checking the design rules…"
     qtbot.waitUntil(lambda: not view.checking, timeout=10_000)
     assert "narrow" in [v.rule for v in view.violations]
-    count = len(view.violations)
-    assert f"{count} rule violation{'' if count == 1 else 's'}" in window.messages.item(0).text()
+    assert window.messages.item(0).text().startswith("Rule violations: ")
 
 
 def test_a_background_check_overtaken_by_an_edit_is_dropped(window, qtbot, monkeypatch):

@@ -2,15 +2,26 @@
 minimum angle, density and overlap (#65, #104)."""
 
 import pytest
-from tests.test_rules import box, project
 
-from mems_sketch import ArrayModifier, RefShape, layout
+from mems_sketch import ArrayModifier, Layer, Project, RefShape, layout
 from mems_sketch.core.component import Geometry, to_dbu
 from mems_sketch.core.process import Rule
-from mems_sketch.core.region import IntPolygon, Region
+from mems_sketch.core.region import Box, IntPolygon, Region
 from mems_sketch.editing import EditSession
 from mems_sketch.export.base import export
 from mems_sketch.export.hierarchy import _arrays, cell_name
+
+
+def box(x0, y0, x1, y1) -> Region:
+    return Region(Box(to_dbu(x0), to_dbu(y0), to_dbu(x1), to_dbu(y1)))
+
+
+def project(rule: Rule) -> Project:
+    p = Project(name="p")
+    for name, gds in (("device", 1), ("anchor", 2), ("metal", 3)):
+        p.add_layer(Layer(name, gds))
+    p.process.add_rule(rule)
+    return p
 
 
 def violations(rule: Rule, **layers: Region):

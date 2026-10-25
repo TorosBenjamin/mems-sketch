@@ -2325,8 +2325,27 @@ class MainWindow(QMainWindow):
         filters = {
             f"{title_of(cls)} (*{cls.file_extension})": name for name, cls in exporters.items()
         }
+        trials = self.document.trials_for(self.document.active)
+        if trials:  # a value tried out goes into the file: say so first (#305)
+            tried = ", ".join(f"{name} = {value}" for name, value in sorted(trials.items()))
+            answer = QMessageBox.question(
+                self,
+                "Export",
+                f"Trial values are set ({tried}). The file is made with them, not with "
+                "the saved values.\n\nExport with the trial values?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                return
+        # A name to start from: the component, as the first format writes it (#305).
+        first = next(iter(exporters.values()), None)
+        suggested = Path(self._last_dir()) / (
+            f"{self.document.active or self.document.project.name}"
+            f"{first.file_extension if first else ''}"
+        )
         path, chosen = QFileDialog.getSaveFileName(
-            self, "Export", self._last_dir(), ";;".join(filters)
+            self, "Export", str(suggested), ";;".join(filters)
         )
         if not path:
             return

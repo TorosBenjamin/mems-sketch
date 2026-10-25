@@ -19,11 +19,13 @@ use them to learn, to sketch, and as a start for your own.
 | `mems.soi` | Silicon on insulator: a 25 µm device layer etched through, released by etching the buried oxide, with metal pads and an optional back-side cavity | cavity, device (anchor), metal |
 
 Choose one under **Process** at the top of the Process tab. Each has width and
-spacing rules per layer, enclosures (anchors and vias inside the layers they
-join, metal on its layer), and the **anchored** and **release** checks, as
-warnings, with the undercut a constant (`process.undercut`). Thicknesses are
-constants too (`process.t_poly1`), for expressions and for what reads them
-later.
+spacing rules and the **anchored** and **release** checks (as warnings, with
+the undercut a constant, `process.undercut`). `mems.polysilicon` and `mems.soi`
+also have enclosures (anchors and vias inside the layers they join, metal on
+its layer); `mems.surface`, the simplest, has only the device layer's width,
+spacing, anchored and release rules, so a process copied from it starts
+without enclosures. Thicknesses are constants too (`process.t_poly1`), for
+expressions and for what reads them later.
 
 The `mems` components draw on `level` and `level.anchor`, so they work on any
 of them: a comb drive placed on poly2 gets poly2's anchors. Their defaults are

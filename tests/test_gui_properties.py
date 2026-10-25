@@ -200,7 +200,8 @@ def test_shapes_and_placements_offer_relative_layers_and_levels(window):
         c for c in window.properties.findChildren(QComboBox) if c.currentData() == "device"
     )
     items = [layer.itemData(k) for k in range(layer.count())]
-    assert items[:4] == ["level", "level+1", "level-1", "level.anchor"]
+    # level-1 is left out: the component is on the bottom level, nothing is below (#297)
+    assert items[:3] == ["level", "level+1", "level.anchor"]
     assert "metal" in items
     doc.project.define_component(
         ComponentDef(name="post", shapes=[RectShape(x0=0, y0=0, x1=5, y1=5)])

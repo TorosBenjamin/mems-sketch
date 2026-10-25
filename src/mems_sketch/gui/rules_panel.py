@@ -209,7 +209,7 @@ class RulesPanel(_Panel):
 
     def refresh(self) -> None:
         project = self.document.project
-        process, base = project.process, project.base_process
+        process = project.process
         self.process.clear()
         self.process.addItems(project.process_names())
         self.process.setCurrentText(project.process_name)
@@ -230,15 +230,7 @@ class RulesPanel(_Panel):
             if name is None:
                 continue
             rule = process.rules[name]
-            if base is None:
-                source = "project"
-            elif name not in base.rules:
-                source = "project (added)"
-            elif rule_changes(base.rules[name], rule):
-                source = f"{project.process_name} (changed)"
-            else:
-                source = project.process_name
-            own = source == project.process_name or base is None  # nothing to give a reason for
+            source, own = self._source(name)
             item = QTableWidgetItem(name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if rule.enabled else Qt.CheckState.Unchecked)
@@ -257,24 +249,51 @@ class RulesPanel(_Panel):
             severity.setToolTip(" or ".join(SEVERITIES))
             self.rules.setItem(row, SEVERITY, severity)
             if name == self._open:  # its details fold out in the next row
-                self.details = RuleDetails(self, name, source, own)
-                self.rules.setSpan(row + 1, 0, 1, len(COLUMNS))
-                self.rules.setCellWidget(row + 1, 0, self.details)
-                self.rules.setRowHeight(row + 1, self.details.sizeHint().height())
+                self._fill_details(row + 1, name)
         self.rules.blockSignals(False)
         widgets.fit_to_rows(self.rules)
 
+    def _source(self, name: str) -> tuple[str, bool]:
+        """Where the rule ``name`` comes from, and whether it is the project's own (or
+        the library's as it is): nothing to give a reason for."""
+        project = self.document.project
+        base, rule = project.base_process, project.process.rules[name]
+        if base is None:
+            source = "project"
+        elif name not in base.rules:
+            source = "project (added)"
+        elif rule_changes(base.rules[name], rule):
+            source = f"{project.process_name} (changed)"
+        else:
+            source = project.process_name
+        return source, source == project.process_name or base is None
+
+    def _fill_details(self, row: int, name: str) -> None:
+        self.details = RuleDetails(self, name, *self._source(name))
+        self.rules.setSpan(row, 0, 1, len(COLUMNS))
+        self.rules.setCellWidget(row, 0, self.details)
+        self.rules.setRowHeight(row, self.details.sizeHint().height())
+
     def _selection_changed(self) -> None:
-        """One rule selected: its details fold out under it."""
+        """One rule selected: its details fold out under it. The rows stay as they
+        are (only the details row moves), so a double-click on a rule not selected
+        yet starts editing its cell (#297)."""
         names = {self._rows[i.row()] for i in self.rules.selectedItems()} - {None}
         if len(names) != 1 or next(iter(names)) == self._open:
             return
         self._open = next(iter(names))
-        self.refresh()
-        selection = self.rules.selectionModel()
-        selection.blockSignals(True)
-        widgets.select_row(self.rules, self._rows.index(self._open))
-        selection.blockSignals(False)
+        self.rules.blockSignals(True)
+        if None in self._rows:  # the details of the rule open before
+            old = self._rows.index(None)
+            self.rules.removeRow(old)
+            del self._rows[old]
+            self.details = None
+        row = self._rows.index(self._open) + 1
+        self.rules.insertRow(row)
+        self._rows.insert(row, None)
+        self._fill_details(row, self._open)
+        self.rules.blockSignals(False)
+        widgets.fit_to_rows(self.rules)
         self._unfold()
 
     def _unfold(self) -> None:

@@ -1165,7 +1165,10 @@ class AlignTool(Tool):
         name = self.document.node(self.path).name if self.path else None
         match self.step:
             case "own":
-                return f"Align {name}: click the point of {name} to align (Esc cancels)"
+                return (
+                    f"Align {name}: click the point of {name} to align, or another shape "
+                    "(Esc cancels)"
+                )
             case "target":
                 return f"Now click the point to put {self.point} on (Esc cancels)"
         return "Align: click the shape to align"
@@ -1217,6 +1220,12 @@ class AlignTool(Tool):
                 self.begin(hit)
             return
         picked = self._nearest(x, y)
+        if picked is None and self.step == "own" and self.only is None:
+            hit = self.window.hit(x, y)
+            if hit is not None and hit != self.path:  # another shape: align that one (#297)
+                self.window.select_click(hit, False)
+                self.begin(hit)
+                return
         if picked is None:
             self.window.statusBar().showMessage(
                 "Click on one of the marked points (Esc cancels)", 5000
@@ -2068,6 +2077,11 @@ class RouteTool(DrawTool):
             if distance < best and name != self.start_port:
                 best, found = distance, name
         return found
+
+    def hover_label(self, x, y) -> str | None:
+        """The port a click here takes, else the point a via point would snap to: the
+        status bar named a point beside a port while the click took the port (#297)."""
+        return self._port_at(x, y) or (super().hover_label(x, y) if self.start_port else None)
 
     def _route(self) -> tuple[NodePath, Shape] | None:
         """The selected shape whose via points can be dragged (a route)."""

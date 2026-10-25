@@ -9,8 +9,9 @@ graph, shows what each changed, and brings back earlier versions.
 
 ## The Commit panel
 
-The changes since the last commit, saved or not, are listed by what holds
-them: one row per component (with its private ones), and rows for the
+**Ctrl+K** (as in JetBrains IDEs; **File → Commit…**) opens it with its message
+ready to type. The changes since the last commit, saved or not, are listed by
+what holds them: one row per component (with its private ones), and rows for the
 project, its process and its imports.
 
 - **A row unfolds into each change**: `pitch  default 20 → 24 µm`,

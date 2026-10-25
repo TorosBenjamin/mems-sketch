@@ -48,9 +48,9 @@ and the [Commit and Git](git.md) panels show what changed between versions.
 ## A first edit
 
 1. Open the example (above) and select **comb_top** in **Shapes**.
-2. In **Properties**, set `fingers` (under *Parameters of mems.comb_drive*;
-   its "?" says it is the number of moving fingers) to `12`. The comb
-   redraws; the alignment keeps it on the plate.
+2. In **Properties**, set **Moving fingers** (under *Parameters of
+   mems.comb_drive*; its tooltip gives the name expressions use, `fingers`)
+   to `12`. The comb redraws; the alignment keeps it on the plate.
 3. Open **Parameters** (the sliders icon on the right edge, or Alt+4) and
    drag the `plate` default from 162.5 to 200: the plate grows, the combs and springs
    move with it.

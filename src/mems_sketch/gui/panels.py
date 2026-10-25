@@ -1705,6 +1705,9 @@ class ConstantsPanel(_Panel):
 # -- messages ------------------------------------------------------------------
 
 
+MESSAGES_FIT_ROWS = 4  # an empty or short Messages panel opens as tall as these
+
+
 class MessagesPanel(QListWidget):
     """Errors and rule violations. Clicking a violation zooms to it; its context
     menu waives it (accepts it, with a reason) or removes its waiver."""
@@ -1728,6 +1731,14 @@ class MessagesPanel(QListWidget):
         self._shown: tuple = ([], [], False, None)  # what show_messages was last given
 
     counts_changed = Signal(int, int)  # errors, warnings (not waived)
+    lines_changed = Signal(int)  # px the lines take (see content_height)
+
+    def content_height(self) -> int:
+        """The height its lines take, at most :data:`MESSAGES_FIT_ROWS` of them: an
+        empty or short list needs no more room than that (#318)."""
+        rows = min(self.count(), MESSAGES_FIT_ROWS)
+        lines = sum(max(self.sizeHintForRow(i), 0) for i in range(rows))
+        return lines + 2 * self.frameWidth() + 2 * self.spacing()
 
     def show_messages(
         self, errors: list[str], violations, checking: bool = False, component: str | None = None
@@ -1782,6 +1793,7 @@ class MessagesPanel(QListWidget):
         elif not errors and not violations:
             self.addItem(QListWidgetItem(icons.icon("ok"), "No rule violations."))
         self.counts_changed.emit(len(errors) + failing, warnings)
+        self.lines_changed.emit(self.content_height())
 
     def _violation_item(self, v, component) -> QListWidgetItem:
         x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)

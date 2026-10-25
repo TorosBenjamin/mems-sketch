@@ -101,7 +101,7 @@ def test_one_toolbar_row_and_no_menu_bar(window):
 
 def test_the_main_menu_holds_every_menu(window):
     titles = [a.text() for a in window.actions_.root.actions()]
-    assert titles == ["&File", "&Edit", "&Tools", "&Add", "&Operations", "&View", "&Help"]
+    assert titles == ["&File", "&Edit", "&Tools", "&Add", "&Operations", "&View", "&Check", "&Help"]
 
 
 def test_every_menu_shortcut_is_registered_on_the_window(window):
@@ -279,7 +279,8 @@ def test_the_process_tab_opens_from_the_tree_and_the_menu_once(window):
     assert view is not None and window.area.panes[0].currentWidget() is view
     assert window.view.component == "top"  # the panels keep showing the component
     assert window.area.views() == [window.view]  # the Process tab is not a component view
-    menu_entry = next(a for a in window.actions_.view.actions() if a.text() == "Process")
+    entries = window.actions_.check.actions()
+    menu_entry = next(a for a in entries if a.text() == "Process and rules")
     menu_entry.trigger()
     assert window.area.process_view is view and window.area.panes[0].count() == 2
     window.area.close_view(view)

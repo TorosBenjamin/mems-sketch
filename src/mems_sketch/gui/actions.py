@@ -48,7 +48,7 @@ OPERATIONS = [
 ]
 BOOLEANS = ("subtract", "intersect", "xor")  # under Operations › Combine
 # The ☰ menu's entries' icons: File, Edit, Tools, Add, Operations, View, Help.
-ROOT_ICONS = ("folder", "edit", "select", "add", "subtract", "eye", "help")
+ROOT_ICONS = ("folder", "edit", "select", "add", "subtract", "eye", "recompile", "help")
 
 
 def _with(standard: QKeySequence.StandardKey, extra: str) -> list[QKeySequence]:
@@ -90,6 +90,7 @@ class Actions:
         act("Open project…", w.open_project, QKeySequence.StandardKey.Open, file, "open")
         self.save = act("Save", w.save_project, QKeySequence.StandardKey.Save, file, "save")
         act("Save as…", w.save_project_as, QKeySequence.StandardKey.SaveAs, file)
+        self.commit = act("Commit…", w.start_commit, "Ctrl+K", file, "commit")
         act("Close project", w.close_project, None, file)
         file.addSeparator()
         act("Import…", lambda: w.components.import_gds(), "Ctrl+I", file, "import")
@@ -115,11 +116,19 @@ class Actions:
             "Select all", w.select_all, QKeySequence.StandardKey.SelectAll, edit, "select"
         )
         self.rename = act("Rename…", w.rename_selection, "F2", edit, "edit")
-        self.unwrap = act("Unwrap operation", w.unwrap, "Ctrl+Shift+U", edit)
+        # Making and unpacking are in Operations only (#328); one verb for taking
+        # an operation or a placed component apart: unpack.
+        self.unwrap = act("Unpack operation", w.unwrap, "Ctrl+Shift+U")
+        # Keys as JetBrains IDEs have them: Ctrl+K commits there (#327), so making a
+        # component takes Extract's Ctrl+Alt+M and unpacking Inline's Ctrl+Alt+N.
         self.make = act(
-            "Make component from selection…", w.make_component, "Ctrl+K", edit, "make_component"
+            "Make component from selection…",
+            w.make_component,
+            "Ctrl+Alt+M",
+            None,
+            "make_component",
         )
-        self.unpack = act("Unpack component", w.unpack, "Ctrl+Shift+K", edit, "unpack")
+        self.unpack = act("Unpack component", w.unpack, "Ctrl+Alt+N", None, "unpack")
         edit.addSeparator()
         self.move_by = act("Move by…", w.move_by, "Ctrl+Shift+M", edit, "move")
         self.rotate_left = act(
@@ -153,7 +162,8 @@ class Actions:
         # closes, and say why (#253).
         edit.aboutToShow.connect(self.show_what_applies)
         edit.aboutToHide.connect(lambda: self.show_what_applies(everything=True))
-        act("Cancel", w.escape, "Esc", edit)
+        # Esc: a key, not a menu entry (#328); in the keymap with the others.
+        self.unlisted = [act("Cancel", w.escape, "Esc")]
 
         tools_menu = self.tools_menu = QMenu("&Tools", w)
         self.tools: dict[str, QAction] = {}
@@ -223,6 +233,7 @@ class Actions:
         self.connect = act("Connect", lambda: w.connect(), menu=operations, icon="connection")
         self.connect.setToolTip("Join the selected shapes' ends (their ports) with a connection")
         operations.addSeparator()
+        operations.addAction(self.unwrap)
         operations.addAction(self.make)
         operations.addAction(self.unpack)
 
@@ -233,7 +244,6 @@ class Actions:
         )
         act("Zoom in", lambda: w.canvas.zoom_by(1.25, animated=True), "Ctrl+=", view, "zoom_in")
         act("Zoom out", lambda: w.canvas.zoom_by(0.8, animated=True), "Ctrl+-", view, "zoom_out")
-        act("Recompile and check", w.refresh, "F5", view, "recompile")
         view.addSeparator()
         overlays = view.addMenu("Overlays")
         icons.bind(overlays.menuAction(), "eye")
@@ -259,7 +269,6 @@ class Actions:
         self.settings_toggles["editor/show_implementation"] = implementation
         view.addSeparator()
         act("Open top component", w._edit_top, "Ctrl+T", view, "top")
-        act("Process", w.open_process, None, view, "process")
         self.split = act("Split right", w.split_view, "Ctrl+\\", view, "split")
         act("Merge panes", w.area.unsplit, None, view)
         self.close_tab = act(
@@ -267,6 +276,11 @@ class Actions:
         )
         self.close_tab.setShortcuts(_with(QKeySequence.StandardKey.Close, "Ctrl+W"))
         self.panels = view.addMenu("Panels")
+
+        # Checking the design, and the process it is checked against (#328).
+        check = self.check = QMenu("&Check", w)
+        act("Recompile and check", w.refresh, "F5", check, "recompile")
+        act("Process and rules", w.open_process, None, check, "process")
 
         help_menu = self.help = QMenu("&Help", w)
         # "Shift Shift" is no key sequence: written after a tab, menus show it as one.
@@ -278,7 +292,7 @@ class Actions:
         act("User guide", w.open_user_guide, None, help_menu, "help")
         act("About MEMS Sketch", w.show_about, None, help_menu)
 
-        self.root_menus = [file, edit, tools_menu, insert, operations, view, help_menu]
+        self.root_menus = [file, edit, tools_menu, insert, operations, view, check, help_menu]
         self.root = QMenu(w)  # the ☰ button's menu
         for menu, icon_name in zip(self.root_menus, ROOT_ICONS, strict=True):
             self.root.addMenu(menu)
@@ -342,6 +356,8 @@ class Actions:
                     found.setdefault(id(action), action)
 
         visit(self.root)
+        for action in self.unlisted:
+            found.setdefault(id(action), action)
         return list(found.values())
 
     def context_menu(self, x: float, y: float) -> QMenu:

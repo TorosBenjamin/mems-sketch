@@ -8,7 +8,7 @@ input, so a subtraction stays editable and parametric.
 
 | Kind | Shape | Notes |
 |---|---|---|
-| Primitive | `rect`, `polygon`, `circle`, `arc`, `path` | `rect` takes a `corner_radius` (clamped to half the shorter side: a fully rounded square is a circle, a rectangle a stadium); `arc` is an annular sector (a ring at 360°); `path` is a centreline with a width and flush, square or round ends |
+| Primitive | `rect`, `polygon`, `circle`, `arc`, `path` | `rect`, `polygon` and `path` take a `rotation` (degrees, about the centre of their box; their points are of the turned shape's box); round a rectangle's corners with a corners modifier (files with a rectangle's earlier `corner_radius` are read as one); `arc` is an annular sector (a ring at 360°); `path` is a centreline with a width and flush, square or round ends |
 | Reference | `ref` | A placed component, with its parameter values and position |
 | | `connection` | The area that joins beam ends, made from their ports (see [Connections](#connections)) |
 | | `route` | A wire from one port to another, which follows them (see [Routes](#routes)) |

@@ -130,7 +130,14 @@ while drawing, the angle step for Rotate), then, dimmed, what to do now (left
 out when the window is too narrow for it). Then the point the cursor would snap
 to and the problems (click to open Messages). On the right, each in a field
 that keeps its width: the snapping toggles (shape points, grid) and the gizmo
-toggle, the grid step, the zoom and the cursor position in µm.
+toggle, the grid step (or *snap 0.5 µm* with a fixed step), the zoom and the
+cursor position in µm.
+
+**Snapping is the editor's, not the design's.** By default drawing and moving
+snap to the grid drawn, which gets finer as you zoom in. *Preferences →
+Snapping → Grid step* fixes it instead (0.5 µm, say): the grid then draws only
+lines on that step. Neither changes the geometry, which keeps 1 nm, nor an
+export, which rounds to its own grid (the process's `grid_um`).
 
 ## Notes and motion
 

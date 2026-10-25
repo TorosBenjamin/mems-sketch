@@ -1,4 +1,5 @@
-// Closed polygon through its points (mems_sketch.core.shapes.kinds.polygon).
+// Closed polygon through its points, turned by its rotation about the centre of
+// their box (mems_sketch.core.shapes.kinds.polygon).
 #include <vector>
 
 #include "kinds.hpp"
@@ -10,7 +11,7 @@ Result render_polygon(const Json& node, const Context& ctx) {
     for (const auto& point : node.at("points")) points.push_back({ctx.value(point.at(0)), ctx.value(point.at(1))});
     const auto region = mgeom::Region::polygon(points);
     if (region.empty()) return {};
-    return {Layers{{ctx.layer(node), region}}, {}};
+    return turned({Layers{{ctx.layer(node), region}}, {}}, node, ctx, centre_of(points));
 }
 
 }  // namespace mems

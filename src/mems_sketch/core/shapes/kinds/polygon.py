@@ -29,6 +29,7 @@ class PolygonShape(Primitive):
     kind: Literal["polygon"] = "polygon"
     layer: str = LEVEL  # see mems_sketch.core.levels
     points: list[tuple[Value, Value]] = Field(min_length=3)
+    rotation: Value = 0.0  # degrees, about the centre of its points' box
 
     def moved(self, x, y, inner) -> dict:
         return {"points": [(x(px), y(py)) for px, py in self.points]}
@@ -42,7 +43,7 @@ class PolygonShape(Primitive):
         return coordinate_dimensions(self.points, v)
 
     def corner_vertices(self, v) -> list[tuple[float, float]]:
-        return [(v(x), v(y)) for x, y in self.points]
+        return self.turned([(v(x), v(y)) for x, y in self.points], v)
 
     def handle_moved(self, key, to, v) -> dict:
         points = points_moved(self.points, key, to, v, closed=True)

@@ -129,7 +129,7 @@ MODIFIER_LABELS = {  # per kind, then per field
         "row_pitch": "Row pitch",
         "hole_size": "Hole size",
         "hole_height": "Hole height",
-        "corner_radius": "Hole corner radius",  # apart from the shape's own (#301)
+        "corner_radius": "Hole corner radius",  # (#301)
         "margin": "Margin",
         "keep_out": "Keep clear of",
         "keep_out_margin": "Keep-out margin",

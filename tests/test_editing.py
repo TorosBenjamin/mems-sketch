@@ -459,7 +459,7 @@ def test_rotating_a_reference_about_a_pivot(doc):
     assert (doc.node(ref).rotation, doc.node(ref).x) == pytest.approx((0, 10))
 
 
-def test_rotating_a_primitive_wraps_it_and_keeps_its_name(doc):
+def test_rotating_a_rectangle_turns_it_and_keeps_its_name(doc):
     rect = doc.nodes.add(RectShape(name="r", layer="device", x0=0, y0=0, x1=20, y1=10))
     post = doc.nodes.add(
         RectShape(
@@ -473,9 +473,8 @@ def test_rotating_a_primitive_wraps_it_and_keeps_its_name(doc):
         )
     )
     doc.moves.rotate([rect], 90, (0, 0))
-    wrapper = doc.node(rect)
-    assert isinstance(wrapper, TransformShape) and wrapper.name == "r"
-    assert wrapper.children[0].name == "r_shape1"
+    turned = doc.node(rect)
+    assert turned.kind == "rect" and turned.name == "r" and turned.rotation == 90  # #214
     box = doc.results.highlight([rect]).layers["device"].bbox()
     assert (box.left, box.bottom, box.right, box.top) == (-10000, 0, 0, 20000)
     # The post stays aligned to the (now rotated) rectangle's top.

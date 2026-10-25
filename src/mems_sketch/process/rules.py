@@ -498,7 +498,7 @@ def name_shapes(
             inside = where.sized(2)
         layers = violation.layer.split(", ")
 
-        def lying_on(area: Region) -> list[str]:
+        def lying_on(area: Region, layers: list[str] = layers) -> list[str]:
             on = []
             for name, geometry in nodes:
                 for layer in layers:

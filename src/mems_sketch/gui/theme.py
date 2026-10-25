@@ -101,9 +101,10 @@ class CanvasColors(_Colors):
     grid_alpha: tuple[int, int, int]  # minor lines, every fifth line, the axes (0-255)
     highlight: str  # the selection
     hover: str
-    violation: str  # rule violations
+    violation: str  # rule violations: errors
+    violation_warning: str | None = None  # and warnings (none: the errors' colour)
     added: str  # history: material a version added
-    removed: str  # and removed (hatched: it is not there any more)
+    removed: str  # and removed (hatched: it is not there any more; grey, not a problem's red)
     declared: str  # points: the edited component's own
     selected: str  # of the selected shape
     pick: str  # candidates while aligning
@@ -379,14 +380,21 @@ QToolBar::separator {{ background: {border_strong}; width: 1px; height: 1px; mar
 QToolButton#window-button, QToolButton#window-close {{ padding: 4px 10px; margin: 0; border-radius: 0; }}
 QToolButton#window-close:hover {{ background: #c42b1c; }}
 QToolButton {{
-    background: transparent; border: none; border-radius: {radius_control}px; padding: 4px;
+    background: transparent; border: 1px solid transparent; border-radius: {radius_control}px;
+    padding: 3px;
 }}
+QToolButton[keyfocus="true"], QCheckBox[keyfocus="true"], QPushButton[keyfocus="true"] {{
+    border: 1px solid {accent};  /* reached with Tab (widgets.FocusRing) */
+}}
+QAbstractItemView[keyfocus="true"] {{ border: 1px solid {accent}; border-radius: {radius_small}px; }}
 QToolButton:hover {{ background: {hover}; }}
 QToolButton:pressed {{ background: {pressed}; }}
 QToolButton:checked {{ background: {selected}; }}
 QToolButton[popupMode="2"] {{ padding-right: 12px; }}
-QToolButton#main-menu {{ padding: 5px; }}
+QToolButton#main-menu {{ padding: 5px; background: transparent; }}  /* flat as the others */
+QToolButton#main-menu:hover, QToolButton#main-menu:open {{ background: {hover}; }}
 QToolButton::menu-indicator {{ image: none; }}
+QToolButton::menu-button {{ border: none; background: transparent; width: 12px; }}  /* #319 */
 QToolBar#tools-toolbar QToolButton {{ padding: 5px; margin: 1px 2px; }}
 
 QMenuBar {{ background: {window}; }}
@@ -603,6 +611,7 @@ QFrame#card {{
 QLabel#card-heading {{ font-weight: 600; }}
 QWidget#empty-state QLabel {{ color: {muted}; }}
 QLabel#muted[error="true"] {{ color: {error}; }}
+QLabel#warning-note {{ color: {warning}; }}
 QLabel#heading {{ font-weight: 600; font-size: {font_heading}px; }}
 QWidget#view-header {{ background: {editor}; border-bottom: 1px solid {border}; }}
 QWidget#view-header QLabel {{ color: {muted}; }}

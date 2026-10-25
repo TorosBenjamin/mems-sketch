@@ -39,6 +39,20 @@ ISLAND_INSET = 4  # px between an island's edge and its content: the corners sta
 DEFAULT_SIZES = {"main": [270, 900, 320], "left": [300, 380], "center": [700, 140]}
 
 
+def main_sizes(width: int) -> list[int]:
+    """[left, editor, right] for a window ``width`` px wide: the side panels a share
+    of it (narrower in a small window, wider in a big one), the editor the rest (#318)."""
+    left = max(SIDE_LEAST_PX, min(round(width * 0.19), SIDE_MOST_PX))
+    # Properties, on the right, needs room for a label and two fields side by side.
+    right = max(RIGHT_LEAST_PX, min(round(width * 0.25), SIDE_MOST_PX + 40))
+    return [left, max(width - left - right, 200), right]
+
+
+SIDE_LEAST_PX = 220
+RIGHT_LEAST_PX = 310
+SIDE_MOST_PX = 380
+
+
 def island(content: QWidget, inset: int = ISLAND_INSET) -> QFrame:
     """A rounded panel on the frame, holding ``content`` ``inset`` px from its edges.
 
@@ -90,9 +104,9 @@ class _Host(QFrame):
         self.title.setObjectName("dock-title-label")
         row.addWidget(self.title)
         row.addSpacing(theme.metric("space_m"))
-        close = QToolButton()
+        close = self.hide_button = QToolButton()
         close.setAutoRaise(True)
-        close.setToolTip("Hide")
+        close.setToolTip("Hide")  # "Hide Shapes" once it shows a window
         icons.bind(close, "minimize")
         close.clicked.connect(lambda _checked=False: hide())  # not the flag as an argument
         row.addWidget(close)
@@ -129,6 +143,7 @@ class ToolWindows(QWidget):
 
     def __init__(self, editor: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._main_default = True  # the side panels' widths follow the window's (#318)
         self._windows: dict[str, _Window] = {}
         self._hosts = {anchor: _Host(lambda a=anchor: self._hide(a)) for anchor in ANCHORS}
 
@@ -274,6 +289,7 @@ class ToolWindows(QWidget):
         host.current = window
         host.stack.setCurrentWidget(window.widget)
         host.title.setText(window.title)
+        host.hide_button.setToolTip(f"Hide {window.title}")  # which one (#328)
         window.header_buttons.show()
         window.button.setChecked(True)
         self._update()
@@ -296,9 +312,17 @@ class ToolWindows(QWidget):
         else:
             self.open(name)
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # Until the user sizes the side panels, they follow the window's width.
+        if self._main_default and "main" in self._splitters:
+            self._splitters["main"].setSizes(main_sizes(self.width()))
+
     def _dragged(self, name: str) -> None:
         """A splitter moved: a panel dragged down to nothing closes, and comes back at
         the size it had when it opens again."""
+        if name == "main":
+            self._main_default = False
         splitter = self._splitters[name]
         sizes = splitter.sizes()
         collapsed = [
@@ -352,6 +376,8 @@ class ToolWindows(QWidget):
             if name in self._windows:
                 self.open(name)
         for name, sizes in state.get("sizes", {}).items():
+            if name == "main":
+                self._main_default = False  # sized as it was left
             splitter = self._splitters.get(name)
             default = DEFAULT_SIZES.get(name)
             if splitter is None or not isinstance(sizes, list) or len(sizes) != len(default):

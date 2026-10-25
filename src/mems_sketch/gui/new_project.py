@@ -88,7 +88,8 @@ class NewProjectDialog(QDialog):
         self.libraries.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.libraries.itemSelectionChanged.connect(self._validate)
         widgets.placeholder(
-            self.libraries, "No libraries of your own: the bundled ones (mems) are always there."
+            self.libraries,
+            "No libraries of your own yet. The bundled ones (mems) are always included.",
         )
         add = widgets.action_button(
             "plus",
@@ -245,7 +246,7 @@ class NewProjectDialog(QDialog):
         for folder in (self.libraries.item(i).toolTip() for i in range(self.libraries.count())):
             names += self._library_processes.get(folder, [])
         for name in names:
-            self.process.addItem(icons.icon("layers"), name, ("library", name))
+            self.process.addItem(icons.icon("process"), name, ("library", name))
         self.process.addItem(COPY_PROCESS, ("copy", None))
         if self.process_from is not None:
             self.process.addItem(

@@ -37,10 +37,13 @@ class HelpButton(QToolButton):
         icons.bind(self, "help")
         self.setIconSize(QSize(14, 14))
         self.setAutoRaise(True)
+        # Not a Tab stop (Tab goes field to field); its field carries the text as its
+        # accessible description, for screen readers (properties._line_up, #323).
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.WhatsThisCursor)
-        self.setToolTip(help_html(text))  # also what a screen reader reads
+        self.setToolTip(help_html(text))
         self.setAccessibleName("Help")
+        self.setAccessibleDescription(text)
         self.clicked.connect(self.show_help)
 
     def show_help(self) -> None:

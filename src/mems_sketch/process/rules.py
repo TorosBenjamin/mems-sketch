@@ -47,6 +47,7 @@ class Finding:
     bbox_um: tuple[float, float, float, float] | None = None
     measured: float | None = None  # what was measured there (a width, a gap), in µm
     outline: tuple[tuple[int, int], ...] = ()  # where, exactly (database units)
+    holes: tuple[tuple[tuple[int, int], ...], ...] = ()  # and the outline's holes
 
 
 class RuleKind(Protocol):
@@ -75,6 +76,7 @@ class Violation:
     measured: float | None = None  # what the kind measured there, in µm (see Finding)
     shapes: tuple[str, ...] = ()  # the shapes or placements it lies on (see name_shapes)
     outline: tuple[tuple[int, int], ...] = ()  # where, exactly (database units)
+    holes: tuple[tuple[tuple[int, int], ...], ...] = ()  # and the outline's holes
 
     @property
     def is_error(self) -> bool:
@@ -439,6 +441,7 @@ def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> lis
             values=values,
             measured=f.measured,
             outline=f.outline,
+            holes=f.holes,
         )
         for f in findings
     ]
@@ -484,7 +487,7 @@ def name_shapes(
             named.append(violation)
             continue
         if violation.outline:
-            where = Region(IntPolygon(list(violation.outline)))
+            where = Region(IntPolygon(list(violation.outline), [list(h) for h in violation.holes]))
         else:
             x0, y0, x1, y1 = (round(c / DBU_UM) for c in violation.bbox_um)
             where = Region(Box(x0, y0, x1, y1))
@@ -494,13 +497,19 @@ def name_shapes(
         if inside.is_empty():  # a sliver: whatever it touches
             inside = where.sized(2)
         layers = violation.layer.split(", ")
-        on = []
-        for name, geometry in nodes:
-            for layer in layers:
-                region = geometry.layers.get(layer)
-                if region is not None and not (region & inside).is_empty():
-                    on.append(name)
-                    break
+
+        def lying_on(area: Region, layers: list[str] = layers) -> list[str]:
+            on = []
+            for name, geometry in nodes:
+                for layer in layers:
+                    region = geometry.layers.get(layer)
+                    if region is not None and not (region & area).is_empty():
+                        on.append(name)
+                        break
+            return on
+
+        # A gap lies on no shape: then the shapes on either side of it (#300).
+        on = lying_on(inside) or lying_on(where.sized(2))
         named.append(dataclasses.replace(violation, shapes=tuple(dict.fromkeys(on))))
     return named
 

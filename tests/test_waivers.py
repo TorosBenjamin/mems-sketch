@@ -183,7 +183,7 @@ def test_waiving_from_the_messages(window, monkeypatch):
 
     from mems_sketch.gui.panels import VIOLATION_ROLE
 
-    assert window.problems_button.text() == "1 violation"
+    assert window.problems_button.text() in ("1 error", "1 warning")
     [item] = [i for i in message_items(window) if i.data(VIOLATION_ROLE) is not None]
     menu = window.messages.context_menu(item)
     [action] = menu.actions()
@@ -196,4 +196,4 @@ def test_waiving_from_the_messages(window, monkeypatch):
     [action] = window.messages.context_menu(item).actions()
     assert action.text() == "Remove the waiver"
     action.trigger()
-    assert window.problems_button.text() == "1 violation"
+    assert window.problems_button.text() in ("1 error", "1 warning")

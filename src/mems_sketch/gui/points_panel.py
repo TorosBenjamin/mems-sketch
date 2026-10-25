@@ -22,13 +22,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QStyledItemDelegate,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from mems_sketch.core.shapes import BBOX_POINTS
+from mems_sketch.core.shapes import BBOX_POINTS, walk
 from mems_sketch.core.user_component import DIRECTIONS
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons, theme, widgets
@@ -64,6 +65,13 @@ HINT_HEIGHT_PX = 32  # the form's place while no point is chosen
 QWIDGETSIZE_MAX = (1 << 24) - 1
 
 
+class _NoEditor(QStyledItemDelegate):
+    """A column shown, not edited in place."""
+
+    def createEditor(self, parent, option, index):
+        return None
+
+
 class PointsPanel(_Panel):
     """See the module docstring."""
 
@@ -82,6 +90,9 @@ class PointsPanel(_Panel):
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
         )
+        # Only the name is edited in the list; a position is set in the form below,
+        # so its cell opens no editor that would drop what is typed (#297).
+        self.tree.setItemDelegateForColumn(1, _NoEditor(self.tree))
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemEntered.connect(lambda item, _: self.hovered.emit(self._marker(item)))
@@ -161,12 +172,17 @@ class PointsPanel(_Panel):
         groups = [("default", "Its box", "Every component has these: of the box around it")]
         groups += [(name, name, f"The points of shape {name}") for name in shapes]
         opened = self._expanded.setdefault(self.document.active, set())
+        kinds = {  # each shape's own icon, as in the Shapes panel (#317)
+            node.name: node.icon_name() for node in walk(self.document.shapes) if node.name
+        }
         for group, title, tip in groups:
             holder = QTreeWidgetItem(self.tree, [title])
             holder.setData(0, GROUP_ROLE, group)
             holder.setFlags(Qt.ItemFlag.ItemIsEnabled)
             holder.setToolTip(0, tip)
-            holder.setIcon(0, icons.icon("shapes" if group != "default" else "component"))
+            holder.setIcon(
+                0, icons.icon(kinds.get(group, "shapes") if group != "default" else "component")
+            )
             points = defaults if group == "default" else shapes[group]
             for name, xy in points.items():
                 self._item(holder, (group, name), xy).setForeground(0, QBrush(theme.color("muted")))
@@ -264,6 +280,7 @@ class PointsPanel(_Panel):
         names = []
         if self._guard(lambda: names.append(self.document.ports.add(at=reference(key), name=name))):
             self.select(("port", names[0]))
+            self.rename(("port", names[0]))  # the name is offered, as for a point (#297)
 
     def name_point(self, key: Key) -> None:
         """Re-export a default or shape point: declare one right there, measured from

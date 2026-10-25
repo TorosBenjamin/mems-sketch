@@ -2016,7 +2016,8 @@ class RouteTool(DrawTool):
     The ports are marked; a click near one picks it (snapping or not), a click
     elsewhere places a via point (snapped as drawing does). The route is
     Manhattan between ports along x and y, else straight; it is as wide as the
-    ports, or the path width when they have none or differ. With a route
+    ports, or the narrower port (the path width when they have none), and never
+    narrower than the layer's minimum width. With a route
     selected and none being drawn, its via points have handles: drag one to
     move it.
     """
@@ -2231,13 +2232,36 @@ class RouteTool(DrawTool):
         start, ports = self.start_port, self.ports()
         axis = all(round(ports[p].angle, 6) % 90 == 0 for p in (start, end))
         widths = {ports[p].width for p in (start, end) if ports[p].width > 0}
+        if len(widths) == 1:
+            width = 0.0  # the ports' own
+        else:  # the narrower port's, or the path width; never under the layer's minimum (#302)
+            width = min(widths) if widths else self.window.path_width
+            layer = getattr(ports[start], "layer", "") or getattr(ports[end], "layer", "")
+            width = max(width, self._min_width(layer))
         return RouteShape(
             start=start,
             end=end,
             style="manhattan" if axis else "straight",
             via=list(self.placed),
-            width=0.0 if len(widths) == 1 else self.window.path_width,
+            width=width,
         )
+
+    def _min_width(self, layer: str) -> float:
+        """The narrowest the process's min-width rules allow on ``layer`` (0: no rule)."""
+        from mems_sketch.core.expressions import evaluate
+
+        process = self.document.project.process
+        found = 0.0
+        try:
+            scope = process.scope()
+            for rule in process.rules_of("min_width"):
+                if layer in rule.layers:
+                    value = rule.values.get("value", 0.0)
+                    value = value if isinstance(value, int | float) else evaluate(str(value), scope)
+                    found = max(found, float(value))
+        except Exception:  # noqa: BLE001 - a rule that does not evaluate sets no minimum
+            return found
+        return found
 
     def markers(self) -> dict[str, list[Candidate]]:
         ports = [(n, p.x, p.y) for n, p in self.ports().items() if n != self.start_port]

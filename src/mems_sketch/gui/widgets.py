@@ -41,6 +41,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QFontMetrics, QKeySequence, QPainter, QPalette, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
     QApplication,
     QComboBox,
@@ -137,7 +138,9 @@ class ElidedLabel(QLabel):
         self._elide()
 
     def _elide(self) -> None:
-        shown = self.fontMetrics().elidedText(self._text, self._mode, self.width())
+        # The room inside its margins and padding: cut short of the edge, never at it.
+        room = self.contentsRect().width() - 2 * self.margin() - 2
+        shown = self.fontMetrics().elidedText(self._text, self._mode, max(room, 0))
         super().setText(shown)
         self.setToolTip(self._text if shown != self._text else "")
 
@@ -545,6 +548,51 @@ class MenuTidier(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Show and isinstance(watched, QMenu):
             tidy_separators(watched)
+        return False
+
+
+class FocusRing(QObject):
+    """Installed on the application: a button, tick box or list reached with the
+    keyboard (Tab) gets the property ``keyfocus``, which the style sheet draws as
+    a ring (#323); a click does not, so the mouse leaves no rings behind."""
+
+    REASONS = (
+        Qt.FocusReason.TabFocusReason,
+        Qt.FocusReason.BacktabFocusReason,
+        Qt.FocusReason.ShortcutFocusReason,
+    )
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        kind = event.type()
+        if kind in (QEvent.Type.FocusIn, QEvent.Type.FocusOut) and isinstance(
+            watched, QAbstractButton | QAbstractItemView
+        ):
+            on = kind == QEvent.Type.FocusIn and event.reason() in self.REASONS
+            if bool(watched.property("keyfocus")) != on:
+                watched.setProperty("keyfocus", on)
+                watched.style().unpolish(watched)
+                watched.style().polish(watched)
+                watched.update()
+        return False
+
+
+class AccessibleNames(QObject):
+    """Installed on the application: a button without a name of its own (an icon
+    button) is named for screen readers after its tooltip, less the shortcut in
+    brackets, or its text (#323)."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() in (QEvent.Type.Polish, QEvent.Type.ToolTipChange) and isinstance(
+            watched, QAbstractButton
+        ):
+            given = watched.property("auto_name")
+            if not watched.accessibleName() or watched.accessibleName() == given:
+                text = watched.toolTip() or watched.text()
+                name = re.sub(r"\s*\([^()]*\)\s*$", "", re.sub(r"<[^>]+>", "", text))
+                name = name.replace("&", "").strip()
+                if name:
+                    watched.setAccessibleName(name)
+                    watched.setProperty("auto_name", name)
         return False
 
 

@@ -81,7 +81,7 @@ def test_guides_are_drawn_and_selected_by_clicking_near_them(window):
 
 def test_the_guide_tool_draws_a_guide(window):
     window.canvas.set_view_state(4, 0, 0)
-    assert any(a.text() == "Guide" for a in window.actions_.add.actions())
+    assert any(a.text().partition("\t")[0] == "Guide" for a in window.actions_.add.actions())
     window.set_tool("guide")
     click(window.canvas, 0, -10)
     click(window.canvas, 0, 10)

@@ -67,7 +67,7 @@ class ProcessView(QWidget):
         return "process"
 
     def icon_name(self) -> str:
-        return "layers"
+        return "process"
 
     def tooltip(self) -> str:
         return "The process: constants, layer definitions and rules"

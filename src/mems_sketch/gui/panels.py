@@ -5,7 +5,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -46,7 +56,17 @@ from mems_sketch.gui.value_edit import (
 )
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
-VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message
+VIOLATION_ROLE = Qt.ItemDataRole.UserRole + 50  # the Violation of a message (a list: a group)
+GROUP_ROLE = Qt.ItemDataRole.UserRole + 51  # a group's key (see _group_key)
+GROUP_AT = 4  # this many violations of a rule on the same shapes are one line
+PARAMETER_COLUMN_MIN_PX = 44  # no column of the Parameters table gets narrower ("Default")
+
+
+def _group_key(v) -> tuple:
+    """What groups violations: the rule, its severity and the shapes it is on."""
+    return (v.rule, v.layer, v.severity, tuple(v.shapes))
+
+
 IMPORT_FILTER = (
     "Layouts (*.gds *.gds2 *.gdsii *.json *.xml *.mat);;"
     "GDS (*.gds *.gds2 *.gdsii);;"
@@ -206,6 +226,25 @@ class ComponentsPanel(_Panel):
         )
         self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.tree)
+        self._tree_keys()
+
+    def _tree_keys(self) -> None:
+        """F2, Ctrl+D and Delete on the current component, as its menu offers (#324)."""
+
+        def on_current(do) -> None:
+            item = self.tree.currentItem()
+            name = item.data(0, self.NAME_ROLE) if item is not None else None
+            if name is not None and name in self.document.project.components:
+                do(name)
+
+        for key, do in (
+            ("F2", self._rename),
+            ("Ctrl+D", lambda n: self._guard(lambda: self.document.components.copy(n))),
+            ("Del", self._delete),
+        ):
+            shortcut = QShortcut(QKeySequence(key), self.tree)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(lambda d=do: on_current(d))
 
     # -- building ------------------------------------------------------------
 
@@ -223,7 +262,7 @@ class ComponentsPanel(_Panel):
         local = self._group(project.name, "project", "folder", "Project components")
         process = QTreeWidgetItem(local, ["Process"])
         process.setData(0, self.PROCESS_ROLE, True)
-        process.setIcon(0, icons.icon("layers"))
+        process.setIcon(0, icons.icon("process"))
         process.setToolTip(0, "The process's layers and constants (opens in a tab)")
         shared = [n for n in project.components if "/" not in n]
         for name in sorted(shared, key=lambda n: n != project.top):  # top first
@@ -303,11 +342,10 @@ class ComponentsPanel(_Panel):
         drag = Qt.ItemFlag.ItemIsDragEnabled  # onto the canvas, where it may be placed
         placeable = self._placeable(name)
         item.setFlags(item.flags() | drag if placeable else item.flags() & ~drag)
-        if name == self.document.active:  # the tab being edited
+        if name == self.document.active:  # the tab being edited: bold, its icon kept (#317)
             font = QFont()
             font.setBold(True)
             item.setFont(0, font)
-            item.setIcon(0, icons.icon("eye" if self.document.read_only else "edit", "blue"))
         library_internals = "." in name and self.hide_implementation
         for child in [] if library_internals else project.private_components(name):
             self._component(item, child)
@@ -442,7 +480,7 @@ class ComponentsPanel(_Panel):
         if item is None:
             self._project_actions(menu)
         elif item.data(0, self.PROCESS_ROLE):
-            _menu_action(menu, "Open the process", self.process_requested.emit, "layers")
+            _menu_action(menu, "Open the process", self.process_requested.emit, "process")
         elif item.data(0, self.GROUP_ROLE) is not None:
             group = item.data(0, self.GROUP_ROLE)
             if group == "project":
@@ -490,14 +528,21 @@ class ComponentsPanel(_Panel):
             _menu_action(menu, "New private component…", lambda: self._new(owner=name), "component")
             self._ownership_actions(menu, name)
             menu.addSeparator()
-            _menu_action(menu, "Rename…", lambda: self._rename(name), "edit")
-            _menu_action(
-                menu,
-                "Duplicate",
-                lambda: self._guard(lambda: self.document.components.copy(name)),
-                "duplicate",
-            )
-            _menu_action(menu, "Delete", lambda: self._delete(name), "delete")
+            for action, key in (
+                (_menu_action(menu, "Rename…", lambda: self._rename(name), "edit"), "F2"),
+                (
+                    _menu_action(
+                        menu,
+                        "Duplicate",
+                        lambda: self._guard(lambda: self.document.components.copy(name)),
+                        "duplicate",
+                    ),
+                    "Ctrl+D",
+                ),
+                (_menu_action(menu, "Delete", lambda: self._delete(name), "delete"), "Del"),
+            ):  # the keys that do it in the tree (see _tree_keys), shown
+                action.setShortcut(QKeySequence(key))
+                action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
             self._level_actions(menu, name)
             menu.addSeparator()
             if name == project.top:
@@ -809,6 +854,11 @@ class ShapeTree(QTreeWidget):
         self._rebuilding = False
         self.hide_implementation = False  # a read-only component: its interface only
         self.show_implementation = False  # the setting: what placed library parts hold
+        self.empty = widgets.placeholder(  # an empty component says how to start (#319)
+            self,
+            "No shapes yet. Draw with B (rectangle), C (circle), P (polygon) or W (path), "
+            "or place a component with Shift+A.",
+        )
         # Per component: collapsed operations (others are open) and opened
         # placed components (others are closed).
         self.collapsed: dict[str, set[NodePath]] = {}
@@ -1117,6 +1167,11 @@ class ParametersPanel(_Panel):
         self.document = document
         self.title = self.header_context = widgets.header_context()  # the component
         self.table = widgets.make_table(self.COLUMNS, stretch=self.COLUMNS.index("Default"))
+        # The name shares the room with the default (both cut with "…", the whole in
+        # the tooltip), so the trial value and the value always fit (#303).
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setMinimumSectionSize(PARAMETER_COLUMN_MIN_PX)
         self.table.setItemDelegateForColumn(0, widgets.IconAfterText(self.table))  # the lock
         self.table.itemChanged.connect(self._changed)
         self.table.viewport().installEventFilter(self)
@@ -1134,6 +1189,11 @@ class ParametersPanel(_Panel):
         )
         self.header_buttons = list(self.actions)  # shown in the tool window's header
         layout.addWidget(self.table)
+        self.empty = widgets.placeholder(  # what to do when there is none yet (#303)
+            self.table,
+            "No parameters yet. + adds one; or right-click a value in Properties and "
+            "choose Make a parameter from this value.",
+        )
         self._names: list[str] = []
 
     def _clear_trials(self) -> None:
@@ -1659,16 +1719,24 @@ class MessagesPanel(QListWidget):
         self.itemClicked.connect(self._activated)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._context_menu)
+        # Several at once can be waived with one reason (#300); a long message wraps.
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setWordWrap(True)
         size = theme.metric("icon_size")
         self.setIconSize(QSize(size, size))
+        self._expanded: set[tuple] = set()  # groups shown one violation per line
+        self._shown: tuple = ([], [], False, None)  # what show_messages was last given
 
-    counts_changed = Signal(int, int)  # errors, violations not waived
+    counts_changed = Signal(int, int)  # errors, warnings (not waived)
 
     def show_messages(
         self, errors: list[str], violations, checking: bool = False, component: str | None = None
     ) -> None:
         """Errors and rule violations of ``component``; ``checking`` while the
-        rules are still being checked in the background."""
+        rules are still being checked in the background. Many violations of one
+        rule on the same shapes are one line (see :meth:`context_menu` to list
+        them one by one)."""
+        self._shown = (list(errors), list(violations), checking, component)
         self.clear()
         for text in errors:
             item = QListWidgetItem(icons.icon("error"), text)
@@ -1676,53 +1744,135 @@ class MessagesPanel(QListWidget):
             self.addItem(item)
         open_ = [v for v in violations if not v.waived]
         waived = len(violations) - len(open_)
-        if violations:
-            count = len(open_)
-            text = f"{count} rule violation{'' if count == 1 else 's'} — click one to zoom to it"
+        failing = sum(1 for v in open_ if v.is_error)
+        warnings = len(open_) - failing
+        if open_:
+            counted = [
+                f"{n} {word}{'' if n == 1 else 's'}"
+                for n, word in ((failing, "error"), (warnings, "warning"))
+                if n
+            ]
+            text = f"Rule violations: {', '.join(counted)} — click one to zoom to it"
             if waived:
                 text += f"; {waived} waived"
+        elif waived:
+            text = f"No open rule violations; {waived} waived"
+        else:
+            text = ""
+        if text:
             summary = QListWidgetItem(text)
             font = QFont()
             font.setBold(True)
             summary.setFont(font)
             self.addItem(summary)
-        for v in sorted(violations, key=lambda v: bool(v.waived)):  # waived ones last
-            x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
-            where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
-            if v.shapes:
-                where += f" on {', '.join(v.shapes)}"
-            if v.waived:
-                kept = v.waiver[0] if v.waiver else component
-                title = "Waived" if kept == component else f"Waived in {kept}"
-                label = f"{title}: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
-                item = QListWidgetItem(icons.icon("ok"), label)
-                item.setForeground(QBrush(theme.color("muted")))
+        groups: dict[tuple, list] = {}
+        for v in open_:
+            groups.setdefault(_group_key(v), []).append(v)
+        for key, members in groups.items():
+            if len(members) >= GROUP_AT and key not in self._expanded:
+                self.addItem(self._group_item(key, members))
             else:
-                prefix = "" if v.is_error else "Warning: "
-                label = f"{prefix}[{v.rule}] {v.layer}: {v.message}{where}"
-                item = QListWidgetItem(icons.icon("warning"), label)
-            item.setData(PATH_ROLE, v.bbox_um)
-            item.setData(VIOLATION_ROLE, v)
-            self.addItem(item)
+                for v in members:
+                    self.addItem(self._violation_item(v, component))
+        for v in violations:
+            if v.waived:
+                self.addItem(self._violation_item(v, component))  # waived ones last
         if checking:
             self.addItem(QListWidgetItem("Checking the design rules…"))
         elif not errors and not violations:
             self.addItem(QListWidgetItem(icons.icon("ok"), "No rule violations."))
-        self.counts_changed.emit(len(errors), len(open_))
+        self.counts_changed.emit(len(errors) + failing, warnings)
+
+    def _violation_item(self, v, component) -> QListWidgetItem:
+        x0, y0, x1, y1 = v.bbox_um or (0, 0, 0, 0)
+        where = f" at ({(x0 + x1) / 2:.2f}, {(y0 + y1) / 2:.2f}) µm" if v.bbox_um else ""
+        if v.shapes:
+            where += f" on {', '.join(v.shapes)}"
+        if v.waived:
+            kept = v.waiver[0] if v.waiver else component
+            title = "Waived" if kept == component else f"Waived in {kept}"
+            label = f"{title}: [{v.rule}] {v.layer}: {v.message}{where} — {v.waived}"
+            item = QListWidgetItem(icons.icon("ok"), label)
+            item.setForeground(QBrush(theme.color("muted")))
+        else:
+            prefix = "Error: " if v.is_error else "Warning: "
+            label = f"{prefix}[{v.rule}] {v.layer}: {v.message}{where}"
+            item = QListWidgetItem(icons.icon("error" if v.is_error else "warning"), label)
+        item.setToolTip(label)
+        item.setData(PATH_ROLE, v.bbox_um)
+        item.setData(VIOLATION_ROLE, v)
+        return item
+
+    def _group_item(self, key: tuple, members: list) -> QListWidgetItem:
+        """One line for many violations of a rule on the same shapes, e.g. every web
+        of a perforation: how many, the smallest measured, and a box around them."""
+        first = members[0]
+        prefix = "Error: " if first.is_error else "Warning: "
+        on = f" on {', '.join(first.shapes)}" if first.shapes else ""
+        measured = [v.measured for v in members if v.measured is not None]
+        least = f", smallest {min(measured):g} µm" if measured else ""
+        label = (
+            f"{prefix}[{first.rule}] {first.layer}: {len(members)} places{on}{least} "
+            f"(e.g. {first.message}) — right-click to list them"
+        )
+        item = QListWidgetItem(icons.icon("error" if first.is_error else "warning"), label)
+        item.setToolTip(label)
+        boxes = [v.bbox_um for v in members if v.bbox_um]
+        if boxes:
+            item.setData(
+                PATH_ROLE,
+                (
+                    min(b[0] for b in boxes),
+                    min(b[1] for b in boxes),
+                    max(b[2] for b in boxes),
+                    max(b[3] for b in boxes),
+                ),
+            )
+        item.setData(VIOLATION_ROLE, list(members))
+        item.setData(GROUP_ROLE, key)
+        return item
+
+    def _toggle_group(self, key: tuple) -> None:
+        self._expanded ^= {key}
+        self.show_messages(*self._shown)
+
+    def _selected_violations(self, item: QListWidgetItem | None) -> list:
+        """The violations of the selected lines (with ``item``), groups as their members."""
+        items = self.selectedItems()
+        if item is not None and item not in items:
+            items = [item]
+        found = []
+        for chosen in items:
+            data = chosen.data(VIOLATION_ROLE)
+            found += data if isinstance(data, list) else [data] if data is not None else []
+        return [v for v in found if v.bbox_um is not None]
 
     def context_menu(self, item: QListWidgetItem | None) -> QMenu | None:
-        violation = item.data(VIOLATION_ROLE) if item is not None else None
-        if violation is None or violation.bbox_um is None:
+        data = item.data(VIOLATION_ROLE) if item is not None else None
+        if data is None:
             return None
         menu = QMenu(self)
-        if violation.waived or violation.stale_waiver:
+        key = item.data(GROUP_ROLE)
+        if key is not None:
+            action = menu.addAction(f"List the {len(data)} one by one")
+            action.triggered.connect(lambda: self._toggle_group(key))
+        elif _group_key(data) in self._expanded:
+            action = menu.addAction("Group them again")
+            action.triggered.connect(lambda: self._toggle_group(_group_key(data)))
+        chosen = self._selected_violations(item)
+        open_ = [v for v in chosen if not v.waived and not v.stale_waiver]
+        if not isinstance(data, list) and (data.waived or data.stale_waiver):
             action = menu.addAction("Remove the waiver")
-            action.triggered.connect(lambda: self.unwaive_requested.emit(violation))
-        else:
+            action.triggered.connect(lambda: self.unwaive_requested.emit(data))
+        elif len(open_) > 1:
+            action = menu.addAction(f"Waive these {len(open_)}…")
+            action.setToolTip("Accept these violations, with one reason")
+            action.triggered.connect(lambda: self.waive_requested.emit(open_))
+        elif open_:
             action = menu.addAction("Waive…")
             action.setToolTip("Accept this violation, with a reason")
-            action.triggered.connect(lambda: self.waive_requested.emit(violation))
-        return menu
+            action.triggered.connect(lambda: self.waive_requested.emit(open_[0]))
+        return menu if not menu.isEmpty() else None
 
     def _context_menu(self, position) -> None:
         menu = self.context_menu(self.itemAt(position))

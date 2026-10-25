@@ -77,6 +77,8 @@ class Result:
         if not words:
             return 2
         text = " ".join(words)
+        if not any(word in title for word in words):
+            return 3  # only its menu matches ("comb" in Operations › Combine): last (#328)
         return 0 if title.startswith(text) else 1 if text in title else 2
 
 
@@ -107,15 +109,27 @@ def action_results(bar: QMenuBar | QMenu) -> list[Result]:
             action.trigger,
             detail=path,
             icon=action.icon(),
-            keys=action.shortcut().toString(QKeySequence.SequenceFormat.NativeText),
+            keys=_state(action)
+            + (
+                action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+                or action.text().partition("\t")[2]  # "Shift Shift", written after a tab
+            ),
             enabled=action.isEnabled(),
         )
         for path, action in menu_actions(bar)
     ]
 
 
+def _state(action: QAction) -> str:
+    """An on/off command's state, as JetBrains' Find Action shows it (#328)."""
+    group = action.actionGroup()
+    if not action.isCheckable() or (group is not None and group.isExclusive()):
+        return ""  # a command, or one of several choices (the tools)
+    return "ON   " if action.isChecked() else "OFF   "
+
+
 def _plain(text: str) -> str:
-    return text.replace("&", "").replace("…", "").strip()
+    return text.partition("\t")[0].replace("&", "").replace("…", "").strip()
 
 
 COMPONENTS = "Components"
@@ -284,6 +298,8 @@ class SearchDialog(QDialog):
             for result in ranked:
                 item = QTreeWidgetItem([result.title, result.detail, result.keys])
                 item.setIcon(0, result.icon)
+                # Every row as high as the theme's rows, with or without an icon (#316).
+                item.setSizeHint(0, QSize(0, theme.metric("row_height")))
                 item.setData(0, RESULT_ROLE, result)
                 item.setForeground(1, muted)
                 item.setForeground(2, muted)

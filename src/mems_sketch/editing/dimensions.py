@@ -128,8 +128,11 @@ class Dimensions(Commands):
         try:
             component = engine.component(name, active)
             qualified = engine.project.qualify(name, active)
+            hidden = set(getattr(component, "internal", ()))  # not settable where placed (#299)
             numeric = [
-                n for n, f in component.Params.model_fields.items() if _numeric(f.annotation)
+                n
+                for n, f in component.Params.model_fields.items()
+                if _numeric(f.annotation) and n not in hidden
             ]
             values = {k: _number(v, scope) for k, v in given.items() if k in numeric}
             inner = engine.variables(qualified, values)

@@ -382,6 +382,9 @@ class ValueEdit(QLineEdit):
         super().focusInEvent(event)
         self._layout()
         self._update_cursor()
+        # (The parameter button stays a hover affordance: shown on focus it would narrow
+        # the field and open the wider editor. From the keyboard, Alt+Enter or the
+        # context menu offers the same, #324.)
         if self._back_from_expanded:
             self._back_from_expanded = False
             return
@@ -429,6 +432,10 @@ class ValueEdit(QLineEdit):
         enter = key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
         if enter and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
             self.expand()
+            return
+        if enter and event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            if not self.isReadOnly():
+                self._bind_menu()  # the parameter menu, from the keyboard
             return
         if enter:
             super().keyPressEvent(event)
@@ -571,6 +578,17 @@ class ValueEdit(QLineEdit):
         self.setCursorPosition(start + len(name))
 
     # -- the parameter button ---------------------------------------------------------
+
+    def contextMenuEvent(self, event) -> None:
+        """Right-click: the parameter menu's entries, then the usual Undo, Cut, Copy…"""
+        menu = self.createStandardContextMenu()
+        if not self.isReadOnly() and self.isEnabled():
+            first = menu.actions()[0] if menu.actions() else None
+            for action in self.parameter_menu().actions():
+                action.setParent(menu)
+                menu.insertAction(first, action)
+            menu.insertSeparator(first)
+        menu.exec(event.globalPos())
 
     def _bind_menu(self) -> None:
         menu = self.parameter_menu()

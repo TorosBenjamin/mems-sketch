@@ -116,6 +116,10 @@ class Process:
         stacked = list(dict.fromkeys(stacked))
         return [name for name in self.layers if name not in stacked] + stacked
 
+    def rules_of(self, kind: str) -> list[Rule]:
+        """The rules of a rule kind (``release``, ``min_width``) that are switched on."""
+        return [rule for rule in self.rules.values() if rule.enabled and kind == rule.kind]
+
     def scope(self) -> dict[str, float]:
         """Resolved constants keyed as they appear in expressions (``process.name``)."""
         return {PROCESS_PREFIX + k: v for k, v in resolve_variables(self.constants).items()}

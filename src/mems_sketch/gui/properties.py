@@ -129,7 +129,7 @@ MODIFIER_LABELS = {  # per kind, then per field
         "row_pitch": "Row pitch",
         "hole_size": "Hole size",
         "hole_height": "Hole height",
-        "corner_radius": "Corner radius",
+        "corner_radius": "Hole corner radius",  # apart from the shape's own (#301)
         "margin": "Margin",
         "keep_out": "Keep clear of",
         "keep_out_margin": "Keep-out margin",
@@ -304,6 +304,7 @@ class PropertyEditor(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.path: NodePath | None = None
         self._shown: NodePath | None = None  # the node the form shows (to keep its scroll)
+        self._shows = 0  # how many times the content was replaced (see _show)
         self.hide_implementation = False  # a read-only component: show its interface
         self._editors: dict[str, typing.Callable[[], object]] = {}
         self._scope: dict[str, float] = {}
@@ -374,6 +375,18 @@ class PropertyEditor(QScrollArea):
         layout.addWidget(main)
 
         fields_shown = self._add_fields(form, node, node.kind, "", skip=_SPECIAL)
+        if node.align is not None and type(node).placed:  # the alignment places it (#304)
+            for name in ("x", "y"):
+                widget = fields_shown.get(name)
+                if widget is not None:
+                    _set_active(form, widget, False)
+                    why = (
+                        "Not used while the shape is aligned: the alignment places it "
+                        "(Edit → Remove alignment keeps it where it is)"
+                    )
+                    widget.set_help(why) if isinstance(widget, ValueEdit) else widget.setToolTip(
+                        why
+                    )
         bend = fields_shown.get("bend")
         if isinstance(bend, QComboBox) and "radius" in fields_shown:  # a route: sharp has none
 
@@ -401,8 +414,8 @@ class PropertyEditor(QScrollArea):
         layout.addStretch()
         _line_up(body)
         # The same node again (a field applied): stay where the panel was scrolled to.
-        self._show(body, keep_scroll=path == self._shown)
-        self._shown = path
+        if self._show(body, keep_scroll=path == self._shown):
+            self._shown = path
 
     def show_several(self, count: int) -> None:
         """Several shapes selected: say how many (one at a time is edited here)."""
@@ -1029,6 +1042,12 @@ class PropertyEditor(QScrollArea):
 
             widgets["even_rim"].toggled.connect(update_rim)
             update_rim()
+            hint = self._release_hint(modifier)
+            if hint:  # webs too wide to release in this process (#301)
+                note = QLabel(hint)
+                note.setObjectName("warning-note")
+                note.setWordWrap(True)
+                layout.addWidget(note)
         if kind == "mirror":  # a line or point given by "about" replaces axis, x and y
             about = widgets["about"].findChild(QComboBox) or widgets["about"]
             axis = widgets["axis"]
@@ -1054,6 +1073,33 @@ class PropertyEditor(QScrollArea):
 
         return card, read
 
+    def _release_hint(self, modifier) -> str:
+        """Why a perforation's webs do not release, if the process has a release
+        rule and they are wider than twice its undercut; empty otherwise."""
+        process = self.document.project.process
+        try:
+            constants = process.scope()
+            undercuts = [
+                _evaluate_in(rule.values.get("undercut"), constants)
+                for rule in process.rules_of("release")
+            ]
+            scope = {**constants, **self._scope}
+            pitch = _evaluate_in(modifier.pitch, scope)
+            hole = _evaluate_in(modifier.hole_size, scope)
+        except Exception:  # noqa: BLE001 - not worked out: no hint
+            return ""
+        undercuts = [u for u in undercuts if u is not None]
+        if not undercuts or pitch is None or hole is None or modifier.even_rim:
+            return ""
+        limit = 2 * min(undercuts)
+        web = pitch - hole
+        if web <= limit + 1e-9:
+            return ""
+        return (
+            f"The webs are {web:g} µm wide, more than {limit:g} µm (2 × the process's "
+            f"undercut): they will not release. Make pitch − hole size at most {limit:g} µm."
+        )
+
     def _corners_editor(
         self, key: str, modifier: CornersModifier, path: NodePath, read_only: bool
     ) -> QWidget:
@@ -1074,6 +1120,7 @@ class PropertyEditor(QScrollArea):
             reader = self._editors.pop(f"{key}corner{index}")
             style = _combo()
             style.addItems(["round", "chamfer"])
+            style.setMinimumWidth(CORNER_STYLE_MIN_PX)  # "round" in full, not "roı" (#318)
             style.setCurrentText(corner.style)
             style.setEnabled(not read_only)
             style.activated.connect(lambda _=0: self.apply())
@@ -1218,19 +1265,28 @@ class PropertyEditor(QScrollArea):
         layout.addStretch()
         self._show(body)
 
-    def _show(self, content: QWidget, keep_scroll: bool = False) -> None:
+    def _show(self, content: QWidget, keep_scroll: bool = False) -> bool:
         """Replace the panel's content. The old content is deleted later, not now: the
         change may come from one of its own fields or buttons (Enter in a field,
         the eye), which Qt is still delivering an event to. ``keep_scroll``: the
-        new content is scrolled as the old was (the same node, built again)."""
+        new content is scrolled as the old was (the same node, built again).
+        False: the panel was built again meanwhile, and ``content`` was not kept."""
         bar = self.verticalScrollBar()
         scrolled = bar.value() if keep_scroll else 0
         if not keep_scroll:
             self._shown = None
+        self._shows += 1
+        shows = self._shows
         old = self.takeWidget()
         if old is not None:
             old.hide()
             old.deleteLater()
+        if self._shows != shows:
+            # Hiding the old content took the focus from one of its fields, which
+            # applied itself and built the panel again: that content is newer, and
+            # the panel's fields (name_edit, the eye…) are its own. Keep it.
+            content.deleteLater()
+            return False
         self.setWidget(content)
         if not scrolled:
             bar.setValue(0)  # another node: from its top
@@ -1240,6 +1296,7 @@ class PropertyEditor(QScrollArea):
             QTimer.singleShot(  # once laid out, unless replaced meanwhile
                 0, lambda: bar.setValue(scrolled) if self.widget() is content else None
             )
+        return True
 
     def _show_component(self) -> None:
         """Nothing selected: the open component's own settings (its description),
@@ -1295,8 +1352,8 @@ class PropertyEditor(QScrollArea):
         layout.addWidget(hint)
         layout.addStretch(1)
         self.description_edit = description
-        self._show(body)
-        self.header_context.setText("Component")
+        if self._show(body):
+            self.header_context.setText("Component")
 
     def _show_placeholder(self, text: str) -> None:
         self._editors = {}  # the fields shown before are gone
@@ -1480,6 +1537,7 @@ def _focusable(body: QWidget) -> list[QWidget]:
 
 
 COMBO_MIN_PX = 64  # the narrowest a list of the form gets
+CORNER_STYLE_MIN_PX = 88  # a corner's round/chamfer list
 
 
 def _combo() -> QComboBox:
@@ -1605,7 +1663,7 @@ class Section(QGroupBox):
 
     def _show_toggle(self) -> None:
         icons.bind(self._toggle, "down" if self._collapsed else "up")
-        self._toggle.setToolTip("Show this section" if self._collapsed else "Fold this section")
+        self._toggle.setToolTip(f"{'Show' if self._collapsed else 'Fold'} {self._title}")  # #328
 
     def showEvent(self, event) -> None:
         if not self._restored:  # its contents are made by now
@@ -1702,6 +1760,17 @@ def _limit(limit, relation: str, values: dict[str, float]) -> str:
     return text
 
 
+def _evaluate_in(value, scope: dict) -> float | None:
+    """A number, or an expression worked out in ``scope``; None for nothing."""
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    from mems_sketch.core.expressions import evaluate
+
+    return float(evaluate(str(value), scope))
+
+
 def _gone(exc: Exception) -> bool:
     """Whether ``exc`` says a field of a form built again meanwhile is gone (#292):
     nothing the user did wrong, and the new form shows the node as it is."""
@@ -1738,8 +1807,8 @@ def _with_button(widget: QWidget, button: QToolButton) -> QWidget:
     return row
 
 
-LINE_UP_MAX_PX = 110
-PARAMETER_FIELD_MIN_PX = 60  # a placed component's parameter field never narrower  # the widest the labels of a form are made to line up to
+LINE_UP_MAX_PX = 110  # the labels' column: one width for every kind of shape (#316)
+PARAMETER_FIELD_MIN_PX = 60  # a placed component's parameter field never narrower
 
 
 def _line_up(body: QWidget) -> None:
@@ -1752,12 +1821,43 @@ def _line_up(body: QWidget) -> None:
         for row in range(form.rowCount())
         if (item := form.itemAt(row, QFormLayout.ItemRole.LabelRole)) and item.widget()
     ]
-    if labels:
-        # Up to a point: one very long label ("Initial finger overlap") would
-        # otherwise narrow every field of the form.
-        width = min(max(label.sizeHint().width() for label in labels), LINE_UP_MAX_PX)
-        for label in labels:
-            label.setMinimumWidth(width)
+    # One width, whatever is shown: the fields start at the same place for a
+    # rectangle and a path, so they do not jump when the selection changes. A
+    # longer label ("Initial finger overlap") takes what it needs.
+    for label in labels:
+        label.setMinimumWidth(LINE_UP_MAX_PX)
+    for form in forms:  # each field named after its label, for screen readers (#323)
+        for row in range(form.rowCount()):
+            label = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            field = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+            if label is None or field is None or label.widget() is None:
+                continue
+            text = _label_text(label.widget())
+            target = field.widget() or (field.layout() and field.layout().itemAt(0).widget())
+            if not text or target is None:
+                continue
+            editors = [
+                w
+                for w in [target, *target.findChildren(QWidget)]
+                if w.focusPolicy() != Qt.FocusPolicy.NoFocus and not isinstance(w, QToolButton)
+            ]
+            for index, editor in enumerate(editors[:2]):  # a pair: "Position x", "Position y"
+                suffix = (
+                    f" {getattr(editor, 'prefix', '') or ''}".rstrip() if len(editors) > 1 else ""
+                )
+                editor.setAccessibleName(f"{text}{suffix}")
+                helper = label.widget().findChild(HelpButton)
+                if helper is not None:
+                    editor.setAccessibleDescription(helper.text_)
+            # (no label.setBuddy: it crashed when the panel's content was replaced)
+
+
+def _label_text(widget: QWidget) -> str:
+    """A label's words: the text of a label, or of the label in a label-with-help."""
+    label = widget if isinstance(widget, QLabel) else widget.findChild(QLabel)
+    if label is None:
+        return ""
+    return re.sub(r"<[^>]+>", "", label.text()).replace("&", "").strip()
 
 
 def _label_with_help(text: str, help_text: str) -> QWidget:
@@ -1768,6 +1868,8 @@ def _label_with_help(text: str, help_text: str) -> QWidget:
     line.setContentsMargins(0, 0, 0, 0)
     line.setSpacing(2)
     line.addWidget(_label(text))
-    line.addWidget(HelpButton(help_text))
+    help_button = HelpButton(help_text)
+    help_button.setAccessibleName(f"Help: {re.sub(r'<[^>]+>', '', text)}")
+    line.addWidget(help_button)
     line.addStretch(1)
     return row

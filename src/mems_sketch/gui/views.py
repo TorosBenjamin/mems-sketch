@@ -317,7 +317,7 @@ class EditorArea(QSplitter):
         icons.bind(button, "close")
         button.setIconSize(QSize(12, 12))
         button.setAutoRaise(True)
-        button.setToolTip("Close (Ctrl+W)")
+        button.setToolTip("Close (Ctrl+W)")  # Ctrl+W closes a tab on every platform (actions)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.setObjectName("tab-close")
         button.clicked.connect(lambda: self.close_view(view))

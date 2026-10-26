@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,11 +38,18 @@ PROCESS_PREFIX = "process."
 
 @dataclass
 class Layer:
-    """A process layer and its GDS numbers."""
+    """A process layer, its GDS numbers and the colour it is drawn in (``#rrggbb``;
+    None: the theme's colour for its place in the process)."""
 
     name: str
     gds_layer: int
     gds_datatype: int = 0
+    color: str | None = None
+
+
+def is_color(value: object) -> bool:
+    """Whether ``value`` is a colour as a layer keeps it: ``#rrggbb``."""
+    return isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value) is not None
 
 
 @dataclass

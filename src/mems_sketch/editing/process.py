@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 
 from mems_sketch.core.process import (
@@ -9,6 +10,7 @@ from mems_sketch.core.process import (
     Level,
     Rule,
     check_levels,
+    default_process,
 )
 from mems_sketch.core.project import Project
 from mems_sketch.editing.commands import Commands
@@ -132,7 +134,7 @@ class ProcessEdits(Commands):
             if project.base_process is not None:  # like the layers, they belong to the process
                 raise ValueError(
                     f"the grid belongs to process {project.process_name}: "
-                    "use a process of the project's own to change it"
+                    "copy it into the project to change it"
                 )
             project.process.grid_um, project.process.chord_um = grid_um, chord_um
 
@@ -219,6 +221,45 @@ class ProcessEdits(Commands):
         """Use another process: one of the project's own, or a library's
         (``std.polymumps``), whose layers then stay as they are there."""
         self.session.edit(f"Use process {name}", lambda p: p.use_process(name))
+
+    def make_own(self, name: str | None = None) -> str:
+        """Copy the library's process in use into the project (#307): a process of the
+        project's own, ``name`` (default: the library's name for it), with the same
+        layers, layer stack, grid, constants and rules, the project's changes
+        included, used from now on. Everything in it can then be changed. A reason
+        given for a change becomes the rule's note, if it has none."""
+        project = self.session.project
+        if project.base_process is None:
+            raise ValueError(f"{project.process_name} is the project's own process already")
+        source = project.process_name
+        if name is None:
+            stem = source.partition(".")[2]
+            name = (
+                stem if stem not in project.processes else fresh_name(stem, set(project.processes))
+            )
+        _check_process_name(name, project)
+
+        def change(project: Project) -> None:
+            process = copy.deepcopy(project.process)
+            for rule, reason in project.reasons.items():
+                if rule in process.rules and not process.rules[rule].message:
+                    process.rules[rule] = dataclasses.replace(process.rules[rule], message=reason)
+            copied = f"Copied from {source}."
+            process.description = f"{process.description}\n\n{copied}".strip()
+            _use_own(project, name, process)
+
+        self.session.edit(f"Copy process {source} into the project", change)
+        return name
+
+    def new_process(self, name: str | None = None) -> str:
+        """A new process of the project's own (#307), used from now on: a device,
+        anchor and metal layer with the starting rules, to change as needed. The
+        process used before stays in the project (or its library)."""
+        project = self.session.project
+        name = name or fresh_name("process", set(project.processes))
+        _check_process_name(name, project)
+        self.session.edit(f"New process {name}", lambda p: _use_own(p, name, default_process()))
+        return name
 
     def set_reason(self, rule: str, reason: str) -> None:
         """Why a rule of a library's process is changed or added (empty: none)."""
@@ -341,10 +382,22 @@ class ProcessEdits(Commands):
         self.session.edit(f"Remove the waiver of {rule}", change)
 
 
+def _check_process_name(name: str, project: Project) -> None:
+    if not name.isidentifier():
+        raise ValueError(f"'{name}' is not a valid process name (letters, digits and _)")
+    if name in project.processes:
+        raise ValueError(f"the project has a process '{name}' already")
+
+
+def _use_own(project: Project, name: str, process) -> None:
+    project.processes[name] = process
+    project.process_name, project.process, project.reasons = name, process, {}
+
+
 def _own_layers(project: Project) -> None:
     """Layers and the layer stack can change only in a process of the project's own."""
     if project.base_process is not None:
         raise ValueError(
             f"the layers belong to process {project.process_name}: "
-            "use a process of the project's own to change them"
+            "copy it into the project to change them"
         )

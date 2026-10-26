@@ -80,9 +80,16 @@ min, max, a trial value and the resolved value.
 (radians) and `sind`, `cosd`, `tand` (degrees, exact at multiples of 90°): a
 beam along angle `a` ends at `[L * cosd(a), L * sind(a)]`.
 
+**Suggestions:** typing a name in a value field lists the names that start with
+it, then those containing it: parameters, process constants (marked *process*),
+points and `i`/`j`, each with its value beside it. Arrows choose, Tab or Enter
+puts it in at the cursor, Esc closes the list. Nothing is listed while you type
+a plain number.
+
 **Make a parameter from a value:** in Properties, the parameter button beside
-any number field (on hover) makes a new parameter with that value as default
-and uses it.
+any number field (on hover, or Alt+Enter) lists every name to use, and offers
+*Make a parameter from this value…*: a new parameter with that value as default,
+used in the field. For an expression, *Use the value* puts in what it comes to.
 
 ## Points
 

@@ -3,11 +3,14 @@
 * A plain number looks like any field. An expression (``pitch * 2``) is tinted
   and shows what it comes to, small and grey inside the field on the right.
   If it cannot be evaluated the field is marked and the tooltip says why.
-* Typing a name offers the matching parameters, process constants, points
-  (``mass.center.x``) and ``i``/``j``, with their values.
-* The parameter button (shown on hover) lists the parameters to use one,
-  makes a new parameter from the current value, or replaces an expression by
-  its value.
+* Suggestions (#232) follow the name at the cursor: names that start with it
+  first, then those containing it, then the rest; parameters, process constants
+  (marked), points (``mass.center.x``) and ``i``/``j`` in one list, names and
+  values in two aligned columns. Arrows choose, Tab or Enter inserts at the
+  cursor, Esc closes. Nothing is offered while a plain number is typed.
+* The parameter button (shown on hover, or Alt+Enter) opens the same list
+  without typing, with *Make a parameter from this value…* (first when the
+  field holds a number) and *Use the value* for an expression.
 * An optional prefix (``x``, ``y``) is drawn inside the field, so pairs such
   as x and y can sit side by side.
 * A number can be dragged, as in Blender: press on the field and drag left or
@@ -32,18 +35,30 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import shiboken6
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QStringListModel, Qt, QTimer, Signal
-from PySide6.QtGui import QPainter, QPalette, QTextCursor, QTextOption
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QPainter,
+    QPalette,
+    QStandardItem,
+    QStandardItemModel,
+    QTextCursor,
+    QTextOption,
+)
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QAbstractScrollArea,
     QApplication,
     QCompleter,
     QLineEdit,
+    QListView,
     QMenu,
     QStyle,
+    QStyledItemDelegate,
     QStyleOptionFrame,
+    QStyleOptionViewItem,
     QTextEdit,
 )
 
@@ -74,6 +89,141 @@ def number_or_expression(text: str) -> float | str:
     if not math.isfinite(value):
         raise ValueError(f"'{text}' is not a finite number")
     return value
+
+
+# -- suggestions (#232) -------------------------------------------------------------
+
+MAKE = "\x00make"  # the row that makes a parameter from the value
+USE_VALUE = "\x00value"  # the row that replaces an expression by its value
+_SUGGESTION_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+@dataclass(frozen=True)
+class Suggestion:
+    """A row of a value field's suggestions: a name to insert (``key``) with its
+    value, or an action (``key`` is :data:`MAKE` or :data:`USE_VALUE`)."""
+
+    key: str
+    label: str  # what the row shows: the name, or the action's words
+    value: str = ""  # muted, in the right-hand column
+    tag: str = ""  # muted, before the value: "process" for a process constant
+
+    @property
+    def action(self) -> bool:
+        return self.key.startswith("\x00")
+
+
+def ranked(names: Sequence[str], word: str) -> list[str]:
+    """``names`` for the ``word`` at the cursor: those starting with it first (also a
+    dotted name whose last part does), then those containing it; the rest are left
+    out. Case does not matter; an empty word keeps them all, in order."""
+    word = word.lower()
+    if not word:
+        return list(names)
+
+    def starts(name: str) -> bool:
+        lower = name.lower()
+        return lower.startswith(word) or lower.rsplit(".", 1)[-1].startswith(word)
+
+    first = [n for n in names if starts(n)]
+    then = [n for n in names if word in n.lower() and n not in first]
+    return first + then
+
+
+class SuggestionDelegate(QStyledItemDelegate):
+    """A suggestion row: the name on the left; its value muted and right-aligned in
+    a column of its own (a process constant tagged beside it); an action in
+    italics."""
+
+    PAD = 8
+
+    def paint(self, painter, option, index) -> None:
+        item: Suggestion = index.data(_SUGGESTION_ROLE)
+        options = QStyleOptionViewItem(option)
+        self.initStyleOption(options, index)
+        options.text = ""
+        style = options.widget.style() if options.widget else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, options, painter, options.widget)
+        if item is None:
+            return
+        rect = option.rect.adjusted(self.PAD, 0, -self.PAD, 0)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        palette = option.palette
+        text = palette.highlightedText() if selected else palette.text()
+        muted = text.color() if selected else palette.placeholderText().color()
+        middle = int(Qt.AlignmentFlag.AlignVCenter)
+        painter.save()
+        font = painter.font()
+        font.setItalic(item.action)
+        painter.setFont(font)
+        painter.setPen(text.color())
+        metrics = painter.fontMetrics()
+        right = ""
+        if item.value or item.tag:
+            right = "   ".join(t for t in (item.tag, item.value) if t)
+        room = rect.width() - (metrics.horizontalAdvance(right) + 2 * self.PAD if right else 0)
+        label = metrics.elidedText(item.label, Qt.TextElideMode.ElideRight, max(room, 0))
+        painter.drawText(rect, middle | int(Qt.AlignmentFlag.AlignLeft), label)
+        if right:
+            painter.setPen(muted)
+            painter.drawText(rect, middle | int(Qt.AlignmentFlag.AlignRight), right)
+        painter.restore()
+
+    def sizeHint(self, option, index) -> QSize:
+        item: Suggestion = index.data(_SUGGESTION_ROLE)
+        metrics = option.fontMetrics
+        height = metrics.height() + 8
+        if item is None:
+            return QSize(0, height)
+        right = "   ".join(t for t in (item.tag, item.value) if t)
+        width = metrics.horizontalAdvance(item.label) + 4 * self.PAD
+        if right:
+            width += metrics.horizontalAdvance(right) + 2 * self.PAD
+        return QSize(width, height)
+
+
+def suggestion_completer(widget) -> QCompleter:
+    """A completer for ``widget`` that shows the rows it is given, as they are (the
+    field ranks them): :func:`fill_suggestions` sets them."""
+    model = QStandardItemModel(widget)
+    completer = QCompleter(model, widget)
+    completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
+    completer.setWidget(widget)
+    popup = QListView()
+    popup.setObjectName("suggestions")
+    popup.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    popup.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    popup.setUniformItemSizes(True)
+    completer.setPopup(popup)
+    popup.setItemDelegate(SuggestionDelegate(popup))  # after: setPopup puts its own
+    completer.setMaxVisibleItems(10)
+    completer._model = model  # kept: the completer does not own it
+    return completer
+
+
+def fill_suggestions(completer: QCompleter, rows: list[Suggestion], rect: QRect) -> None:
+    """Show ``rows`` under ``rect`` (the first chosen), or hide the list if empty."""
+    model: QStandardItemModel = completer._model
+    model.clear()
+    if not rows:
+        completer.popup().hide()
+        return
+    for row in rows:
+        item = QStandardItem(row.label)
+        item.setData(row.key, Qt.ItemDataRole.EditRole)  # what activated() passes
+        item.setData(row, _SUGGESTION_ROLE)
+        item.setToolTip(f"{row.label} = {row.value}" if row.value else row.label)
+        model.appendRow(item)
+    popup = completer.popup()
+    delegate = popup.itemDelegate()
+    option = QStyleOptionViewItem()
+    option.initFrom(popup)
+    widest = max(delegate.sizeHint(option, model.index(k, 0)).width() for k in range(len(rows)))
+    scroll = popup.verticalScrollBar().sizeHint().width() if len(rows) > 10 else 0
+    width = max(rect.width(), min(widest + scroll + 4, 520))
+    completer.setCompletionPrefix("")
+    completer.complete(QRect(rect.left(), rect.top(), width, rect.height()))
+    popup.setCurrentIndex(model.index(0, 0))
 
 
 class ElidedLineEdit(QLineEdit):
@@ -220,12 +370,9 @@ class ValueEdit(QLineEdit):
         # A click must not focus the field before it sees the press (Qt does that for
         # click focus): the press may start a drag. It takes focus itself for an edit.
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        self._model = QStringListModel(self._names(), self)  # kept: the completer does not own it
-        self._completer = QCompleter(self._model, self)
-        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self._completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self._completer.setWidget(self)
-        self._completer.activated.connect(self._complete)
+        self._completer = suggestion_completer(self)
+        self._completer.activated.connect(self._chosen)
+        self._from_button = False  # the list was opened by the parameter button
         self._bind = self.addAction(
             icons.icon("parameter"), QLineEdit.ActionPosition.TrailingPosition
         )
@@ -552,27 +699,91 @@ class ValueEdit(QLineEdit):
         ]
         return [n for n in dict.fromkeys(known) if n.isidentifier() or "." in n]
 
+    def _row(self, name: str) -> Suggestion:
+        value = _format(self.scope[name]) if name in self.scope else ""
+        return Suggestion(name, name, value, "process" if name.startswith("process.") else "")
+
+    def suggestions(self, word: str, button: bool = False) -> list[Suggestion]:
+        """The rows offered for the ``word`` at the cursor: the matching names while
+        typing; from the parameter button (``button``) every name, ranked, and
+        what can be done with the value."""
+        names = self._names()
+        found = ranked(names, word)
+        if button:
+            found += [n for n in names if n not in found]
+        rows = [self._row(n) for n in found]
+        if not button:
+            return rows
+        actions = []
+        if (
+            self.isSignalConnected(
+                self.metaObject().method(
+                    self.metaObject().indexOfSignal("make_parameter(PyObject)")
+                )
+            )
+            and self._value_or_default() is not None
+        ):
+            actions.append(Suggestion(MAKE, "Make a parameter from this value…"))
+        if self._hint:
+            actions.append(Suggestion(USE_VALUE, "Use the value", self._hint))
+        text = self.text().strip()
+        number = not text or is_number(text)
+        return actions + rows if number else rows + actions
+
     def _token(self) -> tuple[int, str]:
         """The name being typed before the cursor: its start and text."""
-        before = self.text()[: self.cursorPosition()]
+        before = self.text()[: self._position()]
         match = _NAME_BEFORE_CURSOR.search(before)
         return (match.start(), match.group()) if match else (len(before), "")
 
+    def _position(self) -> int:
+        """Where a chosen name goes: the cursor, or the end when not editing."""
+        return self.cursorPosition() if self.hasFocus() else len(self.text())
+
     def _suggest(self) -> None:
+        """While typing: the names matching the one at the cursor."""
+        self._from_button = False
         _, token = self._token()
-        if not token or is_number(token):
-            self._completer.popup().hide()
+        rows = [] if not token or is_number(token) else self.suggestions(token)
+        if [r.key for r in rows] == [token]:
+            rows = []  # typed in full already
+        fill_suggestions(self._completer, rows, QRect(0, 0, self.width(), self.height()))
+
+    def show_suggestions(self) -> None:
+        """The parameter button: every name, ranked by the one at the cursor, and what
+        can be done with the value."""
+        self._from_button = True
+        _, token = self._token()
+        rows = self.suggestions(token, button=True)
+        fill_suggestions(self._completer, rows, QRect(0, 0, self.width(), self.height()))
+
+    def suggestion_keys(self) -> list[str]:
+        """The rows the list shows now (names, or the action keys; for tests)."""
+        model = self._completer._model
+        return [model.item(k).data(Qt.ItemDataRole.EditRole) for k in range(model.rowCount())]
+
+    def _chosen(self, key: str) -> None:
+        self._completer.popup().hide()
+        if key == MAKE:
+            self._make_parameter()
             return
-        self._completer.setCompletionPrefix(token)
-        if self._completer.completionCount() == 0:
-            self._completer.popup().hide()
+        if key == USE_VALUE:
+            self._use(self._hint)
             return
-        width = max(220, self.width())
-        self._completer.complete(QRect(0, 0, width, self.height()))
+        self._complete(key)
+        if self._from_button and not self.hasFocus():
+            self.returnPressed.emit()  # chosen without editing: apply, like Enter
+            self._stored = self.text()
 
     def _complete(self, name: str) -> None:
-        start, token = self._token()
+        """Put ``name`` in at the cursor, for the name being typed there; in place of
+        a number (or nothing), the whole field."""
         text = self.text()
+        if not text.strip() or is_number(text.strip()):
+            self.setText(name)
+            self.setCursorPosition(len(name))
+            return
+        start, token = self._token()
         end = start + len(token)
         self.setText(text[:start] + name + text[end:])
         self.setCursorPosition(start + len(name))
@@ -591,26 +802,15 @@ class ValueEdit(QLineEdit):
         menu.exec(event.globalPos())
 
     def _bind_menu(self) -> None:
-        menu = self.parameter_menu()
-        corner = QPoint(max(0, self.width() - menu.sizeHint().width()), self.height())
-        menu.exec(self.mapToGlobal(corner))
+        self.show_suggestions()
 
     def parameter_menu(self) -> QMenu:
-        """The parameter button's menu: use a parameter, make one, or use the value."""
+        """What the parameter button offers, as menu entries (for the context menu):
+        the list of names, make a parameter, or use the value."""
         menu = QMenu(self)
-        if self.parameters:
-            for name in self.parameters:
-                shown = f"{name}  = {_format(self.scope[name])}" if name in self.scope else name
-                action = menu.addAction(shown)
-                action.triggered.connect(lambda _=False, n=name: self._use(n))
-        constants = sorted(n for n in self.scope if n.startswith("process."))
-        if constants:
-            sub = menu.addMenu("Process constants")
-            for name in constants:
-                action = sub.addAction(f"{name}  = {_format(self.scope[name])}")
-                action.triggered.connect(lambda _=False, n=name: self._use(n))
-        if not menu.isEmpty():
-            menu.addSeparator()  # a line only between groups
+        if self._names():
+            choose = menu.addAction("Use a parameter…")
+            choose.triggered.connect(self.show_suggestions)
         if self.isSignalConnected(
             self.metaObject().method(self.metaObject().indexOfSignal("make_parameter(PyObject)"))
         ):
@@ -669,10 +869,7 @@ class ExpandedEdit(QTextEdit):
         else:
             cursor.setPosition(field.cursorPosition())
         self.setTextCursor(cursor)
-        self._completer = QCompleter(field._model, self)
-        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self._completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self._completer.setWidget(self)
+        self._completer = suggestion_completer(self)
         self._completer.activated.connect(self._complete)
         self.document().contentsChanged.connect(self._fit)
 
@@ -705,7 +902,8 @@ class ExpandedEdit(QTextEdit):
     def keyPressEvent(self, event) -> None:
         key = event.key()
         enter = key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-        if self._completer.popup().isVisible() and (enter or key == Qt.Key.Key_Escape):
+        tab = key == Qt.Key.Key_Tab
+        if self._completer.popup().isVisible() and (enter or tab or key == Qt.Key.Key_Escape):
             event.ignore()  # the list of names takes it
             return
         if enter:
@@ -747,17 +945,16 @@ class ExpandedEdit(QTextEdit):
 
     def _suggest(self) -> None:
         _, token = self._token()
-        if not token or is_number(token):
-            self._completer.popup().hide()
-            return
-        self._completer.setCompletionPrefix(token)
-        if self._completer.completionCount() == 0:
-            self._completer.popup().hide()
-            return
+        rows = [] if not token or is_number(token) else self.field.suggestions(token)
+        if [r.key for r in rows] == [token]:
+            rows = []
         rect = self.cursorRect()
-        self._completer.complete(QRect(rect.left(), rect.top(), 240, rect.height()))
+        fill_suggestions(self._completer, rows, QRect(rect.left(), rect.top(), 240, rect.height()))
 
     def _complete(self, name: str) -> None:
+        self._completer.popup().hide()
+        if name.startswith("\x00"):
+            return
         start, token = self._token()
         cursor = self.textCursor()
         cursor.setPosition(start)

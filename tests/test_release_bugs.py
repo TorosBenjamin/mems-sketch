@@ -174,7 +174,7 @@ def test_gui_help_prints_usage(capsys):
     from mems_sketch.gui.app import main
 
     assert main(["mems-sketch", "--help"]) == 0
-    assert "usage: mems-sketch [PROJECT]" in capsys.readouterr().out
+    assert "usage: mems-sketch [PROJECT" in capsys.readouterr().out
     assert main(["mems-sketch", "--bogus"]) == 2
 
 

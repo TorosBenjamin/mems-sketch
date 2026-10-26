@@ -5,4 +5,5 @@ Comment=Parametric MEMS layout design
 Exec=mems-sketch %f
 Icon=mems-sketch
 Categories=Engineering;Science;
+MimeType=application/x-mems-sketch;
 Terminal=false

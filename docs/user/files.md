@@ -6,17 +6,31 @@ A project is a folder of small text files, meant to live in git:
 
 ```
 my_project/
-  project.yaml        the manifest: name, top component, libraries, the process
+  my_project.msketch  the manifest: name, top component, libraries, the process
                       used, and where its processes and components are
   processes/main/
-    process.yaml      process constants, layers (GDS numbers), layer stack, rules
+    main.msketch      process constants, layers (GDS numbers), layer stack, rules
   components/
-    top/component.yaml        one folder per component; the design is the top one
-    comb/component.yaml
-    comb/finger/component.yaml   a component private to comb
+    top/top.msketch           one folder per component; the design is the top one
+    comb/comb.msketch
+    comb/finger/finger.msketch   a component private to comb
   imports/
     padframe.gds      a copy of each imported layout
 ```
+
+**Every file is a `.msketch` file**, so any of them opens with a double-click
+(once MEMS Sketch is installed: the Windows installer and the macOS app register
+it; on Linux, *Help → Install file associations*). What a file is, its first
+line says: `format: mems-sketch/2` for a project (or library), `kind: component`
+or `kind: process`. Opening a component's file opens its project at that
+component's tab; a process's file opens the Process tab. They are YAML inside,
+so git diffs and hand edits work as before.
+
+Projects written before 0.7 have `project.yaml`, `component.yaml` and
+`process.yaml`. Those still open and save with their names; **File → Use .msketch
+file names** (or `mems-sketch-cli rename-files FOLDER`) renames them, which git
+shows as renames to commit. A folder with both names for one file is an error
+that says which to keep.
 
 A library is a project folder too, usually without a top component. It can
 hold processes as well as components, so a fab's process (its layers, stack,
@@ -83,6 +97,9 @@ be read.
 
 The dialog asks for the component's name, the cell, and where each layer
 goes: the project layer with the same GDS numbers, a new layer, or left out.
+Below, a preview shows the cell as it would come in, in the colours of the
+layers it goes to, with its size, layers and points, and how many other cells
+the file has.
 Layers of a geometry file keep their names.
 
 The component is listed under **Imported** in Components. It has no parameters

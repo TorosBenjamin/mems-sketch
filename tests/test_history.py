@@ -269,7 +269,8 @@ def test_local_changes_are_grouped_by_component_with_the_other_files(session, co
     assert set(groups) == {"top", "spring"}
     assert groups["top"].action == CHANGED and groups["spring"].action == ADDED
     assert groups["top"].paths == ["components/top"]
-    assert groups["spring"].paths == ["components/spring", "project.yaml"]  # listed there
+    manifest = f"{session.path.name}.msketch"
+    assert groups["spring"].paths == ["components/spring", manifest]  # listed there
     assert [(f.path, f.state) for f in local.files] == [("notes.md", git.UNTRACKED)]
 
 

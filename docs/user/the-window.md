@@ -11,7 +11,7 @@ y axis).
 
 Started without a project (or after **File → Close project**), the program
 shows the Welcome window: **New project** (the wizard), **Open…** (a project
-folder's `project.yaml` or a project file) and the projects opened lately,
+folder or any `.msketch` file) and the projects opened lately,
 pinned ones first, then the most recent. Each shows its folder, when it was
 opened and the git branch it is on. Type to search; Enter or a double-click
 opens one in its own window. Point at a project for its pin; right-click to pin

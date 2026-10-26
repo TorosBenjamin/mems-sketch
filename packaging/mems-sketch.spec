@@ -8,6 +8,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 ROOT = Path(SPECPATH).parent  # noqa: F821 - set by PyInstaller
 ICONS = ROOT / "packaging" / "icons"
+MSKETCH_UTI = "io.github.torosbenjamin.mems-sketch.msketch"  # the .msketch file type
 
 datas = collect_data_files("mems_sketch")  # bundled libraries, icons, themes in the package
 datas += copy_metadata("mems-sketch")  # its version and entry points (exporters are found by them)
@@ -42,5 +43,27 @@ if sys.platform == "darwin":
         name="MEMS Sketch.app",
         icon=str(icon) if icon and icon.exists() else None,
         bundle_identifier="io.github.torosbenjamin.mems-sketch",
-        info_plist={"NSHighResolutionCapable": True},
+        # .msketch files open in the app (#140): the type is declared, and the app
+        # takes macOS's open events (mems_sketch.gui.associations).
+        info_plist={
+            "NSHighResolutionCapable": True,
+            "CFBundleDocumentTypes": [
+                {
+                    "CFBundleTypeName": "MEMS Sketch file",
+                    "CFBundleTypeRole": "Editor",
+                    "LSHandlerRank": "Owner",
+                    "LSItemContentTypes": [MSKETCH_UTI],
+                    "CFBundleTypeIconFile": "mems-sketch.icns",
+                }
+            ],
+            "UTExportedTypeDeclarations": [
+                {
+                    "UTTypeIdentifier": MSKETCH_UTI,
+                    "UTTypeDescription": "MEMS Sketch file",
+                    "UTTypeConformsTo": ["public.data", "public.text"],
+                    "UTTypeIconFile": "mems-sketch.icns",
+                    "UTTypeTagSpecification": {"public.filename-extension": ["msketch"]},
+                }
+            ],
+        },
     )

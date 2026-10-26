@@ -40,6 +40,7 @@ from mems_sketch.export.base import (
 )
 from mems_sketch.process import rules
 from mems_sketch.storage import is_document, load, save
+from mems_sketch.storage.project_files import is_project_folder
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -92,7 +93,7 @@ def _parser() -> argparse.ArgumentParser:
     mcp.set_defaults(handler=_mcp)
 
     info = commands.add_parser("info", help="list components, parameters and layers")
-    info.add_argument("project", type=Path, help="project folder, project.yaml or one file")
+    info.add_argument("project", type=Path, help="project folder, its .msketch file or one file")
     info.add_argument("--component", help="only this component (also a library's: mems.anchor)")
     info.add_argument("--json", action="store_true", help="print it as JSON")
     info.set_defaults(handler=_info)
@@ -130,14 +131,22 @@ def _parser() -> argparse.ArgumentParser:
         help="translate a project between a folder and one file (.json, .xml, .mat, .yaml); "
         "also reads legacy .mems files",
     )
-    convert.add_argument("source", type=Path, help="project folder, project.yaml or one file")
+    convert.add_argument("source", type=Path, help="project folder, its .msketch file or one file")
     convert.add_argument("target", type=Path, help="a folder, or a file named by its format")
     convert.set_defaults(handler=_convert)
+
+    rename = commands.add_parser(
+        "rename-files",
+        help="give a project written before 0.7 the .msketch file names (project.yaml, "
+        "component.yaml and process.yaml become <name>.msketch)",
+    )
+    rename.add_argument("project", type=Path, help="the project folder")
+    rename.set_defaults(handler=_rename_files)
     return parser
 
 
 def _geometry_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("project", type=Path, help="project folder or project.yaml")
+    parser.add_argument("project", type=Path, help="project folder or its .msketch file")
     parser.add_argument("--component", help="component to compile (default: the top component)")
     parser.add_argument(
         "--set",
@@ -194,7 +203,7 @@ def _geometry(project: Project, args: argparse.Namespace) -> Geometry:
 
 
 def _new(args: argparse.Namespace) -> int:
-    if (args.folder / "project.yaml").exists():
+    if is_project_folder(args.folder):
         raise FileExistsError(f"{args.folder} already contains a project")
     project = new_project(args.name or args.folder.name, library=args.library)
     if args.process:
@@ -214,7 +223,7 @@ def _new_process(args: argparse.Namespace) -> int:
     from mems_sketch.core.process import Process
     from mems_sketch.core.project import Project
 
-    if (args.folder / "project.yaml").exists():
+    if is_project_folder(args.folder):
         raise FileExistsError(f"{args.folder} already contains a project")
     name = args.name or args.folder.name
     if not name.isidentifier():
@@ -237,7 +246,7 @@ def _new_process(args: argparse.Namespace) -> int:
         name=name, top=None, components={}, processes={name: process}, process_name=name
     )
     save(project, args.folder)
-    print(f"created {args.folder}: edit processes/{name}/process.yaml, then add it as a library")
+    print(f"created {args.folder}: edit processes/{name}/{name}.msketch, then add it as a library")
     return 0
 
 
@@ -521,11 +530,24 @@ def _formats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rename_files(args: argparse.Namespace) -> int:
+    from mems_sketch.storage.project_files import project_folder, use_msketch_names
+
+    folder = project_folder(args.project)
+    load(folder)  # it must load as it is first
+    renamed = use_msketch_names(folder)
+    for old, new in renamed:
+        print(f"{old.relative_to(folder).as_posix()} -> {new.relative_to(folder).as_posix()}")
+    if not renamed:
+        print(f"{folder} has .msketch names already")
+    return 0
+
+
 def _convert(args: argparse.Namespace) -> int:
     project = load(args.source)
     if is_document(args.target) and args.target.exists():
         raise FileExistsError(f"{args.target} already exists")
-    if not is_document(args.target) and (args.target / "project.yaml").exists():
+    if not is_document(args.target) and is_project_folder(args.target):
         raise FileExistsError(f"{args.target} already contains a project")
     save(project, args.target)
     print(f"converted {args.source} -> {args.target}")

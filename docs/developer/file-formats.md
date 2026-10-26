@@ -7,17 +7,27 @@ nothing about what they are called: names come from the manifest and the
 component files.
 
 ```
-project.yaml                    the manifest (below)
-processes/main/process.yaml     one folder per process
-components/top/component.yaml   one folder per component
-components/comb/component.yaml
-components/comb/finger/component.yaml   private to comb, which lists it
-imports/                        the imported files
+my_project.msketch                  the manifest (below)
+processes/main/main.msketch         one folder per process (kind: process)
+components/top/top.msketch          one folder per component (kind: component)
+components/comb/comb.msketch
+components/comb/finger/finger.msketch   private to comb, which lists it
+imports/                            the imported files
 ```
 
+Every file has the `.msketch` extension (#139); what it is, its contents say
+(`project_files.file_kind`): a manifest has `format: mems-sketch/2` and no
+`kind`, a component's or process's file starts with `kind: component` or
+`kind: process`, which must match where it is listed. In a folder renamed by
+hand, its one `.msketch` file of that kind is found. Files written before #139
+are `project.yaml`, `process.yaml` and `component.yaml` (no `kind:`): they are
+read, and a project that has them is saved with them; `use_msketch_names`
+renames them. Two files for one thing (`project.yaml` and `x.msketch`) is an
+error.
+
 A component folder can hold other files of its own (notes, pictures);
-saving only writes and removes `component.yaml`. A listed file that is
-missing is an error; a `component.yaml` or `process.yaml` the manifest does
+saving only writes and removes the component's file. A listed file that is
+missing is an error; a component's or process's file the manifest does
 not reach is reported (`Project.load_notes`) and not loaded.
 
 ### The manifest
@@ -144,7 +154,7 @@ files, and a change shows as a small diff.
   plain values short enough (72 characters), go on one line.
 - Unchanged files are not rewritten: a file is left as it is when it reads as
   the same data (so hand-written comments and layout stay until it changes).
-- A save removes only files the folder's previous `project.yaml` listed
+- A save removes only files the folder's previous manifest listed
   (components, processes, imports), never other files.
 
 ## One tree, many formats
@@ -178,10 +188,10 @@ format: mems-sketch/2
 name: resonator
 top: top
 libraries: {mems: bundled@3, fab: ../fab}   # folders relative to the document
-process: main                               # and overrides, as in project.yaml
-processes: {main: {...}}                    # as process.yaml
+process: main                               # and overrides, as in the manifest
+processes: {main: {...}}                    # as a process's file
 imports: {padframe: {file, cell, layers, data: <bytes>}}
-components: {top: {...}, comb: {..., private: {finger: {...}}}}   # as component.yaml
+components: {top: {...}, comb: {..., private: {finger: {...}}}}   # as a component's file
 ```
 
 `load`/`save` choose by suffix (`storage.is_document`). The tests convert

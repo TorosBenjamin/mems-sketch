@@ -11,6 +11,10 @@ mkdir -p "$appdir/usr/lib" "$out"
 cp -a "$bundle" "$appdir/usr/lib/mems-sketch"
 cp "$here/../icons/mems-sketch.png" "$appdir/mems-sketch.png"
 cp "$here/mems-sketch.desktop" "$appdir/mems-sketch.desktop"
+# The .msketch type (#140): desktops that integrate AppImages read it from here;
+# otherwise Help -> Install file associations writes it to ~/.local/share.
+mkdir -p "$appdir/usr/share/mime/packages"
+cp "$here/mems-sketch-mime.xml" "$appdir/usr/share/mime/packages/mems-sketch.xml"
 cat > "$appdir/AppRun" <<'RUN'
 #!/bin/sh
 here=$(dirname "$(readlink -f "$0")")

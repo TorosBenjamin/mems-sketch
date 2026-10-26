@@ -7,6 +7,7 @@ from helpers import read_gds
 
 from mems_sketch.cli import main
 from mems_sketch.storage import load
+from mems_sketch.storage.project_files import item_file
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -23,7 +24,7 @@ def resonator(tmp_path) -> Path:
 
 def test_new_and_info(tmp_path, capsys):
     assert main(["new", str(tmp_path / "p")]) == 0
-    assert (tmp_path / "p" / "components" / "top" / "component.yaml").exists()
+    assert (item_file(tmp_path / "p" / "components" / "top", "component.yaml")).exists()
     assert main(["new", str(tmp_path / "p")]) == 2  # refuses to overwrite
     assert main(["info", str(tmp_path / "p")]) == 0
     assert "device" in capsys.readouterr().out

@@ -34,7 +34,9 @@ class Recent:
 
     @property
     def missing(self) -> bool:
-        return not (Path(self.path) / "project.yaml").exists()
+        from mems_sketch.storage.project_files import is_project_folder
+
+        return not is_project_folder(self.path)
 
     @property
     def branch(self) -> str | None:
@@ -69,9 +71,13 @@ def _store(items: list[Recent]) -> None:
 
 
 def folder_of(path: str | Path) -> str:
-    """A project's folder, whether given the folder or its ``project.yaml``."""
-    path = Path(path)
-    return str((path.parent if path.name == "project.yaml" else path).resolve())
+    """A project's folder, whether given the folder, its project file or a file in it."""
+    from mems_sketch.storage.project_files import ProjectFormatError, project_folder
+
+    try:
+        return str(project_folder(path).resolve())
+    except ProjectFormatError:  # a file not in a project: as it is
+        return str(Path(path).resolve())
 
 
 def remember(path: str | Path, name: str, library: bool = False) -> None:

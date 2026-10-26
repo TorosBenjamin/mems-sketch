@@ -44,7 +44,9 @@ from mems_sketch.storage.project_files import (
     IMPORTS_DIR,
     PROCESSES_DIR,
     PROJECT_FILE,
+    ProjectFormatError,
     component_folder,
+    manifest_file,
     written_by_project,
 )
 
@@ -249,8 +251,12 @@ class History:
         old = self.version(comparison.old) if comparison.old is not None else None
         new = self.session.project
         groups = grouped(comparison.changes)
+        try:
+            manifest = manifest_file(self.session.path).name
+        except ProjectFormatError:  # not saved yet
+            manifest = PROJECT_FILE
         for group in groups:
-            group.paths = _paths(group.key, old, new)
+            group.paths = _paths(group.key, old, new, manifest)
         files = self.other_files() if files is None else files
         return LocalChanges(groups, files)
 
@@ -447,23 +453,24 @@ def grouped(changes: list[Change]) -> list[LocalGroup]:
     return list(groups.values())
 
 
-def _paths(key: str, old: Project | None, new: Project) -> list[str]:
-    """The files in the project folder that hold a group of local changes."""
+def _paths(key: str, old: Project | None, new: Project, manifest: str = PROJECT_FILE) -> list[str]:
+    """The files in the project folder that hold a group of local changes
+    (``manifest``: the project file's name there)."""
     if key == PROJECT:
-        return [PROJECT_FILE]
+        return [manifest]
     if key == PROCESS:
-        return [PROJECT_FILE, PROCESSES_DIR]  # overrides are in the project file
+        return [manifest, PROCESSES_DIR]  # overrides are in the project file
     if key == IMPORTS:
-        return [PROJECT_FILE, IMPORTS_DIR]
+        return [manifest, IMPORTS_DIR]
     places = [
         component_folder(project.components, key)
         for project in (old, new)
         if project is not None and key in project.components
     ]
     if len(set(places)) != 1 or old is None or key not in old.components:
-        places.append(PROJECT_FILE)  # added, removed or moved: the manifest lists it
+        places.append(manifest)  # added, removed or moved: the manifest lists it
     elif key not in new.components:
-        places.append(PROJECT_FILE)
+        places.append(manifest)
     return list(dict.fromkeys(places))
 
 

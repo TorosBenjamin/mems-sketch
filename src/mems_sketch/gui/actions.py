@@ -8,6 +8,7 @@ this module holds no editing logic of its own.
 from __future__ import annotations
 
 import functools
+import sys
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
@@ -92,6 +93,8 @@ class Actions:
         act("Save as…", w.save_project_as, QKeySequence.StandardKey.SaveAs, file)
         self.commit = act("Commit…", w.start_commit, "Ctrl+K", file, "commit")
         act("Close project", w.close_project, None, file)
+        # A project written before #139: its files get the .msketch names.
+        self.msketch_names = act("Use .msketch file names", w.use_msketch_names, None, file)
         file.addSeparator()
         act("Import…", lambda: w.components.import_gds(), "Ctrl+I", file, "import")
         act("Export…", w.export_file, "Ctrl+E", file, "export")
@@ -290,6 +293,8 @@ class Actions:
         act("Keyboard shortcuts", lambda: w.show_settings("Keymap"), None, help_menu)
         help_menu.addSeparator()
         act("User guide", w.open_user_guide, None, help_menu, "help")
+        if sys.platform.startswith("linux"):  # elsewhere the installer registers .msketch
+            act("Install file associations", w.install_file_associations, None, help_menu)
         act("About MEMS Sketch", w.show_about, None, help_menu)
 
         self.root_menus = [file, edit, tools_menu, insert, operations, view, check, help_menu]

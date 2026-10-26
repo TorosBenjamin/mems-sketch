@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.project import new_project
 from mems_sketch.editing.components import library_name
 from mems_sketch.gui import icons, theme, widgets
-from mems_sketch.storage.project_files import PROJECT_FILE, load_library
+from mems_sketch.storage.project_files import is_project_folder, load_library
 
 KINDS = {  # what the wizard makes: label, icon, what it is
     "project": ("Project", "folder", "A design with a top component, exported as a chip."),
@@ -182,7 +182,7 @@ class NewProjectDialog(QDialog):
         if not self.location.text().strip():
             return "Choose where to create it."
         folder = self.folder()
-        if (folder / PROJECT_FILE).exists():
+        if is_project_folder(folder):
             return f"{folder} already holds a project."
         if folder.exists() and not folder.is_dir():
             return f"{folder} is a file."

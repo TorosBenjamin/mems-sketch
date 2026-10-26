@@ -186,9 +186,9 @@ def test_rules_are_edited_with_undo(doc):
 def test_save_open_export(doc, tmp_path):
     doc.nodes.add_component("mems.comb_drive")
     doc.save(tmp_path / "proj")
-    assert not doc.dirty and (tmp_path / "proj" / "project.yaml").exists()
+    assert not doc.dirty and (manifest_file(tmp_path / "proj")).exists()
     other = EditSession()
-    other.open(tmp_path / "proj" / "project.yaml")
+    other.open(manifest_file(tmp_path / "proj"))
     assert other.project == doc.project and other.path == tmp_path / "proj"
     assert other.export(tmp_path / "a.gds").exists()
     assert load(tmp_path / "proj") == doc.project
@@ -202,7 +202,7 @@ def test_saving_over_another_project_needs_replace(doc, tmp_path):
     other.nodes.add(RectShape(name="keep", layer="device", x0=0, y0=0, x1=5, y1=5))
     other.save()
     doc.save(tmp_path / "doc.json")
-    for target in (tmp_path / "other", tmp_path / "other" / "project.yaml", tmp_path / "doc.json"):
+    for target in (tmp_path / "other", manifest_file(tmp_path / "other"), tmp_path / "doc.json"):
         with pytest.raises(ValueError, match="already holds a project"):
             EditSession().save(target)
     assert [s.name for s in load(tmp_path / "other").components["top"].shapes] == ["keep"]
@@ -215,6 +215,7 @@ def test_saving_over_another_project_needs_replace(doc, tmp_path):
 
 from mems_sketch.core.shapes import Align, TransformShape
 from mems_sketch.core.user_component import ComponentDef, ParamDef, PointDef
+from mems_sketch.storage.project_files import item_file, manifest_file
 
 
 def bbox_of(doc: EditSession, path, layer="device"):
@@ -528,8 +529,10 @@ def test_a_script_can_edit_and_save_a_project(tmp_path):
     again = EditSession.open_project(tmp_path / "resonator")
     assert "suspension/spring_with_anchor" in again.project.components  # private to suspension
     owner = tmp_path / "resonator" / "components" / "suspension"
-    assert (owner / "spring_with_anchor" / "component.yaml").is_file()
-    assert "spring_with_anchor: spring_with_anchor" in (owner / "component.yaml").read_text()
+    assert (item_file(owner / "spring_with_anchor", "component.yaml")).is_file()
+    assert (
+        "spring_with_anchor: spring_with_anchor" in (item_file(owner, "component.yaml")).read_text()
+    )
     after = again.results.geometry(component="suspension")
     assert before.layers.keys() == after.layers.keys()
     assert all((before.layers[k] ^ after.layers[k]).is_empty() for k in before.layers)
@@ -583,7 +586,7 @@ def test_libraries_can_be_added_and_removed_with_undo(resonator, tmp_path):
     assert "extra" in resonator.project.libraries
     resonator.undo()
     assert "extra" not in resonator.project.libraries
-    with pytest.raises(ValueError, match="no project.yaml"):
+    with pytest.raises(ValueError, match="not a project or library folder"):
         resonator.components.add_library(tmp_path)
 
 
@@ -630,7 +633,7 @@ def test_create_a_library_and_what_it_refuses(tmp_path):
     with pytest.raises(ValueError, match="needs a name"):
         EditSession().create(tmp_path / "blank", " ")
     (tmp_path / "empty").mkdir()
-    with pytest.raises(ValueError, match="no project.yaml"):
+    with pytest.raises(ValueError, match="not a project or library folder"):
         EditSession().create(tmp_path / "x", "x", libraries=[tmp_path / "empty"])
 
 

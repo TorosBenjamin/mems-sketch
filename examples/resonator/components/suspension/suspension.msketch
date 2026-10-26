@@ -1,3 +1,4 @@
+kind: component
 description: Serpentine spring ending in an anchor pad
 parameters:
   turns: {default: 3, min: 1, integer: true}

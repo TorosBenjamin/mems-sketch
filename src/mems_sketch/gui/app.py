@@ -93,6 +93,7 @@ from mems_sketch.gui.toolwindows import ToolWindows
 from mems_sketch.gui.views import ComponentView, EditorArea, builds
 from mems_sketch.gui.welcome import WelcomeWindow
 from mems_sketch.gui.widgets import AccessibleNames, FocusRing, MenuTidier, TypeAhead
+from mems_sketch.storage.project_files import is_project_folder
 
 PANEL_HELP = {  # the "?" in each tool window's header
     "components": "Every component, each listed once: the project's and each library's, "
@@ -148,7 +149,8 @@ BOX_EPS_UM = 0.0005  # half a database unit: a box edge drawn on a shape's edge 
 HIT_REACH_PX = 4  # a click this close to a shape still selects it (thin fingers, small parts)
 DEFAULT_PATH_WIDTH = 2.0  # µm, for the Path tool until another width is chosen
 OPEN_FILTER = (
-    "MEMS projects (project.yaml);;One-file projects (*.json *.xml *.mat *.yaml *.yml);;"
+    "MEMS Sketch files (*.msketch project.yaml);;"
+    "One-file projects (*.json *.xml *.mat *.yaml *.yml);;"
     "Legacy designs (*.mems)"
 )
 TOOL_WINDOWS_KEY = "layout/tool_windows"  # app setting: open tool windows and panel sizes
@@ -1313,6 +1315,7 @@ class MainWindow(QMainWindow):
         self.components.refresh()
         self.tree.rebuild([p for p in view.selection if self._exists(p)])
         self._show_messages()
+        self._update_msketch_action()
         self.undo_action.setEnabled(self.document.can_undo())
         self.redo_action.setEnabled(self.document.can_redo())
         self.undo_action.setText(f"Undo {self.document.undo_text()}".strip())
@@ -2226,7 +2229,7 @@ class MainWindow(QMainWindow):
         True if a project was made.
         """
         last = Path(self._last_dir())  # the last project's folder: offer the one it is in
-        location = last.parent if (last / "project.yaml").exists() else last
+        location = last.parent if is_project_folder(last) else last
         dialog = NewProjectDialog(str(location), library, self)
         if self.show_dialog(dialog) == QDialog.DialogCode.Accepted and self._confirm_discard():
             return self.create_project(**dialog.values())
@@ -2250,7 +2253,7 @@ class MainWindow(QMainWindow):
         self.save_editor_state()
         if not self._run(create)[0]:
             return False
-        self._remember_dir(str(Path(folder) / "project.yaml"))
+        self._remember_dir(str(Path(folder) / "project"))  # (a file in it: the folder is kept)
         self._remember_project()
         return True
 
@@ -2286,6 +2289,7 @@ class MainWindow(QMainWindow):
         if opened:
             self._remember_dir(path)
             self._remember_project()
+            self.show_file(path)
             if self.document.project.load_notes:
                 self.notify("; ".join(self.document.project.load_notes), "warning", seconds=15)
             elif self.document.path is None:
@@ -2298,12 +2302,54 @@ class MainWindow(QMainWindow):
                 )
         return opened
 
+    def install_file_associations(self) -> None:
+        """Linux: double-clicking a .msketch file opens it here (#140). An AppImage
+        cannot register itself: this writes the MIME type and desktop entry."""
+        from mems_sketch.gui import associations
+
+        ok, written = self._run(lambda: associations.install_linux(icon=_app_icon_png()))
+        if ok:
+            self.notify(
+                f"Double-clicking a .msketch file opens MEMS Sketch now ({len(written)} files "
+                "in ~/.local/share)",
+                "success",
+            )
+
+    def use_msketch_names(self) -> None:
+        """Give a project written before 0.7 the ``.msketch`` file names (#139)."""
+        if not self.document.has_old_file_names():
+            self.notify("The project has .msketch file names already", "info")
+            return
+        ok, renamed = self._run(self.document.use_msketch_names)
+        if ok:
+            self.notify(
+                f"Renamed {len(renamed)} files to .msketch names: double-click them to open",
+                "success",
+            )
+            self._update_msketch_action()
+
+    def _update_msketch_action(self) -> None:
+        self.actions_.msketch_names.setVisible(self.document.has_old_file_names())
+
+    def show_file(self, path: str | Path) -> None:
+        """A component's or process's ``.msketch`` file was opened (#139): its tab."""
+        from mems_sketch.storage.project_files import ProjectFormatError, locate
+
+        try:
+            _, kind, name = locate(path)
+        except (ProjectFormatError, OSError):
+            return
+        if kind == "component" and name and self.document.exists(name):
+            self.open_component(name)
+        elif kind == "process":
+            self.open_process()
+
     def ask_where_to_open(self, path: str) -> str | None:
         """``"here"``, ``"new"`` (another window) or None (cancelled)."""
         box = QMessageBox(self)
         box.setWindowTitle("Open project")
         chosen = Path(path)
-        name = chosen.parent.name if chosen.name == "project.yaml" else chosen.name
+        name = chosen.parent.name if chosen.is_file() else chosen.name
         box.setText(f"Open {name} in this window or in a new one?")
         here = box.addButton("This window", QMessageBox.ButtonRole.AcceptRole)
         new = box.addButton("New window", QMessageBox.ButtonRole.AcceptRole)
@@ -2340,7 +2386,7 @@ class MainWindow(QMainWindow):
     def locate_library(self, path: str, missing) -> bool:
         """Ask where the library ``missing.name`` is, and point the project at it.
         False if the user cancels."""
-        from mems_sketch.storage.project_files import PROJECT_FILE, relocate_library
+        from mems_sketch.storage.project_files import relocate_library
 
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
@@ -2361,8 +2407,8 @@ class MainWindow(QMainWindow):
             )
             if not folder:
                 return False
-            if not (Path(folder) / PROJECT_FILE).is_file():
-                self.report_error(f"{folder} is not a library folder (it has no {PROJECT_FILE})")
+            if not is_project_folder(folder):
+                self.report_error(f"{folder} is not a library folder (it has no project file)")
                 continue
             ok, _ = self._run(lambda f=folder: relocate_library(path, missing.name, f))
             if ok:
@@ -2403,13 +2449,13 @@ class MainWindow(QMainWindow):
         if not folder:
             return False
         target = Path(folder)
-        if (target / "project.yaml").exists() and target != self.document.path:
+        if is_project_folder(target) and target != self.document.path:
             answer = QMessageBox.question(
                 self, "Replace project", f"{target} already contains a project. Replace it?"
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return False
-        self._remember_dir(str(target / "project.yaml"))
+        self._remember_dir(str(target / "project"))  # (a file in it: the folder is kept)
         saved = self._run(lambda: self.document.save(target, replace=True))[0]
         if saved:
             self._remember_project()
@@ -2574,7 +2620,7 @@ USER_GUIDE = "https://github.com/TorosBenjamin/mems-sketch/blob/main/docs/user/R
 
 USAGE = """usage: mems-sketch [PROJECT]
 
-Open the MEMS Sketch editor: PROJECT (a project folder or its project.yaml)
+Open the MEMS Sketch editor: PROJECT (a project folder or a .msketch file)
 in a window, or without one the Welcome window.
 
 options:
@@ -2613,17 +2659,50 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     app = QApplication.instance() or QApplication(argv)
     app.setApplicationName("MEMS Sketch")
+    from mems_sketch.gui import associations
+
+    # Started with a file while the app runs: the running app opens it (#140).
+    if len(argv) > 1 and associations.forward(argv[1]):
+        return 0
+    app._open_server = associations.listen(open_file)  # files later starts hand over
+    app._open_events = associations.OpenEvents(open_file)  # macOS: double-clicked files
+    app.installEventFilter(app._open_events)
     if len(argv) > 1:
-        window = MainWindow()
-        window.open_project(argv[1])
-        window.show()
-        _windows.append(window)
+        open_file(argv[1])
     else:
         show_welcome()
     return app.exec()
 
 
+def open_file(path: str) -> None:
+    """Open a project or one of its files where it belongs (#140): the window that
+    has its project, else a new one; the Welcome window goes once one is open."""
+    from mems_sketch.gui import associations
+
+    shown = [w for w in _windows if isinstance(w, MainWindow) and w.isVisible()]
+    window = associations.route(path, shown, MainWindow)
+    if window not in _windows:
+        _windows.append(window)
+    for widget in QApplication.topLevelWidgets():
+        if isinstance(widget, WelcomeWindow) and widget.isVisible():
+            widget.close()
+
+
 _windows: list[QWidget] = []  # the windows shown from here, kept while they are open
+
+
+def _app_icon_png() -> bytes:
+    """The app's icon as PNG bytes, drawn from its SVG (for a desktop entry)."""
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+
+    from mems_sketch.gui import icons
+
+    pixmap = icons.pixmap("component", 256, ratio=1.0)  # the main window's icon
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    pixmap.save(buffer, "PNG")
+    return bytes(data)
 
 
 def _shapes(count: int) -> str:

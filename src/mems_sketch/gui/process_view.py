@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -29,7 +30,7 @@ from PySide6.QtWidgets import (
 from mems_sketch.core.errors import explain
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.naming import fresh_name
-from mems_sketch.gui import theme, widgets
+from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import ConstantsPanel, LayerDefinitionsPanel
 from mems_sketch.gui.rules_panel import RulesPanel
@@ -58,6 +59,11 @@ class ProcessView(QWidget):
         heading.setObjectName("heading")
         row.addWidget(heading)
         row.addWidget(self.rules.process)  # which process: it decides everything below
+        self.choose = QToolButton()
+        icons.bind(self.choose, "search")
+        self.choose.setToolTip("Choose the process from a list, with what each one is")
+        self.choose.clicked.connect(self.choose_process)
+        row.addWidget(self.choose)
         self.copy_in = QPushButton("Copy into project")
         self.copy_in.setToolTip(
             "Make a process of the project's own from this library's process: the same "
@@ -90,6 +96,26 @@ class ProcessView(QWidget):
         self.layers.refresh()
         self.rules.refresh()
         self.copy_in.setVisible(self.document.project.base_process is not None)
+
+    def choose_process(self) -> None:
+        """Choose the process from a searchable list with descriptions (#143)."""
+        from mems_sketch.gui.picker import Picker, process_entries
+
+        picker = Picker(
+            "Choose process",
+            process_entries(self.document.project),
+            "Search processes",
+            parent=self,
+        )
+        if self.run_picker(picker) and picker.chosen is not None:
+            index = self.rules.process.findText(picker.chosen.name)
+            if index >= 0:
+                self.rules.process.setCurrentIndex(index)
+                self.rules._process_chosen(index)  # as choosing it in the list does
+
+    def run_picker(self, picker) -> bool:
+        """Show a picker (tests choose instead)."""
+        return bool(picker.exec())
 
     def copy_into_project(self) -> None:
         """The library's process in use as a process of the project's own (#307)."""

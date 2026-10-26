@@ -66,7 +66,7 @@ class Workspace:
     def window(self, *panels: str, component: str | None = None) -> MainWindow:
         window = MainWindow()
         window.resize(*SIZE)
-        window.open_project(str(self.project / "project.yaml"))
+        window.open_project(str(self.project))
         for name in window.tool_windows.names():
             window.tool_windows.close(name)
         for name in panels:
@@ -210,7 +210,7 @@ def commit_panel(ws: Workspace) -> None:
 
 @shot
 def git_panel(ws: Workspace) -> None:
-    top = ws.project / "components" / "top" / "component.yaml"
+    top = ws.project / "components" / "top" / "top.msketch"
 
     def commit(message: str, old: str, new: str, author: str = "Designer") -> None:
         top.write_text(top.read_text().replace(old, new))

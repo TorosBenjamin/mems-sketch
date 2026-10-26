@@ -50,13 +50,13 @@ library. Start one from an example:
 mems-sketch-cli new-process my_fab --from mems.polysilicon
 ```
 
-That writes `my_fab/project.yaml` (a library, no top component) and
-`my_fab/processes/my_fab/process.yaml`, a copy of the example to edit
+That writes `my_fab/my_fab.msketch` (a library, no top component) and
+`my_fab/processes/my_fab/my_fab.msketch`, a copy of the example to edit
 (`--from empty` starts with nothing). Add the folder to a project as a library
-(Components **+**, or `libraries: {fab: ../my_fab}` in `project.yaml`) and
+(Components **+**, or `libraries: {fab: ../my_fab}` in the project's `.msketch` file) and
 choose `fab.my_fab` as its process.
 
-### From the handbook to `process.yaml`
+### From the handbook to the process file
 
 A fab's design handbook lists layers and a table of rules. Each row becomes a
 rule of one of the [rule kinds](components.md#design-rules):
@@ -103,7 +103,7 @@ rules:
 
 Projects using the library follow its process when it changes, except where
 they [changed it](components.md#processes-from-a-library), each change kept in
-their `project.yaml` with its reason.
+their project file with its reason.
 
 ### Foundry rules and their licences
 

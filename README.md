@@ -39,7 +39,7 @@ From the source, with Python 3.11 or newer:
 
 ```bash
 pip install -e ".[gui]"                        # add ,matlab for .mat files
-mems-sketch examples/resonator/project.yaml    # the editor
+mems-sketch examples/resonator/resonator.msketch    # the editor
 mems-sketch-cli check examples/resonator       # the same design, from the command line
 ```
 

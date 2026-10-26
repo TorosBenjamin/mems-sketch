@@ -22,7 +22,7 @@ from mems_sketch.core.component import to_dbu
 from mems_sketch.core.process import layer_rules
 from mems_sketch.core.project import new_project
 from mems_sketch.engine import Engine, project_data
-from mems_sketch.storage.project_files import ProjectFormatError
+from mems_sketch.storage.project_files import ProjectFormatError, item_file, manifest_file
 
 
 def area(project: Project, component: str | None = None) -> float:
@@ -108,7 +108,7 @@ def test_a_library_is_saved_and_loaded_without_a_top_component(tmp_path):
     library = Project(name="lib", top=None)
     library.define_component(bar())
     save(library, tmp_path / "lib")
-    assert "top: null" in (tmp_path / "lib" / "project.yaml").read_text()
+    assert "top: null" in (manifest_file(tmp_path / "lib")).read_text()
     loaded = load(tmp_path / "lib")
     assert loaded.top is None and list(loaded.components) == ["bar"]
     assert new_project("x", library=True).top is None
@@ -189,32 +189,33 @@ def test_project_folder_layout_and_round_trip(tmp_path):
     project = make_project()
     folder = save(project, tmp_path / "demo")
     assert sorted(p.name for p in (folder / "components").iterdir()) == ["bar", "top"]
-    assert (folder / "components" / "bar" / "component.yaml").is_file()
-    assert (folder / "processes" / "main" / "process.yaml").is_file()
-    manifest = (folder / "project.yaml").read_text()
+    assert (item_file(folder / "components" / "bar", "component.yaml")).is_file()
+    assert (item_file(folder / "processes" / "main", "process.yaml")).is_file()
+    manifest = (manifest_file(folder)).read_text()
     assert "components: {top: components/top, bar: components/bar}" in manifest
     assert "process: main\nprocesses: {main: processes/main}" in manifest
     assert load(folder) == project
-    assert load(folder / "project.yaml") == project
+    assert load(manifest_file(folder)) == project
 
 
 def test_yaml_is_canonical_and_minimal(tmp_path):
     folder = save(make_project(), tmp_path / "demo")
-    text = (folder / "components" / "bar" / "component.yaml").read_text()
+    text = (item_file(folder / "components" / "bar", "component.yaml")).read_text()
     assert text == (
+        "kind: component\n"
         "parameters:\n"
         "  w: {default: 2, min: 0.5}\n"
         "  length: 10 * w\n"
         "shapes:\n"
         "  rect1: {kind: rect, layer: device, x0: 0, y0: 0, x1: length, y1: w}\n"
     )
-    process = (folder / "processes" / "main" / "process.yaml").read_text()
+    process = (item_file(folder / "processes" / "main", "process.yaml")).read_text()
     assert "gds: [1, 0]" in process
     assert "device_min_width: {kind: min_width, layers: [device], value: 1}" in process
 
 
 def component_files(folder):
-    return {p.parent.name: p.read_text() for p in (folder / "components").rglob("component.yaml")}
+    return {p.parent.name: p.read_text() for p in (folder / "components").rglob("*.msketch")}
 
 
 def test_changing_one_value_changes_one_line(tmp_path):
@@ -243,7 +244,7 @@ def test_removed_components_lose_their_files(tmp_path):
     (folder / "components" / "spare" / "notes.txt").write_text("kept")
     project.remove_component("spare")
     save(project, folder)
-    assert not (folder / "components" / "spare" / "component.yaml").exists()
+    assert not (item_file(folder / "components" / "spare", "component.yaml")).exists()
     assert (folder / "components" / "spare" / "notes.txt").read_text() == "kept"  # not ours
 
 
@@ -251,21 +252,21 @@ def test_a_hand_edited_file_that_did_not_change_is_left_as_it_is(tmp_path):
     """Comments and layout stay until the file's contents change (#240)."""
     project = make_project()
     folder = save(project, tmp_path / "demo")
-    bar_file = folder / "components" / "bar" / "component.yaml"
+    bar_file = item_file(folder / "components" / "bar", "component.yaml")
     by_hand = "# the beam\n" + bar_file.read_text().replace("min: 0.5", "min: 0.50")
     bar_file.write_text(by_hand)
     project = load(folder)
     project.set_variable("w_top", 4)
     save(project, folder)
     assert bar_file.read_text() == by_hand
-    assert "w_top: 4" in (folder / "components" / "top" / "component.yaml").read_text()
+    assert "w_top: 4" in (item_file(folder / "components" / "top", "component.yaml")).read_text()
 
 
 def test_saving_into_a_folder_removes_only_what_the_project_had(tmp_path):
     """A folder without a project keeps its files; a project's own folder loses
     the files of components it no longer has (#240)."""
     folder = tmp_path / "dest"
-    stray = folder / "components" / "old" / "component.yaml"
+    stray = item_file(folder / "components" / "old", "component.yaml")
     stray.parent.mkdir(parents=True)
     stray.write_text("description: someone else's\n")
     (folder / "imports").mkdir()
@@ -284,26 +285,28 @@ def test_saving_into_a_folder_removes_only_what_the_project_had(tmp_path):
 def test_names_come_from_the_files_not_their_places(tmp_path):
     folder = save(make_project(), tmp_path / "demo")
     (folder / "components" / "bar").rename(folder / "components" / "beam_files")
-    manifest = folder / "project.yaml"
+    manifest = manifest_file(folder)
     manifest.write_text(
         manifest.read_text().replace("bar: components/bar", "bar: components/beam_files")
     )
     assert set(load(folder).components) == {"top", "bar"}
     (folder / "components" / "stray").mkdir()
-    (folder / "components" / "stray" / "component.yaml").write_text("description: lost\n")
+    (folder / "components" / "stray" / "stray.msketch").write_text(
+        "kind: component\ndescription: lost\n"
+    )
     assert load(folder).load_notes == [
-        "components/stray/component.yaml is not listed, so it was not loaded"
+        "components/stray/stray.msketch is not listed, so it was not loaded"
     ]
 
 
 def test_load_errors_are_explicit(tmp_path):
     folder = save(make_project(), tmp_path / "demo")
-    (folder / "components" / "bar" / "component.yaml").unlink()
-    with pytest.raises(ProjectFormatError, match="missing .*component.yaml"):
+    (item_file(folder / "components" / "bar", "component.yaml")).unlink()
+    with pytest.raises(ProjectFormatError, match=r"missing .*bar\.msketch"):
         load(folder)
     with pytest.raises(ProjectFormatError, match="missing"):
         load(tmp_path / "nowhere")
-    manifest = folder / "project.yaml"
+    manifest = manifest_file(folder)
     manifest.write_text(manifest.read_text().replace("mems-sketch/2", "mems-sketch/1"))
     with pytest.raises(ProjectFormatError, match="not a mems-sketch/2 project file"):
         load(folder)
@@ -315,6 +318,6 @@ def test_unknown_keys_of_a_layer_are_ignored(tmp_path):
     project = Project()
     project.add_layer(Layer("device", 1))
     save(project, folder)
-    process = folder / "processes" / "main" / "process.yaml"
+    process = item_file(folder / "processes" / "main", "process.yaml")
     process.write_text(process.read_text().replace("gds: [1, 0]", "gds: [1, 0], undercut: 0.3"))
     assert load(folder).layers["device"] == Layer("device", 1)

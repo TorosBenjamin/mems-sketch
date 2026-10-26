@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from mems_sketch.core.project import Project
-from mems_sketch.storage.project_files import PROJECT_FILE, load_project
+from mems_sketch.storage.project_files import is_project_folder, load_project
 
 FIELD, RECORD = "\x1f", "\x1e"  # separators in git log's output
 TIMEOUT_S = 30
@@ -199,7 +199,7 @@ def load_at(folder: str | Path, rev: str) -> Project | None:
             else:
                 archive.extractall(tmp)  # the user's own repository
         copy = Path(tmp) / relative
-        if not (copy / PROJECT_FILE).is_file():
+        if not is_project_folder(copy):
             return None
         return load_project(copy, libraries_from=folder)
 

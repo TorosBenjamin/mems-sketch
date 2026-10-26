@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.new_project import NewProjectDialog
+from mems_sketch.storage.project_files import manifest_file
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -82,7 +83,7 @@ def test_new_project_creates_and_saves_it_with_its_libraries(window, tmp_path, m
     monkeypatch.setattr(window, "show_dialog", fill)
     window.new_project()
     assert window.document.path == tmp_path / "chip" and not window.document.dirty
-    assert (tmp_path / "chip" / "project.yaml").exists()
+    assert (manifest_file(tmp_path / "chip")).exists()
     assert "mems_std" in window.document.project.libraries
     assert window.windowTitle().startswith("chip") or "chip" in window.windowTitle()
     assert [v.component for v in window.area.views()] == ["top"]

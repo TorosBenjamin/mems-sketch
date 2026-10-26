@@ -1,7 +1,8 @@
 ; The Windows installer (Inno Setup 6), from the PyInstaller folder:
 ;   iscc /DAppVersion=0.6.0 /DSourceDir=dist\mems-sketch /DOutputDir=out packaging\windows\mems-sketch.iss
 ; Installs for the current user (no administrator rights needed), with a
-; Start menu entry and an uninstaller.
+; Start menu entry and an uninstaller, and registers .msketch files so that a
+; double-click opens them (#140; the portable zip registers nothing).
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -33,12 +34,22 @@ UninstallDisplayIcon={app}\mems-sketch.exe
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+ChangesAssociations=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Registry]
+; .msketch: a MEMS Sketch file, opened by the app, with its icon (for this user,
+; or every user when installed for all: HKA follows the install mode).
+Root: HKA; Subkey: "Software\Classes\.msketch"; ValueType: string; ValueName: ""; ValueData: "MEMSSketch.File"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.msketch\OpenWithProgids"; ValueType: string; ValueName: "MEMSSketch.File"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\MEMSSketch.File"; ValueType: string; ValueName: ""; ValueData: "MEMS Sketch file"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\MEMSSketch.File\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\mems-sketch.exe,0"
+Root: HKA; Subkey: "Software\Classes\MEMSSketch.File\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\mems-sketch.exe"" ""%1"""
 
 [Icons]
 Name: "{group}\MEMS Sketch"; Filename: "{app}\mems-sketch.exe"

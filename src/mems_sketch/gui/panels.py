@@ -196,6 +196,7 @@ class ComponentsPanel(_Panel):
     place_requested = Signal(str)
     open_requested = Signal(str)
     open_aside_requested = Signal(str)  # open in the other pane
+    view_requested = Signal(str)  # look at it in the quick-look viewer (#141)
     process_requested = Signal()
     collapse_changed = Signal()
     NAME_ROLE = Qt.ItemDataRole.UserRole
@@ -521,6 +522,7 @@ class ComponentsPanel(_Panel):
         _menu_action(
             menu, "Open in the other pane", lambda: self.open_aside_requested.emit(name), "split"
         )
+        _menu_action(menu, "View", lambda: self.view_requested.emit(name), "eye")
         place = _menu_action(
             menu, f"Place in {active}", lambda: self.place_requested.emit(name), "place"
         )

@@ -2,7 +2,8 @@
 
 - **Where a file goes:** a project already open in a window comes to the front
   (with the component's tab when a component's file was opened); another one
-  opens in a new window (:func:`route`).
+  opens in a new window (:func:`route`). A component's file whose project isn't
+  open is shown in the quick-look viewer instead (:func:`opens_in_viewer`, #141).
 - **One running app:** started with a file while it is already running, the
   app hands the file to the running one and quits (:func:`forward`), so a
   double-click in Explorer or a file manager lands in the open editor. The
@@ -107,21 +108,31 @@ def server_name() -> str:
     return f"mems-sketch-{user}"
 
 
-def forward(path: str, name: str | None = None) -> bool:
-    """Hand ``path`` to the app already running, if there is one: True when it took it."""
+VIEW = "--view\t"  # before a path handed over: show it in the viewer (#141)
+
+
+def forward(path: str, name: str | None = None, view: bool = False) -> bool:
+    """Hand ``path`` to the app already running, if there is one: True when it took it.
+    ``view``: to be shown in the quick-look viewer."""
     socket = QLocalSocket()
     socket.connectToServer(name or server_name())
     if not socket.waitForConnected(CONNECT_MS):
         return False
-    socket.write(os.path.abspath(path).encode() + b"\n")
+    line = (VIEW if view else "") + os.path.abspath(path)
+    socket.write(line.encode() + b"\n")
     socket.flush()
     socket.waitForBytesWritten(CONNECT_MS)
     socket.disconnectFromServer()
     return True
 
 
-def listen(open_path: Callable[[str], None], name: str | None = None) -> QLocalServer:
-    """Take files a later start hands over (:func:`forward`), with ``open_path``."""
+def listen(
+    open_path: Callable[[str], None],
+    name: str | None = None,
+    view_path: Callable[[str], object] | None = None,
+) -> QLocalServer:
+    """Take files a later start hands over (:func:`forward`), with ``open_path``
+    (those to be viewed with ``view_path``)."""
     name = name or server_name()
     server = QLocalServer()
     if not server.listen(name):
@@ -134,8 +145,10 @@ def listen(open_path: Callable[[str], None], name: str | None = None) -> QLocalS
 
             def read(socket: QLocalSocket = socket) -> None:
                 for line in bytes(socket.readAll()).decode(errors="replace").splitlines():
-                    if line.strip():
-                        open_path(line.strip())
+                    if line.startswith(VIEW) and view_path is not None:
+                        view_path(line[len(VIEW) :].strip())
+                    elif line.strip():
+                        open_path(line.removeprefix(VIEW).strip())
 
             socket.readyRead.connect(read)
             socket.disconnected.connect(socket.deleteLater)
@@ -158,6 +171,25 @@ class OpenEvents(QObject):
                 self.open_path(path)
             return True
         return super().eventFilter(watched, event)
+
+
+def opens_in_viewer(path: str, windows: list) -> bool:
+    """Whether opening ``path`` shows it in the quick-look viewer (#141): a
+    component's file whose project isn't open in any of ``windows``."""
+    from mems_sketch.storage.project_files import ProjectFormatError, locate
+
+    try:
+        folder, kind, name = locate(path)
+    except (ProjectFormatError, OSError):
+        return False
+    if kind != "component" or not name:
+        return False
+    folder = folder.resolve()
+    for window in windows:
+        here = getattr(getattr(window, "document", None), "path", None)
+        if here is not None and Path(here).resolve() == folder:
+            return False
+    return True
 
 
 def route(path: str, windows: list, make_window: Callable[[], object]) -> object:

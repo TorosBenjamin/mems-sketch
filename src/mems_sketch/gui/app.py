@@ -302,6 +302,7 @@ class MainWindow(QMainWindow):
         self.area.process_factory = self._make_process_view
         self.area.comparison_factory = self._make_comparison_view
         self.components.open_aside_requested.connect(self.open_aside)
+        self.components.view_requested.connect(self.view_component)
         self.layers.visibility_changed.connect(self._set_layer_visible)
         self.tree.collapse_changed.connect(self.state_changed)
         self.components.collapse_changed.connect(self.state_changed)
@@ -2366,6 +2367,24 @@ class MainWindow(QMainWindow):
     def _update_msketch_action(self) -> None:
         self.actions_.msketch_names.setVisible(self.document.has_old_file_names())
 
+    def view_component(self, name: str):
+        """Look at ``name`` in the quick-look viewer (#141), as it is now (unsaved
+        changes too); *Open in editor* there comes back to this window."""
+        from mems_sketch.gui.viewer import Viewer
+
+        viewer = Viewer(self.document.project, name, self.document.path)
+        viewer.open_in_editor.connect(lambda _path, component: self._back_from_viewer(component))
+        viewer.editor.setEnabled(True)  # back to this window, saved or not
+        viewer.show()
+        return viewer
+
+    def _back_from_viewer(self, component: str) -> None:
+        if self.document.exists(component):
+            self.open_component(component)
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def show_file(self, path: str | Path) -> None:
         """A component's or process's ``.msketch`` file was opened (#139): its tab."""
         from mems_sketch.storage.project_files import ProjectFormatError, locate
@@ -2654,13 +2673,14 @@ def _path(steps) -> NodePath:
 
 USER_GUIDE = "https://github.com/TorosBenjamin/mems-sketch/blob/main/docs/user/README.md"
 
-USAGE = """usage: mems-sketch [PROJECT]
+USAGE = """usage: mems-sketch [PROJECT | --view FILE]
 
 Open the MEMS Sketch editor: PROJECT (a project folder or a .msketch file)
 in a window, or without one the Welcome window.
 
 options:
   -h, --help   show this message
+  --view FILE  look at a component in the quick-look viewer (read-only)
   --version    print the version
   --self-test  check that the installation works, without a window
 
@@ -2672,7 +2692,10 @@ def main(argv: list[str] | None = None) -> int:
     # the program, which must run its task, not open a window.
     multiprocessing.freeze_support()
     argv = sys.argv if argv is None else argv
-    if len(argv) > 1 and argv[1].startswith("-") and argv[1] not in ("--version", "--self-test"):
+    view = len(argv) > 2 and argv[1] == "--view"
+    if view:
+        argv = [argv[0], *argv[2:]]
+    elif len(argv) > 1 and argv[1].startswith("-") and argv[1] not in ("--version", "--self-test"):
         known = argv[1] in ("-h", "--help")
         print(USAGE if known else f"mems-sketch: unknown option {argv[1]}\n\n{USAGE}")
         return 0 if known else 2
@@ -2698,25 +2721,36 @@ def main(argv: list[str] | None = None) -> int:
     from mems_sketch.gui import associations
 
     # Started with a file while the app runs: the running app opens it (#140).
-    if len(argv) > 1 and associations.forward(argv[1]):
+    if len(argv) > 1 and associations.forward(argv[1], view=view):
         return 0
-    app._open_server = associations.listen(open_file)  # files later starts hand over
-    app._open_events = associations.OpenEvents(open_file)  # macOS: double-clicked files
+    # Files later starts hand over, and (macOS) double-clicked files.
+    app._open_server = associations.listen(open_file, view_path=show_viewer)
+    app._open_events = associations.OpenEvents(open_file)
     app.installEventFilter(app._open_events)
-    if len(argv) > 1:
+    if len(argv) > 1 and view:
+        if show_viewer(argv[1]) is None:
+            return 1
+    elif len(argv) > 1:
         open_file(argv[1])
     else:
         show_welcome()
     return app.exec()
 
 
-def open_file(path: str) -> None:
+def open_file(path: str, component: str | None = None) -> None:
     """Open a project or one of its files where it belongs (#140): the window that
-    has its project, else a new one; the Welcome window goes once one is open."""
+    has its project, else a new one; the Welcome window goes once one is open. A
+    component's file whose project isn't open is shown in the viewer (#141).
+    ``component``: the tab to open (from the viewer's *Open in editor*)."""
     from mems_sketch.gui import associations
 
     shown = [w for w in _windows if isinstance(w, MainWindow) and w.isVisible()]
+    viewed = component is None and associations.opens_in_viewer(path, shown)
+    if viewed and show_viewer(path) is not None:
+        return
     window = associations.route(path, shown, MainWindow)
+    if component is not None and window.document.exists(component):
+        window.open_component(component)
     if window not in _windows:
         _windows.append(window)
     for widget in QApplication.topLevelWidgets():
@@ -2725,6 +2759,26 @@ def open_file(path: str) -> None:
 
 
 _windows: list[QWidget] = []  # the windows shown from here, kept while they are open
+
+
+def show_viewer(path: str):
+    """The quick-look viewer for a component's file (#141); None (and a message
+    box) if it can't be shown."""
+    from mems_sketch.gui.viewer import open_viewer
+
+    try:
+        viewer = open_viewer(path)
+    except Exception as exc:  # noqa: BLE001 - said in a message box
+        QMessageBox.warning(None, "Cannot view", f"{path}: {exc}")
+        return None
+    viewer.open_in_editor.connect(lambda file, component: open_file(file, component))
+    viewer.destroyed.connect(lambda: _windows.remove(viewer) if viewer in _windows else None)
+    _windows.append(viewer)
+    viewer.show()
+    for widget in QApplication.topLevelWidgets():
+        if isinstance(widget, WelcomeWindow) and widget.isVisible():
+            widget.close()
+    return viewer
 
 
 def _app_icon_png() -> bytes:

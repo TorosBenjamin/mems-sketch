@@ -22,9 +22,17 @@ my_project/
 (once MEMS Sketch is installed: the Windows installer and the macOS app register
 it; on Linux, *Help → Install file associations*). What a file is, its first
 line says: `format: mems-sketch/2` for a project (or library), `kind: component`
-or `kind: process`. Opening a component's file opens its project at that
-component's tab; a process's file opens the Process tab. They are YAML inside,
+or `kind: process`. Opening a component's file shows it in the **viewer** (below);
+if its project is already open, the editor comes to the front at that
+component's tab instead. A process's file opens the Process tab. They are YAML inside,
 so git diffs and hand edits work as before.
+
+**The viewer** is a small read-only window for one component: the canvas
+(zoom, pan, layers to show or hide, and *Measure* (D) to put rulers down), and
+its parameters to try values in. Nothing in it edits the design, and the values
+tried are never saved. **Open in editor** opens the project at that component.
+It also opens from *View* in a component's right-click menu, or with
+`mems-sketch --view FILE`.
 
 Projects written before 0.7 have `project.yaml`, `component.yaml` and
 `process.yaml`. Those still open and save with their names; **File → Use .msketch

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from mems_sketch import ArrayModifier, PolygonShape, RectShape
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.properties import ElidedLabel
-from mems_sketch.gui.value_edit import ValueEdit
+from mems_sketch.gui.value_edit import MAKE, ValueEdit
 
 
 @pytest.fixture
@@ -78,8 +78,7 @@ def test_names_are_completed(window):
     edit.setText("pi")
     edit.setCursorPosition(2)
     edit._suggest()
-    assert edit._completer.completionCount() >= 1
-    assert edit._completer.currentCompletion() == "pitch"
+    assert edit.suggestion_keys()[0] == "pitch"
     edit._complete("pitch")
     assert edit.text() == "pitch"
     edit.setText("2*mass")
@@ -88,16 +87,16 @@ def test_names_are_completed(window):
 
 def test_the_parameter_button_uses_or_makes_parameters(window, monkeypatch):
     edit = fields(window)["To y"]
-    menu = edit.parameter_menu()
-    texts = [a.text() for a in menu.actions()]
-    assert "pitch  = 13" in texts and "Make a parameter from this value…" in texts
-    next(a for a in menu.actions() if a.text() == "pitch  = 13").trigger()  # applies it
+    edit.show_suggestions()
+    rows = {r.key: r for r in edit.suggestions("", button=True)}
+    assert rows["pitch"].value == "13" and MAKE in rows
+    assert edit.suggestion_keys()[0] == MAKE  # a number: making a parameter comes first
+    edit._chosen("pitch")  # applies it
     assert window.document.shapes[0].y1 == "pitch"
 
     monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("height", True))
     edit = fields(window)["From x"]
     edit.setText("7")
-    edit.parameter_menu()  # the menu offers it; the action calls this
     edit._make_parameter()
     assert window.document.shapes[0].x0 == "height"
     assert window.document.active_definition.parameter("height").default == 7

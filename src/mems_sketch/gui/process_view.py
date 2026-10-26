@@ -6,14 +6,29 @@ rarely changed, so they open in an editor tab (from the project tree or
 ☰ › View › Process) rather than taking a panel. The tab is a page of cards at
 a readable width, with the process picker in its header. Edits go through the
 edit session like any other, with undo.
+
+A library's process keeps its layers, layer stack and grid as the library has
+them (its rules and constants can be changed in the project). **Copy into
+project** makes a process of the project's own from it, everything editable;
+**New process…** starts one from the starting layers and rules (#307).
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
+from mems_sketch.core.errors import explain
 from mems_sketch.editing import EditSession
+from mems_sketch.editing.naming import fresh_name
 from mems_sketch.gui import theme, widgets
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import ConstantsPanel, LayerDefinitionsPanel
@@ -43,6 +58,19 @@ class ProcessView(QWidget):
         heading.setObjectName("heading")
         row.addWidget(heading)
         row.addWidget(self.rules.process)  # which process: it decides everything below
+        self.copy_in = QPushButton("Copy into project")
+        self.copy_in.setToolTip(
+            "Make a process of the project's own from this library's process: the same "
+            "layers, rules and constants (with your changes), and all of it editable"
+        )
+        self.copy_in.clicked.connect(self.copy_into_project)
+        self.new = QPushButton("New process…")
+        self.new.setToolTip(
+            "Start a process of the project's own from the starting layers and rules"
+        )
+        self.new.clicked.connect(lambda: self.new_process())
+        row.addWidget(self.copy_in)
+        row.addWidget(self.new)
         row.addWidget(
             HelpButton(
                 "What the whole project is made with: its constants, which every "
@@ -61,6 +89,28 @@ class ProcessView(QWidget):
         self.constants.refresh()
         self.layers.refresh()
         self.rules.refresh()
+        self.copy_in.setVisible(self.document.project.base_process is not None)
+
+    def copy_into_project(self) -> None:
+        """The library's process in use as a process of the project's own (#307)."""
+        try:
+            self.document.process.make_own()
+        except Exception as exc:  # noqa: BLE001 - reported to the user
+            self.error.emit(explain(exc))
+
+    def new_process(self, name: str | None = None) -> None:
+        """A new process of the project's own, named ``name`` (asked when not given)."""
+        if name is None:
+            suggested = fresh_name("process", set(self.document.project.processes))
+            name, ok = QInputDialog.getText(
+                self, "New process", "Name:", QLineEdit.EchoMode.Normal, suggested
+            )
+            if not ok or not name.strip():
+                return
+        try:
+            self.document.process.new_process(name.strip())
+        except Exception as exc:  # noqa: BLE001 - reported to the user
+            self.error.emit(explain(exc))
 
     # The tab's label, icon and tooltip, as for a component tab.
     def title(self) -> str:

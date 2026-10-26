@@ -66,6 +66,7 @@ from mems_sketch.core.process import (
     Rule,
     changes_between,
     check_levels,
+    is_color,
     with_changes,
 )
 from mems_sketch.core.project import FORMER_BUILTINS, MAIN_PROCESS, Library, Project
@@ -322,7 +323,10 @@ def process_data(process: Process) -> dict[str, Any]:
     if process.constants:
         data["constants"] = yaml_format.to_data(process.constants)
     data["layers"] = {
-        layer.name: {"gds": [layer.gds_layer, layer.gds_datatype]}
+        layer.name: {
+            "gds": [layer.gds_layer, layer.gds_datatype],
+            **({"color": layer.color} if layer.color else {}),
+        }
         for layer in process.layers.values()
     }
     if process.levels:
@@ -348,10 +352,14 @@ def process_from_data(data: dict[str, Any]) -> Process:
     layers = {}
     for name, entry in (data.get("layers") or {}).items():
         gds = (entry or {}).get("gds", [0, 0])
+        color = (entry or {}).get("color")
+        if color is not None and not is_color(color):
+            raise ProjectFormatError(f"layer '{name}': colour {color!r} is not like '#4a90d9'")
         layers[str(name)] = Layer(
             name=str(name),
             gds_layer=int(gds[0]),
             gds_datatype=int(gds[1]) if len(gds) > 1 else 0,
+            color=None if color is None else str(color).lower(),
         )
     levels = [
         Level(

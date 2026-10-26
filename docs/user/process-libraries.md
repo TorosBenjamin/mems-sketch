@@ -39,9 +39,12 @@ rules.
 
 ## Writing your own
 
-A fab's process belongs in a **process library**: a folder holding the
-process, that every project of that fab uses as a library. Start one from an
-example:
+For one project, **Copy into project** in the Process tab makes a process of
+the project's own from an example, to change there (see
+[A process of the project's own](components.md#a-process-of-the-projects-own)).
+A fab's process that several projects share belongs in a **process library**:
+a folder holding the process, that every project of that fab uses as a
+library. Start one from an example:
 
 ```console
 mems-sketch-cli new-process my_fab --from mems.polysilicon
@@ -74,7 +77,7 @@ A whole process:
 description: Our fab's two-poly process, rev. C
 constants: {undercut: 3, t_poly1: 2}
 layers:
-  poly1: {gds: [4, 0]}
+  poly1: {gds: [4, 0], color: "#4a90d9"}   # optional: the colour it is drawn in
   anchor1: {gds: [2, 0]}
 levels:
 - layer: poly1
@@ -88,7 +91,8 @@ rules:
 ```
 
 - **Layers** are named as you like; their GDS layer and datatype are what
-  exports write.
+  exports write, and `color` (`#rrggbb`, optional) is what the canvas draws
+  them in (without it, the theme's colour for the layer's place).
 - **Levels** are the stack, bottom to top. A level is a layer, with **roles**
   for the layers that belong to it (`anchor`, `dimple`, `via`: any name), so a
   component draws `level.anchor` and works on every level that has one.

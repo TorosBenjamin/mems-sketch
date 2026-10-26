@@ -58,7 +58,7 @@ from mems_sketch.core.shapes import (
 from mems_sketch.editing import EditSession
 from mems_sketch.gui import icons, theme, widgets
 from mems_sketch.gui.actions import OPERATIONS, PRIMITIVES
-from mems_sketch.gui.canvas import layer_color
+from mems_sketch.gui.canvas import layer_colors
 from mems_sketch.gui.help import HelpButton
 from mems_sketch.gui.panels import component_icon, parse_value, read_only_kind, swatch_icon
 from mems_sketch.gui.settings import APPLICATION, ORGANIZATION
@@ -583,7 +583,7 @@ class PropertyEditor(QScrollArea):
             current = stack.top_level(getattr(definition, "level", None))  # its own level
         except ValueError:
             current = None
-        colors = {name: layer_color(i) for i, name in enumerate(project.layers)}
+        colors = layer_colors(project.layers)
         combo = _combo()
         if optional:
             combo.addItem(icons.icon("layers"), "ports' layer", None)

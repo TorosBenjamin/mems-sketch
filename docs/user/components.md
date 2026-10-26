@@ -203,6 +203,21 @@ rules.
 
 ![The Process tab](../images/process.png)
 
+Each layer has a **Colour** it is drawn in: the theme's for its place in the
+process unless you choose one (double-click the colour; right-click for the
+theme's again). A chosen colour is kept with the process.
+
+### A process of the project's own
+
+A new project uses a process of its own (`main`), which you can change
+throughout. To start from a library's process instead, choose it under
+**Process**, then **Copy into project**: the project gets a process of its
+own with the same layers, layer stack, grid, constants and rules (your
+changes to them included, a change's reason as the rule's note), named after
+the library's (`surface`), and uses it from then on; everything in it can be
+changed. **New process…** starts another from the starting layers and rules.
+The processes a project has stay in it, so **Process** can switch back.
+
 ### The layer stack and component levels
 
 The layers' **Level** column places them in the **layer stack**: a number
@@ -287,8 +302,9 @@ On a library's process:
   say why under **Reason**.
   Untick a rule to turn it off. **Reset** takes the process's rule again.
 - **Add rules** of your own; they are marked *(added)*.
-- The **layers and the layer stack** belong to the fab and cannot change
-  here: use a process of the project's own for that.
+- The **layers, the layer stack and the grid** belong to the fab and cannot
+  change here: the Layers card says so, with **Copy into project** to make a
+  process of the project's own that you can change throughout.
 
 When the library's process changes, the project follows it everywhere except
 where it changed it. The changes are kept in `project.yaml`, each with its

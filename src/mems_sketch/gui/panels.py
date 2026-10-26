@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 
 from PySide6.QtCore import QEvent, QMimeData, QSize, Qt, QTimer, Signal
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QPushButton,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -1455,14 +1457,14 @@ class LayersPanel(_Panel):
         self._layer_names: list[str] = []
 
     def refresh(self) -> None:
-        from mems_sketch.gui.canvas import layer_color
+        from mems_sketch.gui.canvas import layer_colors
 
         process = self.document.project.process
         layers, stack = process.layers, process.stack_order()
         # Each layer keeps its colour (by its place in the process); ``colors`` is in
         # the stack's order, bottom to top, which is how the canvas draws them, and
         # the list shows the top one first, as it is on top on the canvas.
-        hues = {name: layer_color(i) for i, name in enumerate(layers)}
+        hues = layer_colors(layers)
         self.colors = {name: hues[name] for name in stack}
         self._layer_names = list(reversed(stack))
         self.layers.blockSignals(True)
@@ -1542,7 +1544,8 @@ class LayerDefinitionsPanel(_Panel):
     """The process's layers: name, GDS mapping and place in the layer stack (in
     the Process tab)."""
 
-    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Level")
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Level", "Colour")
+    COLOR = 4
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -1551,6 +1554,9 @@ class LayerDefinitionsPanel(_Panel):
         # A level's layer (device.anchor): the level muted.
         self.layers.setItemDelegateForColumn(3, widgets.QualifiedDelegate(self.layers))
         self.layers.itemChanged.connect(self._layer_changed)
+        self.layers.cellDoubleClicked.connect(self._cell_double_clicked)
+        self.layers.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.layers.customContextMenuRequested.connect(self._context_menu)
         card = widgets.Card(
             "Layers",
             help="The mask layers and their *GDS* layer and datatype for export. "
@@ -1558,12 +1564,32 @@ class LayerDefinitionsPanel(_Panel):
             "*Level* places a layer in the layer stack: a number makes it a level "
             "(1 at the bottom); `poly1.anchor` makes it level poly1's anchor layer. "
             "Components draw relative to their level (`level-1`, `level.anchor`), "
-            "so the same component can be placed on any level.",
+            "so the same component can be placed on any level.\n\n"
+            "*Colour*: double-click to choose the colour it is drawn in; right-click "
+            "for the theme's colour again.\n\n"
+            "A library's process keeps its layers as they are: *Copy into project* "
+            "makes a process of the project's own to change them.",
         )
         self.actions = card.add_actions(
             ("plus", "Add layer", lambda: self._guard(self.document.process.add_layer)),
             ("minus", "Remove the selected layers", self._remove_layers),
         )
+        # On a library's process: whose layers these are, and how to change them.
+        self.library_note = QWidget()
+        note_row = QHBoxLayout(self.library_note)
+        note_row.setContentsMargins(0, 0, 0, 0)
+        self.library_text = QLabel()
+        self.library_text.setWordWrap(True)
+        self.library_text.setObjectName("muted")
+        self.copy_in = QPushButton("Copy into project")
+        self.copy_in.setToolTip(
+            "A process of the project's own with these layers, rules and constants, "
+            "and everything in it editable"
+        )
+        self.copy_in.clicked.connect(lambda: self._guard(self.document.process.make_own))
+        note_row.addWidget(self.library_text, 1)
+        note_row.addWidget(self.copy_in)
+        card.body.addWidget(self.library_note)
         card.body.addWidget(self.layers)
         self.default_level = QComboBox()
         self.default_level.setToolTip(
@@ -1619,13 +1645,16 @@ class LayerDefinitionsPanel(_Panel):
         self._layer_names: list[str] = []
 
     def refresh(self) -> None:
-        from mems_sketch.gui.canvas import layer_color
+        from mems_sketch.gui.canvas import layer_colors
 
-        layers = self.document.project.layers
+        project = self.document.project
+        own = project.base_process is None
+        layers = project.layers
+        colors = layer_colors(layers)
         self._layer_names = list(layers)
         self.layers.blockSignals(True)
         self.layers.setRowCount(len(layers))
-        levels = self.document.project.process.levels
+        levels = project.process.levels
         for row, layer in enumerate(layers.values()):
             values = [
                 layer.name,
@@ -1634,12 +1663,34 @@ class LayerDefinitionsPanel(_Panel):
                 stack_place(levels, layer.name),
             ]
             for column, value in enumerate(values):
-                self.layers.setItem(row, column, QTableWidgetItem(_format(value)))
-            self.layers.item(row, 0).setIcon(swatch_icon(layer_color(row)))  # as in Layers
+                item = QTableWidgetItem(_format(value))
+                if not own:  # the library's: shown, not edited
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                self.layers.setItem(row, column, item)
+            self.layers.item(row, 0).setIcon(swatch_icon(colors[layer.name]))  # as in Layers
             self.layers.item(row, 3).setToolTip(
                 "A level number (1 at the bottom), a level's role (poly1.anchor), or empty"
             )
+            color = QTableWidgetItem(layer.color or "theme")
+            color.setIcon(swatch_icon(colors[layer.name]))
+            color.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            color.setToolTip(
+                "Double-click to choose its colour; right-click for the theme's"
+                if own
+                else "The library's process sets it"
+            )
+            if not layer.color:
+                color.setForeground(QBrush(theme.color("muted")))
+            self.layers.setItem(row, self.COLOR, color)
         self.layers.blockSignals(False)
+        self.library_note.setVisible(not own)
+        if not own:
+            self.library_text.setText(
+                f"These are {project.process_name}'s layers, as the library has them. "
+                "Copy the process into the project to change them."
+            )
+        for button in ("Add layer", "Remove the selected layers"):
+            self.actions.buttons[button].setEnabled(own)
         self.default_level.clear()
         self.default_level.addItems(["(the first level)", *(lv.layer for lv in levels)])
         default = self.document.project.process.default_level
@@ -1659,10 +1710,41 @@ class LayerDefinitionsPanel(_Panel):
             text.setVisible(not own)
         widgets.fit_to_rows(self.layers)
 
+    def choose_color(self, name: str, color: str | None) -> None:
+        """Draw layer ``name`` in ``color`` (``#rrggbb``; None: the theme's)."""
+        layer = self.document.project.layers[name]
+        changed = dataclasses.replace(layer, color=color)
+        if not self._guard(lambda: self.document.process.set_layer(name, changed)):
+            self.refresh()
+
+    def _cell_double_clicked(self, row: int, column: int) -> None:
+        if column != self.COLOR or self.document.project.base_process is not None:
+            return
+        from PySide6.QtWidgets import QColorDialog
+
+        from mems_sketch.gui.canvas import layer_colors
+
+        name = self._layer_names[row]
+        current = layer_colors(self.document.project.layers)[name]
+        chosen = QColorDialog.getColor(current, self, f"Colour of {name}")
+        if chosen.isValid():
+            self.choose_color(name, chosen.name())
+
+    def _context_menu(self, at) -> None:
+        index = self.layers.indexAt(at)
+        if not index.isValid() or self.document.project.base_process is not None:
+            return
+        name = self._layer_names[index.row()]
+        menu = QMenu(self)
+        menu.addAction("Choose colour…", lambda: self._cell_double_clicked(index.row(), self.COLOR))
+        theme_color = menu.addAction("Theme colour", lambda: self.choose_color(name, None))
+        theme_color.setEnabled(bool(self.document.project.layers[name].color))
+        menu.exec(self.layers.viewport().mapToGlobal(at))
+
     def _layer_changed(self, item: QTableWidgetItem) -> None:
         name = self._layer_names[item.row()]
         row = item.row()
-        texts = [self.layers.item(row, c).text().strip() for c in range(len(self.LAYER_COLUMNS))]
+        texts = [self.layers.item(row, c).text().strip() for c in range(self.COLOR)]
 
         def apply() -> None:
             if item.column() == 3:
@@ -1673,7 +1755,8 @@ class LayerDefinitionsPanel(_Panel):
                     levels, default if default in {lv.layer for lv in levels} else None
                 )
                 return
-            layer = Layer(texts[0], int(texts[1]), int(texts[2]))
+            old = self.document.project.layers[name]
+            layer = Layer(texts[0], int(texts[1]), int(texts[2]), old.color)
             self.document.process.set_layer(name, layer)
 
         if not self._guard(apply):

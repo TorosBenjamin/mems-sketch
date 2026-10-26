@@ -150,6 +150,15 @@ def layer_color(index: int) -> QColor:
     return QColor(palette[index % len(palette)])
 
 
+def layer_colors(layers) -> dict[str, QColor]:
+    """Each layer's colour (``layers``: the process's, by name): its own, else the
+    theme's for its place in the process (#307)."""
+    return {
+        name: QColor(layer.color) if getattr(layer, "color", None) else layer_color(index)
+        for index, (name, layer) in enumerate(layers.items())
+    }
+
+
 def geometry_path(geometry: Geometry, layer: str) -> QPainterPath:
     """A layer's merged polygons (with holes) as one odd-even filled painter path, in µm."""
     path = QPainterPath()

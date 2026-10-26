@@ -155,7 +155,10 @@ port to another.
 ## Libraries
 
 A library is a folder of components (any project folder works), added from
-the Components panel's **+** or listed in `project.yaml`:
+the Components panel's **+** or listed in the project's `.msketch` file.
+**+ → Add library** lists the libraries it finds, with what each one is: those
+in the project's `libraries/` folder and next to the project, and those your
+recent projects use. Type to search; **Browse…** picks any other folder.
 
 ```yaml
 libraries:
@@ -293,7 +296,8 @@ components: a library can hold processes, typically one per fab process, kept
 by whoever looks after it. The bundled `mems` library has three example
 processes; [Processes and process libraries](process-libraries.md) shows them
 and how to write your own. Choose the one the project uses under **Process**
-at the top of the tab: the project's own, or `library.process`.
+at the top of the tab: the project's own, or `library.process` (the search
+button beside it lists them with what each one is).
 
 On a library's process:
 
@@ -307,7 +311,7 @@ On a library's process:
   process of the project's own that you can change throughout.
 
 When the library's process changes, the project follows it everywhere except
-where it changed it. The changes are kept in `project.yaml`, each with its
+where it changed it. The changes are kept in the project's `.msketch` file, each with its
 reason.
 
 ### Waivers

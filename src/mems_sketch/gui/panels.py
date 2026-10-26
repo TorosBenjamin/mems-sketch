@@ -630,11 +630,36 @@ class ComponentsPanel(_Panel):
                 QTimer.singleShot(0, lambda: self.select_component(made))  # after its tab opens
 
     def add_library(self, folder: str | None = None) -> None:
-        """Load a folder of components (a library or another project) as a library."""
+        """Load a folder of components (a library or another project) as a library:
+        chosen from those found (#143), or any folder (Browse…)."""
         if folder is None:
-            folder = QFileDialog.getExistingDirectory(self, "Add library: choose its folder")
+            folder = self.choose_library()
         if folder:
             self._guard(lambda: self.document.components.add_library(folder))
+
+    def choose_library(self) -> str | None:
+        """The folder of a library to add: one found near the project or used by a
+        recent one, or (Browse…) any folder."""
+        from mems_sketch.gui.picker import Picker, library_candidates
+
+        found = library_candidates(self.document.project, self.document.path)
+        picker = Picker(
+            "Add library",
+            list(found),
+            "Search libraries",
+            browse="Browse…",
+            empty="No libraries found near the project or in recent projects: Browse… for one",
+            parent=self,
+        )
+        if not self.run_picker(picker):
+            return None
+        if picker.browsed:
+            return QFileDialog.getExistingDirectory(self, "Add library: choose its folder") or None
+        return str(found[picker.chosen]) if picker.chosen is not None else None
+
+    def run_picker(self, picker) -> bool:
+        """Show a picker (tests choose instead)."""
+        return bool(picker.exec())
 
     def import_gds(self, path: str | None = None) -> str | None:
         """Choose a layout (GDS or a geometry document) and how to import it;

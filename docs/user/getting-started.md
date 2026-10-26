@@ -12,7 +12,7 @@ pip install -e ".[gui,matlab]"     # also MATLAB .mat files
 Start the editor with `mems-sketch`, or open a project straight away:
 
 ```bash
-mems-sketch examples/resonator/project.yaml
+mems-sketch examples/resonator/resonator.msketch
 ```
 
 ![The editor with the resonator example](../images/window.png)

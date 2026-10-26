@@ -6,7 +6,7 @@ The bundled libraries are ordinary library folders in
 `src/mems_sketch/libraries/` (`mems/`, a project folder without a top
 component, see [File formats](file-formats.md)). Add a component folder in
 the category folder it belongs to (`components/springs/<name>/`) and list it in
-the library's `project.yaml`; draw on `level` and `level.anchor` rather than
+the library's manifest (`.msketch`); draw on `level` and `level.anchor` rather than
 named layers, so it works on any level of any project's layer stack. The
 engine builds it like any other component, and its parameters' limits are its
 checks. Raise the library's `version` when a change could change designs that

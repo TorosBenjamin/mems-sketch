@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-mems-sketch">
+    <comment>MEMS Sketch file</comment>
+    <sub-class-of type="application/x-yaml"/>
+    <glob pattern="*.msketch"/>
+    <magic priority="50">
+      <match type="string" value="format: mems-sketch/" offset="0:512"/>
+      <match type="string" value="kind: component" offset="0:512"/>
+      <match type="string" value="kind: process" offset="0:512"/>
+    </magic>
+    <icon name="mems-sketch"/>
+  </mime-type>
+</mime-info>

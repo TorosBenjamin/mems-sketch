@@ -119,7 +119,7 @@ def test_a_malformed_rule_names_the_file_rule_and_key(tmp_path):
     from mems_sketch.storage import load
 
     assert main(["new-process", str(tmp_path / "fab"), "--from", "mems.surface"]) == 0
-    process = tmp_path / "fab" / "processes" / "fab" / "process.yaml"
+    process = item_file(tmp_path / "fab" / "processes" / "fab", "process.yaml")
     text = process.read_text()
     text = text.replace(
         "device_min_width: {kind: min_width, layers: [device], value: 2}",
@@ -129,7 +129,7 @@ def test_a_malformed_rule_names_the_file_rule_and_key(tmp_path):
     with pytest.raises(ValueError) as error:
         load(tmp_path / "fab")
     message = str(error.value)
-    assert "process.yaml" in message and "device_min_width" in message and "'5'" in message
+    assert "fab.msketch" in message and "device_min_width" in message and "'5'" in message
 
 
 def test_rule_changes_are_local_changes(tmp_path):
@@ -187,6 +187,7 @@ from PySide6.QtWidgets import QApplication, QGroupBox, QMessageBox
 
 from mems_sketch.gui.app import MainWindow
 from mems_sketch.gui.value_edit import ValueEdit
+from mems_sketch.storage.project_files import item_file
 
 
 @pytest.fixture

@@ -40,7 +40,7 @@ ROW_HEIGHT = 52
 PIN_SIZE = 16
 WIDTH, HEIGHT = 820, 540
 SIDE_WIDTH = 210
-OPEN_FILTER = "Projects (project.yaml *.mems *.msketch);;All files (*)"
+OPEN_FILTER = "Projects (*.msketch project.yaml *.mems);;All files (*)"
 
 
 def short_path(path: str) -> str:
@@ -194,7 +194,7 @@ class WelcomeWindow(QWidget):
         self.new_button.clicked.connect(self.new_project)
         self.open_button = QPushButton("Open…")
         self.open_button.setAutoDefault(False)
-        self.open_button.setToolTip("Open a project folder, its project.yaml or a project file")
+        self.open_button.setToolTip("Open a project folder or a .msketch file")
         self.open_button.clicked.connect(self.choose)
         header = QHBoxLayout()
         header.setSpacing(8)
@@ -318,7 +318,9 @@ class WelcomeWindow(QWidget):
         folder = self.pick_folder(f"Where is {recent.name} now?")
         if not folder:
             return
-        if not (Path(folder) / "project.yaml").exists():
+        from mems_sketch.storage.project_files import is_project_folder
+
+        if not is_project_folder(folder):
             self.empty.setText(f"{folder} holds no project.")
             return
         recent_projects.locate(recent.path, folder)

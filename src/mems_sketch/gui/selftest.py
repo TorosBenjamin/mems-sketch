@@ -59,6 +59,8 @@ def run(window: bool = True) -> None:
         assert layout.cells, "the GDS file has no cells"
         say(f"GDS written and read back: {path.stat().st_size} bytes")
 
+    say(f"file types: {file_types()}")
+
     if window:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6.QtWidgets import QApplication
@@ -72,3 +74,37 @@ def run(window: bool = True) -> None:
         main.close()
         say("main window opened and closed")
     say("self-test passed")
+
+
+def file_types() -> str:
+    """Whether .msketch files are registered here (#140), as far as can be seen:
+    the macOS bundle declares the type; the Windows installer writes it to the
+    registry (the portable zip does not); on Linux the MIME type is installed.
+    Only what is found is said: a missing registration is not a failure."""
+    import sys
+    import xml.etree.ElementTree as ET
+
+    from mems_sketch.gui.associations import MIME_TYPE, MIME_XML
+
+    ET.fromstring(MIME_XML)  # what Linux gets must be valid
+    if sys.platform == "darwin" and getattr(sys, "frozen", False):
+        import plistlib
+
+        info = Path(sys.executable).resolve().parents[1] / "Info.plist"
+        if info.is_file():
+            declared = plistlib.loads(info.read_bytes()).get("UTExportedTypeDeclarations", [])
+            if not any("msketch" in str(t) for t in declared):
+                raise AssertionError("the app bundle does not declare .msketch files")
+            return ".msketch declared by the app bundle"
+    if sys.platform == "win32":
+        import winreg
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.msketch") as key:
+                return f".msketch registered as {winreg.QueryValue(key, None)}"
+        except OSError:
+            return ".msketch not registered (the portable zip registers nothing)"
+    share = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    if (share / "mime" / "packages" / "mems-sketch.xml").is_file():
+        return f"{MIME_TYPE} installed for this user"
+    return f"{MIME_TYPE} not installed (Help → Install file associations)"

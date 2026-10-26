@@ -21,7 +21,9 @@ BUNDLED_FOLDER = Path(__file__).parent
 
 def bundled_names() -> list[str]:
     """The bundled libraries' names."""
-    return sorted(p.name for p in BUNDLED_FOLDER.iterdir() if (p / "project.yaml").is_file())
+    from mems_sketch.storage.project_files import is_project_folder
+
+    return sorted(p.name for p in BUNDLED_FOLDER.iterdir() if p.is_dir() and is_project_folder(p))
 
 
 @functools.cache

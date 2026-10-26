@@ -5,7 +5,7 @@ import pytest
 from mems_sketch import Layer, Project, load, load_library, save
 from mems_sketch.core.process import Rule, default_process
 from mems_sketch.editing import EditSession
-from mems_sketch.storage.project_files import ProjectFormatError
+from mems_sketch.storage.project_files import ProjectFormatError, item_file, manifest_file
 
 
 def fab_library(folder) -> Project:
@@ -36,7 +36,7 @@ def test_a_library_shares_its_process(tmp_path):
         "fab.surface",
     ]
     save(project, tmp_path / "chip")
-    manifest = (tmp_path / "chip" / "project.yaml").read_text()
+    manifest = (manifest_file(tmp_path / "chip")).read_text()
     assert "process: fab.surface\n" in manifest and "overrides" not in manifest
     assert not (tmp_path / "chip" / "processes").exists()
     assert load(tmp_path / "chip") == project
@@ -50,7 +50,7 @@ def test_changes_are_saved_as_overrides_and_the_rest_follows_the_library(tmp_pat
     project.process.add_rule(Rule("metal_space", "min_space", ["metal"], {"value": 5}))
     project.reasons["device_min_width"] = "test structures"
     save(project, tmp_path / "chip")
-    manifest = (tmp_path / "chip" / "project.yaml").read_text()
+    manifest = (manifest_file(tmp_path / "chip")).read_text()
     assert "overrides:\n  constants: {undercut: 3}\n" in manifest
     assert "device_min_width: {value: 1.5, reason: test structures}" in manifest
     assert "device_release: {enabled: false}" in manifest
@@ -109,7 +109,7 @@ def test_switching_between_processes(tmp_path):
 def test_overrides_need_what_they_change(tmp_path):
     project = using(tmp_path)
     save(project, tmp_path / "chip")
-    manifest = tmp_path / "chip" / "project.yaml"
+    manifest = manifest_file(tmp_path / "chip")
     text = manifest.read_text()
     manifest.write_text(text + "overrides:\n  rules:\n    nothing: {value: 1}\n")
     with pytest.raises(ProjectFormatError, match="no rule 'nothing'"):
@@ -132,7 +132,9 @@ def test_a_document_keeps_the_process_and_its_overrides(tmp_path):
 def test_the_grid_is_saved_with_the_process_only_when_it_is_not_the_default(tmp_path):
     project = Project(name="chip")
     save(project, tmp_path / "a")
-    assert "grid" not in (tmp_path / "a" / "processes" / "main" / "process.yaml").read_text()
+    assert (
+        "grid" not in (item_file(tmp_path / "a" / "processes" / "main", "process.yaml")).read_text()
+    )
     project.process.grid_um, project.process.chord_um = 0.002, 0.01
     save(project, tmp_path / "b")
     again = load(tmp_path / "b")
@@ -142,7 +144,7 @@ def test_the_grid_is_saved_with_the_process_only_when_it_is_not_the_default(tmp_
 def test_a_grid_that_is_not_a_positive_length_is_refused(tmp_path):
     project = Project(name="chip")
     save(project, tmp_path / "a")
-    path = tmp_path / "a" / "processes" / "main" / "process.yaml"
+    path = item_file(tmp_path / "a" / "processes" / "main", "process.yaml")
     path.write_text(path.read_text() + "grid: -1\n")
     with pytest.raises(ProjectFormatError, match="positive length"):
         load(tmp_path / "a")

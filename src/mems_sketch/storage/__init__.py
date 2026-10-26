@@ -1,6 +1,7 @@
 """Loading and saving projects.
 
-``load`` accepts a project folder, its ``project.yaml``, a one-file project
+``load`` accepts a project folder, its project file (``.msketch``, or
+``project.yaml`` before #139) or a component's or process's file in it, a one-file project
 document (``.json``, ``.xml``, ``.mat``, ``.yaml``: see ``storage/document.py``)
 or a legacy ``*.mems`` design. ``save`` writes a project folder;
 ``save`` to a document's name (``design.json``) writes that document.
@@ -13,7 +14,7 @@ from pathlib import Path
 from mems_sketch.core.project import Project
 from mems_sketch.storage.document import is_document, read_project, write_project
 from mems_sketch.storage.legacy_sqlite import load_legacy
-from mems_sketch.storage.project_files import load_library, load_project, save_project
+from mems_sketch.storage.project_files import EXTENSION, load_library, load_project, save_project
 
 LAYOUT_SUFFIXES = (".gds", ".gds2", ".gdsii", ".oas", ".dxf")
 
@@ -29,8 +30,10 @@ def load(path: str | Path) -> Project:
             f"'{path}' is a layout, not a project: import it into a project "
             "(File → Import… in the editor) to use it"
         )
-    if path.is_file() and path.name != "project.yaml":
-        raise ValueError(f"'{path}' is not a project: open a project folder or its project.yaml")
+    if path.is_file() and path.name != "project.yaml" and path.suffix != EXTENSION:
+        raise ValueError(
+            f"'{path}' is not a project: open a project folder or its {EXTENSION} file"
+        )
     return load_project(path)
 
 

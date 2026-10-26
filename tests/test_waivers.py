@@ -8,6 +8,7 @@ from mems_sketch.cli import main
 from mems_sketch.editing import EditSession
 from mems_sketch.process import rules
 from mems_sketch.storage import load
+from mems_sketch.storage.project_files import item_file
 
 
 @pytest.fixture
@@ -73,7 +74,7 @@ def test_waivers_need_a_reason_and_a_place(doc):
 def test_waivers_are_saved_with_the_component(doc, tmp_path, capsys):
     doc.process.waive(narrow(doc), "test structure")
     doc.save(tmp_path / "p")
-    text = (tmp_path / "p" / "components" / "top" / "component.yaml").read_text()
+    text = (item_file(tmp_path / "p" / "components" / "top", "component.yaml")).read_text()
     assert "waivers:\n- rule: device_min_width\n" in text and "reason: test structure" in text
     assert load(tmp_path / "p").components["top"].waivers == doc.project.components["top"].waivers
     assert main(["check", str(tmp_path / "p")]) == 0

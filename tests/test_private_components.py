@@ -7,6 +7,7 @@ from mems_sketch.core.shapes import RectShape, RefShape
 from mems_sketch.core.user_component import ComponentDef
 from mems_sketch.editing import EditSession
 from mems_sketch.storage import load, save
+from mems_sketch.storage.project_files import item_file
 
 
 def rect(size=2.0):
@@ -201,8 +202,8 @@ def test_unpacking_a_component_that_places_private_ones_is_refused(doc):
 def test_private_components_are_saved_in_their_owners_folder(doc, tmp_path):
     save(doc.project, tmp_path / "p")
     comb = tmp_path / "p" / "components" / "comb"
-    assert (comb / "finger" / "component.yaml").is_file()
-    assert "private: {finger: finger}" in (comb / "component.yaml").read_text()
+    assert (item_file(comb / "finger", "component.yaml")).is_file()
+    assert "private: {finger: finger}" in (item_file(comb, "component.yaml")).read_text()
     again = load(tmp_path / "p")
     assert set(again.components) == {"top", "comb", "comb/finger"}
     assert again.components["comb/finger"].name == "comb/finger"
@@ -210,7 +211,7 @@ def test_private_components_are_saved_in_their_owners_folder(doc, tmp_path):
     again.move_component("comb/finger", "finger")
     save(again, tmp_path / "p")
     assert not (comb / "finger").exists()  # emptied and removed
-    assert (tmp_path / "p" / "components" / "finger" / "component.yaml").is_file()
+    assert (item_file(tmp_path / "p" / "components" / "finger", "component.yaml")).is_file()
 
 
 def test_a_new_private_component_cannot_hide_one_placed_there():

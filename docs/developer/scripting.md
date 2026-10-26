@@ -55,7 +55,7 @@ save(project, "my_resonator")  # a project folder (or "my_resonator.json": one f
 export(project, "my_resonator.gds")
 ```
 
-- `load` takes a project folder, its `project.yaml`, a one-file project
+- `load` takes a project folder, any of its `.msketch` files, a one-file project
   (`.json`, `.xml`, `.mat`, `.yaml`) or a legacy `.mems` file.
 - `project.render(component=None, params=None)` returns the `Geometry` (a `Region`
   per layer, on the 1 nm grid); `export(project, path, component=…, params=…)`

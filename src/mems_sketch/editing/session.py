@@ -59,7 +59,7 @@ from mems_sketch.editing.results import Results
 from mems_sketch.engine import Engine
 from mems_sketch.export.base import export_with_report
 from mems_sketch.storage import is_copy, is_document, load, save
-from mems_sketch.storage.project_files import PROJECT_FILE, load_library, project_folder
+from mems_sketch.storage.project_files import is_project_folder, load_library, project_folder
 
 UNDO_LIMIT = 200
 
@@ -111,7 +111,7 @@ class EditSession:
 
     @classmethod
     def open_project(cls, path: str | Path) -> EditSession:
-        """A session on the project at ``path``: a folder, its project.yaml or a .mems file."""
+        """A session on the project at ``path``: a folder, its project file or a .mems file."""
         session = cls()
         session.open(path)
         return session
@@ -240,7 +240,7 @@ class EditSession:
         folder = Path(folder)
         if not name.strip():
             raise ValueError("the project needs a name")
-        if (folder / PROJECT_FILE).exists():
+        if is_project_folder(folder):
             raise ValueError(f"{folder} already holds a project")
         if folder.exists() and not folder.is_dir():
             raise ValueError(f"{folder} is a file, not a folder")
@@ -263,7 +263,8 @@ class EditSession:
         return self.save(folder)
 
     def open(self, path: str | Path) -> None:
-        """Open a project folder, its project.yaml, or a legacy .mems file."""
+        """Open a project folder, its project file (or a component's or process's
+        ``.msketch`` file in it), or a legacy .mems file."""
         path = Path(path)
         project = load(path)
         if is_copy(path):  # a legacy design or a one-file document: saved as a folder
@@ -288,6 +289,26 @@ class EditSession:
         self._set_dirty(False)
         self.changed.emit()  # tabs drop their "modified" marks
         return target
+
+    def has_old_file_names(self) -> bool:
+        """Whether the project's folder has the file names from before #139
+        (``project.yaml``): :meth:`use_msketch_names` gives it the new ones."""
+        from mems_sketch.storage.project_files import PROJECT_FILE
+
+        return self.path is not None and (self.path / PROJECT_FILE).is_file()
+
+    def use_msketch_names(self) -> list[tuple[Path, Path]]:
+        """Save, then rename the project's files to ``.msketch`` names (#139):
+        (old, new) for each; in git the change shows as renames to commit."""
+        from mems_sketch.storage.project_files import use_msketch_names
+
+        if self.path is None:
+            raise ValueError("the project is not saved in a folder yet")
+        if self.dirty:
+            self.save()
+        renamed = use_msketch_names(self.path)
+        self.changed.emit()
+        return renamed
 
     def export(
         self, path: str | Path, format_name: str | None = None, options: dict | None = None
@@ -511,4 +532,4 @@ def _holds_another_project(target: Path, own: Path | None) -> bool:
         return False
     if is_document(target):
         return target.exists()
-    return (target / PROJECT_FILE).exists()
+    return is_project_folder(target)

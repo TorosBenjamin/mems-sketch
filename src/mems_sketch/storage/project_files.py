@@ -4,19 +4,28 @@ Layout (the names of files and folders are only where things are; what they
 are called is in the files)::
 
     my_project/
-      project.yaml          the manifest: format, name, top component (null for a
+      my_project.msketch    the manifest: format, name, top component (null for a
                             library), libraries, the process used (and the
                             project's changes to a library's), processes,
                             shared components, imported cells
-      processes/main/process.yaml
+      processes/main/main.msketch
       components/
-        top/component.yaml  one folder per component
-        comb/component.yaml
-        comb/finger/component.yaml   private to comb (comb lists it)
+        top/top.msketch     one folder per component
+        comb/comb.msketch
+        comb/finger/finger.msketch   private to comb (comb lists it)
       imports/
         padframe.gds        a copy of each imported file (see core/imports.py)
 
-``project.yaml``::
+**One extension, ``.msketch``, for every file** (#139), so that each can be
+double-clicked: what a file is, its contents say. A manifest starts with
+``format:``; a component's file with ``kind: component``, a process's with
+``kind: process``. They are YAML. Projects written before have
+``project.yaml``, ``components/top/component.yaml`` and
+``processes/main/process.yaml``: those still load, and saving keeps the names
+a project has (:func:`use_msketch_names` renames them). A folder with both
+names for one file is an error.
+
+The manifest::
 
     format: mems-sketch/2
     name: resonator
@@ -77,6 +86,9 @@ from mems_sketch.storage.component_format import component_data, component_from_
 FORMAT = "mems-sketch/2"
 BUNDLED = "bundled"
 CATEGORY_FILE = "category.yaml"
+EXTENSION = ".msketch"  # every file a project writes (#139)
+COMPONENT_KIND, PROCESS_KIND = "component", "process"  # the header of their files
+# The names before #139, still read (and kept by a project that has them).
 PROJECT_FILE = "project.yaml"
 PROCESS_FILE = "process.yaml"
 COMPONENT_FILE = "component.yaml"
@@ -96,25 +108,148 @@ class MissingLibraryError(ProjectFormatError):
 
     def __init__(self, name: str, folder: Path) -> None:
         super().__init__(
-            f"library '{name}': {folder} is not a project or library folder (no {PROJECT_FILE})"
+            f"library '{name}': {folder} is not a project or library folder "
+            f"(no *{EXTENSION} or {PROJECT_FILE} in it)"
         )
         self.name, self.folder = name, folder
 
 
+# -- which file is which (#139) ----------------------------------------------------
+
+
+def file_kind(path: str | Path) -> str | None:
+    """What a project file is, by its contents: ``project`` (a manifest; a library
+    is one too), ``component`` or ``process``; None for anything else."""
+    path = Path(path)
+    try:
+        data = yaml_format.load(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - not readable as YAML: not one of ours
+        return None
+    if not isinstance(data, dict):
+        return None
+    if str(data.get("format", "")).startswith("mems-sketch/") and "kind" not in data:
+        return "project"  # (of any version: loading says when it is not this one)
+    if data.get("kind") in (COMPONENT_KIND, PROCESS_KIND):
+        return str(data["kind"])
+    if path.name == COMPONENT_FILE:
+        return COMPONENT_KIND
+    if path.name == PROCESS_FILE:
+        return PROCESS_KIND
+    return None
+
+
+def manifest_files(folder: str | Path) -> list[Path]:
+    """The manifests in ``folder``: its ``project.yaml`` and the ``.msketch`` files
+    that are manifests (there should be one)."""
+    folder = Path(folder)
+    found = [folder / PROJECT_FILE] if (folder / PROJECT_FILE).is_file() else []
+    if folder.is_dir():
+        found += sorted(p for p in folder.glob(f"*{EXTENSION}") if file_kind(p) == "project")
+    return found
+
+
+def manifest_file(folder: str | Path) -> Path:
+    """The project's manifest in ``folder``; an error when there is none, or more
+    than one."""
+    folder = Path(folder)
+    found = manifest_files(folder)
+    if not found:
+        raise ProjectFormatError(f"{folder} has no project file (*{EXTENSION} or {PROJECT_FILE})")
+    if len(found) > 1:
+        names = " and ".join(p.name for p in found)
+        raise ProjectFormatError(f"{folder} has {names}: keep one project file")
+    return found[0]
+
+
+def is_project_folder(folder: str | Path) -> bool:
+    """Whether ``folder`` holds a project (or library): a manifest of either name."""
+    return bool(manifest_files(folder))
+
+
+def item_file(directory: Path, old_name: str) -> Path:
+    """The file of a component or process in ``directory``: ``<directory>.msketch``
+    (or, in a folder renamed since, its one ``.msketch`` file of that kind), or
+    ``old_name`` (``component.yaml``) for one written before #139; an error when
+    there are two. When there is none, ``<directory>.msketch`` (what to write)."""
+    kind = COMPONENT_KIND if old_name == COMPONENT_FILE else PROCESS_KIND
+    new, old = directory / f"{directory.name}{EXTENSION}", directory / old_name
+    found = [new] if new.is_file() else []
+    if not found and directory.is_dir():
+        found = [p for p in sorted(directory.glob(f"*{EXTENSION}")) if file_kind(p) == kind]
+    if old.is_file():
+        found.append(old)
+    if len(found) > 1:
+        names = " and ".join(p.name for p in found)
+        raise ProjectFormatError(f"{directory} has {names}: keep one {kind} file")
+    return found[0] if found else new
+
+
+def _uses_msketch(folder: Path) -> bool:
+    """Whether a project in ``folder`` is written with ``.msketch`` names: a new one
+    is; one with a ``project.yaml`` keeps its names."""
+    return not (folder / PROJECT_FILE).is_file()
+
+
+def _manifest_target(folder: Path) -> Path:
+    """Where saving writes the manifest: the one there is, else ``<folder>.msketch``."""
+    found = manifest_files(folder)
+    if len(found) > 1:
+        manifest_file(folder)  # the error
+    return found[0] if found else folder / f"{folder.name}{EXTENSION}"
+
+
+def use_msketch_names(folder: str | Path) -> list[tuple[Path, Path]]:
+    """Rename a project's files to ``.msketch`` names (#139): the manifest to
+    ``<folder>.msketch``, each component's and process's file to its folder's
+    name, with their ``kind:`` header. Returns what was renamed (old, new)."""
+    folder = Path(folder)
+    old_manifest = folder / PROJECT_FILE
+    if not old_manifest.is_file():
+        return []
+    manifest = _manifest(folder)
+    moves: list[tuple[Path, Path, str | None]] = [
+        (old_manifest, folder / f"{folder.name}{EXTENSION}", None)
+    ]
+    for rel in (manifest.get("processes") or {}).values():
+        directory = folder / str(rel)
+        moves.append(
+            (directory / PROCESS_FILE, directory / f"{directory.name}{EXTENSION}", PROCESS_KIND)
+        )
+    for path in sorted((folder / COMPONENTS_DIR).rglob(COMPONENT_FILE)):
+        moves.append((path, path.parent / f"{path.parent.name}{EXTENSION}", COMPONENT_KIND))
+    for old, new, _ in moves:
+        if old.is_file() and new.exists():
+            raise ProjectFormatError(f"{new} exists already: nothing was renamed")
+    renamed = []
+    for old, new, kind in moves:
+        if not old.is_file():
+            continue
+        if kind is None:
+            os.replace(old, new)
+        else:
+            data = _read(old) or {}
+            _write(new, yaml_format.dump({"kind": kind, **data}))
+            old.unlink()
+        renamed.append((old, new))
+    return renamed
+
+
 def relocate_library(project: str | Path, name: str, folder: str | Path) -> None:
-    """Point the project in ``project`` (its folder or project.yaml) at ``folder`` for
+    """Point the project in ``project`` (its folder or manifest) at ``folder`` for
     its library ``name``: written relative to the project, as saving does."""
     project = project_folder(project)
     folder = Path(folder)
-    if not (folder / PROJECT_FILE).is_file():
-        raise ProjectFormatError(f"{folder} is not a project or library folder (no {PROJECT_FILE})")
+    if not is_project_folder(folder):
+        raise ProjectFormatError(
+            f"{folder} is not a project or library folder (no *{EXTENSION} or {PROJECT_FILE})"
+        )
     manifest = _manifest(project)
     libraries = manifest.get("libraries") or {}
     if name not in libraries:
         raise ProjectFormatError(f"the project lists no library '{name}'")
     libraries[name] = _relative(folder, project)
     manifest["libraries"] = libraries
-    _write(project / PROJECT_FILE, yaml_format.dump(manifest))
+    _write(manifest_file(project), yaml_format.dump(manifest))
 
 
 # -- saving ----------------------------------------------------------------
@@ -141,28 +276,56 @@ def save_project(project: Project, folder: str | Path) -> Path:
     }
     if project.imports:
         manifest["imports"] = imports_data(project)
-    _write(folder / PROJECT_FILE, yaml_format.dump(_without_empty(manifest)))
+    msketch = _uses_msketch(folder)
+    _write(_manifest_target(folder), yaml_format.dump(_without_empty(manifest)))
     _save_imports(project, folder / IMPORTS_DIR, owned)
     written = set()
     for name, process in project.processes.items():
-        path = folder / PROCESSES_DIR / name / PROCESS_FILE
+        directory = folder / PROCESSES_DIR / name
+        path = _item_target(directory, PROCESS_FILE, msketch)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _write(path, yaml_format.dump(process_data(process)))
+        data = process_data(process)
+        _write(path, yaml_format.dump({"kind": PROCESS_KIND, **data} if _is_new(path) else data))
         written.add(path)
     for name, definition in project.components.items():
-        path = folder / component_folder(project.components, name) / COMPONENT_FILE
+        directory = folder / component_folder(project.components, name)
+        path = _item_target(directory, COMPONENT_FILE, msketch)
         path.parent.mkdir(parents=True, exist_ok=True)
         private = {child: child for child in private_names(project.components, name)}
-        _write(path, yaml_format.dump(component_data(definition, private)))
+        data = component_data(definition, private)
+        _write(path, yaml_format.dump({"kind": COMPONENT_KIND, **data} if _is_new(path) else data))
         written.add(path)
     for directory, file in ((COMPONENTS_DIR, COMPONENT_FILE), (PROCESSES_DIR, PROCESS_FILE)):
-        for stale in (folder / directory).rglob(file):
+        for stale in _item_files(folder / directory, file):
             if stale not in written and _is_in(stale, owned):
                 stale.unlink()
         for empty in sorted((folder / directory).rglob("*"), reverse=True):  # deepest first
             if empty.is_dir() and not any(empty.iterdir()):
                 empty.rmdir()
     return folder
+
+
+def _item_target(directory: Path, old_name: str, msketch: bool) -> Path:
+    """Where saving writes a component's or process's file: the one there is, else
+    the project's kind of name."""
+    found = item_file(directory, old_name)
+    if found.is_file():
+        return found
+    return directory / f"{directory.name}{EXTENSION}" if msketch else directory / old_name
+
+
+def _is_new(path: Path) -> bool:
+    return path.suffix == EXTENSION
+
+
+def _item_files(root: Path, old_name: str) -> list[Path]:
+    """The component (or process) files below ``root``, of either name."""
+    if not root.is_dir():
+        return []
+    kind = COMPONENT_KIND if old_name == COMPONENT_FILE else PROCESS_KIND
+    found = list(root.rglob(old_name))
+    found += [p for p in root.rglob(f"*{EXTENSION}") if file_kind(p) == kind]
+    return sorted(found)
 
 
 def component_folder(components: dict[str, ComponentDef], name: str) -> str:
@@ -177,12 +340,13 @@ def written_by_project(path: str) -> bool:
     """Whether a file (its path in the project folder, with ``/``) is one a project
     writes: the manifest, a component's or a process's file, or an imported file."""
     parts = path.split("/")
-    if parts == [PROJECT_FILE]:
-        return True
+    if len(parts) == 1:
+        return parts[0] == PROJECT_FILE or parts[0].endswith(EXTENSION)
+    own = len(parts) >= 3 and parts[-1] == f"{parts[-2]}{EXTENSION}"  # comb/comb.msketch
     if parts[0] == COMPONENTS_DIR:
-        return parts[-1] == COMPONENT_FILE
+        return parts[-1] == COMPONENT_FILE or own
     if parts[0] == PROCESSES_DIR:
-        return parts[-1] == PROCESS_FILE
+        return parts[-1] == PROCESS_FILE or own
     return parts[0] == IMPORTS_DIR and len(parts) == 2
 
 
@@ -543,12 +707,50 @@ def _relative(path: Path | None, folder: Path) -> str:
 
 
 def project_folder(path: str | Path) -> Path:
+    """The project folder ``path`` names: the folder, its manifest, or a component's
+    or process's file in it (the folder up from there with a manifest)."""
     path = Path(path)
-    return path.parent if path.name == PROJECT_FILE else path
+    if path.name == PROJECT_FILE or (path.suffix == EXTENSION and file_kind(path) == "project"):
+        return path.parent
+    if path.is_file() and file_kind(path) in (COMPONENT_KIND, PROCESS_KIND):
+        for folder in path.parents:
+            if is_project_folder(folder):
+                return folder
+        raise ProjectFormatError(f"{path} is not in a project folder")
+    return path
+
+
+def locate(path: str | Path) -> tuple[Path, str, str | None]:
+    """What opening ``path`` opens (#139): (the project folder, what the file is,
+    and the component or process it names, if it is one's file). A folder or a
+    manifest is ``project``."""
+    path = Path(path)
+    folder = project_folder(path)
+    kind = "project" if path.is_dir() else file_kind(path) or "project"
+    if kind not in (COMPONENT_KIND, PROCESS_KIND):
+        return folder, "project", None
+    manifest = _manifest(folder)
+    key = "components" if kind == COMPONENT_KIND else "processes"
+    here = path.parent.resolve()
+
+    def found(entries: dict, where: Path, prefix: str = "") -> str | None:
+        for name, rel in entries.items():
+            directory = (where / str(rel)).resolve()
+            if directory == here:
+                return f"{prefix}{name}"
+            if kind == COMPONENT_KIND and here.is_relative_to(directory):
+                data = _read(item_file(directory, COMPONENT_FILE)) or {}
+                inner = found(data.get("private") or {}, directory, f"{prefix}{name}/")
+                if inner is not None:
+                    return inner
+        return None
+
+    return folder, kind, found(manifest.get(key) or {}, folder)
 
 
 def load_project(path: str | Path, libraries_from: str | Path | None = None) -> Project:
-    """Load a project from its folder or its ``project.yaml``.
+    """Load a project from its folder, its manifest, or a file of one of its
+    components or processes.
 
     Libraries are found relative to ``libraries_from`` if given (a copy of a
     project, e.g. an earlier version from git, uses the real project's)."""
@@ -562,10 +764,10 @@ def load_project(path: str | Path, libraries_from: str | Path | None = None) -> 
     }
     top = manifest.get("top")  # null: a library, with no top component
     if top is not None and top not in components:
-        raise ProjectFormatError(f"the top component '{top}' is not listed in {PROJECT_FILE}")
+        raise ProjectFormatError(f"the top component '{top}' is not listed in the project file")
     process_name = str(manifest.get("process") or MAIN_PROCESS)
     if "." not in process_name and process_name not in processes:
-        raise ProjectFormatError(f"the process '{process_name}' is not listed in {PROJECT_FILE}")
+        raise ProjectFormatError(f"the process '{process_name}' is not listed in the project file")
     project = Project(
         name=str(manifest.get("name", folder.name)),
         components=components,
@@ -587,7 +789,7 @@ def load_project(path: str | Path, libraries_from: str | Path | None = None) -> 
 def load_library(name: str, folder: str | Path) -> Library:
     """A project folder as a library: its components and processes, read-only."""
     folder = Path(folder)
-    if not (folder / PROJECT_FILE).is_file():
+    if not is_project_folder(folder):
         raise MissingLibraryError(name, folder)
     manifest = _manifest(folder)
     processes, components, _ = _contents(folder, manifest)
@@ -626,9 +828,12 @@ def _categories(components_dir: Path) -> dict[str, dict[str, Any]]:
 
 
 def _manifest(folder: Path) -> dict[str, Any]:
-    manifest = _read(folder / PROJECT_FILE)
+    if not manifest_files(folder) and not (folder / PROJECT_FILE).exists():
+        raise ProjectFormatError(f"missing {folder / PROJECT_FILE}")  # nothing there at all
+    path = manifest_file(folder)
+    manifest = _read(path)
     if not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
-        raise ProjectFormatError(f"{folder / PROJECT_FILE} is not a {FORMAT} project file")
+        raise ProjectFormatError(f"{path} is not a {FORMAT} project file")
     return manifest
 
 
@@ -638,16 +843,18 @@ def _contents(
     """The processes and components a manifest lists, and notes on component and
     process files it does not."""
     processes = {}
+    process_files = set()
     for name, rel in (manifest.get("processes") or {}).items():
-        path = folder / str(rel) / PROCESS_FILE
+        path = item_file(folder / str(rel), PROCESS_FILE)
+        process_files.add(path)
         try:
-            processes[str(name)] = process_from_data(_read(path) or {})
+            processes[str(name)] = process_from_data(_without_kind(_read(path), path, PROCESS_KIND))
         except (ProjectFormatError, ValueError, TypeError) as error:  # say which file
             raise ProjectFormatError(f"{path}: {error}") from None
 
     def open_component(rel: Any, where: Path) -> tuple[Any, Path]:
-        path = where / str(rel) / COMPONENT_FILE
-        return _read(path), path.parent
+        path = item_file(where / str(rel), COMPONENT_FILE)
+        return _without_kind(_read(path), path, COMPONENT_KIND), path.parent
 
     entries = manifest.get("components") or {}
     components, files = read_components(entries, open_component, folder)
@@ -655,17 +862,28 @@ def _contents(
         parts = Path(str(rel)).parts
         if len(parts) > 2 and parts[0] == COMPONENTS_DIR and parts[-1] == str(name):
             components[str(name)].category = "/".join(parts[1:-1])
-    files |= {
-        folder / str(rel) / PROCESS_FILE for rel in (manifest.get("processes") or {}).values()
-    }
+    files |= process_files
     listed = {f.resolve() for f in files}
     notes = [
         f"{path.relative_to(folder).as_posix()} is not listed, so it was not loaded"
-        for pattern in (COMPONENT_FILE, PROCESS_FILE)
-        for path in sorted(folder.rglob(pattern))
+        for directory, old_name in ((COMPONENTS_DIR, COMPONENT_FILE), (PROCESSES_DIR, PROCESS_FILE))
+        for path in _item_files(folder / directory, old_name)
         if path.resolve() not in listed and ".mems-sketch" not in path.parts
     ]
     return processes, components, notes
+
+
+def _without_kind(data: Any, path: Path, kind: str) -> Any:
+    """A component's or process's file without its ``kind:`` header, which must say
+    what is expected (a ``.msketch`` file must have it)."""
+    if not isinstance(data, dict):
+        return data
+    found = data.get("kind")
+    if found is None and path.suffix == EXTENSION:
+        raise ProjectFormatError(f"{path} does not say what it is (kind: {kind})")
+    if found is not None and found != kind:
+        raise ProjectFormatError(f"{path} is a {found} file, not a {kind}'s")
+    return {k: v for k, v in data.items() if k != "kind"}
 
 
 def read_components(
@@ -682,11 +900,13 @@ def read_components(
             raise ProjectFormatError(f"'{name}' is not a valid component name")
         data, here = open_entry(entry, where)
         if isinstance(here, Path):
-            files.add(here / COMPONENT_FILE)
+            files.add(item_file(here, COMPONENT_FILE))
         try:
             definition, private = component_from_data(name, data)
         except Exception as exc:
-            where_text = here / COMPONENT_FILE if isinstance(here, Path) else f"component '{name}'"
+            where_text = (
+                item_file(here, COMPONENT_FILE) if isinstance(here, Path) else f"component '{name}'"
+            )
             raise ProjectFormatError(f"{where_text}: {exc}") from exc
         components[name] = definition
         for child, child_entry in private.items():

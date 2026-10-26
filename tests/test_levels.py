@@ -6,7 +6,7 @@ from mems_sketch import ComponentDef, Layer, LayerMapShape, Project, RectShape, 
 from mems_sketch.core.levels import Stack, is_relative
 from mems_sketch.core.process import Level
 from mems_sketch.editing import EditSession
-from mems_sketch.storage.project_files import ProjectFormatError
+from mems_sketch.storage.project_files import ProjectFormatError, item_file
 
 STACK = [
     Level("poly0", {"anchor": "anchor0"}),
@@ -119,7 +119,7 @@ def test_the_stack_is_saved_and_checked_on_load(tmp_path):
     loaded = load(tmp_path / "p")
     assert loaded.process.levels == STACK
     assert loaded.process.default_level == "poly1"
-    path = tmp_path / "p" / "processes" / "main" / "process.yaml"
+    path = item_file(tmp_path / "p" / "processes" / "main", "process.yaml")
     text = path.read_text()
     path.write_text(text.replace("via: via12", "via: nothing", 1))
     with pytest.raises(ProjectFormatError, match="'nothing'"):

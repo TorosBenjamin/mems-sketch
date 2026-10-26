@@ -418,6 +418,8 @@ def _check_rule(name, rule, kinds, geometry, project, scope, scope_error) -> lis
     regions = [geometry.layers.get(n, Region()) for n in rule.layers]
     # A kind that compares sizes may allow for rounding onto the process's grid.
     extra = {"grid": project.process.grid_um} if _takes(kind, "grid") else {}
+    if _takes(kind, "extent"):  # a density: of the box around the whole component
+        extra["extent"] = geometry.bbox()
     key = (
         rule.kind,
         type(kind),

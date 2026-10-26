@@ -103,7 +103,12 @@ def test_the_grid_is_a_whole_multiple_of_1_nm(resonator, tmp_path):
 
 
 def test_builtin_formats_declare_options():
-    assert [o.name for o in options_of(GdsExporter)] == ["grid_um", "chord_um", "top_cell"]
+    assert [o.name for o in options_of(GdsExporter)] == [
+        "grid_um",
+        "chord_um",
+        "top_cell",
+        "keep_hierarchy",
+    ]
     assert base.title_of(GdsExporter) == "GDSII"
 
 
@@ -168,9 +173,11 @@ def test_the_curve_tolerance_sets_how_finely_curves_are_written(resonator, tmp_p
     def points(chord):
         path = export(resonator, tmp_path / f"c{chord}.gds", options={"chord_um": chord})
         layout = read_gds(path)
-        cell = layout.cells[layout.top_cells()[0]]
-        return sum(
-            len(p.hull) + sum(len(h) for h in p.holes) for ps in cell.polygons.values() for p in ps
+        top = layout.top_cells()[0]
+        return sum(  # the cells it places included (#74)
+            len(p.hull) + sum(len(h) for h in p.holes)
+            for layer in layout.layers_in(top)
+            for p in layout.flat(top, layer)
         )
 
     assert points(0.5) < points(0.005)  # the release holes: fewer, longer segments

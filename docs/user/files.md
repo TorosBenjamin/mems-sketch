@@ -143,7 +143,14 @@ mems-sketch-cli mcp     [my_project]                         # for AI assistants
   be repeated; `formats` lists them. GDSII, OASIS and DXF take `grid_um`, the
   file's grid (a whole multiple of 1 nm), `chord_um`, the curve tolerance
   (both default to the process's; `grid` and `chord` work too, as the
-  process calls them), and `top_cell`, the top cell's name. What
+  process calls them), `top_cell`, the top cell's name (default: the
+  exported component's), and `keep_hierarchy` (default on). With the
+  hierarchy, each placed component is a cell of its own, named after it
+  (`mems.anchor` is `mems_anchor`), placed by reference, and copies on a
+  regular grid (an array) are one array reference; each cell is rounded onto
+  the grid once, in its own frame, and a placement that would put it off the
+  grid (turned by other than a quarter, or moved off the grid) is flattened
+  into its parent instead. Off, the file has one flat cell. What
   rounding onto the grid changed in the shape of the design is printed after
   the file is written. **File → Export…** asks for the same settings and
   remembers, per project and format, the ones you changed from the

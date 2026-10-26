@@ -792,6 +792,7 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
             for (const auto& polygon : polygons) layers.add(layer, region_of(polygon));
         auto built = std::make_shared<Built>();
         built->key = "import:" + project_.fingerprint(qualified);
+        built->component = qualified;
         built->layers = layers.merged();
         built->box = bbox_of(built->layers);
         return imported_.emplace(qualified, std::move(built)).first->second;
@@ -827,6 +828,7 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
     auto made = std::make_shared<Built>();
     Built& built = *made;
     built.key = key;
+    built.component = qualified;
     built.layers = std::move(rendered.layers.front());
     built.instances = std::move(rendered.instances.front());
     built.box = bbox_of(built.layers, built.instances);

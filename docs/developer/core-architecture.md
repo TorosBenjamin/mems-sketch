@@ -333,8 +333,12 @@ OCC's own BREP and STEP. This is how export already works, and it stays:
   into flags, so neither has code for a particular format.
 - **Every export to a grid returns the snapping report** (requirements
   OUT-3), which the GUI shows and the CLI prints.
-- **Layouts keep the hierarchy** (OUT-4). `export/cells.py` writes a
-  library cell to GDS, OASIS or DXF: each cell once, arrays as array
+- **Layouts keep the hierarchy** (OUT-4). `export/hierarchy.py` writes a
+  component as the engine's cells (`Build.cells`): a cell per component it
+  places whole, named after it, rounded once onto the grid in its own frame
+  by the engine, copies on a regular grid as one array reference, and a
+  placement that would put a cell off the grid flattened into its parent.
+  `export/cells.py` does the same for a geometry library cell: each cell once, arrays as array
   references, each cell's geometry snapped in its own frame. A placement
   stays a reference only if it maps the grid onto itself (no scaling, a
   quarter turn, an offset and array steps on the grid); otherwise it is

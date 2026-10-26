@@ -244,9 +244,12 @@ the value (`2`); one with several, `name=value` separated by commas.
 | Minimum width, spacing | one | nothing narrower or closer than `value` |
 | Maximum width | one | nothing wider than `value` |
 | Minimum area, hole area | one | no piece (hole) smaller than `value` µm² |
+| Minimum angle | one | no corner of the material sharper than `angle` degrees (spikes that etch away or break off) |
+| Density | one | the layer covers between `minimum` and `maximum` percent of the component's extent, or of every `window` µm square of it (0: the whole extent) |
 | Number of pieces | one | the layer is `pieces` separate pieces |
 | Enclosure | outer, inner | the inner layer is inside the outer, by at least `value` |
 | Separation | first, second | the layers are at least `value` apart and do not overlap |
+| Overlap | first, second | wherever the first meets the second, it overlaps it by at least `value` (touching without overlapping is reported too) |
 | Inside, not overlapping | two | one layer inside the other; the two never overlap |
 | Anchored | layer, anchor | every piece touches an anchor, so nothing floats away at release |
 | Release | layer, anchor | away from anchors no part is wider than twice the `undercut` (or the etch cannot free it: add release holes), and anchors are wider than that (or the undercut frees them too). Widths allow for rounding onto the process grid, so a beam exactly twice the undercut wide passes at any angle; material only along an anchor's edge counts as the anchor's |

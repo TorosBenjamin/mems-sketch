@@ -16,8 +16,8 @@ from mems_sketch.storage import load
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "resonator"
 EXPECTED = {
-    "gds": "60c59a948b3e933031cb12108e0f84f6cebf9fb443d0534dea635a047083d6b7",
-    "oas": "bce079aecfd6a6e81dcbbe88ed7b34ba1e22de5d6d15de72f7e56f0701d214d0",
+    "gds": "25f22814f7f30ee74cdf4def11e7431a40a59a3950ff17ac2a25321cf3236728",
+    "oas": "b8928c16e738af65eb843ebf57f4a36c0476966688843ba585af0788d3f3ef1a",
 }
 
 

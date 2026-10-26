@@ -145,7 +145,7 @@ void add_cell(const mems::Built& built, nb::dict& cells, double grid, double cho
     if (cells.contains(key)) return;
     cells[key] = nb::none();  // placed in itself never: a placeholder is enough
     nb::list placed = instances_list(built.instances, cells, grid, chord);
-    cells[key] = nb::make_tuple(layers_dict(built.layers, grid, chord), placed);
+    cells[key] = nb::make_tuple(layers_dict(built.layers, grid, chord), placed, nb::str(built.component.c_str()));
 }
 
 nb::list instances_list(const mems::Instances& instances, nb::dict& cells, double grid, double chord) {
@@ -363,7 +363,7 @@ NB_MODULE(_core, m) {
                                       ports_dict(built->ports));
             },
             "component"_a, "params"_a = nb::dict(), "grid"_a = 0.001, "chord"_a = 0.005,
-            "(key, cells, points, ports): the component as cells, {key: (own layers, [(key, transform)])}, its own "
+            "(key, cells, points, ports): the component as cells, {key: (own layers, [(key, transform)], component)}, its own "
             "under ``key``; each component it places whole is a cell of its own, built and snapped once. "
             "Layers as build() gives them, transforms as (dx, dy, angle, mirror_x, scale).")
         .def(

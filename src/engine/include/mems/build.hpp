@@ -76,6 +76,7 @@ using Instances = std::vector<Instance>;
 // its ports.
 struct Built {
     std::string key;  // what the build cache knows it by: the same key, the same geometry
+    std::string component;  // its qualified name (mems.anchor): what a layout calls the cell
     Layers layers;
     Instances instances;
     PointMap points;

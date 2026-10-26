@@ -13,6 +13,7 @@
 // fillets, layer maps, rounded corners) flatten what they are given.
 #pragma once
 
+#include <list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -131,21 +132,47 @@ class BuildCache {
 public:
     explicit BuildCache(size_t max_entries = 4096, size_t max_nodes = 65536)
         : max_entries_(max_entries), max_nodes_(max_nodes) {}
-    std::shared_ptr<const Built> find(const std::string& key) const;
+    // A lookup by a speculative builder (one building ahead, QS-10) leaves what it
+    // finds as it is; any other makes it a real result, kept like the others.
+    std::shared_ptr<const Built> find(const std::string& key, bool speculative = false);
     // What the cache keeps for the key: ``built``, or what another thread put first.
-    std::shared_ptr<const Built> put(std::shared_ptr<const Built> built);
-    std::shared_ptr<const CachedNode> find_node(const std::string& key) const;
-    void put_node(const std::string& key, std::shared_ptr<const CachedNode> node);
+    std::shared_ptr<const Built> put(std::shared_ptr<const Built> built, bool speculative = false);
+    std::shared_ptr<const CachedNode> find_node(const std::string& key, bool speculative = false);
+    void put_node(const std::string& key, std::shared_ptr<const CachedNode> node, size_t bytes,
+                  bool speculative = false);
+    // At most ``max_bytes`` kept (an estimate, see mgeom::Region::memory), of which
+    // at most ``max_speculative_bytes`` built ahead. Past a limit the least recently
+    // used go, what was built ahead first (QS-11).
+    void set_limits(size_t max_bytes, size_t max_speculative_bytes);
     void clear();
     size_t size() const;  // components
     size_t nodes() const;
+    size_t bytes() const;
+    size_t speculative_bytes() const;
 
 private:
+    using Use = std::list<std::pair<bool, std::string>>;  // (a node?, key), least recent first
+    struct Entry {
+        std::shared_ptr<const void> value;
+        size_t bytes = 0;
+        bool speculative = false;
+        Use::iterator used;
+    };
+    std::map<std::string, Entry>& entries(bool node) { return node ? nodes_ : built_; }
+    void touch(Entry& entry, bool speculative);
+    void add(bool node, const std::string& key, std::shared_ptr<const void> value, size_t bytes, bool speculative);
+    void make_room();
+
     size_t max_entries_, max_nodes_;
+    size_t max_bytes_ = static_cast<size_t>(-1), max_speculative_bytes_ = static_cast<size_t>(-1);
+    size_t bytes_ = 0, speculative_bytes_ = 0;
     mutable std::mutex mutex_;
-    std::map<std::string, std::shared_ptr<const Built>> built_;
-    std::map<std::string, std::shared_ptr<const CachedNode>> nodes_;
+    std::map<std::string, Entry> built_, nodes_;
+    Use use_;
 };
+
+// About how many bytes a build takes in memory (an estimate, for the cache).
+size_t memory_of(const Built& built);
 
 // Builds the components of one project. Each component built with the same
 // parameter values is built once (by fingerprint and values).
@@ -181,9 +208,15 @@ public:
     Records* recording() { return recording_; }
     BuildCache& cache() { return *cache_; }
 
+    // A speculative builder builds ahead of the user (QS-10): what it puts in the
+    // cache is the first to go, and what it finds stays as it is.
+    void set_speculative(bool speculative) { speculative_ = speculative; }
+    bool speculative() const { return speculative_; }
+
 private:
     const Project& project_;
     std::shared_ptr<BuildCache> cache_;
+    bool speculative_ = false;
     OptionalLevel level_;  // while a component is built
     NodePath path_;
     Records* recording_ = nullptr;

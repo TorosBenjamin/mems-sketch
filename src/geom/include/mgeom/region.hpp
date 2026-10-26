@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <span>
 #include <vector>
@@ -84,6 +85,8 @@ public:
     bool empty() const;
     // Connected pieces (faces).
     int pieces() const;
+    // About how many bytes it takes in memory (an estimate, for caches).
+    std::size_t memory() const;
     Box bbox() const;
     double area() const;  // µm²
 

@@ -78,6 +78,13 @@ SCROLLING = {  # canvas/scrolling: value -> label
     "pan": "Scrolling pans (Ctrl zooms)",
 }
 
+AHEAD = {  # performance/build_ahead: value -> label
+    "0": "Off",
+    "1": "1 value each way",
+    "2": "2 values each way",
+    "4": "4 values each way",
+}
+
 EMPTY_DRAG = {  # canvas/empty_drag: value -> label
     "box": "Draws a selection box",
     "pan": "Pans the view (Shift: a selection box)",
@@ -290,6 +297,94 @@ SETTINGS: tuple[Setting, ...] = (
         "in full quality.",
         keywords=("antialiasing", "fps", "lag", "speed"),
     ),
+    Setting(
+        "canvas/drag_skips_checks",
+        True,
+        "Check rules when a drag ends",
+        "Canvas",
+        "Performance",
+        "While a value is dragged (a parameter in Parameters), the design is redrawn "
+        "at each step but its rules are checked only when the drag ends. Off: checked "
+        "at every step too.",
+        keywords=("drc", "rule check", "slow", "speed"),
+    ),
+    # -- Performance (requirement QS-11) -------------------------------------
+    Setting(
+        "performance/threads",
+        0,
+        "Threads for geometry",
+        "Performance",
+        "Building",
+        "How many processors one geometry operation may use. Fewer leaves more for "
+        "other programs. Automatic: all of them.",
+        minimum=0,
+        maximum=256,
+        keywords=("cores", "cpu", "parallel"),
+        special="Automatic",
+    ),
+    Setting(
+        "performance/cache_mb",
+        0,
+        "Build cache",
+        "Performance",
+        "Building",
+        "How much memory the built components may keep, so that what an edit does not "
+        "change is not built again. Past it, the least recently used go. Automatic: "
+        "a quarter of the memory, 256 MB to 4 GB.",
+        minimum=0,
+        maximum=1 << 20,
+        step=256,
+        suffix=" MB",
+        keywords=("memory", "ram"),
+        special="Automatic",
+    ),
+    Setting(
+        "performance/build_ahead",
+        "1",
+        "Build ahead",
+        "Performance",
+        "Building ahead",
+        "While a whole number (a tooth count) is dragged in Parameters, the values next "
+        "to it are built in the background, so that moving on to one shows at once. "
+        "Only while processors are idle, at the lowest priority, and never in the way "
+        "of a real change.",
+        choices=AHEAD,
+        keywords=("speculative", "prefetch", "neighbours"),
+    ),
+    Setting(
+        "performance/ahead_threads",
+        1,
+        "Threads for building ahead",
+        "Performance",
+        "Building ahead",
+        minimum=1,
+        maximum=64,
+    ),
+    Setting(
+        "performance/ahead_max_seconds",
+        1.0,
+        "Only designs built in under",
+        "Performance",
+        "Building ahead",
+        "Nothing is built ahead of a component that took longer than this to build: "
+        "large rebuilds are left to the real change.",
+        minimum=0.1,
+        maximum=60,
+        step=0.5,
+        suffix=" s",
+        decimals=1,
+    ),
+    Setting(
+        "performance/ahead_cache_percent",
+        25,
+        "Share of the cache",
+        "Performance",
+        "Building ahead",
+        "The most of the build cache what is built ahead may hold; it is the first to go.",
+        minimum=0,
+        maximum=100,
+        suffix=" %",
+    ),
     # -- Snapping -----------------------------------------------------------
     Setting(
         "snapping/points",
@@ -393,6 +488,7 @@ PAGES = {
     "Canvas": "grid",
     "Snapping": "snap",
     "Editor": "edit",
+    "Performance": "recompile",
     "Keymap": "keyboard",
 }
 
@@ -653,6 +749,8 @@ class PreferencesDialog(QDialog):
             editor.setRange(int(setting.minimum), int(setting.maximum))
             editor.setSingleStep(int(setting.step or 1))
             editor.setSuffix(setting.suffix)
+            if setting.special:
+                editor.setSpecialValueText(setting.special)
             editor.setValue(value)
             editor.valueChanged.connect(lambda v, k=key: self.settings.set(k, v))
         else:

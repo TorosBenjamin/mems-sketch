@@ -1,8 +1,11 @@
 #include "mgeom/region.hpp"
 
 #include "mgeom/interrupt.hpp"
+#include "mgeom/threads.hpp"
 
 #include "region_impl.hpp"
+
+#include <atomic>
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -30,6 +33,8 @@
 #include <Message_ProgressIndicator.hxx>
 #include <Message_ProgressScope.hxx>
 #include <NCollection_List.hxx>
+#include <OSD_Parallel.hxx>
+#include <OSD_ThreadPool.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
@@ -128,6 +133,8 @@ private:
     const std::atomic<bool>* flag_;
 };
 
+std::atomic<int> g_threads{0};  // 0: the machine's
+
 template <class Op>
 TopoDS_Shape run_boolean(const NCollection_List<TopoDS_Shape>& shared_args,
                          const NCollection_List<TopoDS_Shape>& shared_tools, const char* name) {
@@ -137,7 +144,7 @@ TopoDS_Shape run_boolean(const NCollection_List<TopoDS_Shape>& shared_args,
         Op op;
         op.SetArguments(args);
         op.SetTools(tools);
-        op.SetRunParallel(true);
+        op.SetRunParallel(threads() > 1);
         check_interrupted();
         if (const std::atomic<bool>* flag = interrupt_flag()) {
             occ::handle<StopWhenInterrupted> progress = new StopWhenInterrupted(flag);
@@ -653,6 +660,28 @@ double Region::max_tolerance() const { return detail::worst_tolerance(impl_->sha
 
 bool Region::valid() const {
     return empty() || BRepCheck_Analyzer(impl_->shape).IsValid();
+}
+
+// -- threads and memory ----------------------------------------------------------
+
+void set_threads(int count) {
+    g_threads.store(count > 0 ? count : 0);
+    // How many threads Open CASCADE's default pool lends one job (-1: all it has).
+    OSD_ThreadPool::DefaultPool()->SetNbDefaultThreadsToLaunch(count > 0 ? count : -1);
+}
+
+int threads() {
+    const int count = g_threads.load();
+    return count > 0 ? count : OSD_Parallel::NbLogicalProcessors();
+}
+
+std::size_t Region::memory() const {
+    if (empty()) return sizeof(Impl);
+    std::size_t edges = 0;
+    for (TopExp_Explorer it(impl_->shape, TopAbs_EDGE); it.More(); it.Next()) ++edges;
+    // An edge with its curve and vertices, a face with its surface and wires:
+    // rough sizes of Open CASCADE's objects, for a cache to weigh what it keeps.
+    return sizeof(Impl) + edges * 400 + impl_->faces.size() * 300;
 }
 
 }  // namespace mgeom

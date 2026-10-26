@@ -51,6 +51,25 @@ SNAP_CHANGES = {
 PREVIEW = "_preview"  # the component loose shapes are built in
 
 
+def set_threads(count: int) -> None:
+    """How many threads one geometry operation may use (requirement QS-11): 1 the
+    calling thread only, 0 as many as the machine has."""
+    _geom().set_threads(int(count))
+
+
+def threads() -> int:
+    """The threads one geometry operation may use."""
+    return _geom().threads()
+
+
+def _geom():
+    try:
+        from mems_sketch import _geom as geom  # type: ignore[attr-defined]
+    except ImportError:
+        import _geom as geom  # built in build/geom/ until it is packaged
+    return geom
+
+
 def versions() -> dict[str, str]:
     """The versions of the engine and the geometry library it is built on."""
     from mems_sketch import _core, _geom
@@ -81,23 +100,53 @@ class Engine:
         # in every version of the project (what draws it can keep its drawing).
         self._cells: dict[str, Geometry] = {}
 
-    def load(self, project: Project) -> Engine:
+    def load(self, project: Project, speculative: bool = False) -> Engine:
         """Build from ``project`` from now on. It must not change while it is loaded:
-        load the changed project again instead."""
+        load the changed project again instead. A ``speculative`` engine (one that
+        builds ahead, see :meth:`build_ahead`) needs a cache to share: it is loaded
+        through :meth:`trial`."""
         data = json.dumps(project_data(project))
         if self._root is None:
             self._root = self._core = _core().Engine(data)
         else:
-            self._core = self._root.trial(data)
+            self._core = self._root.trial(data, speculative)
         self._project, self._components = project, {}
         return self
 
-    def trial(self, project: Project) -> Engine:
+    def trial(self, project: Project, speculative: bool = False) -> Engine:
         """Another engine for a variant of the project (e.g. an edit being tried),
-        sharing this one's cache; this engine keeps its project."""
+        sharing this one's cache; this engine keeps its project. A ``speculative``
+        one builds ahead of the user (requirement QS-10): what it adds to the cache
+        is the first to go when the cache is full, and it gives way to real builds
+        (:meth:`cancel` it when one starts)."""
         other = Engine()
         other._root, other._cells = self._root, self._cells
-        return other.load(project)
+        return other.load(project, speculative)
+
+    def build_ahead(self, component: str, params: dict[str, Any] | None = None) -> None:
+        """Build ``component`` into the cache only, without making its geometry here:
+        so that asking for it later is a cache hit."""
+        if self._core is None:
+            raise RuntimeError("no project loaded: call load() first")
+        # Only the engine's own data: safe on another thread while the project changes.
+        self._core.built(component, params or {})
+
+    def set_cache_limits(self, max_bytes: int, max_speculative_bytes: int) -> None:
+        """At most ``max_bytes`` kept in the cache (estimated), of which at most
+        ``max_speculative_bytes`` built ahead; past them the least recently used
+        builds go, those built ahead first (requirement QS-11)."""
+        if self._root is not None:
+            self._root.set_cache_limits(int(max_bytes), int(max_speculative_bytes))
+
+    @property
+    def cache_bytes(self) -> int:
+        """About how many bytes the cache holds (shared with its trials)."""
+        return 0 if self._root is None else self._root.cache_bytes
+
+    @property
+    def speculative_bytes(self) -> int:
+        """About how many of them were built ahead and not asked for yet."""
+        return 0 if self._root is None else self._root.speculative_bytes
 
     @property
     def project(self) -> Project:

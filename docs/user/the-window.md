@@ -177,12 +177,34 @@ glow.
 **☰ → File → Settings…** (Ctrl+Alt+S): appearance (light, dark, as the
 system or [your own theme](#your-own-theme); the canvas can keep its own
 background), canvas (fill opacity,
-outlines, grid, overlays, gizmo size, zoom step), snapping, editor defaults
-and the keymap: every command with a shortcut, its keys and the menu it is in.
-The search field filters them, shortcuts too; changes apply at once and are
-kept per user.
+outlines, grid, overlays, gizmo size, zoom step), snapping, editor defaults,
+performance and the keymap: every command with a shortcut, its keys and the
+menu it is in. The search field filters them, shortcuts too; changes apply at
+once and are kept per user.
 
 ![Settings](../images/settings.png)
+
+### Performance
+
+*Settings → Performance* has defaults from your machine:
+
+- **Threads for geometry:** how many processors one geometry operation may
+  use (*Automatic*: all of them). Fewer leaves more for other programs.
+- **Build cache:** how much memory built components may keep, so that what an
+  edit does not change is not built again. *Automatic* is a quarter of the
+  memory, 256 MB to 4 GB. Past the limit the least recently used go.
+- **Build ahead:** while a whole number (a tooth count) is dragged in
+  Parameters, the values next to it (1, 2 or 4 each way, or *Off*) are built
+  in the background, so that moving on to one shows at once. They run only
+  while processors are idle, other programs counted, at the lowest priority,
+  and stop when the design changes for real. Nothing is built ahead of a
+  component that took longer than *Only designs built in under* to build, and
+  what is built ahead holds at most its *Share of the cache*, going first when
+  the cache is full.
+
+*Settings → Canvas → Performance* has **Check rules when a drag ends** (on): while
+a value is dragged in Parameters, the design follows each step and Messages
+says *checking*; the rules are checked once, when the mouse is released.
 
 ### Your own theme
 

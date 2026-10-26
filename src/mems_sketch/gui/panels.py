@@ -1164,6 +1164,9 @@ class ParametersPanel(_Panel):
     COLUMNS = ("Name", "Default", "Min", "Max", "Trial", "Value")
     TRIAL = 4
 
+    value_dragged = Signal(object, float)  # (the parameter, the value) at each step of a drag
+    drag_finished = Signal()  # the mouse was released: the design is final again
+
     def __init__(self, document: EditSession) -> None:
         super().__init__()
         self.document = document
@@ -1339,16 +1342,20 @@ class ParametersPanel(_Panel):
             if (p.min_exclusive and value == low) or (p.max_exclusive and value == high):
                 return True  # the limit itself is excluded: stay one step inside
             self._drag["value"] = value
-            self._guard(lambda: self.document.set_trial(p.name, value))  # shown live
+            self.document.dragging = True
+            if self._guard(lambda: self.document.set_trial(p.name, value)):  # shown live
+                self.value_dragged.emit(p, value)
             return True
         elif kind == QEvent.Type.MouseButtonRelease and self._drag is not None:
             drag, self._drag = self._drag, None
             if not drag["dragging"]:
                 return False
+            self.document.dragging = False
             if drag["column"] == 1 and "value" in drag:  # the default: applied now
                 name, value = drag["name"], drag["value"]
                 self._guard(lambda: self.document.set_trial(name, None))
                 self._guard(lambda: self.document.parameters.update(name, default=value))
+            self.drag_finished.emit()
             return True
         return False
 

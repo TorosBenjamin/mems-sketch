@@ -89,7 +89,7 @@ def frame_and_pad() -> Geometry:
 def neighbour_ratios(mesh) -> np.ndarray:
     """For each edge two triangles share, the larger one's size over the smaller's."""
     owners: dict = {}
-    for k, triangle in enumerate(mesh.triangles.tolist()):
+    for k, triangle in enumerate(mesh.elements.tolist()):
         for a, b in ((0, 1), (1, 2), (2, 0)):
             key = tuple(sorted((triangle[a], triangle[b])))
             owners.setdefault(key, []).append(k)
@@ -131,7 +131,7 @@ def test_a_layers_size_applies_on_it_and_sizes_grade_without_a_seam():
 @needs_gmsh
 def test_refinements_make_the_mesh_finer_where_they_are():
     def mean_size_near(mesh, x, y, reach):
-        centres = mesh.nodes[mesh.triangles].mean(axis=1)
+        centres = mesh.nodes[mesh.elements].mean(axis=1)
         near = np.hypot(centres[:, 0] - x, centres[:, 1] - y) < reach
         return mesh.sizes()[near].mean()
 
@@ -205,3 +205,115 @@ def test_the_mesh_formats_are_exporters():
     from mems_sketch.export.base import available_exporters
 
     assert {"msh", "inp", "bdf", "elmer", "xdmf"} <= set(available_exporters())
+
+
+# -- 3D: the layers extruded through the stack (#49) -----------------------------------
+
+STACK = {"anchor": (0.0, 2.0), "device": (2.0, 3.0)}  # the anchor under the device
+
+
+@needs_gmsh
+def test_a_3d_mesh_extrudes_each_layer_and_joins_them_node_to_node():
+    mesh = meshing.generate(frame_and_pad(), MeshSettings(size=10), heights=STACK)
+    assert mesh.dim == 3 and mesh.elements.shape[1] == 4
+    volume = mesh.measures()
+    assert volume[mesh.regions["device"]].sum() == pytest.approx(200 * 100 * 3, rel=1e-6)
+    assert volume[mesh.regions["anchor"]].sum() == pytest.approx(40 * 40 * 2, rel=1e-6)
+    assert not set(mesh.regions["anchor"]) & set(mesh.regions["device"])  # one above the other
+    on_anchor = set(mesh.elements[mesh.regions["anchor"]].ravel())
+    on_device = set(mesh.elements[mesh.regions["device"]].ravel())
+    shared = on_anchor & on_device
+    assert shared and np.allclose(mesh.nodes[list(shared), 2], 2.0)  # the face they share
+    assert set(mesh.boundaries) == {"device_boundary", "anchor_boundary"}
+    assert mesh.facets.shape[1] == 3 and "tetrahedra" in mesh.summary()
+
+
+@needs_gmsh
+def test_a_3d_mesh_leaves_out_layers_without_a_thickness():
+    mesh = meshing.generate(frame_and_pad(), MeshSettings(size=10), heights={"device": (2.0, 3.0)})
+    assert set(mesh.regions) == {"device"}
+    with pytest.raises(meshing.MeshError, match="with a thickness"):
+        meshing.generate(frame_and_pad(), MeshSettings(), heights={"metal": (0, 1)})
+
+
+@needs_gmsh
+@pytest.mark.parametrize("extension", [".msh", ".inp", ".xdmf", ".elmer"])
+def test_3d_formats(tmp_path, extension):
+    from mems_sketch.export.base import export
+
+    project = chip(MeshSettings(size=20))
+    project.layers["device"].z, project.layers["device"].thickness = "process.t", 3
+    project.layers["anchor"].z, project.layers["anchor"].thickness = 0, "process.t"
+    project.process.constants["t"] = 2.0
+    path = export(project, tmp_path / f"chip{extension}", options={"dimensions": "3D"})
+    if extension == ".elmer":
+        header = (path / "mesh.header").read_text().split()
+        assert "504" in header and "303" in header  # tetrahedra and their triangles
+        z = [float(line.split()[4]) for line in (path / "mesh.nodes").read_text().splitlines()]
+        assert max(z) == pytest.approx(5)
+        return
+    text = path.read_text()
+    if extension == ".msh":
+        assert '"device"' in text and '"anchor_boundary"' in text
+    elif extension == ".inp":
+        assert "type=C3D4" in text and "ELSET=device" in text
+    else:
+        grid = ET.fromstring(text).find("Domain/Grid")
+        assert grid.find("Topology").get("TopologyType") == "Tetrahedron"
+        assert grid.find("Geometry").get("GeometryType") == "XYZ"
+
+
+@needs_gmsh
+def test_3d_needs_heights_in_the_process(tmp_path):
+    from mems_sketch.export.base import export
+
+    project = chip(MeshSettings(size=20))
+    for layer in project.layers.values():
+        layer.thickness = None
+    with pytest.raises(meshing.MeshError, match="z and thickness"):
+        export(project, tmp_path / "chip.msh", options={"dimensions": "3D"})
+
+
+# -- layer heights in the process -------------------------------------------------------
+
+
+def test_layer_heights_are_saved_evaluated_and_checked(tmp_path):
+    from mems_sketch.core.process import Layer
+
+    project = chip()
+    process = project.process
+    process.constants.update({"t_ox": 2.0, "t_dev": 3.0})
+    process.layers["anchor"].z, process.layers["anchor"].thickness = 0, "process.t_ox"
+    process.layers["device"].z = "process.t_ox"
+    process.layers["device"].thickness = "process.t_dev"
+    heights = process.heights()
+    assert heights["anchor"] == (0, 2) and heights["device"] == (2, 3)
+    assert "metal" not in heights or process.layers["metal"].thickness is not None
+    process.layers["metal"] = Layer("metal", 3, 0, None, 5, "process.t_dev - 3")
+    with pytest.raises(ValueError, match="layer 'metal': thickness 0"):
+        process.heights()
+
+
+def test_the_bundled_processes_have_heights():
+    from mems_sketch.libraries import bundled_library
+
+    processes = bundled_library("mems").processes
+    surface = processes["surface"].heights()
+    assert surface["device"] == (2.5, 2.0) and surface["anchor"] == (0.5, 2.0)
+    assert processes["soi"].heights()["device"] == (2.0, 25.0)
+    assert "cavity" not in processes["soi"].heights()  # a mask, not extruded
+    poly = processes["polysilicon"].heights()
+    assert poly["poly2"][0] == pytest.approx(poly["via12"][0] + poly["via12"][1])
+
+
+def test_layer_heights_round_trip_and_show_in_diffs(tmp_path):
+    project = chip()
+    project.process.constants["t"] = 2.0
+    project.layers["device"].z, project.layers["device"].thickness = 1, "process.t"
+    folder = save(project, tmp_path / "chip")
+    loaded = load(folder)
+    assert (loaded.layers["device"].z, loaded.layers["device"].thickness) == (1, "process.t")
+    changed = load(folder)
+    changed.layers["device"].thickness = 4.0
+    texts = [c.text for c in diff_projects(loaded, changed)]
+    assert any("thickness process.t → 4" in t for t in texts), texts

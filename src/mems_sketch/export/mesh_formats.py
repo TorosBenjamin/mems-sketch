@@ -10,7 +10,9 @@
 
 Each exports the component's mesh as its mesh settings say (see
 :mod:`mems_sketch.meshing`), with layers as named regions and their outlines as
-named boundaries. Coordinates are in µm, or in metres with ``units=m``.
+named boundaries: in 2D (``dimensions=2D``, triangles) or 3D (``3D``, the
+layers extruded through the stack as the process places them, tetrahedra).
+Coordinates are in µm, or in metres with ``units=m``.
 """
 
 from __future__ import annotations
@@ -25,10 +27,18 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.mesh_settings import MeshSettings
 from mems_sketch.core.project import Project
 from mems_sketch.export.base import ExportOption
-from mems_sketch.meshing import Mesh, generate, save_with_gmsh
+from mems_sketch.meshing import Mesh, generate, save_with_gmsh, stack_heights
 
 UNITS = {"um": 1.0, "m": 1e-6}
 _OPTIONS = (
+    ExportOption(
+        "dimensions",
+        "2D",
+        "Dimensions",
+        "2D: the layers' faces, in triangles. 3D: the layers extruded through the "
+        "stack (each layer's z and thickness in the process), in tetrahedra",
+        choices=("2D", "3D"),
+    ),
     ExportOption(
         "units",
         "um",
@@ -78,14 +88,18 @@ class _MeshExporter:
         build=None,
         units: str = "um",
         layers: str = "",
+        dimensions: str = "2D",
         **_: Any,
     ) -> Mesh:
         component = build.component if build is not None else project.top
         variables = build.variables() if build is not None else {}
         settings = mesh_settings(project, component)
         scale = UNITS[units]
+        heights = stack_heights(project.process) if dimensions == "3D" else None
         write = save_with_gmsh(Path(path), scale) if self.gmsh_writes else None
-        mesh = generate(geometry, settings, variables, layer_list(layers), write=write)
+        mesh = generate(
+            geometry, settings, variables, layer_list(layers), write=write, heights=heights
+        )
         if not self.gmsh_writes:
             self.write(mesh, Path(path), scale)
         return mesh
@@ -140,7 +154,8 @@ BUILTIN = (MshExporter, AbaqusExporter, NastranExporter, ElmerExporter, XdmfExpo
 
 # -- Elmer ----------------------------------------------------------------------------
 
-ELMER_TRIANGLE, ELMER_LINE = 303, 202
+ELMER_ELEMENT = {2: 303, 3: 504}  # 3-node triangle, 4-node tetrahedron
+ELMER_FACET = {2: 202, 3: 303}  # their sides: 2-node line, 3-node triangle
 
 
 def write_elmer(mesh: Mesh, folder: Path, scale: float = 1.0) -> Path:
@@ -150,33 +165,35 @@ def write_elmer(mesh: Mesh, folder: Path, scale: float = 1.0) -> Path:
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     bodies, body_of = mesh.bodies()
-    nodes = mesh.nodes * scale
+    dim = mesh.dim
+    nodes = np.zeros((len(mesh.nodes), 3))
+    nodes[:, :dim] = mesh.nodes * scale
     (folder / "mesh.nodes").write_text(
-        "".join(f"{k + 1} -1 {x:.12g} {y:.12g} 0\n" for k, (x, y) in enumerate(nodes))
+        "".join(f"{k + 1} -1 {x:.12g} {y:.12g} {z:.12g}\n" for k, (x, y, z) in enumerate(nodes))
     )
     (folder / "mesh.elements").write_text(
         "".join(
-            f"{k + 1} {body_of[k] + 1} {ELMER_TRIANGLE} {a + 1} {b + 1} {c + 1}\n"
-            for k, (a, b, c) in enumerate(mesh.triangles)
+            f"{k + 1} {body_of[k] + 1} {ELMER_ELEMENT[dim]} {_numbers(element)}\n"
+            for k, element in enumerate(mesh.elements)
         )
     )
-    owners = _edge_owners(mesh.triangles)
+    owners = _facet_owners(mesh.elements)
     lines = []
     names = sorted(mesh.boundaries)
     for number, name in enumerate(names, start=1):
-        for edge in mesh.boundaries[name]:
-            a, b = (int(n) for n in mesh.edges[edge])
-            parents = [*owners.get((min(a, b), max(a, b)), []), -1, -1][:2]
+        for index in mesh.boundaries[name]:
+            facet = mesh.facets[index]
+            parents = [*owners.get(tuple(sorted(int(n) for n in facet)), []), -1, -1][:2]
             left, right = (p + 1 if p >= 0 else 0 for p in parents)
-            lines.append(f"{number} {left} {right} {ELMER_LINE} {a + 1} {b + 1}")
+            lines.append(f"{number} {left} {right} {ELMER_FACET[dim]} {_numbers(facet)}")
     (folder / "mesh.boundary").write_text(
         "".join(f"{k + 1} {line}\n" for k, line in enumerate(lines))
     )
-    types = [(ELMER_TRIANGLE, len(mesh.triangles))]
+    types = [(ELMER_ELEMENT[dim], len(mesh.elements))]
     if lines:
-        types.append((ELMER_LINE, len(lines)))
+        types.append((ELMER_FACET[dim], len(lines)))
     (folder / "mesh.header").write_text(
-        f"{len(nodes)} {len(mesh.triangles)} {len(lines)}\n{len(types)}\n"
+        f"{len(nodes)} {len(mesh.elements)} {len(lines)}\n{len(types)}\n"
         + "".join(f"{kind} {count}\n" for kind, count in types)
     )
     (folder / "mesh.names").write_text(
@@ -192,11 +209,18 @@ def _elmer_name(name: str) -> str:
     return name.replace("+", "_and_")
 
 
-def _edge_owners(triangles: np.ndarray) -> dict[tuple[int, int], list[int]]:
-    owners: dict[tuple[int, int], list[int]] = {}
-    for k, (a, b, c) in enumerate(triangles.tolist()):
-        for p, q in ((a, b), (b, c), (c, a)):
-            owners.setdefault((min(p, q), max(p, q)), []).append(k)
+def _numbers(nodes) -> str:
+    """Node indices as Elmer numbers them (from 1)."""
+    return " ".join(str(int(n) + 1) for n in nodes)
+
+
+def _facet_owners(elements: np.ndarray) -> dict[tuple[int, ...], list[int]]:
+    """The elements each side (sorted node indices) belongs to."""
+    owners: dict[tuple[int, ...], list[int]] = {}
+    for k, element in enumerate(elements.tolist()):
+        for left_out in range(len(element)):
+            side = tuple(sorted(n for i, n in enumerate(element) if i != left_out))
+            owners.setdefault(side, []).append(k)
     return owners
 
 
@@ -208,8 +232,11 @@ def write_xdmf(mesh: Mesh, path: Path, scale: float = 1.0) -> Path:
     (each its body, see :meth:`Mesh.bodies`), the names in an Information entry."""
     bodies, body_of = mesh.bodies()
     nodes = mesh.nodes * scale
-    xy = "\n".join(f"{x:.12g} {y:.12g}" for x, y in nodes)
-    cells = "\n".join(f"{a} {b} {c}" for a, b, c in mesh.triangles)
+    xy = "\n".join(" ".join(f"{v:.12g}" for v in node) for node in nodes)
+    cells = "\n".join(" ".join(str(int(n)) for n in element) for element in mesh.elements)
+    topology, geometry, corners = (
+        ("Triangle", "XY", 3) if mesh.dim == 2 else ("Tetrahedron", "XYZ", 4)
+    )
     regions = " ".join(str(int(b) + 1) for b in body_of)
     names = "; ".join(f"{k}={name}" for k, name in enumerate(bodies, start=1))
     path = Path(path)
@@ -219,14 +246,15 @@ def write_xdmf(mesh: Mesh, path: Path, scale: float = 1.0) -> Path:
         "<Domain>\n"
         '<Grid Name="mesh" GridType="Uniform">\n'
         f'<Information Name="regions" Value="{escape(names)}"/>\n'
-        f'<Topology TopologyType="Triangle" NumberOfElements="{len(mesh.triangles)}">\n'
-        f'<DataItem Dimensions="{len(mesh.triangles)} 3" NumberType="Int" Format="XML">\n'
+        f'<Topology TopologyType="{topology}" NumberOfElements="{len(mesh.elements)}">\n'
+        f'<DataItem Dimensions="{len(mesh.elements)} {corners}" NumberType="Int" '
+        'Format="XML">\n'
         f"{cells}\n</DataItem>\n</Topology>\n"
-        '<Geometry GeometryType="XY">\n'
-        f'<DataItem Dimensions="{len(nodes)} 2" Format="XML">\n{xy}\n</DataItem>\n'
+        f'<Geometry GeometryType="{geometry}">\n'
+        f'<DataItem Dimensions="{len(nodes)} {mesh.dim}" Format="XML">\n{xy}\n</DataItem>\n'
         "</Geometry>\n"
         '<Attribute Name="region" AttributeType="Scalar" Center="Cell">\n'
-        f'<DataItem Dimensions="{len(mesh.triangles)}" NumberType="Int" Format="XML">\n'
+        f'<DataItem Dimensions="{len(mesh.elements)}" NumberType="Int" Format="XML">\n'
         f"{regions}\n</DataItem>\n</Attribute>\n"
         "</Grid>\n</Domain>\n</Xdmf>\n"
     )

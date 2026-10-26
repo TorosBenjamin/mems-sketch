@@ -578,9 +578,9 @@ Most users have no licence for a commercial mesher or solver, so a mesh
 from mems-sketch is their way into simulation; those who have one (e.g.
 Ansys) can mesh the STEP export themselves (OUT-6).
 
-- **MSH-1** (Must, changes; [#49](https://github.com/TorosBenjamin/mems-sketch/issues/49)) Export a **mesh** of a component for simulation:
-  2D (the layers' faces) or 3D (the layers extruded through the stack).
-  2D exists; 3D needs the layers' thicknesses in the process first.
+- **MSH-1** (Must, exists; [#49](https://github.com/TorosBenjamin/mems-sketch/issues/49)) Export a **mesh** of a component for simulation:
+  2D (the layers' faces) or 3D (the layers extruded through the stack, each
+  from its z by its thickness, as the process gives them).
 - **MSH-2** (Must, changes; [#50](https://github.com/TorosBenjamin/mems-sketch/issues/50)) **Mesh settings are project data**, as expressions:
   a global size, sizes per layer, and refinement regions (areas, points,
   edges, distances from edges) drawn on the canvas. They are saved, diffed

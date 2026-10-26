@@ -146,3 +146,18 @@ def test_renaming_a_layer_keeps_its_colour(window):
     session.process.set_layer("device", dataclasses.replace(device, color="#000080"))
     session.process.set_layer("device", Layer("structure", device.gds_layer, 0, "#000080"))
     assert session.project.layers["structure"].color == "#000080"
+
+
+def test_a_layers_z_and_thickness_are_edited_as_expressions(window):
+    window.document.process.make_own()
+    window.open_process()
+    panel = window.area.process_view.layers
+    row = panel._layer_names.index("device")
+    panel.layers.item(row, panel.Z).setText("process.t_wiring + process.t_oxide")
+    panel.layers.item(row, panel.THICKNESS).setText("3")
+    layer = window.document.project.layers["device"]
+    assert (layer.z, layer.thickness) == ("process.t_wiring + process.t_oxide", 3.0)
+    assert window.document.project.process.heights()["device"] == (2.5, 3.0)
+    assert "2.5" in panel.layers.item(row, panel.THICKNESS).toolTip()
+    panel.layers.item(row, panel.THICKNESS).setText("")  # empty: not extruded
+    assert "device" not in window.document.project.process.heights()

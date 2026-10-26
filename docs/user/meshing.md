@@ -3,8 +3,9 @@
 mems-sketch makes a mesh of a component for simulation, so a design goes
 straight into a free solver: **Elmer** (electrostatics, structures, modes),
 **CalculiX**, **FEniCS** or scikit-fem, or **gmsh** itself. Ansys Mechanical
-also reads the Abaqus and Nastran files. Meshes are 2D for now: the layers'
-faces. 3D meshes, the layers extruded through the stack, come next.
+also reads the Abaqus and Nastran files. Meshes are **2D** (the layers' faces,
+in triangles) or **3D** (each layer extruded through the stack, in
+tetrahedra).
 
 Meshing uses [gmsh](https://gmsh.info). It is installed with the app; with
 pip, it is an extra: `pip install "mems-sketch[mesh]"`. On Linux, gmsh also
@@ -54,15 +55,36 @@ mesh:
     - {kind: edges, layer: device, size: 0.5, distance: 1}
 ```
 
+## 3D: the layers in height
+
+A 3D mesh needs to know where each layer is in height. In the **Process** tab,
+each layer has a **Z** (its bottom) and a **Thickness**, in µm, as expressions
+over the process constants:
+
+```yaml
+constants: {t_wiring: 0.5, t_oxide: 2, t_device: 2}
+layers:
+  anchor: {gds: [2, 0], z: process.t_wiring, thickness: process.t_oxide}
+  device: {gds: [1, 0], z: process.t_wiring + process.t_oxide, thickness: process.t_device}
+```
+
+A layer without a thickness (a mask, such as a cavity or a dimple) is left
+out of 3D meshes. The bundled processes (mems.surface, mems.soi,
+mems.polysilicon) give theirs. Choose **3D** before *Mesh* in the Mesh window,
+or the *Dimensions* option when exporting. A 3D mesh is counted in the
+window, not drawn. Point and box refinements reach through the whole height.
+
 ## What the mesh is
 
 - **Conforming everywhere.** The layers are cut into one another first, so
-  where an anchor overlaps the device layer, the two share their nodes.
+  where an anchor overlaps the device layer (2D) or meets it (3D, at the
+  device's bottom face), the two share their nodes.
 - **Named.** Each layer is a named region (`device`, `anchor`) and its outline
-  a named boundary (`device_boundary`), so a solver finds them by name. Where
+  (its edges in 2D, its surface in 3D) a named boundary (`device_boundary`), so
+  a solver finds them by name. Where
   layers overlap, a triangle is in both; formats that allow one body per
   element name the overlap after both (`anchor+device`).
-- **Triangles**, from gmsh's Frontal-Delaunay mesher.
+- **Triangles** (gmsh's Frontal-Delaunay) or **tetrahedra** (Delaunay).
 
 ## Formats
 
@@ -77,9 +99,10 @@ line `mems-sketch-cli export PROJECT FILE`:
 | Elmer | `.elmer` | a mesh folder (`mesh.header`, `mesh.nodes`, …, `mesh.names`): point Elmer's `Mesh DB` at it |
 | XDMF | `.xdmf` | FEniCS/dolfinx, meshio, ParaView: a `region` number per triangle |
 
-Options: **Units** (`um`, or `m` for SI solvers) and **Layers** (the layers to
-mesh, e.g. `device`; all of them when empty).
+Options: **Dimensions** (`2D` or `3D`), **Units** (`um`, or `m` for SI
+solvers) and **Layers** (the layers to mesh, e.g. `device`; all of them when
+empty).
 
 ```sh
-mems-sketch-cli export examples/resonator resonator.elmer --option units=m
+mems-sketch-cli export examples/resonator resonator.elmer --option units=m --option dimensions=3D
 ```

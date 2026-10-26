@@ -10,11 +10,11 @@ constants:
   t_box: 2
   t_handle: 400
   t_metal: 0.5
-layers:
-  device: {gds: [1, 0]}
-  anchor: {gds: [2, 0]}
-  metal: {gds: [3, 0]}
-  cavity: {gds: [4, 0]}
+layers:                # z = 0: the top of the handle wafer
+  device: {gds: [1, 0], z: process.t_box, thickness: process.t_device}
+  anchor: {gds: [2, 0], z: 0, thickness: process.t_box}
+  metal: {gds: [3, 0], z: process.t_box + process.t_device, thickness: process.t_metal}
+  cavity: {gds: [4, 0]}  # a hole in the handle: not extruded
 levels:
 - {layer: cavity}
 - layer: device

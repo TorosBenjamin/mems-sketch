@@ -12,14 +12,26 @@ constants:
   t_poly2: 1.5
   t_metal: 0.5
 layers:
-  poly0: {gds: [1, 0]}
-  anchor1: {gds: [2, 0]}
-  dimple: {gds: [3, 0]}
-  poly1: {gds: [4, 0]}
-  via12: {gds: [5, 0]}
-  anchor2: {gds: [6, 0]}
-  poly2: {gds: [7, 0]}
-  metal: {gds: [8, 0]}
+  poly0: {gds: [1, 0], z: 0, thickness: process.t_poly0}
+  anchor1: {gds: [2, 0], z: process.t_poly0, thickness: process.t_oxide1}
+  dimple: {gds: [3, 0]}  # a shallow etch into oxide1: not extruded
+  poly1: {gds: [4, 0], z: process.t_poly0 + process.t_oxide1, thickness: process.t_poly1}
+  via12:
+    gds: [5, 0]
+    z: process.t_poly0 + process.t_oxide1 + process.t_poly1
+    thickness: process.t_oxide2
+  anchor2:  # poly2 down to poly0, through both oxides
+    gds: [6, 0]
+    z: process.t_poly0
+    thickness: process.t_oxide1 + process.t_poly1 + process.t_oxide2
+  poly2:
+    gds: [7, 0]
+    z: process.t_poly0 + process.t_oxide1 + process.t_poly1 + process.t_oxide2
+    thickness: process.t_poly2
+  metal:
+    gds: [8, 0]
+    z: process.t_poly0 + process.t_oxide1 + process.t_poly1 + process.t_oxide2 + process.t_poly2
+    thickness: process.t_metal
 levels:
 - {layer: poly0}
 - layer: poly1

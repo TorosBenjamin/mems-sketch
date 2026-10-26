@@ -4,7 +4,7 @@ release's packages are tested with (``mems-sketch --self-test``).
 It builds a component that places components of the bundled mems library
 (so the bundled libraries are in the package), checks the design rules in
 a background process (as the editor does on big designs), writes and reads
-back a GDS file, and opens and closes the main window. Each step prints a
+back a GDS file, meshes it (when gmsh is there), and opens and closes the main window. Each step prints a
 line, and also goes to the file MEMS_SKETCH_SELFTEST_LOG names, if any (a
 windowed app has no console to print to); any failure raises.
 """
@@ -58,6 +58,7 @@ def run(window: bool = True) -> None:
         layout = read_layout(path.read_bytes())
         assert layout.cells, "the GDS file has no cells"
         say(f"GDS written and read back: {path.stat().st_size} bytes")
+        say(f"mesh: {mesh_check(geometry)}")
 
     say(f"file types: {file_types()}")
 
@@ -74,6 +75,19 @@ def run(window: bool = True) -> None:
         main.close()
         say("main window opened and closed")
     say("self-test passed")
+
+
+def mesh_check(geometry) -> str:
+    """A coarse mesh of the test design, when gmsh is here (an app bundles it;
+    with pip it is an extra, so its absence is said, not a failure)."""
+    from mems_sketch import meshing
+    from mems_sketch.core.mesh_settings import MeshSettings
+
+    if not meshing.available():
+        return "gmsh not installed (meshing is off)"
+    mesh = meshing.generate(geometry, MeshSettings(size=20))
+    assert mesh.element_count > 0, "the mesh has no elements"
+    return mesh.summary()
 
 
 def file_types() -> str:

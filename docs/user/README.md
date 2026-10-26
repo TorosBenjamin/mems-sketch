@@ -21,8 +21,10 @@ design rules, and exported for the rest of the flow.
    component is made of.
 8. **[Files, import and export](files.md)**: the project folder, other
    formats, GDS import, the command line.
-9. **[Git](git.md)**: what changed, committing and restoring with git.
-10. **[AI assistants](ai-assistants.md)**: let Claude or another assistant
+9. **[Meshing](meshing.md)**: meshes for simulation in Elmer, CalculiX,
+   FEniCS or gmsh, with sizes and refinements saved in the design.
+10. **[Git](git.md)**: what changed, committing and restoring with git.
+11. **[AI assistants](ai-assistants.md)**: let Claude or another assistant
     open, edit, build, look at and check designs (MCP).
 
 Looking for the Python API or how the tool works inside? See the

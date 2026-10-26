@@ -578,26 +578,29 @@ Most users have no licence for a commercial mesher or solver, so a mesh
 from mems-sketch is their way into simulation; those who have one (e.g.
 Ansys) can mesh the STEP export themselves (OUT-6).
 
-- **MSH-1** (Must, new; [#49](https://github.com/TorosBenjamin/mems-sketch/issues/49)) Export a **mesh** of a component for simulation:
+- **MSH-1** (Must, changes; [#49](https://github.com/TorosBenjamin/mems-sketch/issues/49)) Export a **mesh** of a component for simulation:
   2D (the layers' faces) or 3D (the layers extruded through the stack).
-- **MSH-2** (Must, new; [#50](https://github.com/TorosBenjamin/mems-sketch/issues/50)) **Mesh settings are project data**, as expressions:
+  2D exists; 3D needs the layers' thicknesses in the process first.
+- **MSH-2** (Must, changes; [#50](https://github.com/TorosBenjamin/mems-sketch/issues/50)) **Mesh settings are project data**, as expressions:
   a global size, sizes per layer, and refinement regions (areas, points,
   edges, distances from edges) drawn on the canvas. They are saved, diffed
   and parametric like everything else.
+  Exists, except drawing the refinements with the mouse: they are typed in the
+  Mesh window and shown on the canvas.
 - **MSH-3** (Should, new; [#70](https://github.com/TorosBenjamin/mems-sketch/issues/70)) The mesh is generated from the **exact geometry**,
   not the export grid, with its own merge tolerance (e.g. 10⁻⁶ µm).
 - **MSH-4** (Should, new; [#71](https://github.com/TorosBenjamin/mems-sketch/issues/71)) Mesh regions and boundaries are **named** after
   layers and named shapes (physical groups), so a solver finds anchors and
   electrodes by name.
-- **MSH-5** (Must, new; [#51](https://github.com/TorosBenjamin/mems-sketch/issues/51)) Mesh formats for **free solvers** first: Elmer
+- **MSH-5** (Must, exists; [#51](https://github.com/TorosBenjamin/mems-sketch/issues/51)) Mesh formats for **free solvers** first: Elmer
   (good MEMS support: electrostatics, structures, modes), CalculiX (Abaqus
   `.inp`), and FEniCS or scikit-fem (through meshio, e.g. XDMF); gmsh's
   `.msh` itself. Abaqus `.inp` and Nastran `.bdf` also go into commercial
   tools such as Ansys Mechanical. Further formats are exporter plugins
   (OUT-7).
-- **MSH-6** (Should, new; [#72](https://github.com/TorosBenjamin/mems-sketch/issues/72)) A **preview** of the mesh on the canvas, with element
+- **MSH-6** (Should, exists; [#72](https://github.com/TorosBenjamin/mems-sketch/issues/72)) A **preview** of the mesh on the canvas, with element
   count and quality.
-- **MSH-7** (Must, new; [#52](https://github.com/TorosBenjamin/mems-sketch/issues/52)) **Graded sizes, no seams:** where regions of
+- **MSH-7** (Must, exists; [#52](https://github.com/TorosBenjamin/mems-sketch/issues/52)) **Graded sizes, no seams:** where regions of
   different sizes meet (a finely meshed spring on a coarse frame), the
   element size changes gradually, by at most a growth rate per element
   (a project setting, e.g. 1.2), never in one step. The mesh is conforming

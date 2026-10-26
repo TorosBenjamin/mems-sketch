@@ -52,6 +52,7 @@ from mems_sketch.gui.export_dialog import (
     remembered,
 )
 from mems_sketch.gui.git_panel import GitPanel
+from mems_sketch.gui.mesh_panel import MeshPanel
 from mems_sketch.gui.new_project import NewProjectDialog
 from mems_sketch.gui.panels import (
     INSIDE_ROLE,
@@ -137,6 +138,10 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "project (or the component you are editing) as it was: an ordinary edit, which "
     "Undo takes back. Checking out, merging and remotes stay with your git tools for "
     "now.",
+    "mesh": "How the component is meshed for simulation: the largest element, how "
+    "fast sizes may grow from one element to the next, a size per layer, and places "
+    "the mesh is finer. *Mesh* shows the mesh on the canvas; *Export…* saves it for "
+    "Elmer, CalculiX, FEniCS or gmsh. Needs gmsh.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "
@@ -197,6 +202,7 @@ PANEL_KEYS = {
     "points": "Alt+5",
     "layers": "Alt+6",
     "messages": "Alt+7",
+    "mesh": "Alt+8",
     "git": "Alt+9",
     "commit": "Alt+0",
 }
@@ -256,6 +262,9 @@ class MainWindow(QMainWindow):
         self.layers = LayersPanel(self.document)
         self.layers.layers.currentCellChanged.connect(self._layer_row_chosen)
         self.points = PointsPanel(self.document)
+        self.mesh = MeshPanel(self.document)
+        self.mesh.shown_changed.connect(self.update_overlay)
+        self.mesh.export_requested.connect(lambda: self.export_file("msh"))
         self.points.hovered.connect(self._point_hovered)
         self.points.focused.connect(self._point_focused)
         self._hovered_point = None
@@ -314,7 +323,14 @@ class MainWindow(QMainWindow):
         self.messages.unwaive_requested.connect(self.unwaive)
         self.settings.changed.connect(self._setting_changed)
         self._apply_performance()
-        for panel in (self.parameters, self.layers, self.components, self.commit_panel, self.git):
+        for panel in (
+            self.parameters,
+            self.layers,
+            self.components,
+            self.commit_panel,
+            self.git,
+            self.mesh,
+        ):
             panel.error.connect(self.report_error)
         for panel in (self.properties, self.points):  # the field says why too (#325)
             panel.error.connect(self.report_refusal)
@@ -1012,6 +1028,7 @@ class MainWindow(QMainWindow):
             ("properties", "Properties", "properties", self.properties, "right"),
             ("parameters", "Parameters", "parameters", self.parameters, "right"),
             ("points", "Points", "point", self.points, "right"),
+            ("mesh", "Mesh", "mesh", self.mesh, "right"),
         ):
             self.tool_windows.add(name, title, icon, widget, anchor, PANEL_HELP[name])
         self._restore_tool_windows()
@@ -1345,6 +1362,7 @@ class MainWindow(QMainWindow):
         self.properties.hide_implementation = hidden
         self.parameters.refresh()
         self.points.refresh()
+        self.mesh.refresh()
         self.commit_panel.refresh()
         self.git.refresh()
         self._refresh_layer_box()
@@ -1414,6 +1432,9 @@ class MainWindow(QMainWindow):
                 changes = panel.geometry(view.component)
                 break
         self.canvas.show_changes(*(changes or (None, None)))
+        meshing = self.tool_windows.is_open("mesh")  # its refinements and preview (#50, #72)
+        self.canvas.show_refinements(self.mesh.refinement_marks() if meshing else [])
+        self.canvas.show_mesh(*(self.mesh.preview_arrays() if meshing else (None, None)))
         open_ = self.tool_windows.is_open("points")
         focus = (
             [m for m in (self.points.focused_marker(), self._hovered_point) if m] if open_ else []
@@ -2531,8 +2552,11 @@ class MainWindow(QMainWindow):
         show_welcome()
         self.close()
 
-    def export_file(self) -> None:
+    def export_file(self, format_name: str | None = None) -> None:
+        """File › Export…; ``format_name``: the format offered first."""
         exporters = available_exporters()
+        if isinstance(format_name, str) and format_name in exporters:  # (not a click's flag)
+            exporters = {format_name: exporters[format_name], **exporters}
         filters = {
             f"{title_of(cls)} (*{cls.file_extension})": name for name, cls in exporters.items()
         }

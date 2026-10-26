@@ -592,6 +592,7 @@ class LayoutCanvas(QGraphicsView):
         self._ghost: QGraphicsItem | None = None  # a component being placed
         self._snap_marker: _SnapMarker | None = None  # where a click would snap
         self._ruler_items: list = []
+        self._mesh_items: dict[str, QGraphicsPathItem] = {}  # "mesh", "refine": see show_mesh
         self._rulers: list[tuple[float, float, float, float]] = []  # distances, for ticks
         self._box_item: QGraphicsRectItem | None = None
         self._sketch_item: QGraphicsPathItem | None = None
@@ -1408,6 +1409,65 @@ class LayoutCanvas(QGraphicsView):
             label.setZValue(1040)
             self.scene().addItem(label)
             self._guide_items += [line, label]
+
+    def show_mesh(self, nodes=None, triangles=None) -> None:
+        """A mesh's triangles (``nodes`` (n, 2) in µm, ``triangles`` (m, 3) indices)
+        drawn as thin lines over the layers; None hides it."""
+        path = QPainterPath()
+        if nodes is not None and triangles is not None:
+            for a, b, c in triangles:
+                path.moveTo(*nodes[a])
+                path.lineTo(*nodes[b])
+                path.lineTo(*nodes[c])
+                path.closeSubpath()
+        color = QColor(self.theme["overlay"])
+        color.setAlpha(150)
+        self._mesh_path("mesh", path, color, 0.6, 1140)
+
+    def show_refinements(self, refinements: list[tuple]) -> None:
+        """Where a mesh is finer: ``("point", x, y, radius)`` a circle (a cross when
+        the radius is 0), ``("box", x0, y0, x1, y1)`` a rectangle, dashed."""
+        path = QPainterPath()
+        mark = 6 / self.pixels_per_um()
+        for refinement in refinements:
+            if refinement[0] == "point":
+                _, x, y, radius = refinement
+                if radius > 0:
+                    path.addEllipse(QPointF(x, y), radius, radius)
+                path.moveTo(x - mark, y)
+                path.lineTo(x + mark, y)
+                path.moveTo(x, y - mark)
+                path.lineTo(x, y + mark)
+            elif refinement[0] == "box":
+                _, x0, y0, x1, y1 = refinement
+                path.addRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)))
+        self._mesh_path("refine", path, QColor(self.theme["guide"]), 1.5, 1145, dashed=True)
+
+    def _mesh_path(
+        self, key: str, path: QPainterPath, color: QColor, width: float, z: float, dashed=False
+    ) -> None:
+        item = self._mesh_items.get(key)
+        if item is not None and not shiboken6.isValid(item):
+            item = None
+        if path.isEmpty():
+            if item is not None:
+                self.scene().removeItem(item)
+                del self._mesh_items[key]
+            return
+        if item is None:
+            item = self.scene().addPath(path)
+            item.setZValue(z)
+            self._mesh_items[key] = item
+        pen = QPen(color, width)
+        pen.setCosmetic(True)
+        if dashed:
+            pen.setStyle(Qt.PenStyle.DashLine)
+        item.setPen(pen)
+        item.setPath(path)
+
+    def mesh_shown(self) -> bool:
+        """Whether a mesh is drawn (for tests)."""
+        return "mesh" in self._mesh_items
 
     def show_rulers(self, rulers: list[tuple[float, ...]]) -> None:
         """Measurements: a distance ``(x0, y0, x1, y1)`` is a line with its length, dx

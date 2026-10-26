@@ -78,6 +78,9 @@ def component_data(
         data["shapes"] = shapes_data(definition.shapes)
     if definition.waivers:
         data["waivers"] = yaml_format.to_data(definition.waivers)
+    mesh = yaml_format.to_data(definition.mesh)
+    if mesh:
+        data["mesh"] = mesh
     return data
 
 
@@ -97,6 +100,7 @@ def component_from_data(name: str, data: dict[str, Any]) -> tuple[ComponentDef, 
         "private",
         "shapes",
         "waivers",
+        "mesh",
     }
     if unknown:
         raise ValueError(f"unknown field '{min(unknown)}'")
@@ -115,6 +119,7 @@ def component_from_data(name: str, data: dict[str, Any]) -> tuple[ComponentDef, 
         "ports": [{"name": str(n), **(v or {})} for n, v in _map(data, "ports").items()],
         "shapes": shapes_from_data(_map(data, "shapes")),
         "waivers": data.get("waivers") or [],
+        "mesh": data.get("mesh") or {},
     }
     private = {str(k): v for k, v in _map(data, "private").items()}
     return ComponentDef.model_validate(model), private

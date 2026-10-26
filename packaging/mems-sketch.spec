@@ -13,11 +13,20 @@ MSKETCH_UTI = "io.github.torosbenjamin.mems-sketch.msketch"  # the .msketch file
 datas = collect_data_files("mems_sketch")  # bundled libraries, icons, themes in the package
 datas += copy_metadata("mems-sketch")  # its version and entry points (exporters are found by them)
 hidden = collect_submodules("mems_sketch")  # plugins are imported by name, at run time
+binaries = []
+try:  # meshing (gmsh, GPL): its library goes next to gmsh.py, where gmsh.py looks for it
+    import gmsh
+
+    binaries.append((gmsh.libpath, "."))
+    hidden.append("gmsh")
+except (ImportError, OSError):
+    print("gmsh not installed: the app is built without meshing")
 
 a = Analysis(  # noqa: F821
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[],
     datas=datas,
+    binaries=binaries,
     hiddenimports=hidden,
     excludes=["tkinter", "matplotlib", "IPython", "pytest"],
     noarchive=False,

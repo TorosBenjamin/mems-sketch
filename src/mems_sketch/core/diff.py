@@ -179,7 +179,34 @@ def _component(name: str, old: ComponentDef | None, new: ComponentDef | None) ->
     ):
         changes += _named(name, what, before, after)
     changes += _shapes(name, old.shapes, new.shapes, (), 0, (), None)
+    changes += _mesh(name, old, new)
     return changes
+
+
+def _mesh(name: str, old: ComponentDef, new: ComponentDef) -> list[Change]:
+    """The mesh settings (#50): size, growth and layer sizes by field, refinements
+    by their place in the list."""
+    before, after = old.mesh.model_dump(mode="json"), new.mesh.model_dump(mode="json")
+    if before == after:
+        return []
+    details = list(
+        _fields(
+            {k: v for k, v in before.items() if k != "refine"},
+            {k: v for k, v in after.items() if k != "refine"},
+        )
+    )
+    old_refine, new_refine = old.mesh.refine, new.mesh.refine
+    for index in range(max(len(old_refine), len(new_refine))):
+        a = old_refine[index] if index < len(old_refine) else None
+        b = new_refine[index] if index < len(new_refine) else None
+        if a == b:
+            continue
+        if a is None or b is None:
+            details.append(f"refinement {(b or a).label} {ADDED if a is None else REMOVED}")
+        else:
+            inner = _fields(a.model_dump(mode="json"), b.model_dump(mode="json"))
+            details.append(f"refinement {b.label}: {'; '.join(inner)}")
+    return [Change(CHANGED, name, "mesh", "", tuple(details), component=name)]
 
 
 def _named(component: str, what: str, old: list, new: list) -> list[Change]:

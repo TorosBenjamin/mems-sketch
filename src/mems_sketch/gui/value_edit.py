@@ -184,21 +184,42 @@ class SuggestionDelegate(QStyledItemDelegate):
 
 def suggestion_completer(widget) -> QCompleter:
     """A completer for ``widget`` that shows the rows it is given, as they are (the
-    field ranks them): :func:`fill_suggestions` sets them."""
+    field ranks them): :func:`fill_suggestions` sets them. Its list is made when it
+    is first shown: a completer's list is a window of its own, which the completer
+    deletes, so one per field made up front would be windows that nothing shows
+    (and that a sweep of the open windows would delete twice)."""
     model = QStandardItemModel(widget)
     completer = QCompleter(model, widget)
     completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
     completer.setWidget(widget)
-    popup = QListView()
-    popup.setObjectName("suggestions")
-    popup.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-    popup.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-    popup.setUniformItemSizes(True)
-    completer.setPopup(popup)
-    popup.setItemDelegate(SuggestionDelegate(popup))  # after: setPopup puts its own
     completer.setMaxVisibleItems(10)
     completer._model = model  # kept: the completer does not own it
+    completer._list = None  # the list, once made (see suggestions_list)
     return completer
+
+
+def suggestions_list(completer: QCompleter) -> QListView:
+    """The completer's list, made on first use: names and values in two columns."""
+    if completer._list is None:
+        popup = QListView()
+        popup.setObjectName("suggestions")
+        popup.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        popup.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        popup.setUniformItemSizes(True)
+        completer.setPopup(popup)  # the completer owns it now
+        popup.setItemDelegate(SuggestionDelegate(popup))  # after: setPopup puts its own
+        completer._list = popup
+    return completer._list
+
+
+def suggestions_shown(completer: QCompleter) -> bool:
+    """Whether the completer's list is open."""
+    return completer._list is not None and completer._list.isVisible()
+
+
+def hide_suggestions(completer: QCompleter) -> None:
+    if completer._list is not None:
+        completer._list.hide()
 
 
 def fill_suggestions(completer: QCompleter, rows: list[Suggestion], rect: QRect) -> None:
@@ -206,7 +227,7 @@ def fill_suggestions(completer: QCompleter, rows: list[Suggestion], rect: QRect)
     model: QStandardItemModel = completer._model
     model.clear()
     if not rows:
-        completer.popup().hide()
+        hide_suggestions(completer)
         return
     for row in rows:
         item = QStandardItem(row.label)
@@ -214,7 +235,7 @@ def fill_suggestions(completer: QCompleter, rows: list[Suggestion], rect: QRect)
         item.setData(row, _SUGGESTION_ROLE)
         item.setToolTip(f"{row.label} = {row.value}" if row.value else row.label)
         model.appendRow(item)
-    popup = completer.popup()
+    popup = suggestions_list(completer)
     delegate = popup.itemDelegate()
     option = QStyleOptionViewItem()
     option.initFrom(popup)
@@ -589,8 +610,8 @@ class ValueEdit(QLineEdit):
             self._stored = self.text()  # applied (or put back by the panel): the new start
             return
         if key == Qt.Key.Key_Escape and not event.modifiers():
-            if self._completer.popup().isVisible():
-                self._completer.popup().hide()
+            if suggestions_shown(self._completer):
+                hide_suggestions(self._completer)
             elif self.text() != self._stored:  # Esc: put the stored value back
                 self.setText(self._stored)
                 self.selectAll()
@@ -763,7 +784,7 @@ class ValueEdit(QLineEdit):
         return [model.item(k).data(Qt.ItemDataRole.EditRole) for k in range(model.rowCount())]
 
     def _chosen(self, key: str) -> None:
-        self._completer.popup().hide()
+        hide_suggestions(self._completer)
         if key == MAKE:
             self._make_parameter()
             return
@@ -903,7 +924,7 @@ class ExpandedEdit(QTextEdit):
         key = event.key()
         enter = key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
         tab = key == Qt.Key.Key_Tab
-        if self._completer.popup().isVisible() and (enter or tab or key == Qt.Key.Key_Escape):
+        if suggestions_shown(self._completer) and (enter or tab or key == Qt.Key.Key_Escape):
             event.ignore()  # the list of names takes it
             return
         if enter:
@@ -952,7 +973,7 @@ class ExpandedEdit(QTextEdit):
         fill_suggestions(self._completer, rows, QRect(rect.left(), rect.top(), 240, rect.height()))
 
     def _complete(self, name: str) -> None:
-        self._completer.popup().hide()
+        hide_suggestions(self._completer)
         if name.startswith("\x00"):
             return
         start, token = self._token()

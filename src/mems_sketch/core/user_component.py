@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 from mems_sketch.core.component import Component, Params
 from mems_sketch.core.expressions import RESERVED_NAMES, evaluate, resolve_variables
 from mems_sketch.core.levels import DEFAULT_STACK, Stack
+from mems_sketch.core.mesh_settings import MeshSettings
 from mems_sketch.core.shapes import (
     BBOX_POINTS,
     INDEX_NAMES,
@@ -240,6 +241,7 @@ class ComponentDef(_Model):
     ports: list[PortDef] = Field(default_factory=list)
     shapes: list[Shape] = Field(default_factory=list)
     waivers: list[Waiver] = Field(default_factory=list)
+    mesh: MeshSettings = Field(default_factory=MeshSettings)  # how it is meshed (#50)
 
     @field_validator("name")
     @classmethod
@@ -340,6 +342,7 @@ class ComponentDef(_Model):
         ]
         self.shapes = map_expressions(self.shapes, change)
         self._rewrite_points(change)
+        self.mesh = _mesh_renamed(self.mesh, change)
 
     def follow_point_rename(self, nodes: set[str], old: str, new: str) -> None:
         """Update what uses point ``old`` of the nodes named in ``nodes``, which place
@@ -466,3 +469,22 @@ def _params_model(definition: ComponentDef, scope: Mapping[str, float]) -> type[
 
     ResolvedParams.__name__ = base.__name__
     return ResolvedParams
+
+
+def _mesh_renamed(mesh: MeshSettings, change: Callable[[str], str | None]) -> MeshSettings:
+    """``mesh`` with each name in its expressions passed through ``change``."""
+
+    def visit(value: Any, key: str | None = None) -> Any:
+        if isinstance(value, dict):
+            return {k: visit(v, k) for k, v in value.items()}
+        if isinstance(value, list):
+            return [visit(v) for v in value]
+        if isinstance(value, str) and key not in ("kind", "layer"):
+            return rewrite(value, change)
+        return value
+
+    data = mesh.model_dump()
+    data["layers"] = {k: visit(v) for k, v in data["layers"].items()}  # keys are layers
+    return MeshSettings.model_validate(
+        {**visit({k: v for k, v in data.items() if k != "layers"}), "layers": data["layers"]}
+    )

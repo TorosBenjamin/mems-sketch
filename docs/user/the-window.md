@@ -93,7 +93,7 @@ Panels open and close from the stripes on the window's edges:
 | Left stripe, top | **Components**, **Commit** |
 | Left stripe, below | **Shapes**, **Layers** |
 | Left stripe, bottom | **Messages**, **Git** (along the bottom) |
-| Right stripe | **Properties**, **Parameters**, **Points** |
+| Right stripe | **Properties**, **Parameters**, **Points**, **Mesh** ([meshing](meshing.md)) |
 
 Each place shows one window at a time; the left side splits when Components
 and Shapes (or Layers) are both open. Every panel has a **?** in its header:

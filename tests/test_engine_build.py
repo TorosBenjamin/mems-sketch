@@ -80,6 +80,7 @@ _LATER_FIELDS = {
     (None, "category"): "",
     (None, "tags"): [],
     (None, "ports"): [],
+    (None, "mesh"): {"size": None, "growth": 1.2, "layers": {}, "refine": []},  # #50
 }
 # What components were called when the recording was made: the built-ins and
 # the example library's plate are the bundled mems library's now.

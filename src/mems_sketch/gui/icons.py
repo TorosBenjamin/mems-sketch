@@ -244,6 +244,7 @@ ICONS = {
     "keyboard": '<rect x="1.5" y="4" width="13" height="8.4" rx="1.4"/>'
     '<path d="M4 6.6h.01M6.7 6.6h.01M9.3 6.6h.01M12 6.6h.01M4 9.6h.01M12 9.6h.01M6.2 9.6h3.6" '
     'stroke-width="1.4"/>',
+    "mesh": '<path d="M2 13.5 8 2.5l6 11z"/><path d="M5 8h6M8 13.5 5 8M8 13.5 11 8"/>',
     "grid": '<rect x="1.8" y="1.8" width="12.4" height="12.4" rx="1"/>'
     '<path d="M1.8 6h12.4M1.8 10h12.4M6 1.8v12.4M10 1.8v12.4"/>',
     "axes": '<path d="M3 13V3.2" stroke="{y}"/><path d="M3 13h9.8" stroke="{x}"/>'

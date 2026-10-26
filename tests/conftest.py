@@ -45,6 +45,8 @@ def _delete_windows() -> None:
     if app is None:
         return
     for widget in app.topLevelWidgets():
+        if widget.objectName() == "suggestions":
+            continue  # a value field's list: its completer deletes it (twice would crash)
         widget.deleteLater()  # not close(): an unsaved window would ask about saving
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     gc.collect()

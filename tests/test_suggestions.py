@@ -9,7 +9,14 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-from mems_sketch.gui.value_edit import MAKE, USE_VALUE, ValueEdit, ranked
+from mems_sketch.gui.value_edit import (
+    MAKE,
+    USE_VALUE,
+    ValueEdit,
+    ranked,
+    suggestions_list,
+    suggestions_shown,
+)
 
 SCOPE = {"plate": 162.5, "pitch": 10.0, "w_finger": 2.0, "process.undercut": 3.0}
 
@@ -47,7 +54,7 @@ def test_typing_offers_what_matches_the_word_at_the_cursor(field):
 def test_nothing_is_offered_while_a_number_is_typed(field):
     field.setText("")
     QTest.keyClicks(field, "11")
-    assert not field._completer.popup().isVisible()
+    assert not suggestions_shown(field._completer)
 
 
 def test_rows_have_aligned_values_and_constants_are_marked(field):
@@ -60,7 +67,7 @@ def test_rows_have_aligned_values_and_constants_are_marked(field):
 def test_arrows_and_tab_insert_at_the_cursor(field):
     field.setText("")
     QTest.keyClicks(field, "plate + w")
-    popup = field._completer.popup()
+    popup = suggestions_list(field._completer)
     assert popup.isVisible()
     QTest.keyClick(popup, Qt.Key.Key_Tab)
     assert field.text() == "plate + w_finger" and not popup.isVisible()
@@ -74,8 +81,8 @@ def test_arrows_and_tab_insert_at_the_cursor(field):
 def test_escape_closes_the_list_and_keeps_the_text(field):
     field.setText("")
     QTest.keyClicks(field, "pl")
-    QTest.keyClick(field._completer.popup(), Qt.Key.Key_Escape)
-    assert not field._completer.popup().isVisible() and field.text() == "pl"
+    QTest.keyClick(suggestions_list(field._completer), Qt.Key.Key_Escape)
+    assert not suggestions_shown(field._completer) and field.text() == "pl"
 
 
 def test_the_button_on_a_number_offers_to_make_a_parameter_first(field):

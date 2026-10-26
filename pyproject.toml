@@ -14,7 +14,8 @@ dependencies = [
 gui = ["PySide6>=6.6,!=6.12.0"]
 matlab = ["scipy>=1.10"]  # .mat files
 mcp = ["mcp>=2.3"]  # mems-sketch-cli mcp: the design tools for AI assistants
-dev = ["pytest>=8", "pytest-qt>=4.4", "pytest-xdist>=3.6", "ruff==0.16.8", "PySide6>=6.6,!=6.12.0", "scipy>=1.10", "mcp>=2.3"]  # ruff pinned: CI and local agree
+mesh = ["gmsh>=4.13"]  # meshes for simulation (GPL: see docs/user/meshing.md)
+dev = ["pytest>=8", "pytest-qt>=4.4", "pytest-xdist>=3.6", "ruff==0.16.8", "PySide6>=6.6,!=6.12.0", "scipy>=1.10", "mcp>=2.3", "gmsh>=4.13"]  # ruff pinned: CI and local agree
 
 [project.scripts]
 mems-sketch-cli = "mems_sketch.cli:main"
@@ -31,6 +32,11 @@ dxf = "mems_sketch.export.layout_formats:DxfExporter"
 json = "mems_sketch.export.document_formats:JsonExporter"
 xml = "mems_sketch.export.document_formats:XmlExporter"
 mat = "mems_sketch.export.document_formats:MatExporter"
+msh = "mems_sketch.export.mesh_formats:MshExporter"
+inp = "mems_sketch.export.mesh_formats:AbaqusExporter"
+bdf = "mems_sketch.export.mesh_formats:NastranExporter"
+elmer = "mems_sketch.export.mesh_formats:ElmerExporter"
+xdmf = "mems_sketch.export.mesh_formats:XdmfExporter"
 
 # scikit-build-core builds the geometry library's Python module (C++, see
 # CMakeLists.txt) into the package when Open CASCADE is found; without it the

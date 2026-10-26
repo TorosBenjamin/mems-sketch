@@ -10,6 +10,7 @@ from typing import Any
 
 from mems_sketch.core.expressions import ExpressionError, names_in
 from mems_sketch.core.levels import LEVEL, Stack, is_relative, offset, shifted
+from mems_sketch.core.mesh_settings import MeshSettings
 from mems_sketch.core.project import Project
 from mems_sketch.core.shapes import (
     NodePath,
@@ -260,6 +261,17 @@ class ComponentEdits(Commands):
             project.components[name].description = text
 
         self.session.edit(f"Describe {name}", change)
+
+    def set_mesh(self, name: str, settings: MeshSettings) -> None:
+        """How a project component is meshed (#50): its whole mesh settings."""
+        settings = MeshSettings.model_validate(settings.model_dump())  # checked, and a copy
+
+        def change(project: Project) -> None:
+            if name not in project.components:
+                raise ValueError(f"'{name}' is read-only: its mesh settings cannot be changed")
+            project.components[name].mesh = settings
+
+        self.session.edit(f"Mesh settings of {name}", change)
 
     def _check_name(self, name: str, owner: str | None = None, moving: str | None = None) -> str:
         """The path of a new component ``name`` (private to ``owner``), if it is free

@@ -326,8 +326,15 @@ NB_MODULE(_core, m) {
              [](Engine* e, std::string_view json) { new (e) Engine(std::make_shared<mems::BuildCache>(), json); },
              "json"_a)
         .def(
-            "trial", [](const Engine& e, std::string_view json) { return Engine(e.cache, json); }, "json"_a,
-            "Another version of the project, sharing this engine's cache.")
+            "trial",
+            [](const Engine& e, std::string_view json, bool speculative) {
+                Engine other(e.cache, json);
+                other.builder->set_speculative(speculative);
+                return other;
+            },
+            "json"_a, "speculative"_a = false,
+            "Another version of the project, sharing this engine's cache. A speculative one builds ahead of "
+            "the user: what it adds to the cache goes first when the cache is full.")
         .def_prop_ro("project", [](const Engine& e) { return *e.project; }, "The model it builds from.")
         .def(
             "build",
@@ -439,6 +446,18 @@ NB_MODULE(_core, m) {
             "cancel", [](Engine& e) { e.stop->store(true); },
             "Stop this engine's builds (another thread may call it while one runs): they raise "
             "BuildCancelled soon, and what they had finished stays in the cache.")
+        .def(
+            "set_cache_limits",
+            [](Engine& e, size_t max_bytes, size_t max_speculative_bytes) {
+                e.cache->set_limits(max_bytes, max_speculative_bytes);
+            },
+            "max_bytes"_a, "max_speculative_bytes"_a,
+            "At most this much kept (bytes, estimated), of which at most the second built ahead; past it "
+            "the least recently used go, what was built ahead first.")
+        .def_prop_ro("cache_bytes", [](const Engine& e) { return e.cache->bytes(); },
+                     "About how many bytes the cache holds.")
+        .def_prop_ro("speculative_bytes", [](const Engine& e) { return e.cache->speculative_bytes(); },
+                     "About how many bytes of it were built ahead and not used yet.")
         .def_prop_ro("cached", [](const Engine& e) { return e.cache->size(); },
                      "How many component builds the cache holds.")
         .def_prop_ro("cached_nodes", [](const Engine& e) { return e.cache->nodes(); },

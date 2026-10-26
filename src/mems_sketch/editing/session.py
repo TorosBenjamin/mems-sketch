@@ -81,6 +81,9 @@ class EditSession:
         # a big design takes seconds, so the editor turns this off for one and shows
         # what does not build instead (references are checked either way).
         self.check_builds = True
+        # A value is being dragged (QS-9): the design follows each step, and the
+        # editor may leave the rule checks until the drag ends.
+        self.dragging = False
         self._valid: bool | None = None  # whether the project builds, once known
         # Edits made without that check since the last time someone looked (see
         # :meth:`take_back_unchecked`): the editor builds afterwards and takes them back

@@ -36,6 +36,7 @@ from mems_sketch.core.errors import explain
 from mems_sketch.core.shapes import CornersModifier, NodePath, paths
 from mems_sketch.editing import EditSession
 from mems_sketch.editing.clipboard import is_shapes
+from mems_sketch.editing.speculation import Speculator
 from mems_sketch.export.base import available_exporters, cell_name_notes, options_of, title_of
 from mems_sketch.gui import component_picker, icons, motion, recent_projects, theme
 from mems_sketch.gui.actions import Actions, make_action
@@ -214,6 +215,7 @@ class MainWindow(QMainWindow):
     def __init__(self, document: EditSession | None = None) -> None:
         super().__init__()
         self.document = document or EditSession()
+        self.speculator = Speculator(self.document)  # builds ahead while a value is dragged
         self._problems: list[str] = []
         self._built_clean = False  # the last build had no problems (see _refresh_built)
         self._corner_errors: list[tuple[float, float]] = []  # corners whose radius does not fit
@@ -310,11 +312,14 @@ class MainWindow(QMainWindow):
         self.messages.waive_requested.connect(self.waive)
         self.messages.unwaive_requested.connect(self.unwaive)
         self.settings.changed.connect(self._setting_changed)
+        self._apply_performance()
         for panel in (self.parameters, self.layers, self.components, self.commit_panel, self.git):
             panel.error.connect(self.report_error)
         for panel in (self.properties, self.points):  # the field says why too (#325)
             panel.error.connect(self.report_refusal)
         self.properties.previewed.connect(self._preview_node)
+        self.parameters.value_dragged.connect(self._build_ahead)
+        self.parameters.drag_finished.connect(self.refresh)  # with the rule checks now
         self.properties.pick_corners.connect(lambda: self.set_tool("corners"))
         self.properties.pick_alignment.connect(self._pick_alignment)
         self.properties.open_component.connect(self.open_component)
@@ -513,8 +518,37 @@ class MainWindow(QMainWindow):
         options["max_fps"] = round(self.screen().refreshRate()) if rate == "display" else int(rate)
         return options
 
+    def _apply_performance(self) -> None:
+        """The performance settings (QS-11): threads, the cache and building ahead."""
+        from mems_sketch import engine, machine
+
+        settings = self.settings
+        engine.set_threads(settings.get("performance/threads"))
+        megabytes = settings.get("performance/cache_mb") or machine.default_cache_mb()
+        share = settings.get("performance/ahead_cache_percent") / 100
+        self.document.engine.set_cache_limits(megabytes << 20, int((megabytes << 20) * share))
+        ahead = self.speculator.settings
+        ahead.ahead = int(settings.get("performance/build_ahead"))
+        ahead.threads = settings.get("performance/ahead_threads")
+        ahead.max_seconds = settings.get("performance/ahead_max_seconds")
+        ComponentView.checks_wait_for_drag = settings.get("canvas/drag_skips_checks")
+
+    def _build_ahead(self, parameter, value: float) -> None:
+        """A parameter dragged in Parameters: build its next values ahead (QS-10)."""
+        if not getattr(parameter, "integer", False):
+            return
+        component = self.document.active
+        try:
+            limits = parameter.limits(self.document.results.scope())
+        except Exception:  # noqa: BLE001 - a limit that does not evaluate: none
+            limits = (None, None)
+        took = self.build_seconds.get(component)
+        self.speculator.around(component, parameter.name, value, took, limits)
+
     def _setting_changed(self, key: str) -> None:
         """Apply a changed setting at once."""
+        if key.startswith("performance/") or key == "canvas/drag_skips_checks":
+            self._apply_performance()
         if key == "appearance/reduce_motion":
             motion.set_enabled(not self.settings.get(key))
         if key == "appearance/custom_title_bar":
@@ -1189,6 +1223,7 @@ class MainWindow(QMainWindow):
     def refresh(self) -> None:
         """Recompile every open tab and update the panels (after any change). A big
         design is built in the background: the tabs show the last result meanwhile."""
+        self.speculator.cancel()  # a real build comes first (QS-10)
         self.tool.design_changed()  # what it was doing was based on the previous state
         self._hovered = None  # it may be gone (deleted): the next move finds what is under
         self.canvas.show_hover(None)
@@ -2569,6 +2604,7 @@ class MainWindow(QMainWindow):
         if self._confirm_discard():
             self.save_editor_state()
             self._save_tool_windows()
+            self.speculator.shutdown()
             event.accept()
         else:
             event.ignore()

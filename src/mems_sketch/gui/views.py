@@ -97,6 +97,7 @@ class ComponentView(QWidget):
     """One tab: a component, its canvas and selection."""
 
     show_implementation = False  # the window's setting: shapes of read-only components
+    checks_wait_for_drag = True  # the window's setting: no rule checks while a value is dragged
     checked = Signal()  # a background rule check finished: violations changed
     _check_done = Signal(int, object)  # generation, Future (from the worker thread)
 
@@ -198,6 +199,9 @@ class ComponentView(QWidget):
         self._generation += 1
         self.checking = False
         if drawn is None:
+            return
+        if self.document.dragging and self.checks_wait_for_drag:
+            self.checking = True  # until the drag ends (QS-9)
             return
         if self.canvas.isVisible():
             self.canvas.viewport().repaint()

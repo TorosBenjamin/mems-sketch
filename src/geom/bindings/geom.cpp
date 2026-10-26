@@ -21,6 +21,7 @@
 #include "mgeom/measure.hpp"
 #include "mgeom/region.hpp"
 #include "mgeom/snap.hpp"
+#include "mgeom/threads.hpp"
 #include "mgeom/transform.hpp"
 #include "mgeom/wire.hpp"
 
@@ -343,6 +344,7 @@ NB_MODULE(_geom, m) {
         .def_prop_ro("empty", &Region::empty)
         .def("__bool__", [](const Region& r) { return !r.empty(); })
         .def_prop_ro("pieces", &Region::pieces)
+        .def_prop_ro("memory", &Region::memory, "About how many bytes it takes (an estimate).")
         .def_prop_ro("bbox", &Region::bbox)
         .def_prop_ro("area", &Region::area)
         .def(
@@ -458,6 +460,10 @@ NB_MODULE(_geom, m) {
           nb::call_guard<nb::gil_scoped_release>(),
           "The region on a grid (µm): curves split at chord, points rounded to the grid, "
           "cleaned up, with a report of what the rounding changed.");
+
+    m.def("set_threads", &mgeom::set_threads, "count"_a,
+          "How many threads one operation may use: 1 the calling thread only, 0 the machine's.");
+    m.def("threads", &mgeom::threads, "The threads one operation may use.");
 
     // Grid polygons (integer coordinates): exact and fast booleans and offsets.
     nb::enum_<grid::Op>(m, "GridOp")

@@ -171,3 +171,29 @@ TEST_CASE("a circle's segments are as given, from 3 to 4096, and refused otherwi
           doctest::Approx(3 * std::sqrt(3.0) / 2));
     for (const double n : {2.0, 4097.0, 6.5}) CHECK_THROWS_AS(builder.build("tri", {{"n", n}}), mems::BuildError);
 }
+
+TEST_CASE("the cache keeps the least recently used out, what was built ahead first") {
+    const Project project = Project::from_json(PROJECT);
+    auto cache = std::make_shared<mems::BuildCache>();
+    Builder builder(project, cache);
+    Builder ahead(project, cache);
+    ahead.set_speculative(true);
+    const auto real = builder.build("pad", {{"w", 3.0}});
+    const size_t one = cache->bytes();
+    CHECK(one > 0);
+    CHECK(cache->speculative_bytes() == 0);
+    ahead.build("pad", {{"w", 4.0}});
+    ahead.build("pad", {{"w", 5.0}});
+    CHECK(cache->speculative_bytes() > 0);
+    // Asked for for real: kept like any other.
+    const size_t before = cache->speculative_bytes();
+    builder.build("pad", {{"w", 4.0}});
+    CHECK(cache->speculative_bytes() < before);
+    // No room for what was built ahead: it goes, the real ones stay.
+    cache->set_limits(static_cast<size_t>(-1), 0);
+    CHECK(cache->speculative_bytes() == 0);
+    CHECK(builder.build("pad", {{"w", 3.0}}) == real);  // still there
+    // Room for about one: the least recently used goes.
+    cache->set_limits(cache->bytes() / 2, 0);
+    CHECK(cache->bytes() <= one * 2);
+}

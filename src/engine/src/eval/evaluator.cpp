@@ -238,6 +238,31 @@ struct CachedNode {
     std::vector<std::pair<NodePath, NodeRecord>> records;
 };
 
+// What a cache entry weighs (an estimate): its geometry, and a little for the
+// rest. Geometry shared with other entries is counted in each.
+namespace {
+
+size_t memory_of(const Layers& layers) {
+    size_t bytes = 0;
+    for (const auto& [name, region] : layers) bytes += name.size() + region.memory();
+    return bytes;
+}
+
+size_t memory_of(const CachedNode& node) {
+    size_t bytes = sizeof(CachedNode) + memory_of(node.result.layers) + node.result.instances.size() * sizeof(Instance);
+    for (const auto& [path, record] : node.records)
+        bytes += sizeof(record) + path.size() * sizeof(path.front()) + memory_of(record.layers) +
+                 record.instances.size() * sizeof(Instance);
+    return bytes;
+}
+
+}  // namespace
+
+size_t memory_of(const Built& built) {
+    return sizeof(Built) + built.key.size() + memory_of(built.layers) + built.instances.size() * sizeof(Instance) +
+           built.points.size() * 64 + built.ports.size() * 96;
+}
+
 namespace {
 
 void strings_in(const Json& value, std::vector<std::string>& out) {
@@ -340,7 +365,7 @@ NodeResult cached_render(const Json& node, Builder& builder, const std::string& 
     if (!key) return render_node(node, builder, component, variables, scope);
     Records* records = builder.recording();
     const NodePath& path = builder.path();
-    const auto hit = builder.cache().find_node(*key);
+    const auto hit = builder.cache().find_node(*key, builder.speculative());
     if (hit && (!records || hit->has_records)) {
         mgeom::check_interrupted();
         if (records)
@@ -360,7 +385,7 @@ NodeResult cached_render(const Json& node, Builder& builder, const std::string& 
         // Built before without records: keep that result (other nodes' keys name its geometry).
         if (hit) made->result = hit->result;
     }
-    builder.cache().put_node(*key, made);
+    builder.cache().put_node(*key, made, memory_of(*made), builder.speculative());
     return made->result;
 }
 
@@ -814,7 +839,7 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
         std::snprintf(buffer, sizeof buffer, "%.17g", value);
         key += "|" + name + "=" + buffer;
     }
-    if (auto found = cache_->find(key)) return found;
+    if (auto found = cache_->find(key, speculative_)) return found;
     struct Restore {  // the level of the component that placed this one, after it
         OptionalLevel& level;
         OptionalLevel saved;
@@ -893,33 +918,103 @@ std::shared_ptr<const Built> Builder::build_on(const std::string& qualified, con
         made_port.layer = given("layer") ? layer(port["layer"].get<std::string>()) : from ? from->layer : layer("level");
         built.ports[name] = made_port;
     }
-    return cache_->put(std::move(made));
+    return cache_->put(std::move(made), speculative_);
 }
 
-std::shared_ptr<const Built> BuildCache::find(const std::string& key) const {
+std::shared_ptr<const Built> BuildCache::find(const std::string& key, bool speculative) {
     const std::lock_guard lock(mutex_);
     const auto found = built_.find(key);
-    return found == built_.end() ? nullptr : found->second;
+    if (found == built_.end()) return nullptr;
+    touch(found->second, speculative);
+    return std::static_pointer_cast<const Built>(found->second.value);
 }
 
-std::shared_ptr<const Built> BuildCache::put(std::shared_ptr<const Built> built) {
+std::shared_ptr<const Built> BuildCache::put(std::shared_ptr<const Built> built, bool speculative) {
     const std::lock_guard lock(mutex_);
-    // Past the limit, start again: what is in use is built again as it is asked for
-    // (what is still placed somewhere stays alive with its instances).
-    if (built_.size() >= max_entries_) built_.clear();
-    return built_.try_emplace(built->key, std::move(built)).first->second;
+    if (const auto found = built_.find(built->key); found != built_.end()) {  // another thread was first
+        touch(found->second, speculative);
+        return std::static_pointer_cast<const Built>(found->second.value);
+    }
+    const std::string key = built->key;
+    const size_t bytes = memory_of(*built);
+    add(false, key, built, bytes, speculative);
+    make_room();  // (what is still placed somewhere stays alive with its instances)
+    return built;
 }
 
-std::shared_ptr<const CachedNode> BuildCache::find_node(const std::string& key) const {
+std::shared_ptr<const CachedNode> BuildCache::find_node(const std::string& key, bool speculative) {
     const std::lock_guard lock(mutex_);
     const auto found = nodes_.find(key);
-    return found == nodes_.end() ? nullptr : found->second;
+    if (found == nodes_.end()) return nullptr;
+    touch(found->second, speculative);
+    return std::static_pointer_cast<const CachedNode>(found->second.value);
 }
 
-void BuildCache::put_node(const std::string& key, std::shared_ptr<const CachedNode> node) {
+void BuildCache::put_node(const std::string& key, std::shared_ptr<const CachedNode> node, size_t bytes,
+                          bool speculative) {
     const std::lock_guard lock(mutex_);
-    if (nodes_.size() >= max_nodes_) nodes_.clear();  // as for components: start again
-    nodes_.insert_or_assign(key, std::move(node));
+    if (const auto found = nodes_.find(key); found != nodes_.end()) {  // made again with its records
+        Entry& entry = found->second;
+        bytes_ = bytes_ - entry.bytes + bytes;
+        if (entry.speculative) speculative_bytes_ = speculative_bytes_ - entry.bytes + bytes;
+        entry.value = std::move(node);
+        entry.bytes = bytes;
+        touch(entry, speculative);
+    } else {
+        add(true, key, std::move(node), bytes, speculative);
+    }
+    make_room();
+}
+
+void BuildCache::touch(Entry& entry, bool speculative) {
+    use_.splice(use_.end(), use_, entry.used);  // the most recently used now
+    if (entry.speculative && !speculative) {  // asked for for real: kept like the rest
+        entry.speculative = false;
+        speculative_bytes_ -= entry.bytes;
+    }
+}
+
+void BuildCache::add(bool node, const std::string& key, std::shared_ptr<const void> value, size_t bytes,
+                     bool speculative) {
+    use_.emplace_back(node, key);
+    entries(node).emplace(key, Entry{std::move(value), bytes, speculative, std::prev(use_.end())});
+    bytes_ += bytes;
+    if (speculative) speculative_bytes_ += bytes;
+}
+
+void BuildCache::make_room() {
+    // The least recently used go first; built-ahead results before anything else.
+    const auto drop = [this](Use::iterator it) {
+        auto& map = entries(it->first);
+        const auto found = map.find(it->second);
+        bytes_ -= found->second.bytes;
+        if (found->second.speculative) speculative_bytes_ -= found->second.bytes;
+        map.erase(found);
+        use_.erase(it);
+    };
+    const auto oldest = [this](auto&& wanted) {
+        for (auto it = use_.begin(); it != use_.end(); ++it)
+            if (wanted(*it)) return it;
+        return use_.end();
+    };
+    const auto is_speculative = [this](const std::pair<bool, std::string>& use) {
+        return entries(use.first).at(use.second).speculative;
+    };
+    while (speculative_bytes_ > max_speculative_bytes_ || (bytes_ > max_bytes_ && speculative_bytes_ > 0)) {
+        const auto it = oldest(is_speculative);
+        if (it == use_.end()) break;
+        drop(it);
+    }
+    while (bytes_ > max_bytes_ && use_.size() > 1) drop(use_.begin());
+    while (built_.size() > max_entries_) drop(oldest([](const auto& use) { return !use.first; }));
+    while (nodes_.size() > max_nodes_) drop(oldest([](const auto& use) { return use.first; }));
+}
+
+void BuildCache::set_limits(size_t max_bytes, size_t max_speculative_bytes) {
+    const std::lock_guard lock(mutex_);
+    max_bytes_ = max_bytes;
+    max_speculative_bytes_ = max_speculative_bytes;
+    make_room();
 }
 
 size_t BuildCache::nodes() const {
@@ -927,10 +1022,22 @@ size_t BuildCache::nodes() const {
     return nodes_.size();
 }
 
+size_t BuildCache::bytes() const {
+    const std::lock_guard lock(mutex_);
+    return bytes_;
+}
+
+size_t BuildCache::speculative_bytes() const {
+    const std::lock_guard lock(mutex_);
+    return speculative_bytes_;
+}
+
 void BuildCache::clear() {
     const std::lock_guard lock(mutex_);
     built_.clear();
     nodes_.clear();
+    use_.clear();
+    bytes_ = speculative_bytes_ = 0;
 }
 
 size_t BuildCache::size() const {

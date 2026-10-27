@@ -140,8 +140,8 @@ PANEL_HELP = {  # the "?" in each tool window's header
     "now.",
     "mesh": "How the component is meshed for simulation: the largest element, how "
     "fast sizes may grow from one element to the next, a size per layer, and places "
-    "the mesh is finer. *Mesh* shows the mesh on the canvas; *Export…* saves it for "
-    "Elmer, CalculiX, FEniCS or gmsh. Needs gmsh.",
+    "the mesh is finer. *Bake* makes the mesh in the background and shows it on the "
+    "canvas; *Export…* saves it for Elmer, CalculiX, FEniCS or gmsh. Needs gmsh.",
     "points": "Every point of the component. Its own points are for whoever places "
     "it (to align to); *Default* are the points every component has, from the box "
     "around it; then the points of each named shape.\n\nHover a point to find it "
@@ -1435,7 +1435,9 @@ class MainWindow(QMainWindow):
         meshing = self.tool_windows.is_open("mesh")  # its refinements and preview (#50, #72)
         self.canvas.show_refinements(self.mesh.refinement_marks() if meshing else [])
         self.canvas.show_size_map(self.mesh.size_map_marks() if meshing else [])
-        self.canvas.show_mesh(*(self.mesh.preview_arrays() if meshing else (None, None)))
+        self.canvas.show_mesh(
+            *(self.mesh.preview_arrays() if meshing else (None, None)), stale=self.mesh.stale
+        )
         open_ = self.tool_windows.is_open("points")
         focus = (
             [m for m in (self.points.focused_marker(), self._hovered_point) if m] if open_ else []

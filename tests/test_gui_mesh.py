@@ -10,6 +10,8 @@ pytest.importorskip("PySide6")
 
 from mems_sketch import meshing
 
+QTimerClass = pytest.importorskip("PySide6.QtCore").QTimer
+
 needs_gmsh = pytest.mark.skipif(not meshing.available(), reason="gmsh is not installed")
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -81,16 +83,89 @@ def test_refinements_are_added_edited_and_drawn(window):
 
 
 @needs_gmsh
-def test_the_preview_is_drawn_and_goes_when_the_design_changes(window):
+def test_the_preview_is_drawn_and_kept_out_of_date_when_the_design_changes(window):
     panel = window.mesh
     apply(panel.size, "20")
     panel.automatic.click()  # off: a quick, coarse mesh of the whole device
+    panel.live.setChecked(False)
     mesh = panel.preview()
     assert mesh is not None and window.canvas.mesh_shown()
     assert "triangles" in panel.summary.text() and "quality" in panel.summary.text()
     window.document.parameters.set("plate", 140.0)
     window.mesh.refresh()
-    assert panel.mesh is None and not window.canvas.mesh_shown()
+    assert panel.mesh is mesh and panel.stale  # kept, said to be out of date
+    assert panel.summary.text().startswith("Out of date") and window.canvas.mesh_shown()
+    window.document.undo()
+    window.mesh.refresh()
+    assert not panel.stale  # the design it was made from again
+
+
+@needs_gmsh
+def test_a_bake_runs_in_another_process_and_the_window_answers(window, qtbot):
+    import os
+
+    window.open_component("suspension")
+    panel = window.mesh
+    ticks = []
+    timer = QTimerClass(window)
+    timer.timeout.connect(lambda: ticks.append(1))
+    timer.start(10)
+    assert panel.start_bake() and panel.baking
+    assert panel._bake._process.pid != os.getpid()
+    assert panel.cancel_button.isVisible()
+    qtbot.waitUntil(lambda: not panel.baking, timeout=60_000)
+    timer.stop()
+    assert panel.mesh is not None and ticks  # the window went on meanwhile
+    assert not panel.cancel_button.isVisible()
+
+
+@needs_gmsh
+def test_cancel_stops_a_bake(window, qtbot):
+    panel = window.mesh  # the whole resonator, automatic sizes: several seconds
+    assert panel.start_bake()
+    process = panel._bake._process
+    panel.cancel_bake()
+    qtbot.waitUntil(lambda: not process.is_alive(), timeout=10_000)
+    assert not panel.baking and panel.mesh is None
+    assert panel.summary.text() == "Cancelled."
+
+
+@needs_gmsh
+def test_a_quick_mesh_is_baked_again_after_an_edit(window, qtbot):
+    window.open_component("suspension")
+    panel = window.mesh
+    apply(panel.size, "20")
+    panel.automatic.click()  # off: quick
+    first = panel.preview()
+    assert first is not None and panel._bake_seconds < 5
+    panel._bake_seconds = 0.1  # (as quick as on a fast machine)
+    apply(panel.size, "15")  # an edit: out of date, then baked again by itself
+    assert panel.stale
+    qtbot.waitUntil(lambda: panel.mesh is not first and not panel.baking, timeout=60_000)
+    assert not panel.stale and panel.mesh.settings.size == 15
+
+
+@needs_gmsh
+def test_export_uses_the_baked_mesh_when_current(window, monkeypatch, tmp_path):
+    from mems_sketch.export.base import export
+
+    window.open_component("suspension")
+    panel = window.mesh
+    apply(panel.size, "20")
+    mesh = panel.preview()
+    assert mesh is not None
+
+    def no_meshing(*args, **kwargs):
+        raise AssertionError("meshed again")
+
+    monkeypatch.setattr(meshing, "_entities", no_meshing)
+    document = window.document
+    path, _ = document.export_with_report(tmp_path / "s.msh", "msh", {})
+    assert '"spring.device"' in path.read_text()
+    elmer, _ = document.export_with_report(tmp_path / "s.elmer", "elmer", {})
+    assert (elmer / "mesh.header").read_text().split()[1] == str(mesh.element_count)
+    with pytest.raises(AssertionError, match="meshed again"):  # changed: meshed anew
+        export(document.project, tmp_path / "x.msh", component="suspension", params={"turns": 4})
 
 
 @needs_gmsh

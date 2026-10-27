@@ -48,11 +48,20 @@ is meshed:
 - **Through each layer** (3D) is how many prisms go through each layer's
   thickness: 2 by default. **Free tetrahedra** (0) fills the layers with
   tetrahedra instead.
-- **Mesh** makes the mesh and draws it over the layers, with the number of
-  elements and the worst element's quality (1 is a regular element, near 0 a
-  sliver; prisms in a thin film score lower for being flat, which is fine).
-  It goes away when the design changes; press Mesh again.
-- **Export…** saves it (see below).
+- **Bake** makes the mesh in the background and draws it over the layers,
+  with the number of elements and the worst element's quality (1 is a regular
+  element, near 0 a sliver; prisms in a thin film score lower for being flat,
+  which is fine). The window stays usable meanwhile; the line under the
+  buttons says what gmsh is doing and for how long, and **Cancel** stops it.
+  Baking again while one is running replaces it.
+- When the design or the settings change, the mesh is **kept but out of date**:
+  drawn faintly, its summary starting with *Out of date*. A mesh that took under
+  a second (a part in 2D) is baked again by itself shortly after your last
+  change, while **Bake again after each change, when it is quick** is on;
+  larger ones wait for *Bake*. The size map and the refinements always follow
+  each edit at once.
+- **Export…** saves it (see below). An export of the design the baked mesh is
+  current for uses that mesh, rather than meshing it again.
 
 Every value is an expression like any other, over the component's parameters
 and the process constants: `size: plate / 20` follows the plate. The settings

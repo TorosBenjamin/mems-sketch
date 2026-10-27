@@ -26,6 +26,7 @@ after another (a lock), not at once.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import itertools
 import math
 import threading
@@ -87,6 +88,7 @@ ELEMENT_TYPES = {
 }
 TRIANGLE, QUADRILATERAL, PRISM = 2, 3, 6  # gmsh's numbers for the extruded mesh's parts
 _lock = threading.Lock()
+_kept: Mesh | None = None  # a baked mesh, used again while current (see keep)
 
 
 class MeshError(Exception):
@@ -137,6 +139,7 @@ class Mesh:
     # The component's named shapes on each layer (``mass.device``): element indices (#71).
     parts: dict[str, np.ndarray] = field(default_factory=dict)
     size_points: list = field(default_factory=list)  # the automatic size map used (#73)
+    fingerprint: str = ""  # what it was made from (see keep)
 
     @property
     def dim(self) -> int:
@@ -225,6 +228,7 @@ def generate(
     write: Callable[[object], None] | None = None,
     heights: dict[str, tuple[float, float]] | None = None,
     shapes: dict[str, Geometry] | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> Mesh:
     """Mesh ``geometry`` (all its layers, or ``layers``) with ``settings``
     (expressions evaluated with ``variables``): in 2D, or in 3D when ``heights``
@@ -233,8 +237,12 @@ def generate(
     module while the mesh is in it, to save it in gmsh's formats (see
     :func:`save_with_gmsh`). ``shapes``: the component's named shapes and their
     geometry (:func:`named_shapes`), each a named part of the mesh on each layer
-    (``mass.device``)."""
+    (``mass.device``). ``progress``, if given, is told each step as it starts.
+
+    A mesh :func:`keep` was given, made from the same geometry and settings, is
+    used again instead of meshing anew (a bake in the Mesh window, then an export)."""
     gmsh = _gmsh()
+    say = progress or (lambda _step: None)
     dim = 2 if heights is None else 3
     wanted = None if layers is None else set(layers)
     regions = {
@@ -257,6 +265,20 @@ def generate(
     if unknown:
         raise MeshError(f"the mesh settings name layers that are not drawn: {', '.join(unknown)}")
     layered = heights is not None and settings.through > 0
+    fingerprint = _fingerprint(regions, settings, heights, shapes or {})
+    if _kept is not None and _kept.fingerprint == fingerprint:
+        if write is not None:
+            say("writing the baked mesh")
+            with _lock:
+                gmsh.initialize(interruptible=False)
+                try:
+                    gmsh.option.setNumber("General.Terminal", 0)
+                    gmsh.model.add("mems-sketch")
+                    _load(gmsh, _kept)
+                    write(gmsh)
+                finally:
+                    gmsh.finalize()
+        return _kept
     size_points = []
     if settings.automatic:
         largest = max([settings.size, *settings.layers.values()])
@@ -272,33 +294,65 @@ def generate(
         try:
             gmsh.option.setNumber("General.Terminal", 0)
             gmsh.model.add("mems-sketch")
+            say("cutting the layers into one another")
             entities, parts = _entities(gmsh, regions, None if layered else heights, shapes or {})
             flat_dim = 2 if layered else dim
             _sizes(gmsh, entities, settings, flat_dim, size_points)
             _groups(gmsh, {**entities, **parts}, flat_dim)
+            say(f"meshing in {flat_dim}D")
             try:
                 gmsh.model.mesh.generate(flat_dim)
             except Exception as exc:
                 raise MeshError(f"gmsh could not mesh it: {exc}") from exc
             if layered:  # the flat mesh, extruded through each layer's thickness
+                say("extruding through the layers")
                 flat = _read(gmsh, set(entities), 2)
                 gmsh.model.remove()
                 gmsh.model.add("mems-sketch-3d")
                 _load(gmsh, _extrude(flat, heights, settings.through))
             if settings.order == 2:
-                gmsh.option.setNumber(
-                    "Mesh.SecondOrderIncomplete", 1
-                )  # 8-node quads, 15-node prisms
-                gmsh.option.setNumber("Mesh.SecondOrderLinear", 1)  # mid-edge, on straight edges
+                say("adding the mid-edge nodes")
+                # 8-node quadrilaterals and 15-node prisms; mid-edge, on straight edges
+                gmsh.option.setNumber("Mesh.SecondOrderIncomplete", 1)
+                gmsh.option.setNumber("Mesh.SecondOrderLinear", 1)
                 gmsh.model.mesh.setOrder(2)
+            say("reading the mesh")
             mesh = _read(gmsh, set(entities), dim)
             mesh.settings = settings
             mesh.size_points = size_points
+            mesh.fingerprint = fingerprint
             if write is not None:
                 write(gmsh)
             return mesh
         finally:
             gmsh.finalize()
+
+
+def keep(mesh: Mesh | None) -> None:
+    """Keep ``mesh`` (one made elsewhere, as a bake in another process) to be used
+    again by :func:`generate` while what it was made from stays the same; None
+    forgets it."""
+    global _kept
+    _kept = mesh
+
+
+def _fingerprint(regions, settings: ResolvedMesh, heights, shapes) -> str:
+    """What a mesh is made from, as a hash: the outlines, the settings as numbers,
+    the heights and the named shapes."""
+    digest = hashlib.sha1(repr((settings, sorted((heights or {}).items()))).encode())
+
+    def outlines(name: str, region) -> None:
+        digest.update(name.encode())
+        for hull, holes in region.points_um():
+            for ring in (hull, *holes):
+                digest.update(np.ascontiguousarray(ring, dtype=float).tobytes())
+
+    for name in sorted(regions):
+        outlines(name, regions[name])
+    for name in sorted(shapes):
+        for layer in sorted(shapes[name].layers):
+            outlines(f"{name}.{layer}", shapes[name].layers[layer])
+    return digest.hexdigest()
 
 
 def stack_heights(process) -> dict[str, tuple[float, float]]:
@@ -662,19 +716,7 @@ def _read(gmsh, layers: set[str], dim: int) -> Mesh:
 # -- layered 3D meshes ----------------------------------------------------------------
 
 
-@dataclass
-class _Extruded:
-    """A prism mesh made from a flat one (see :func:`_extrude`)."""
-
-    nodes: np.ndarray  # (n, 3)
-    prisms: np.ndarray  # (m, 6): the bottom triangle, then the top one
-    groups: dict[str, np.ndarray]  # layers and named shapes: prism indices
-    facets: np.ndarray  # (k, 4): triangles padded with -1, and quadrilaterals
-    facet_types: np.ndarray  # (k,): TRIANGLE or QUADRILATERAL
-    boundaries: dict[str, np.ndarray]  # ``<name>_boundary``: facet indices
-
-
-def _extrude(flat: Mesh, heights: dict[str, tuple[float, float]], through: int) -> _Extruded:
+def _extrude(flat: Mesh, heights: dict[str, tuple[float, float]], through: int) -> Mesh:
     """``flat`` (linear triangles, its layers and named shapes) extruded into prisms:
     each layer from its z by its thickness, in ``through`` prisms through it.
 
@@ -776,16 +818,27 @@ def _extrude(flat: Mesh, heights: dict[str, tuple[float, float]], through: int) 
         for name, keys_ in outline.items()
         if len(keys_)
     }
-    return _Extruded(nodes, prisms, groups, facets.astype(np.int64), facet_types, boundaries)
+    return Mesh(
+        nodes=nodes,
+        elements=prisms,
+        regions={name: found for name, found in groups.items() if name in flat.regions},
+        facets=facets.astype(np.int64),
+        boundaries=boundaries,
+        parts={name: found for name, found in groups.items() if name not in flat.regions},
+        element_type=PRISM,
+        facet_types=facet_types,
+    )
 
 
-def _load(gmsh, mesh: _Extruded) -> None:
+def _load(gmsh, mesh: Mesh) -> None:
     """``mesh`` into gmsh's (empty) model, with the same named groups as a mesh
     gmsh made itself: an entity for each set of groups an element is in."""
     tag = itertools.count(1)
-    node_tags = np.arange(1, len(mesh.nodes) + 1)
+    dim = mesh.dim
+    nodes = np.zeros((len(mesh.nodes), 3))
+    nodes[:, :dim] = mesh.nodes
 
-    def entities(dim: int, count: int, groups: dict[str, np.ndarray]):
+    def entities(entity_dim: int, count: int, groups: dict[str, np.ndarray]):
         """One entity per combination of groups: each, and the rows in it."""
         names = sorted(groups)
         member = np.zeros((count, max(len(names), 1)), dtype=bool)
@@ -797,32 +850,37 @@ def _load(gmsh, mesh: _Extruded) -> None:
         for combo in range(len(combos)):
             rows = np.nonzero(which == combo)[0]
             in_groups = [n for k, n in enumerate(names) if member[rows[0], k]]
-            made.append((gmsh.model.addDiscreteEntity(dim), rows, in_groups))
+            made.append((gmsh.model.addDiscreteEntity(entity_dim), rows, in_groups))
         return made
 
-    volumes = entities(3, len(mesh.prisms), mesh.groups)
-    gmsh.model.mesh.addNodes(3, volumes[0][0], node_tags.tolist(), mesh.nodes.ravel().tolist())
-    for entity, rows, _ in volumes:
-        element_tags = [next(tag) for _ in rows]
+    groups = {**mesh.regions, **mesh.parts}
+    bodies = entities(dim, len(mesh.elements), groups)
+    gmsh.model.mesh.addNodes(
+        dim, bodies[0][0], list(range(1, len(nodes) + 1)), nodes.ravel().tolist()
+    )
+    for entity, rows, _ in bodies:
         gmsh.model.mesh.addElementsByType(
-            entity, PRISM, element_tags, (mesh.prisms[rows] + 1).ravel().tolist()
+            entity,
+            mesh.kind.gmsh,
+            [next(tag) for _ in rows],
+            (mesh.elements[rows] + 1).ravel().tolist(),
         )
-    surfaces = entities(2, len(mesh.facets), mesh.boundaries)
-    for entity, rows, _ in surfaces:
-        for kind, width in ((TRIANGLE, 3), (QUADRILATERAL, 4)):
+    sides = entities(dim - 1, len(mesh.facets), mesh.boundaries)
+    for entity, rows, _ in sides:
+        for kind in sorted(set(mesh.facet_types[rows].tolist())):
             chosen = rows[mesh.facet_types[rows] == kind]
-            if len(chosen):
-                gmsh.model.mesh.addElementsByType(
-                    entity,
-                    kind,
-                    [next(tag) for _ in chosen],
-                    (mesh.facets[chosen, :width] + 1).ravel().tolist(),
-                )
-    for dim, made, names in ((3, volumes, mesh.groups), (2, surfaces, mesh.boundaries)):
+            width = ELEMENT_TYPES[kind].nodes
+            gmsh.model.mesh.addElementsByType(
+                entity,
+                kind,
+                [next(tag) for _ in chosen],
+                (mesh.facets[chosen, :width] + 1).ravel().tolist(),
+            )
+    for group_dim, made, names in ((dim, bodies, groups), (dim - 1, sides, mesh.boundaries)):
         for name in sorted(names):
             members = [entity for entity, _, in_groups in made if name in in_groups]
             if members:
-                gmsh.model.addPhysicalGroup(dim, members, name=name)
+                gmsh.model.addPhysicalGroup(group_dim, members, name=name)
 
 
 def save_with_gmsh(path: Path, scale: float = 1.0, msh_version: float = 4.1):

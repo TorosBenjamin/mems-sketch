@@ -8,8 +8,12 @@ preview of its mesh on the canvas (#72).
   window is open.
 - **Elements:** first or second order, and in 3D how many prisms go through
   each layer's thickness (0: free tetrahedra) (#346).
-- **Preview:** *Mesh* makes the mesh and draws it over the layers, with its
-  element count and its worst element's quality; *Export…* saves it.
+- **Preview:** *Bake* makes the mesh in the background (another process, so
+  the window stays usable and *Cancel* stops it) and draws it over the layers,
+  with its element count and its worst element's quality; *Export…* saves it,
+  using the baked mesh when it is current (#351). When the design or the
+  settings change, the mesh is kept but shown as out of date; one that took
+  under a second is baked again by itself shortly after the last edit.
 
 Every value is an expression like any other, over the component's parameters
 and the process constants, and is saved with the component (undoable).
@@ -18,7 +22,9 @@ A library's component shows its settings without letting them be changed.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+import time
+
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -46,7 +52,11 @@ from mems_sketch.editing import EditSession
 from mems_sketch.gui import widgets
 from mems_sketch.gui.panels import _Panel
 from mems_sketch.gui.value_edit import ValueEdit, _format
+from mems_sketch.mesh_bake import Bake, BakeJob
 
+LIVE_SECONDS = 1.0  # a mesh quicker than this is baked again by itself after an edit
+LIVE_DELAY_MS = 400  # after the last edit
+POLL_MS = 50  # how often a running bake is asked how it is getting on
 NO_GMSH = (
     "Meshing needs <b>gmsh</b>, which is not installed:<br>"
     "<code>pip install 'mems-sketch[mesh]'</code>"
@@ -62,6 +72,19 @@ class MeshPanel(_Panel):
         self.document = document
         self.mesh: meshing.Mesh | None = None  # the preview
         self._preview_key: tuple | None = None  # what the preview was made from
+        self.stale = False  # the preview was made from an earlier design or settings
+        self._bake: Bake | None = None  # the bake running
+        self._bake_key: tuple | None = None  # what it is made from
+        self._bake_seconds: float | None = None  # how long the last bake took
+        self._step = ""
+        self._failed = False
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(POLL_MS)
+        self._poll_timer.timeout.connect(self._poll)
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(LIVE_DELAY_MS)
+        self._live_timer.timeout.connect(self._live_bake)
         self._editable = False
 
         self.size = self._field(optional=True)
@@ -153,11 +176,24 @@ class MeshPanel(_Panel):
         self.refine_fields: dict[str, ValueEdit] = {}
         self.refine_layer: QComboBox | None = None  # an edges refinement's layer, when shown
 
-        self.mesh_button = QPushButton("Mesh")
-        self.mesh_button.setToolTip("Make the mesh and show it on the canvas")
-        self.mesh_button.clicked.connect(lambda: self.preview())
+        self.mesh_button = QPushButton("Bake")
+        self.mesh_button.setToolTip(
+            "Make the mesh in the background and show it on the canvas; the window "
+            "stays usable meanwhile"
+        )
+        self.mesh_button.clicked.connect(lambda: self.start_bake())
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setToolTip("Stop the mesh being made")
+        self.cancel_button.clicked.connect(self.cancel_bake)
+        self.cancel_button.hide()
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear_preview)
+        self.live = QCheckBox("Bake again after each change, when it is quick")
+        self.live.setChecked(True)
+        self.live.setToolTip(
+            f"A mesh that took under {LIVE_SECONDS:g} s is made again by itself shortly "
+            "after the last change; a slower one is only marked out of date"
+        )
         self.show_map = QCheckBox("Show the size map")
         self.show_map.setToolTip(
             "Where the automatic sizes make the mesh finer: a circle as wide as the "
@@ -172,8 +208,10 @@ class MeshPanel(_Panel):
         self.summary.setWordWrap(True)
         preview = widgets.Card(
             "Preview",
-            help="The mesh as it would be exported: in 2D drawn over the layers, in 3D "
-            "(the layers extruded through the stack) counted. Quality is gmsh's: 1 "
+            help="The mesh as it would be exported, made in the background: in 2D drawn "
+            "over the layers, in 3D (the layers extruded through the stack) counted. "
+            "After a change it is kept but out of date (drawn faintly); a quick one is "
+            "baked again by itself. Export uses it while it is current. Quality is gmsh's: 1 "
             "for a regular triangle or tetrahedron, near 0 for a sliver; prisms in a "
             "thin film score low for being flat, which is fine.",
         )
@@ -185,11 +223,13 @@ class MeshPanel(_Panel):
             "not drawn"
         )
         buttons = QHBoxLayout()
-        for button in (self.dimensions, self.mesh_button, self.clear_button):
+        self.dimensions.currentTextChanged.connect(lambda _text: self._check_current())
+        for button in (self.dimensions, self.mesh_button, self.cancel_button, self.clear_button):
             buttons.addWidget(button)
         buttons.addStretch(1)
         buttons.addWidget(self.export_button)
         preview.body.addLayout(buttons)
+        preview.body.addWidget(self.live)
         preview.body.addWidget(self.show_map)
         preview.body.addWidget(self.summary)
 
@@ -256,8 +296,19 @@ class MeshPanel(_Panel):
         self._show_refinement(self.refinements.currentRow())
         for button in self.refine_actions:
             button.setEnabled(self._editable)
-        if self.mesh is not None and self._preview_key != self._key():
-            self.clear_preview()  # made from an earlier version: not shown as current
+        self._check_current()
+
+    def _check_current(self) -> None:
+        """Whether the preview is of the design and settings as they are: if not,
+        it is kept but said to be out of date, and made again soon if that is
+        quick (see LIVE_SECONDS)."""
+        if self.mesh is not None:
+            self.stale = self._preview_key != self._key()
+            quick = self._bake_seconds is not None and self._bake_seconds < LIVE_SECONDS
+            if self.stale and quick and self.live.isChecked():
+                self._live_timer.start()  # (again at each edit: from the last one)
+            if self._bake is None:
+                self._show_summary()
         self.shown_changed.emit()
 
     def _key(self) -> tuple:
@@ -267,7 +318,15 @@ class MeshPanel(_Panel):
             geometry = None
         active = self.document.active
         trials = tuple(sorted(self.document.trials_for(active).items())) if active else ()
-        return active, id(geometry), self.settings().model_dump_json(), trials
+        dimensions = self.dimensions.currentText()
+        heights = None
+        if dimensions == "3D":
+            try:
+                heights = tuple(sorted(self.document.project.process.heights().items()))
+            except ValueError:
+                heights = "unknown"
+        settings = self.settings().model_dump_json()
+        return active, id(geometry), settings, trials, dimensions, heights
 
     def _scope(self) -> tuple[dict[str, float], list[str]]:
         try:
@@ -449,37 +508,124 @@ class MeshPanel(_Panel):
 
     # -- the preview -----------------------------------------------------------------
 
-    def preview(self) -> meshing.Mesh | None:
-        """Mesh the component as it is now and show it; None (and the reason, in the
-        panel and in Messages) if that fails."""
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    def start_bake(self) -> bool:
+        """Start making the mesh of the component as it is now, in another process
+        (a bake already running is stopped first); False (and the reason, in the
+        panel and in Messages) if it cannot start."""
+        self._live_timer.stop()
+        if self._bake is not None:
+            self._bake.cancel()
+            self._bake = None
         try:
             build = self.document.results.build()
             heights = None
             if self.dimensions.currentText() == "3D":
                 heights = meshing.stack_heights(self.document.project.process)
-            self.mesh = meshing.generate(
+            job = BakeJob(
                 build.geometry,
                 self.settings(),
                 build.variables(),
-                heights=heights,
-                shapes=meshing.named_shapes(build),
+                heights,
+                meshing.named_shapes(build),
             )
+            self._bake = Bake(job)
         except Exception as exc:  # noqa: BLE001 - shown in the panel
-            self.mesh = None
-            self.summary.setText(f"Not meshed: {exc}")
-            self.error.emit(f"Mesh: {exc}")
+            self._fail(str(exc))
+            return False
+        self._bake_key = self._key()
+        self._failed = False
+        self._step = "starting"
+        self._poll_timer.start()
+        self._buttons()
+        self._show_summary()
+        return True
+
+    def cancel_bake(self) -> None:
+        if self._bake is not None:
+            self._bake.cancel()
+            self._bake = None
+            self._poll_timer.stop()
+            self._buttons()
+            self._show_summary()
+            if self.mesh is None:
+                self.summary.setText("Cancelled.")
+
+    @property
+    def baking(self) -> bool:
+        return self._bake is not None
+
+    def _poll(self) -> None:
+        bake = self._bake
+        if bake is None:
+            self._poll_timer.stop()
+            return
+        for kind, value in bake.poll():
+            if kind == "step":
+                self._step = str(value)
+            elif kind == "done":
+                self.mesh = value
+                meshing.keep(value)  # an export of the same design uses it again
+                self._preview_key = self._bake_key
+                self._bake_seconds = bake.seconds
+                self.stale = self._preview_key != self._key()
+            elif kind == "error":
+                self._fail(str(value))
+        if bake.finished:
+            self._bake = None
+            self._poll_timer.stop()
+            self._buttons()
+            if not self._failed:
+                self._show_summary()
+                self.shown_changed.emit()
+                if self.stale and self.live.isChecked() and self._bake_seconds < LIVE_SECONDS:
+                    self._live_timer.start()  # it changed while baking
+        else:
+            self._show_summary()
+
+    def _fail(self, reason: str) -> None:
+        self._failed = True
+        self.summary.setText(f"Not meshed: {reason}")
+        self.error.emit(f"Mesh: {reason}")
+
+    def _live_bake(self) -> None:
+        if self.stale and self.isVisible() and self._bake is None:
+            self.start_bake()
+
+    def _buttons(self) -> None:
+        self.cancel_button.setVisible(self._bake is not None)
+        self.mesh_button.setText("Bake again" if self._bake is not None else "Bake")
+
+    def _show_summary(self) -> None:
+        parts = []
+        if self._bake is not None:
+            parts.append(f"Baking: {self._step}… ({self._bake.seconds:.0f} s)")
+        if self.mesh is not None:
+            text = self.mesh.summary()
+            parts.append(
+                f"Out of date (the design or settings changed): {text}" if self.stale else text
+            )
+        self.summary.setText("\n".join(parts))
+
+    def preview(self, timeout: float = 600.0) -> meshing.Mesh | None:
+        """Bake the mesh and wait for it (the window still answers meanwhile): the
+        mesh, or None (and the reason, in the panel and in Messages)."""
+        if not self.start_bake():
             return None
-        finally:
-            QApplication.restoreOverrideCursor()
-        self._preview_key = self._key()
-        self.summary.setText(self.mesh.summary())
-        self.shown_changed.emit()
-        return self.mesh
+        deadline = time.monotonic() + timeout
+        while self._bake is not None and time.monotonic() < deadline:
+            QApplication.processEvents()
+            self._poll()
+            time.sleep(0.01)
+        if self._bake is not None:
+            self.cancel_bake()
+            return None
+        return None if self._failed else self.mesh
 
     def clear_preview(self) -> None:
         self.mesh = None
         self._preview_key = None
+        self.stale = False
+        self._live_timer.stop()
         self.summary.setText("")
         self.shown_changed.emit()
 

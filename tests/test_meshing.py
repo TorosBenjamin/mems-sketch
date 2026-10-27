@@ -481,3 +481,29 @@ def test_a_shape_splits_a_layer_along_its_outline():
     assert area[mesh.parts["left.device"]].sum() == pytest.approx(40 * 20, rel=1e-6)
     assert area[mesh.parts["right.device"]].sum() == pytest.approx(60 * 20, rel=1e-6)
     assert not set(mesh.parts["left.device"]) & set(mesh.parts["right.device"])
+
+
+@needs_gmsh
+def test_a_kept_mesh_is_used_again_while_its_inputs_are_the_same(tmp_path, monkeypatch):
+    for heights in (None, STACK):
+        made = meshing.generate(frame_and_pad(), MeshSettings(size=20), heights=heights)
+        meshing.keep(made)
+        try:
+            calls = []
+            monkeypatch.setattr(meshing, "_entities", lambda *a, c=calls: c.append(1) or 1 / 0)
+            path = tmp_path / f"again{len(heights or {})}.inp"
+            again = meshing.generate(
+                frame_and_pad(),
+                MeshSettings(size=20),
+                heights=heights,
+                write=meshing.save_with_gmsh(path),
+            )
+            assert again is made and not calls
+            text = path.read_text()
+            assert "ELSET=device" in text and "ELSET=anchor_boundary" in text
+            assert text.count("\n") > made.element_count  # every element written
+            with pytest.raises(ZeroDivisionError):  # other settings: meshed anew
+                meshing.generate(frame_and_pad(), MeshSettings(size=15), heights=heights)
+        finally:
+            meshing.keep(None)
+            monkeypatch.undo()

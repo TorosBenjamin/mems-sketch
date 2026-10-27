@@ -1412,9 +1412,10 @@ class LayoutCanvas(QGraphicsView):
             self.scene().addItem(label)
             self._guide_items += [line, label]
 
-    def show_mesh(self, nodes=None, triangles=None) -> None:
+    def show_mesh(self, nodes=None, triangles=None, stale: bool = False) -> None:
         """A mesh's triangles (``nodes`` (n, 2) in µm, ``triangles`` (m, 3) indices)
-        drawn as thin lines over the layers; None hides it."""
+        drawn as thin lines over the layers, faint when ``stale`` (made from an
+        earlier version of the design); None hides it."""
         path = QPainterPath()
         if nodes is not None and triangles is not None:
             for a, b, c in triangles:
@@ -1423,7 +1424,7 @@ class LayoutCanvas(QGraphicsView):
                 path.lineTo(*nodes[c])
                 path.closeSubpath()
         color = QColor(self.theme["overlay"])
-        color.setAlpha(150)
+        color.setAlpha(55 if stale else 150)
         self._mesh_path("mesh", path, color, 0.6, 1140)
 
     def show_refinements(self, refinements: list[tuple]) -> None:

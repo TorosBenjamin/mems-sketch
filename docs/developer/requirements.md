@@ -601,7 +601,10 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   tools such as Ansys Mechanical. Further formats are exporter plugins
   (OUT-7).
 - **MSH-6** (Should, exists; [#72](https://github.com/TorosBenjamin/mems-sketch/issues/72)) A **preview** of the mesh on the canvas, with element
-  count and quality.
+  count and quality. It is baked in the background, in another process that
+  *Cancel* stops; kept, shown as out of date, when the design changes; baked
+  again by itself when that is quick; and used by an export of the same design
+  ([#351](https://github.com/TorosBenjamin/mems-sketch/issues/351)).
 - **MSH-7** (Must, exists; [#52](https://github.com/TorosBenjamin/mems-sketch/issues/52)) **Graded sizes, no seams:** where regions of
   different sizes meet (a finely meshed spring on a coarse frame), the
   element size changes gradually, by at most a growth rate per element

@@ -75,10 +75,10 @@ A whole process:
 
 ```yaml
 description: Our fab's two-poly process, rev. C
-constants: {undercut: 3, t_poly1: 2}
+constants: {undercut: 3, t_oxide1: 2, t_poly1: 2}
 layers:
-  poly1: {gds: [4, 0], color: "#4a90d9"}   # optional: the colour it is drawn in
-  anchor1: {gds: [2, 0]}
+  poly1: {gds: [4, 0], color: "#4a90d9", z: process.t_oxide1, thickness: process.t_poly1}
+  anchor1: {gds: [2, 0], z: 0, thickness: process.t_oxide1}
 levels:
 - layer: poly1
   roles: {anchor: anchor1}
@@ -92,7 +92,10 @@ rules:
 
 - **Layers** are named as you like; their GDS layer and datatype are what
   exports write, and `color` (`#rrggbb`, optional) is what the canvas draws
-  them in (without it, the theme's colour for the layer's place).
+  them in (without it, the theme's colour for the layer's place). `z` (its
+  bottom) and `thickness`, in µm, place it in height for
+  [3D meshes](meshing.md#3d-the-layers-in-height); a mask without a thickness
+  is not extruded.
 - **Levels** are the stack, bottom to top. A level is a layer, with **roles**
   for the layers that belong to it (`anchor`, `dimple`, `via`: any name), so a
   component draws `level.anchor` and works on every level that has one.

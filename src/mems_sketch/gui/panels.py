@@ -1578,8 +1578,8 @@ class LayerDefinitionsPanel(_Panel):
     """The process's layers: name, GDS mapping and place in the layer stack (in
     the Process tab)."""
 
-    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Level", "Colour")
-    COLOR = 4
+    LAYER_COLUMNS = ("Layer", "GDS", "Datatype", "Level", "Z", "Thickness", "Colour")
+    Z, THICKNESS, COLOR = 4, 5, 6
 
     def __init__(self, document: EditSession) -> None:
         super().__init__()
@@ -1599,6 +1599,9 @@ class LayerDefinitionsPanel(_Panel):
             "(1 at the bottom); `poly1.anchor` makes it level poly1's anchor layer. "
             "Components draw relative to their level (`level-1`, `level.anchor`), "
             "so the same component can be placed on any level.\n\n"
+            "*Z* and *Thickness* (µm) place a layer in height, for 3D meshes: "
+            "expressions over the constants, such as `process.t_oxide`. A layer "
+            "without a thickness (a mask such as a cavity) is not extruded.\n\n"
             "*Colour*: double-click to choose the colour it is drawn in; right-click "
             "for the theme's colour again.\n\n"
             "A library's process keeps its layers as they are: *Copy into project* "
@@ -1689,12 +1692,18 @@ class LayerDefinitionsPanel(_Panel):
         self.layers.blockSignals(True)
         self.layers.setRowCount(len(layers))
         levels = project.process.levels
+        try:
+            heights = project.process.heights()
+        except ValueError:
+            heights = {}
         for row, layer in enumerate(layers.values()):
             values = [
                 layer.name,
                 layer.gds_layer,
                 layer.gds_datatype,
                 stack_place(levels, layer.name),
+                layer.z,
+                layer.thickness,
             ]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(_format(value))
@@ -1705,6 +1714,12 @@ class LayerDefinitionsPanel(_Panel):
             self.layers.item(row, 3).setToolTip(
                 "A level number (1 at the bottom), a level's role (poly1.anchor), or empty"
             )
+            if layer.name in heights:  # what the expressions come to
+                z, thickness = heights[layer.name]
+                self.layers.item(row, self.Z).setToolTip(f"Its bottom: {z:g} µm")
+                self.layers.item(row, self.THICKNESS).setToolTip(
+                    f"{thickness:g} µm: from {z:g} to {z + thickness:g} µm"
+                )
             color = QTableWidgetItem(layer.color or "theme")
             color.setIcon(swatch_icon(colors[layer.name]))
             color.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
@@ -1790,7 +1805,8 @@ class LayerDefinitionsPanel(_Panel):
                 )
                 return
             old = self.document.project.layers[name]
-            layer = Layer(texts[0], int(texts[1]), int(texts[2]), old.color)
+            z, thickness = (parse_value(t) if t else None for t in texts[self.Z : self.COLOR])
+            layer = Layer(texts[0], int(texts[1]), int(texts[2]), old.color, z, thickness)
             self.document.process.set_layer(name, layer)
 
         if not self._guard(apply):

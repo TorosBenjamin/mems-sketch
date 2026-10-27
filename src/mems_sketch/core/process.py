@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from mems_sketch.core.expressions import resolve_variables
+from mems_sketch.core.expressions import evaluate, resolve_variables
 
 Value = float | str
 RuleValue = bool | float | str
@@ -39,12 +39,17 @@ PROCESS_PREFIX = "process."
 @dataclass
 class Layer:
     """A process layer, its GDS numbers and the colour it is drawn in (``#rrggbb``;
-    None: the theme's colour for its place in the process)."""
+    None: the theme's colour for its place in the process). ``z`` (its bottom) and
+    ``thickness``, in µm, are where it is in the stack, for 3D meshes: expressions
+    over the process constants (``process.t_oxide``); a layer without a thickness
+    is not extruded (a mask such as a cavity or dimple)."""
 
     name: str
     gds_layer: int
     gds_datatype: int = 0
     color: str | None = None
+    z: Value | None = None
+    thickness: Value | None = None
 
 
 def is_color(value: object) -> bool:
@@ -131,6 +136,25 @@ class Process:
     def scope(self) -> dict[str, float]:
         """Resolved constants keyed as they appear in expressions (``process.name``)."""
         return {PROCESS_PREFIX + k: v for k, v in resolve_variables(self.constants).items()}
+
+    def heights(self) -> dict[str, tuple[float, float]]:
+        """Each layer that has a thickness: its bottom and its thickness (µm), the
+        expressions evaluated with the constants. Raises ValueError for one that
+        does not evaluate, or a thickness that is not positive."""
+        scope = self.scope()
+        found = {}
+        for name, layer in self.layers.items():
+            if layer.thickness is None:
+                continue
+            try:
+                z = 0.0 if layer.z is None else evaluate(layer.z, scope)
+                thickness = evaluate(layer.thickness, scope)
+            except Exception as exc:
+                raise ValueError(f"layer '{name}': {exc}") from exc
+            if not thickness > 0:
+                raise ValueError(f"layer '{name}': thickness {thickness:g} is not more than 0")
+            found[name] = (z, thickness)
+        return found
 
 
 # The layer stack of a process that declares none (and of a new project's).

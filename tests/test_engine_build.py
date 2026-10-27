@@ -125,6 +125,8 @@ def stack_as_recorded(project: Project) -> None:
     not use."""
     process = project.process
     process.levels = [level for level in process.levels if level.layer != "wiring"]
+    for name in ("t_wiring", "t_oxide", "t_device", "t_metal"):  # its heights since (#49)
+        process.constants.pop(name, None)
     process.default_level = None  # the first level: device, as then
 
 

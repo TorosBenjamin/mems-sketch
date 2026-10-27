@@ -130,3 +130,14 @@ def test_without_gmsh_the_panel_says_how_to_get_it(qtbot, monkeypatch):
     qtbot.addWidget(panel)
     assert panel.unavailable.isVisibleTo(panel) and not panel.page.isVisibleTo(panel)
     assert "mems-sketch[mesh]" in panel.unavailable.label.text()
+
+
+@needs_gmsh
+def test_a_3d_preview_is_counted_not_drawn(window):
+    panel = window.mesh
+    apply(panel.size, "20")
+    panel.dimensions.setCurrentText("3D")
+    mesh = panel.preview()  # the example's process (mems.surface) places its layers
+    assert mesh is not None and mesh.dim == 3
+    assert "tetrahedra" in panel.summary.text()
+    assert not window.canvas.mesh_shown()

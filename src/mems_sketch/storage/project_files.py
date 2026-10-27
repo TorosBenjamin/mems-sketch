@@ -490,6 +490,12 @@ def process_data(process: Process) -> dict[str, Any]:
         layer.name: {
             "gds": [layer.gds_layer, layer.gds_datatype],
             **({"color": layer.color} if layer.color else {}),
+            **({"z": yaml_format.to_data(layer.z)} if layer.z is not None else {}),
+            **(
+                {"thickness": yaml_format.to_data(layer.thickness)}
+                if layer.thickness is not None
+                else {}
+            ),
         }
         for layer in process.layers.values()
     }
@@ -509,6 +515,15 @@ def process_data(process: Process) -> dict[str, Any]:
     return data
 
 
+def _height(value, what: str):
+    """A layer's z or thickness as read: a number, an expression, or None."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ProjectFormatError(f"{what}: {value!r} is not a number or an expression")
+    return float(value)
+
+
 def process_from_data(data: dict[str, Any]) -> Process:
     """A process as read."""
     if not isinstance(data, dict):
@@ -524,6 +539,8 @@ def process_from_data(data: dict[str, Any]) -> Process:
             gds_layer=int(gds[0]),
             gds_datatype=int(gds[1]) if len(gds) > 1 else 0,
             color=None if color is None else str(color).lower(),
+            z=_height((entry or {}).get("z"), f"layer '{name}' z"),
+            thickness=_height((entry or {}).get("thickness"), f"layer '{name}' thickness"),
         )
     levels = [
         Level(

@@ -114,11 +114,19 @@ class MeshPanel(_Panel):
         self.summary.setWordWrap(True)
         preview = widgets.Card(
             "Preview",
-            help="The mesh as it would be exported, drawn over the layers. Quality is "
-            "gmsh's: 1 for an equilateral triangle, near 0 for a sliver.",
+            help="The mesh as it would be exported: in 2D drawn over the layers, in 3D "
+            "(the layers extruded through the stack) counted. Quality is gmsh's: 1 "
+            "for a regular triangle or tetrahedron, near 0 for a sliver.",
+        )
+        self.dimensions = QComboBox()
+        self.dimensions.addItems(["2D", "3D"])
+        self.dimensions.setToolTip(
+            "2D: the layers' faces, drawn on the canvas. 3D: the layers extruded "
+            "through the stack (their z and thickness in the Process tab): counted, "
+            "not drawn"
         )
         buttons = QHBoxLayout()
-        for button in (self.mesh_button, self.clear_button):
+        for button in (self.dimensions, self.mesh_button, self.clear_button):
             buttons.addWidget(button)
         buttons.addStretch(1)
         buttons.addWidget(self.export_button)
@@ -376,7 +384,12 @@ class MeshPanel(_Panel):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             build = self.document.results.build()
-            self.mesh = meshing.generate(build.geometry, self.settings(), build.variables())
+            heights = None
+            if self.dimensions.currentText() == "3D":
+                heights = meshing.stack_heights(self.document.project.process)
+            self.mesh = meshing.generate(
+                build.geometry, self.settings(), build.variables(), heights=heights
+            )
         except Exception as exc:  # noqa: BLE001 - shown in the panel
             self.mesh = None
             self.summary.setText(f"Not meshed: {exc}")
@@ -396,7 +409,7 @@ class MeshPanel(_Panel):
         self.shown_changed.emit()
 
     def preview_arrays(self):
-        """The preview's nodes and triangles, or (None, None)."""
-        if self.mesh is None:
+        """The preview's nodes and triangles, or (None, None) (none, or a 3D mesh)."""
+        if self.mesh is None or self.mesh.dim != 2:
             return None, None
-        return self.mesh.nodes, self.mesh.triangles
+        return self.mesh.nodes, self.mesh.elements

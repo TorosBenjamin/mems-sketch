@@ -3,12 +3,21 @@ description: >-
   structural layer over a sacrificial oxide, its anchors, metal on it, and a
   wiring layer under the oxide to reach anchors the structure boxes in.
   Typical, round values, not any foundry's rules.
-constants: {undercut: 2, min_gap: 2}
+constants:
+  undercut: 2
+  min_gap: 2
+  t_wiring: 0.5        # thicknesses (µm), bottom to top
+  t_oxide: 2
+  t_device: 2
+  t_metal: 0.5
 layers:
-  device: {gds: [1, 0]}
-  anchor: {gds: [2, 0]}
-  metal: {gds: [3, 0]}
-  wiring: {gds: [4, 0]}
+  device: {gds: [1, 0], z: process.t_wiring + process.t_oxide, thickness: process.t_device}
+  anchor: {gds: [2, 0], z: process.t_wiring, thickness: process.t_oxide}
+  metal:
+    gds: [3, 0]
+    z: process.t_wiring + process.t_oxide + process.t_device
+    thickness: process.t_metal
+  wiring: {gds: [4, 0], z: 0, thickness: process.t_wiring}
 levels:
 - {layer: wiring}
 - layer: device

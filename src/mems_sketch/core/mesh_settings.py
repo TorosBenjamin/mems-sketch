@@ -11,6 +11,8 @@ In a component's file::
       layers: {anchor: 5}         # a size per layer
       automatic: true             # finer in narrow parts, gaps and curves (#73)
       across: 2                   # elements across the narrowest part of a beam or gap
+      order: 2                    # elements of the first (linear) or second order
+      through: 2                  # 3D: elements through each layer's thickness
       refine:
         - {kind: point, x: 0, y: "plate / 2", size: 1, radius: 3}
         - {kind: box, x0: -10, y0: 0, x1: 10, y1: 40, size: 2}
@@ -26,6 +28,17 @@ the next (MSH-7, #52), up to the size of the layer it is on, then ``size``.
 The **automatic size map** (``automatic``, on unless turned off) adds what the
 geometry needs: about ``across`` elements across each narrow beam and each
 small gap, and enough along tight curves (see :mod:`mems_sketch.mesh_sizes`).
+
+**Second-order** elements (``order: 2``, the default) have a node at the middle
+of each edge as well: 6-node triangles, 10-node tetrahedra, 15-node prisms.
+First-order tetrahedra are much too stiff in bending, so a spring's stiffness
+and a resonator's frequency come out tens of percent off unless the mesh is
+extremely fine (#346).
+
+In **3D**, each layer is meshed in ``through`` layers of prisms through its
+thickness (the 2D mesh extruded), well shaped in thin films with far fewer
+elements than tetrahedra small enough to fit the thickness. ``through: 0``
+fills the layers with free tetrahedra instead.
 """
 
 from __future__ import annotations
@@ -42,6 +55,8 @@ Value = float | str
 REFINEMENT_KINDS = ("point", "box", "edges")
 DEFAULT_GROWTH = 1.2
 DEFAULT_ACROSS = 2.0  # elements across the narrowest part, for the automatic size map
+DEFAULT_ORDER = 2  # second order: quadratic elements
+DEFAULT_THROUGH = 2  # 3D: prisms through each layer's thickness (0: free tetrahedra)
 AUTOMATIC_DIVISIONS = 20  # automatic size: the component's smaller side over this
 
 
@@ -148,6 +163,10 @@ class MeshSettings(_Model):
     # with ``across`` elements across the narrowest part of a beam or a gap.
     automatic: bool = True
     across: Value = DEFAULT_ACROSS
+    # The elements' order (#346): 1, linear; 2, with a node mid-edge.
+    order: Literal[1, 2] = DEFAULT_ORDER
+    # 3D (#346): prisms through each layer's thickness; 0, free tetrahedra.
+    through: int = Field(default=DEFAULT_THROUGH, ge=0, le=50)
 
     def resolved(
         self, variables: dict[str, float], bbox: tuple[float, float, float, float] | None
@@ -192,7 +211,9 @@ class MeshSettings(_Model):
 
             refine.append(r.resolved(field))
         across = positive(self.across, "elements across")
-        return ResolvedMesh(size, growth, layers, refine, self.automatic, across)
+        return ResolvedMesh(
+            size, growth, layers, refine, self.automatic, across, self.order, self.through
+        )
 
 
 class ResolvedRefinement:
@@ -255,6 +276,8 @@ class ResolvedMesh:
     refine: list[ResolvedRefinement] = field(default_factory=list)
     automatic: bool = False
     across: float = 2.0
+    order: int = 1
+    through: int = 0  # 3D: prisms through each layer; 0, free tetrahedra
 
     def ramp(self, small: float, large: float) -> float:
         """How far the size takes to grow from ``small`` to ``large``, by at most the

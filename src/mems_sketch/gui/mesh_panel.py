@@ -6,6 +6,8 @@ preview of its mesh on the canvas (#72).
 - **Refinements:** places the mesh is finer: around a point, in a box, along
   the edges of a layer. They are drawn on the canvas, dashed, while the
   window is open.
+- **Elements:** first or second order, and in 3D how many prisms go through
+  each layer's thickness (0: free tetrahedra) (#346).
 - **Preview:** *Mesh* makes the mesh and draws it over the layers, with its
   element count and its worst element's quality; *Export…* saves it.
 
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -99,6 +102,36 @@ class MeshPanel(_Panel):
         sizes.body.addWidget(layer_box)
         self.layer_fields: dict[str, ValueEdit] = {}
 
+        self.order = QComboBox()
+        self.order.addItems(["First (linear)", "Second (quadratic)"])
+        self.order.setToolTip(
+            "Second-order elements have a node mid-edge too. First-order ones are far "
+            "too stiff in bending: a spring's stiffness or a resonator's frequency "
+            "comes out tens of percent off unless the mesh is very fine"
+        )
+        self.order.activated.connect(lambda index: self._change_or_refresh(order=index + 1))
+        self.through = QSpinBox()
+        self.through.setRange(0, 50)
+        self.through.setSpecialValueText("Free tetrahedra")
+        self.through.setSuffix(" prisms")
+        self.through.setToolTip(
+            "3D: elements through each layer's thickness, the 2D mesh extruded into "
+            "prisms; 0, the layers filled with free tetrahedra instead"
+        )
+        self.through.editingFinished.connect(self._set_through)
+        elements = widgets.Card(
+            "Elements",
+            help="*Order*: second-order elements (a node mid-edge) bend as they should; "
+            "first-order ones need a much finer mesh for the same answer.\n\n"
+            "*Through each layer* (3D): each layer meshed in this many prisms through "
+            "its thickness, well shaped in thin films with far fewer elements than "
+            "tetrahedra; 0 fills the layers with tetrahedra instead.",
+        )
+        element_form = QFormLayout()
+        element_form.addRow("Order", self.order)
+        element_form.addRow("Through each layer", self.through)
+        elements.body.addLayout(element_form)
+
         self.refinements = QListWidget()
         self.refinements.setObjectName("mesh-refinements")
         self.refinements.currentRowChanged.connect(self._show_refinement)
@@ -141,7 +174,8 @@ class MeshPanel(_Panel):
             "Preview",
             help="The mesh as it would be exported: in 2D drawn over the layers, in 3D "
             "(the layers extruded through the stack) counted. Quality is gmsh's: 1 "
-            "for a regular triangle or tetrahedron, near 0 for a sliver.",
+            "for a regular triangle or tetrahedron, near 0 for a sliver; prisms in a "
+            "thin film score low for being flat, which is fine.",
         )
         self.dimensions = QComboBox()
         self.dimensions.addItems(["2D", "3D"])
@@ -162,7 +196,7 @@ class MeshPanel(_Panel):
         page = QWidget()
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(0, 0, 0, 0)
-        for card in (sizes, refine, preview):
+        for card in (sizes, elements, refine, preview):
             page_layout.addWidget(card)
         page_layout.addStretch(1)
         scroll = QScrollArea()
@@ -198,6 +232,12 @@ class MeshPanel(_Panel):
         self.automatic.setEnabled(self._editable)
         self.across.setText(_format(settings.across))
         self.across.setEnabled(settings.automatic)
+        self.order.setCurrentIndex(settings.order - 1)
+        self.through.blockSignals(True)
+        self.through.setValue(settings.through)
+        self.through.blockSignals(False)
+        for control in (self.order, self.through):
+            control.setEnabled(self._editable)
         self._size_map = None  # made again when shown
         automatic = self._automatic()
         self.size.setText("" if settings.size is None else _format(settings.size))
@@ -463,6 +503,10 @@ class MeshPanel(_Panel):
             self._size_map = [(p.x, p.y, p.size) for p in points]
         return self._size_map
 
+    def _set_through(self) -> None:
+        if self.through.value() != self.settings().through:
+            self._change_or_refresh(through=self.through.value())
+
     def _change_or_refresh(self, **fields) -> None:
         if not self._change(**fields):
             self.refresh()
@@ -471,4 +515,4 @@ class MeshPanel(_Panel):
         """The preview's nodes and triangles, or (None, None) (none, or a 3D mesh)."""
         if self.mesh is None or self.mesh.dim != 2:
             return None, None
-        return self.mesh.nodes, self.mesh.elements
+        return self.mesh.nodes, self.mesh.corners  # (second order: its corners only)

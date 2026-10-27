@@ -2,7 +2,9 @@
 
 :func:`generate` meshes a component's layers in **2D** (their faces, in
 triangles) or in **3D** (each layer extruded from its ``z`` by its
-``thickness``, as the process gives them, in tetrahedra). The layers are cut
+``thickness``, as the process gives them): by default the 2D mesh extruded into
+prisms, a few through each layer (:func:`_extrude`), or free tetrahedra.
+Elements are second order unless the settings say first (#346). The layers are cut
 into one another first, so where they overlap or touch they share their nodes,
 and the mesh is conforming everywhere (MSH-7, #52): a device layer and the
 anchor under it meet node to node. Each layer is a named region and its outline
@@ -24,6 +26,7 @@ after another (a lock), not at once.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import math
 import threading
 from collections.abc import Callable, Iterable
@@ -37,12 +40,52 @@ from mems_sketch.core.mesh_settings import MeshSettings, ResolvedMesh
 from mems_sketch.mesh_sizes import BIN_RATIO, bins, rings_of, size_map
 
 THICKNESS_RATIO = 1.5  # 3D, automatic sizes: elements at most this times the layer thick
-MERGE_UM = 1e-4
-BOOLEAN_TOLERANCE_UM = 1e-3  # outlines closer than this are merged when cut into another  # points closer than this along an outline are one point
+MERGE_UM = 1e-4  # points closer than this along an outline are one point
+BOOLEAN_TOLERANCE_UM = 1e-3  # outlines closer than this are merged when cut into another
 MAX_SAMPLING = 4000  # points a distance field samples along an edge
-ELEMENT = {2: 2, 3: 4}  # gmsh's element types: 3-node triangle, 4-node tetrahedron
-FACET = {2: 1, 3: 2}  # and of their sides: 2-node line, 3-node triangle
-ELEMENT_NAME = {2: "triangles", 3: "tetrahedra"}
+LEVEL_UM = 1e-9  # heights closer than this are one level of a layered 3D mesh
+
+
+@dataclass(frozen=True)
+class ElementType:
+    """A kind of element, by gmsh's number for it: its corners, its nodes (corners
+    first, then those mid-edge), what it is called, and its sides (by corner)."""
+
+    gmsh: int
+    name: str
+    dim: int
+    corners: int
+    nodes: int
+    sides: tuple[tuple[int, ...], ...] = ()
+
+
+ELEMENT_TYPES = {
+    t.gmsh: t
+    for t in (
+        ElementType(1, "lines", 1, 2, 2),
+        ElementType(8, "3-node lines", 1, 2, 3),
+        ElementType(2, "triangles", 2, 3, 3, ((0, 1), (1, 2), (2, 0))),
+        ElementType(9, "6-node triangles", 2, 3, 6, ((0, 1), (1, 2), (2, 0))),
+        ElementType(3, "quadrilaterals", 2, 4, 4),
+        ElementType(16, "8-node quadrilaterals", 2, 4, 8),
+        ElementType(4, "tetrahedra", 3, 4, 4, ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))),
+        ElementType(
+            11, "10-node tetrahedra", 3, 4, 10, ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))
+        ),
+        ElementType(
+            6, "prisms", 3, 6, 6, ((0, 1, 2), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5))
+        ),
+        ElementType(
+            18,
+            "15-node prisms",
+            3,
+            6,
+            15,
+            ((0, 1, 2), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5)),
+        ),
+    )
+}
+TRIANGLE, QUADRILATERAL, PRISM = 2, 3, 6  # gmsh's numbers for the extruded mesh's parts
 _lock = threading.Lock()
 
 
@@ -72,17 +115,23 @@ def _gmsh():
 
 @dataclass
 class Mesh:
-    """A mesh in µm: triangles in 2D, tetrahedra in 3D.
+    """A mesh in µm: triangles in 2D; in 3D prisms (layers extruded) or tetrahedra;
+    first or second order (:attr:`element_type`), all elements of one type.
 
     ``regions`` and ``boundaries`` are named groups of elements and of facets
-    (their sides: edges in 2D, triangles in 3D), by index. Where layers overlap
-    an element is in each of their regions."""
+    (their sides: edges in 2D; triangles, and the prisms' quadrilaterals, in 3D),
+    by index. Where layers overlap an element is in each of their regions.
+    ``facets`` is padded with -1 where a facet has fewer nodes than the widest
+    (a prism mesh's triangles next to its quadrilaterals); ``facet_types`` says
+    which each is."""
 
     nodes: np.ndarray  # (n, dim) coordinates
-    elements: np.ndarray  # (m, dim + 1) node indices
+    elements: np.ndarray  # (m, nodes per element) node indices, corners first
     regions: dict[str, np.ndarray] = field(default_factory=dict)  # layer: element indices
     facets: np.ndarray = field(default_factory=lambda: np.zeros((0, 2), dtype=np.int64))
     boundaries: dict[str, np.ndarray] = field(default_factory=dict)  # name: facet indices
+    element_type: int = 0  # gmsh's number (ELEMENT_TYPES); 0: the linear simplex
+    facet_types: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))
     quality: np.ndarray = field(default_factory=lambda: np.zeros(0))  # per element, 0..1
     settings: ResolvedMesh | None = None
     # The component's named shapes on each layer (``mass.device``): element indices (#71).
@@ -92,6 +141,21 @@ class Mesh:
     @property
     def dim(self) -> int:
         return self.nodes.shape[1]
+
+    @property
+    def kind(self) -> ElementType:
+        """What the elements are (a 3-node triangle or 4-node tetrahedron if not said)."""
+        return ELEMENT_TYPES[self.element_type or (2 if self.dim == 2 else 4)]
+
+    @property
+    def order(self) -> int:
+        """1: linear elements; 2: with a node mid-edge."""
+        return 2 if self.kind.nodes > self.kind.corners else 1
+
+    @property
+    def corners(self) -> np.ndarray:
+        """Each element's corner nodes only."""
+        return self.elements[:, : self.kind.corners]
 
     @property
     def element_count(self) -> int:
@@ -104,10 +168,17 @@ class Mesh:
         return float(self.quality.min()) if len(self.quality) else 1.0
 
     def measures(self) -> np.ndarray:
-        """Each element's area (2D) or volume (3D)."""
-        corners = [self.nodes[self.elements[:, k]] for k in range(self.dim + 1)]
-        edges = np.stack([c - corners[0] for c in corners[1:]], axis=1)
-        return np.abs(np.linalg.det(edges)) / math.factorial(self.dim)
+        """Each element's area (2D) or volume (3D; a prism as three tetrahedra)."""
+        if self.kind.corners == 6:
+            pieces = ((0, 1, 2, 3), (1, 2, 3, 4), (2, 3, 4, 5))
+        else:
+            pieces = (tuple(range(self.dim + 1)),)
+        total = np.zeros(len(self.elements))
+        for piece in pieces:
+            corners = [self.nodes[self.elements[:, k]] for k in piece]
+            edges = np.stack([c - corners[0] for c in corners[1:]], axis=1)
+            total += np.abs(np.linalg.det(edges)) / math.factorial(self.dim)
+        return total
 
     def sizes(self) -> np.ndarray:
         """Each element's size: the edge of a right isosceles triangle of its area
@@ -141,7 +212,7 @@ class Mesh:
             return f"{n:,}".replace(",", " ")  # a narrow space between thousands
 
         return (
-            f"{count(self.element_count)} {ELEMENT_NAME[self.dim]}, "
+            f"{count(self.element_count)} {self.kind.name}, "
             f"{count(len(self.nodes))} nodes; worst quality {self.min_quality:.2f}"
         )
 
@@ -185,11 +256,12 @@ def generate(
     unknown = sorted(named - set(geometry.layers))
     if unknown:
         raise MeshError(f"the mesh settings name layers that are not drawn: {', '.join(unknown)}")
+    layered = heights is not None and settings.through > 0
     size_points = []
     if settings.automatic:
         largest = max([settings.size, *settings.layers.values()])
         size_points = size_map(rings_of(geometry, regions), settings.across, largest)
-        if heights is not None:  # no flat tetrahedra: a layer's elements near its thickness
+        if heights is not None and not layered:  # no flat tetrahedra: near the thickness
             layers = dict(settings.layers)
             for layer in regions:
                 cap = heights[layer][1] * THICKNESS_RATIO
@@ -200,14 +272,26 @@ def generate(
         try:
             gmsh.option.setNumber("General.Terminal", 0)
             gmsh.model.add("mems-sketch")
-            entities, parts = _entities(gmsh, regions, heights, shapes or {})
-            _sizes(gmsh, entities, settings, dim, size_points)
-            _groups(gmsh, {**entities, **parts}, dim)
+            entities, parts = _entities(gmsh, regions, None if layered else heights, shapes or {})
+            flat_dim = 2 if layered else dim
+            _sizes(gmsh, entities, settings, flat_dim, size_points)
+            _groups(gmsh, {**entities, **parts}, flat_dim)
             try:
-                gmsh.model.mesh.generate(dim)
+                gmsh.model.mesh.generate(flat_dim)
             except Exception as exc:
                 raise MeshError(f"gmsh could not mesh it: {exc}") from exc
-            mesh = _read(gmsh, entities, parts, dim)
+            if layered:  # the flat mesh, extruded through each layer's thickness
+                flat = _read(gmsh, set(entities), 2)
+                gmsh.model.remove()
+                gmsh.model.add("mems-sketch-3d")
+                _load(gmsh, _extrude(flat, heights, settings.through))
+            if settings.order == 2:
+                gmsh.option.setNumber(
+                    "Mesh.SecondOrderIncomplete", 1
+                )  # 8-node quads, 15-node prisms
+                gmsh.option.setNumber("Mesh.SecondOrderLinear", 1)  # mid-edge, on straight edges
+                gmsh.model.mesh.setOrder(2)
+            mesh = _read(gmsh, set(entities), dim)
             mesh.settings = settings
             mesh.size_points = size_points
             if write is not None:
@@ -501,63 +585,244 @@ def _groups(gmsh, entities: dict[str, list[int]], dim: int) -> None:
 # -- reading the mesh back -----------------------------------------------------------
 
 
-def _read(gmsh, entities: dict[str, list[int]], parts: dict[str, list[int]], dim: int) -> Mesh:
+def _read(gmsh, layers: set[str], dim: int) -> Mesh:
+    """The mesh in gmsh, by its named groups (see :func:`_groups`): the elements of
+    the groups named in ``layers`` and of the named shapes' groups, and the facets
+    of the ``_boundary`` groups."""
     tags, coords, _ = gmsh.model.mesh.getNodes()
-    index = {int(t): k for k, t in enumerate(tags)}
+    tags = np.asarray(tags, dtype=np.int64)
+    index = np.full(int(tags.max()) + 1 if len(tags) else 1, -1, dtype=np.int64)
+    index[tags] = np.arange(len(tags))
     nodes = np.asarray(coords, dtype=float).reshape(-1, 3)[:, :dim]
-    corners = dim + 1
+    groups = {gmsh.model.getPhysicalName(d, t): (d, t) for d, t in gmsh.model.getPhysicalGroups()}
 
-    def connectivity(entity_dim: int, tag: int, kind: int, width: int):
-        kinds, element_tags, nodes_ = gmsh.model.mesh.getElements(entity_dim, tag)
-        for found_kind, found_tags, found_nodes in zip(kinds, element_tags, nodes_, strict=True):
-            if found_kind == kind:
-                rows = np.array([index[int(n)] for n in found_nodes], dtype=np.int64)
-                return rows.reshape(-1, width), np.asarray(found_tags)
-        return np.zeros((0, width), dtype=np.int64), np.zeros(0)
+    def gather(group_dim: int, names: list[str]):
+        """The elements of the groups ``names`` (each once): their types, node
+        indices (padded with -1), gmsh tags, and each group's by index."""
+        by_entity: dict[int, np.ndarray] = {}
+        types, rows, found_tags = [], [], []
+        count = 0
+        for name in names:
+            for entity in gmsh.model.getEntitiesForPhysicalGroup(*groups[name]):
+                if entity in by_entity:
+                    continue
+                start = count
+                kinds, element_tags, element_nodes = gmsh.model.mesh.getElements(group_dim, entity)
+                for kind, kind_tags, kind_nodes in zip(
+                    kinds, element_tags, element_nodes, strict=True
+                ):
+                    width = ELEMENT_TYPES[int(kind)].nodes
+                    block = index[np.asarray(kind_nodes, dtype=np.int64)].reshape(-1, width)
+                    rows.append(block)
+                    types.append(np.full(len(block), int(kind), dtype=np.int64))
+                    found_tags.append(np.asarray(kind_tags, dtype=np.int64))
+                    count += len(block)
+                by_entity[entity] = np.arange(start, count)
+        width = max((r.shape[1] for r in rows), default=dim)
+        padded = np.full((count, width), -1, dtype=np.int64)
+        at = 0
+        for block in rows:
+            padded[at : at + len(block), : block.shape[1]] = block
+            at += len(block)
+        empty = np.zeros(0, dtype=np.int64)
+        joined_types = np.concatenate(types) if types else empty
+        joined_tags = np.concatenate(found_tags) if found_tags else empty
 
-    blocks: list[np.ndarray] = []
-    element_tags: list[np.ndarray] = []
-    by_entity: dict[int, np.ndarray] = {}
-    count = 0
-    for tag in sorted({t for found in entities.values() for t in found}):
-        rows, found_tags = connectivity(dim, tag, ELEMENT[dim], corners)
-        blocks.append(rows)
-        element_tags.append(found_tags)
-        by_entity[tag] = np.arange(count, count + len(rows))
-        count += len(rows)
-    elements = np.vstack(blocks) if blocks else np.zeros((0, corners), dtype=np.int64)
-    all_tags = np.concatenate(element_tags) if element_tags else np.zeros(0)
+        def members(name: str) -> np.ndarray:
+            found = [by_entity[e] for e in gmsh.model.getEntitiesForPhysicalGroup(*groups[name])]
+            return np.unique(np.concatenate(found)) if found else empty
+
+        return joined_types, padded, joined_tags, {name: members(name) for name in names}
+
+    bodies = [n for n, (d, _t) in groups.items() if d == dim]
+    sides = [n for n, (d, _t) in groups.items() if d == dim - 1]
+    types, elements, element_tags, by_name = gather(dim, bodies)
+    kinds = set(types.tolist())
+    if len(kinds) > 1:
+        raise MeshError(f"the mesh mixes element types: {sorted(kinds)}")
     quality = (
-        np.asarray(gmsh.model.mesh.getElementQualities(all_tags.tolist(), "minSICN"))
-        if len(all_tags)
+        np.asarray(gmsh.model.mesh.getElementQualities(element_tags.tolist(), "minSICN"))
+        if len(element_tags)
         else np.zeros(0)
     )
-
-    def members(found: list[int]) -> np.ndarray:
-        return np.unique(np.concatenate([by_entity.get(t, np.zeros(0, np.int64)) for t in found]))
-
-    regions = {layer: members(found) for layer, found in entities.items()}
-    named = {name: members(found) for name, found in parts.items()}
-    facets: list[np.ndarray] = []
-    boundaries: dict[str, np.ndarray] = {}
-    total = 0
-    for layer, found in {**entities, **parts}.items():
-        sides = [connectivity(dim - 1, s, FACET[dim], dim)[0] for s in _boundary(gmsh, found, dim)]
-        sides = [s for s in sides if len(s)]
-        if sides:
-            block = np.vstack(sides)
-            facets.append(block)
-            boundaries[f"{layer}_boundary"] = np.arange(total, total + len(block))
-            total += len(block)
+    facet_types, facets, _, boundaries = gather(dim - 1, sides)
     return Mesh(
         nodes=nodes,
         elements=elements,
-        regions=regions,
-        facets=np.vstack(facets) if facets else np.zeros((0, dim), dtype=np.int64),
+        regions={n: m for n, m in by_name.items() if n in layers},
+        facets=facets,
         boundaries=boundaries,
         quality=quality,
-        parts=named,
+        parts={n: m for n, m in by_name.items() if n not in layers},
+        element_type=kinds.pop() if kinds else 0,
+        facet_types=facet_types,
     )
+
+
+# -- layered 3D meshes ----------------------------------------------------------------
+
+
+@dataclass
+class _Extruded:
+    """A prism mesh made from a flat one (see :func:`_extrude`)."""
+
+    nodes: np.ndarray  # (n, 3)
+    prisms: np.ndarray  # (m, 6): the bottom triangle, then the top one
+    groups: dict[str, np.ndarray]  # layers and named shapes: prism indices
+    facets: np.ndarray  # (k, 4): triangles padded with -1, and quadrilaterals
+    facet_types: np.ndarray  # (k,): TRIANGLE or QUADRILATERAL
+    boundaries: dict[str, np.ndarray]  # ``<name>_boundary``: facet indices
+
+
+def _extrude(flat: Mesh, heights: dict[str, tuple[float, float]], through: int) -> _Extruded:
+    """``flat`` (linear triangles, its layers and named shapes) extruded into prisms:
+    each layer from its z by its thickness, in ``through`` prisms through it.
+
+    All layers share the same levels in height (every layer's bottom and top, and
+    the steps between), so where two layers meet, at a face or side by side, their
+    prisms share nodes: the mesh is conforming without any cutting. Where layers
+    overlap in height over the same triangle, one prism is in both."""
+    points = flat.nodes
+    triangles = flat.corners.copy()
+    a, b, c = (points[triangles[:, k]] for k in range(3))
+    u, v = b - a, c - a
+    clockwise = (
+        u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0] < 0
+    )  # every bottom counter-clockwise from above
+    triangles[clockwise, 1], triangles[clockwise, 2] = (
+        triangles[clockwise, 2].copy(),
+        triangles[clockwise, 1].copy(),
+    )
+    layers = sorted(flat.regions)
+    breaks: list[float] = []
+    for z in sorted({v for layer in layers for v in (heights[layer][0], sum(heights[layer]))}):
+        if not breaks or z - breaks[-1] > LEVEL_UM:
+            breaks.append(z)
+    levels, slab_of = [breaks[0]], []  # each step's slab
+    cover = np.zeros((len(breaks) - 1, len(layers)), dtype=bool)  # the layers in each slab
+    for k, (low, high) in enumerate(itertools.pairwise(breaks)):
+        steps = 1
+        for j, layer in enumerate(layers):
+            z, thickness = heights[layer]
+            if z <= low + LEVEL_UM and z + thickness >= high - LEVEL_UM:
+                cover[k, j] = True
+                steps = max(steps, math.ceil(through * (high - low) / thickness - 1e-6))
+        levels += [low + (high - low) * (s + 1) / steps for s in range(steps)]
+        slab_of += [k] * steps
+    level_count = len(levels)
+    inside = np.zeros((len(triangles), len(layers)), dtype=bool)
+    for j, layer in enumerate(layers):
+        inside[flat.regions[layer], j] = True
+    has = inside[:, None, :] & cover[np.asarray(slab_of)][None, :, :]  # triangle, step, layer
+    tri, step = np.nonzero(has.any(axis=2))
+    keys = np.hstack(
+        [
+            triangles[tri] * level_count + step[:, None],
+            triangles[tri] * level_count + step[:, None] + 1,
+        ]
+    )
+    used, prisms = np.unique(keys, return_inverse=True)
+    prisms = prisms.reshape(-1, 6)
+    nodes = np.column_stack([points[used // level_count], np.asarray(levels)[used % level_count]])
+
+    groups = {layer: np.nonzero(has[tri, step, j])[0] for j, layer in enumerate(layers)}
+    for name, members in flat.parts.items():
+        layer = name.rsplit(".", 1)[-1]
+        if layer not in layers:
+            continue
+        in_part = np.zeros(len(triangles), dtype=bool)
+        in_part[members] = True
+        groups[name] = np.nonzero(in_part[tri] & has[tri, step, layers.index(layer)])[0]
+
+    # The faces: a triangle at a level, or a quadrilateral up an edge over a step.
+    edge_pairs = np.sort(
+        np.concatenate([triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]]), axis=1
+    )
+    edges, edge_of = np.unique(edge_pairs, axis=0, return_inverse=True)
+    edge_of = edge_of.reshape(3, -1).T  # each triangle's three edges
+    steps_count = level_count - 1
+    quads_from = len(triangles) * level_count  # face keys: triangles first, then quadrilaterals
+    outline: dict[str, np.ndarray] = {}
+    for name, members in groups.items():
+        t, s = tri[members], step[members]
+        caps = np.concatenate([t * level_count + s, t * level_count + s + 1])
+        sides = (edge_of[t] * steps_count + s[:, None]).ravel() + quads_from
+        found, counts = np.unique(np.concatenate([caps, sides]), return_counts=True)
+        outline[name] = found[counts == 1]  # a face of only one of its prisms
+    faces = (
+        np.unique(np.concatenate(list(outline.values())))
+        if outline
+        else np.zeros(0, dtype=np.int64)
+    )
+    caps, sides = faces[faces < quads_from], faces[faces >= quads_from] - quads_from
+
+    def lookup(key: np.ndarray) -> np.ndarray:  # a node by its key
+        return np.searchsorted(used, key)
+
+    cap_rows = lookup(triangles[caps // level_count] * level_count + (caps % level_count)[:, None])
+    edge, low = edges[sides // steps_count], sides % steps_count
+    side_rows = np.column_stack(
+        [
+            lookup(edge[:, 0] * level_count + low),
+            lookup(edge[:, 1] * level_count + low),
+            lookup(edge[:, 1] * level_count + low + 1),
+            lookup(edge[:, 0] * level_count + low + 1),
+        ]
+    )
+    facets = np.vstack([np.column_stack([cap_rows, np.full(len(caps), -1)]), side_rows])
+    facet_types = np.concatenate([np.full(len(caps), TRIANGLE), np.full(len(sides), QUADRILATERAL)])
+    boundaries = {
+        f"{name}_boundary": np.searchsorted(faces, keys_)
+        for name, keys_ in outline.items()
+        if len(keys_)
+    }
+    return _Extruded(nodes, prisms, groups, facets.astype(np.int64), facet_types, boundaries)
+
+
+def _load(gmsh, mesh: _Extruded) -> None:
+    """``mesh`` into gmsh's (empty) model, with the same named groups as a mesh
+    gmsh made itself: an entity for each set of groups an element is in."""
+    tag = itertools.count(1)
+    node_tags = np.arange(1, len(mesh.nodes) + 1)
+
+    def entities(dim: int, count: int, groups: dict[str, np.ndarray]):
+        """One entity per combination of groups: each, and the rows in it."""
+        names = sorted(groups)
+        member = np.zeros((count, max(len(names), 1)), dtype=bool)
+        for k, name in enumerate(names):
+            member[groups[name], k] = True
+        combos, which = np.unique(np.packbits(member, axis=1), axis=0, return_inverse=True)
+        which = which.ravel()
+        made = []
+        for combo in range(len(combos)):
+            rows = np.nonzero(which == combo)[0]
+            in_groups = [n for k, n in enumerate(names) if member[rows[0], k]]
+            made.append((gmsh.model.addDiscreteEntity(dim), rows, in_groups))
+        return made
+
+    volumes = entities(3, len(mesh.prisms), mesh.groups)
+    gmsh.model.mesh.addNodes(3, volumes[0][0], node_tags.tolist(), mesh.nodes.ravel().tolist())
+    for entity, rows, _ in volumes:
+        element_tags = [next(tag) for _ in rows]
+        gmsh.model.mesh.addElementsByType(
+            entity, PRISM, element_tags, (mesh.prisms[rows] + 1).ravel().tolist()
+        )
+    surfaces = entities(2, len(mesh.facets), mesh.boundaries)
+    for entity, rows, _ in surfaces:
+        for kind, width in ((TRIANGLE, 3), (QUADRILATERAL, 4)):
+            chosen = rows[mesh.facet_types[rows] == kind]
+            if len(chosen):
+                gmsh.model.mesh.addElementsByType(
+                    entity,
+                    kind,
+                    [next(tag) for _ in chosen],
+                    (mesh.facets[chosen, :width] + 1).ravel().tolist(),
+                )
+    for dim, made, names in ((3, volumes, mesh.groups), (2, surfaces, mesh.boundaries)):
+        for name in sorted(names):
+            members = [entity for entity, _, in_groups in made if name in in_groups]
+            if members:
+                gmsh.model.addPhysicalGroup(dim, members, name=name)
 
 
 def save_with_gmsh(path: Path, scale: float = 1.0, msh_version: float = 4.1):

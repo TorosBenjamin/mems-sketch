@@ -176,19 +176,21 @@ def test_every_format_is_written_with_the_named_regions(tmp_path, extension):
         assert len(files["mesh.boundary"].splitlines()) == boundary > 0
         assert "$ frame_device_and_pad_anchor = 2" in files["mesh.names"]  # the shapes
         assert "$ device_boundary" in files["mesh.names"]
+        assert "306" in header and "203" in header  # second order: 6-node triangles
         return
     text = path.read_text()
     if extension == ".msh":
         assert '"device"' in text and '"anchor_boundary"' in text
         assert '"pad.anchor"' in text and '"frame.device_boundary"' in text  # the shapes
     elif extension == ".inp":
-        assert "ELSET=device" in text and "type=CPS3" in text
+        assert "ELSET=device" in text and "type=CPS6" in text
     elif extension == ".bdf":
-        assert "CTRIA3" in text
+        assert "CTRIA6" in text
     else:
         grid = ET.fromstring(text).find("Domain/Grid")
         assert "frame.device+pad.anchor" in grid.find("Information").get("Value")
         assert int(grid.find("Topology").get("NumberOfElements")) > 10
+        assert grid.find("Topology").get("TopologyType") == "Triangle_6"
 
 
 @needs_gmsh
@@ -216,17 +218,85 @@ STACK = {"anchor": (0.0, 2.0), "device": (2.0, 3.0)}  # the anchor under the dev
 @needs_gmsh
 def test_a_3d_mesh_extrudes_each_layer_and_joins_them_node_to_node():
     mesh = meshing.generate(frame_and_pad(), MeshSettings(size=10), heights=STACK)
-    assert mesh.dim == 3 and mesh.elements.shape[1] == 4
+    assert mesh.dim == 3 and mesh.elements.shape[1] == 15  # 15-node prisms
     volume = mesh.measures()
     assert volume[mesh.regions["device"]].sum() == pytest.approx(200 * 100 * 3, rel=1e-6)
     assert volume[mesh.regions["anchor"]].sum() == pytest.approx(40 * 40 * 2, rel=1e-6)
     assert not set(mesh.regions["anchor"]) & set(mesh.regions["device"])  # one above the other
-    on_anchor = set(mesh.elements[mesh.regions["anchor"]].ravel())
-    on_device = set(mesh.elements[mesh.regions["device"]].ravel())
+    on_anchor = set(mesh.corners[mesh.regions["anchor"]].ravel())
+    on_device = set(mesh.corners[mesh.regions["device"]].ravel())
     shared = on_anchor & on_device
     assert shared and np.allclose(mesh.nodes[list(shared), 2], 2.0)  # the face they share
     assert set(mesh.boundaries) == {"device_boundary", "anchor_boundary"}
-    assert mesh.facets.shape[1] == 3 and "tetrahedra" in mesh.summary()
+    assert set(mesh.facet_types.tolist()) == {9, 16}  # 6-node triangles, 8-node quadrilaterals
+    assert "prisms" in mesh.summary() and mesh.min_quality > 0.15  # flat, not distorted
+
+
+@needs_gmsh
+def test_free_tetrahedra_of_the_first_order_are_still_there():
+    settings = MeshSettings(size=10, order=1, through=0)
+    mesh = meshing.generate(frame_and_pad(), settings, heights=STACK)
+    assert mesh.elements.shape[1] == 4 and mesh.facets.shape[1] == 3
+    assert mesh.order == 1 and "tetrahedra" in mesh.summary()
+    volume = mesh.measures()
+    assert volume[mesh.regions["device"]].sum() == pytest.approx(200 * 100 * 3, rel=1e-6)
+    shared = set(mesh.elements[mesh.regions["anchor"]].ravel()) & set(
+        mesh.elements[mesh.regions["device"]].ravel()
+    )
+    assert shared and np.allclose(mesh.nodes[list(shared), 2], 2.0)
+
+
+@needs_gmsh
+def test_second_order_tetrahedra_go_into_elmer_and_xdmf(tmp_path):
+    from mems_sketch.export.mesh_formats import write_elmer, write_xdmf
+
+    mesh = meshing.generate(frame_and_pad(), MeshSettings(size=20, through=0), heights=STACK)
+    assert mesh.elements.shape[1] == 10
+    header = (write_elmer(mesh, tmp_path / "m.elmer") / "mesh.header").read_text().split()
+    assert {"510", "306"} <= set(header)
+    grid = ET.parse(write_xdmf(mesh, tmp_path / "m.xdmf")).find("Domain/Grid")
+    assert grid.find("Topology").get("TopologyType") == "Tetrahedron_10"
+
+
+@needs_gmsh
+def test_each_layer_gets_the_prisms_through_it_asked_for():
+    settings = MeshSettings(size=10, automatic=False, order=1)
+    flat = meshing.generate(frame_and_pad(), settings)
+    triangles = {layer: len(found) for layer, found in flat.regions.items()}
+    for through in (1, 2, 3):
+        mesh = meshing.generate(
+            frame_and_pad(), settings.model_copy(update={"through": through}), heights=STACK
+        )
+        assert mesh.elements.shape[1] == 6 and mesh.order == 1
+        assert {layer: len(found) for layer, found in mesh.regions.items()} == {
+            layer: count * through for layer, count in triangles.items()
+        }
+        levels = np.unique(np.round(mesh.nodes[:, 2], 9))
+        assert len(levels) == 2 * through + 1  # the anchor's, then the device's
+
+
+@needs_gmsh
+def test_overlapping_layers_share_the_prisms_where_they_overlap():
+    stack = {"anchor": (0.0, 3.0), "device": (2.0, 3.0)}  # the anchor 1 µm into the device
+    mesh = meshing.generate(frame_and_pad(), MeshSettings(size=10, order=1), heights=stack)
+    both = set(mesh.regions["anchor"]) & set(mesh.regions["device"])
+    assert both  # over the pad, from 2 to 3 µm
+    volume = mesh.measures()
+    assert volume[list(both)].sum() == pytest.approx(40 * 40 * 1, rel=1e-6)
+    assert volume[mesh.regions["device"]].sum() == pytest.approx(200 * 100 * 3, rel=1e-6)
+
+
+@needs_gmsh
+def test_second_order_nodes_are_mid_edge():
+    for heights in (None, STACK):
+        mesh = meshing.generate(frame_and_pad(), MeshSettings(size=20), heights=heights)
+        assert mesh.order == 2
+        kind = mesh.kind
+        first = mesh.elements[0]
+        corners = mesh.nodes[first[: kind.corners]]
+        middles = mesh.nodes[first[kind.corners :]]
+        between = {tuple(np.round((p + q) / 2, 6)) for p in corners for q in corners}
+        assert all(tuple(np.round(m, 6)) in between for m in middles)
 
 
 @needs_gmsh
@@ -249,7 +319,9 @@ def test_3d_formats(tmp_path, extension):
     path = export(project, tmp_path / f"chip{extension}", options={"dimensions": "3D"})
     if extension == ".elmer":
         header = (path / "mesh.header").read_text().split()
-        assert "504" in header and "303" in header  # tetrahedra and their triangles
+        assert {"715", "306", "408"} <= set(header)  # 15-node prisms, their sides
+        boundary = (path / "mesh.boundary").read_text().splitlines()
+        assert all(line.split()[2] != "0" for line in boundary)  # each side knows its prism
         z = [float(line.split()[4]) for line in (path / "mesh.nodes").read_text().splitlines()]
         assert max(z) == pytest.approx(5)
         return
@@ -258,10 +330,10 @@ def test_3d_formats(tmp_path, extension):
         assert '"device"' in text and '"anchor_boundary"' in text
         assert '"pad.anchor"' in text and '"frame.device_boundary"' in text  # the shapes
     elif extension == ".inp":
-        assert "type=C3D4" in text and "ELSET=device" in text
+        assert "type=C3D15" in text and "ELSET=device" in text
     else:
         grid = ET.fromstring(text).find("Domain/Grid")
-        assert grid.find("Topology").get("TopologyType") == "Tetrahedron"
+        assert grid.find("Topology").get("TopologyType") == "Wedge_15"
         assert grid.find("Geometry").get("GeometryType") == "XYZ"
 
 
@@ -359,10 +431,13 @@ def test_the_automatic_map_meshes_a_narrow_beam_across():
 
 
 @needs_gmsh
-def test_in_3d_thin_layers_get_no_flat_elements():
-    mesh = meshing.generate(frame_and_pad(), MeshSettings(size=20), heights=STACK)
+def test_in_3d_thin_layers_get_no_flat_tetrahedra():
+    free = {"through": 0, "order": 1}
+    mesh = meshing.generate(frame_and_pad(), MeshSettings(size=20, **free), heights=STACK)
     assert mesh.min_quality > 0.2
-    flat = meshing.generate(frame_and_pad(), MeshSettings(size=20, automatic=False), heights=STACK)
+    flat = meshing.generate(
+        frame_and_pad(), MeshSettings(size=20, automatic=False, **free), heights=STACK
+    )
     assert flat.min_quality < mesh.min_quality
 
 

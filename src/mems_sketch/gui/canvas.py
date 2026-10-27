@@ -76,6 +76,8 @@ from mems_sketch.core.transform import Transform
 from mems_sketch.gui import icons, motion
 from mems_sketch.gui import theme as themes
 
+SIZE_SHADES = 5  # the automatic mesh size map: shades from finest to coarsest
+SIZE_DOT_PX = 3  # and its dots' least radius on screen
 CORNER_HANDLE_PX = 4.5  # a rounded corner's handle (radius)
 CORNER_ERROR_PX = 9  # the ring round a corner whose radius does not fit
 EDIT_HANDLE_PX = 4  # half the size of a shape's handle (a side, a vertex)
@@ -1443,8 +1445,35 @@ class LayoutCanvas(QGraphicsView):
                 path.addRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)))
         self._mesh_path("refine", path, QColor(self.theme["guide"]), 1.5, 1145, dashed=True)
 
+    def show_size_map(self, points: list[tuple[float, float, float]]) -> None:
+        """The automatic mesh size map (#73): at each ``(x, y, size)``, a circle as
+        wide as the element there (at least a few pixels), the finest darkest (five
+        shades)."""
+        sizes = [size for _, _, size in points]
+        least = SIZE_DOT_PX / self.pixels_per_um()
+        paths = [QPainterPath() for _ in range(SIZE_SHADES)]
+        if sizes:
+            low, high = math.log(min(sizes)), math.log(max(sizes))
+            span = max(high - low, 1e-9)
+            for x, y, size in points:
+                shade = min(int((math.log(size) - low) / span * SIZE_SHADES), SIZE_SHADES - 1)
+                radius = max(size / 2, least)
+                paths[shade].addEllipse(QPointF(x, y), radius, radius)
+        base = QColor(self.theme["focus"])
+        for shade, path in enumerate(paths):
+            color = QColor(base)
+            color.setAlphaF(0.75 - 0.5 * shade / max(SIZE_SHADES - 1, 1))
+            self._mesh_path(f"sizes{shade}", path, color, 0, 1135, fill=True)
+
     def _mesh_path(
-        self, key: str, path: QPainterPath, color: QColor, width: float, z: float, dashed=False
+        self,
+        key: str,
+        path: QPainterPath,
+        color: QColor,
+        width: float,
+        z: float,
+        dashed=False,
+        fill=False,
     ) -> None:
         item = self._mesh_items.get(key)
         if item is not None and not shiboken6.isValid(item):
@@ -1462,6 +1491,9 @@ class LayoutCanvas(QGraphicsView):
         pen.setCosmetic(True)
         if dashed:
             pen.setStyle(Qt.PenStyle.DashLine)
+        if fill:
+            pen = QPen(Qt.PenStyle.NoPen)
+            item.setBrush(QBrush(color))
         item.setPen(pen)
         item.setPath(path)
 

@@ -1434,6 +1434,7 @@ class MainWindow(QMainWindow):
         self.canvas.show_changes(*(changes or (None, None)))
         meshing = self.tool_windows.is_open("mesh")  # its refinements and preview (#50, #72)
         self.canvas.show_refinements(self.mesh.refinement_marks() if meshing else [])
+        self.canvas.show_size_map(self.mesh.size_map_marks() if meshing else [])
         self.canvas.show_mesh(*(self.mesh.preview_arrays() if meshing else (None, None)))
         open_ = self.tool_windows.is_open("points")
         focus = (

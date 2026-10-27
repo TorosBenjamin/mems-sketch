@@ -27,6 +27,14 @@ is meshed:
   (1.2 by default). Where a fine region meets a coarse one, the size changes
   gradually, never in one step: sudden jumps make distorted elements and
   unreliable results along the seam.
+- **Automatic** (on by default) makes the mesh finer where the geometry needs
+  it: about **Across** elements (2 by default) across each narrow beam and each
+  small gap, such as between comb fingers, and enough along tight curves (16
+  round a circle). Without it, a beam narrower than the size gets thin,
+  distorted triangles. **Show the size map** draws where, before meshing: a
+  circle as wide as the element at each corner that needs it, the finest
+  darkest. In 3D it also keeps each layer's elements near its thickness, so
+  thin layers get no flat tetrahedra.
 - **Size on** a layer sets a size for that layer, e.g. finer anchors.
 - **Refinements** make the mesh finer in places: around a point (within a
   radius), in a box, or along the edges of a layer (within a distance). Points
@@ -48,6 +56,8 @@ In the component's file:
 mesh:
   size: plate / 20
   growth: 1.2
+  across: 3            # automatic: three elements across narrow parts
+  # automatic: false   # to turn the automatic size map off
   layers: {anchor: 2}
   refine:
     - {kind: point, x: 0, y: 0, size: 0.5, radius: 3}
@@ -73,6 +83,9 @@ out of 3D meshes. The bundled processes (mems.surface, mems.soi,
 mems.polysilicon) give theirs. Choose **3D** before *Mesh* in the Mesh window,
 or the *Dimensions* option when exporting. A 3D mesh is counted in the
 window, not drawn. Point and box refinements reach through the whole height.
+A fine 3D mesh of a whole device is large: the example resonator with the
+automatic map is about 530 000 tetrahedra and takes minutes; mesh a part of it,
+or raise *Size* or lower *Across*.
 
 ## What the mesh is
 
@@ -81,9 +94,13 @@ window, not drawn. Point and box refinements reach through the whole height.
   device's bottom face), the two share their nodes.
 - **Named.** Each layer is a named region (`device`, `anchor`) and its outline
   (its edges in 2D, its surface in 3D) a named boundary (`device_boundary`), so
-  a solver finds them by name. Where
+  a solver finds them by name. Each **named shape** of the component is a
+  region too, on each of its layers: `mass.device`, `anchor_left.anchor`, with
+  `mass.device_boundary`. Name the electrodes and anchors you want to find
+  (in the Shapes list, F2); the mesh is split along their outlines. Where
   layers overlap, a triangle is in both; formats that allow one body per
-  element name the overlap after both (`anchor+device`).
+  element (Elmer, XDMF) name it after the shapes it is in (`mass.device`), else
+  its layers (`anchor+device`).
 - **Triangles** (gmsh's Frontal-Delaunay) or **tetrahedra** (Delaunay).
 
 ## Formats

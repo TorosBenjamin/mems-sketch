@@ -23,6 +23,7 @@ after another (a lock), not at once.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import threading
 from collections.abc import Callable, Iterable
@@ -33,8 +34,11 @@ import numpy as np
 
 from mems_sketch.core.component import Geometry
 from mems_sketch.core.mesh_settings import MeshSettings, ResolvedMesh
+from mems_sketch.mesh_sizes import BIN_RATIO, bins, rings_of, size_map
 
-MERGE_UM = 1e-4  # points closer than this along an outline are one point
+THICKNESS_RATIO = 1.5  # 3D, automatic sizes: elements at most this times the layer thick
+MERGE_UM = 1e-4
+BOOLEAN_TOLERANCE_UM = 1e-3  # outlines closer than this are merged when cut into another  # points closer than this along an outline are one point
 MAX_SAMPLING = 4000  # points a distance field samples along an edge
 ELEMENT = {2: 2, 3: 4}  # gmsh's element types: 3-node triangle, 4-node tetrahedron
 FACET = {2: 1, 3: 2}  # and of their sides: 2-node line, 3-node triangle
@@ -81,6 +85,9 @@ class Mesh:
     boundaries: dict[str, np.ndarray] = field(default_factory=dict)  # name: facet indices
     quality: np.ndarray = field(default_factory=lambda: np.zeros(0))  # per element, 0..1
     settings: ResolvedMesh | None = None
+    # The component's named shapes on each layer (``mass.device``): element indices (#71).
+    parts: dict[str, np.ndarray] = field(default_factory=dict)
+    size_points: list = field(default_factory=list)  # the automatic size map used (#73)
 
     @property
     def dim(self) -> int:
@@ -111,13 +118,18 @@ class Mesh:
         return np.cbrt(6 * math.sqrt(2) * measure)
 
     def bodies(self) -> tuple[list[str], np.ndarray]:
-        """Each element in one body, for formats that allow only one: the layers
-        it is in, joined (``device``, ``anchor+device``); the names, and each
-        element's index into them."""
+        """Each element in one body, for formats that allow only one: the named
+        shapes it is in (``mass.device``), else the layers it is in, joined
+        (``device``, ``anchor+device``); the names, and each element's index into
+        them."""
         member = [[] for _ in range(len(self.elements))]
+        for name in sorted(self.parts):
+            for index in self.parts[name]:
+                member[index].append(name)
         for name in sorted(self.regions):
             for index in self.regions[name]:
-                member[index].append(name)
+                if not any("." in m for m in member[index]):
+                    member[index].append(name)
         names = sorted({"+".join(m) or "none" for m in member})
         lookup = {name: k for k, name in enumerate(names)}
         return names, np.array([lookup["+".join(m) or "none"] for m in member], dtype=np.int64)
@@ -141,13 +153,16 @@ def generate(
     layers: Iterable[str] | None = None,
     write: Callable[[object], None] | None = None,
     heights: dict[str, tuple[float, float]] | None = None,
+    shapes: dict[str, Geometry] | None = None,
 ) -> Mesh:
     """Mesh ``geometry`` (all its layers, or ``layers``) with ``settings``
     (expressions evaluated with ``variables``): in 2D, or in 3D when ``heights``
     is given (each layer's bottom and thickness, :meth:`Process.heights`; layers
     without one are left out). ``write``, if given, is called with the gmsh
     module while the mesh is in it, to save it in gmsh's formats (see
-    :func:`save_with_gmsh`)."""
+    :func:`save_with_gmsh`). ``shapes``: the component's named shapes and their
+    geometry (:func:`named_shapes`), each a named part of the mesh on each layer
+    (``mass.device``)."""
     gmsh = _gmsh()
     dim = 2 if heights is None else 3
     wanted = None if layers is None else set(layers)
@@ -170,20 +185,31 @@ def generate(
     unknown = sorted(named - set(geometry.layers))
     if unknown:
         raise MeshError(f"the mesh settings name layers that are not drawn: {', '.join(unknown)}")
+    size_points = []
+    if settings.automatic:
+        largest = max([settings.size, *settings.layers.values()])
+        size_points = size_map(rings_of(geometry, regions), settings.across, largest)
+        if heights is not None:  # no flat tetrahedra: a layer's elements near its thickness
+            layers = dict(settings.layers)
+            for layer in regions:
+                cap = heights[layer][1] * THICKNESS_RATIO
+                layers[layer] = min(layers.get(layer, settings.size), cap)
+            settings = dataclasses.replace(settings, layers=layers)
     with _lock:
         gmsh.initialize(interruptible=False)
         try:
             gmsh.option.setNumber("General.Terminal", 0)
             gmsh.model.add("mems-sketch")
-            entities = _entities(gmsh, regions, heights)
-            _sizes(gmsh, entities, settings, dim)
-            _groups(gmsh, entities, dim)
+            entities, parts = _entities(gmsh, regions, heights, shapes or {})
+            _sizes(gmsh, entities, settings, dim, size_points)
+            _groups(gmsh, {**entities, **parts}, dim)
             try:
                 gmsh.model.mesh.generate(dim)
             except Exception as exc:
                 raise MeshError(f"gmsh could not mesh it: {exc}") from exc
-            mesh = _read(gmsh, entities, dim)
+            mesh = _read(gmsh, entities, parts, dim)
             mesh.settings = settings
+            mesh.size_points = size_points
             if write is not None:
                 write(gmsh)
             return mesh
@@ -206,36 +232,76 @@ def stack_heights(process) -> dict[str, tuple[float, float]]:
 # -- the geometry ---------------------------------------------------------------------
 
 
-def _entities(gmsh, regions, heights) -> dict[str, list[int]]:
-    """The layers as gmsh surfaces (2D) or volumes (3D, extruded), cut into one
-    another so that layers that overlap or touch share their nodes: each layer's
-    pieces, by tag."""
+def _entities(gmsh, regions, heights, shapes) -> tuple[dict[str, list[int]], dict]:
+    """The layers as gmsh surfaces (2D) or volumes (3D), cut into one another so
+    that layers that overlap or touch share their nodes: each layer's pieces, by
+    tag; and each named shape's pieces on each layer (``mass.device``).
+
+    The outlines are cut into one another flat first, the shapes with the layers,
+    so every piece is wholly inside a shape or outside it. In 3D each layer's
+    pieces are then extruded from its z by its thickness, and the layers' volumes
+    cut into one another where they meet: no two volumes ever coincide, which the
+    3D mesher could not fill."""
     occ = gmsh.model.occ
-    dim = 2 if heights is None else 3
     inputs: list[tuple[str, int]] = []
-    for layer, region in regions.items():
-        z, thickness = (0.0, 0.0) if heights is None else heights[layer]
+
+    def add(region, key: str) -> None:
         for hull, holes in region.points_um():
-            outer = _loop(occ, hull, z)
+            outer = _loop(occ, hull)
             if outer is None:
                 continue
-            inner = [loop for loop in (_loop(occ, h, z) for h in holes) if loop is not None]
-            surface = occ.addPlaneSurface([outer, *inner])
-            if dim == 2:
-                inputs.append((layer, surface))
-                continue
-            made = occ.extrude([(2, surface)], 0, 0, thickness)
-            inputs += [(layer, tag) for d, tag in made if d == 3]
-    if len(inputs) > 1:
-        _, children = occ.fragment([(dim, tag) for _, tag in inputs], [])
-    else:
-        children = [[(dim, inputs[0][1])]]
+            inner = [loop for loop in (_loop(occ, h) for h in holes) if loop is not None]
+            inputs.append((key, occ.addPlaneSurface([outer, *inner])))
+
+    for layer, region in regions.items():
+        add(region, layer)
+    for name, geometry in shapes.items():
+        for layer, region in geometry.layers.items():
+            if layer in regions and not region.is_empty():
+                add(region & regions[layer], f"{name}.{layer}")
+    # Outlines a hair apart (a shape's edge on its layer's, snapped differently) are one.
+    gmsh.option.setNumber("Geometry.ToleranceBoolean", BOOLEAN_TOLERANCE_UM)
+    keys_of: dict[int, set[str]] = {}  # each flat piece: the layers and shapes it is in
+    children = _cut(occ, [(2, tag) for _, tag in inputs])
+    for (key, _), pieces in zip(inputs, children, strict=True):
+        for d, tag in pieces:
+            if d == 2:
+                keys_of.setdefault(tag, set()).add(key)
+    if heights is not None:
+        volumes: list[tuple[set[str], int]] = []
+        for layer in regions:
+            z, thickness = heights[layer]
+            for piece, keys in keys_of.items():
+                if layer not in keys:
+                    continue
+                copy = occ.copy([(2, piece)])
+                occ.translate(copy, 0, 0, z)
+                made = occ.extrude(copy, 0, 0, thickness)
+                labels = {layer} | {k for k in keys if k.endswith(f".{layer}")}
+                volumes += [(labels, tag) for d, tag in made if d == 3]
+        occ.remove([(2, piece) for piece in keys_of], recursive=True)
+        keys_of = {}
+        for (labels, _), pieces in zip(
+            volumes, _cut(occ, [(3, t) for _, t in volumes]), strict=True
+        ):
+            for d, tag in pieces:
+                if d == 3:
+                    keys_of.setdefault(tag, set()).update(labels)
     occ.synchronize()
     found: dict[str, list[int]] = {}
-    for (layer, _), pieces in zip(inputs, children, strict=True):
-        tags = found.setdefault(layer, [])
-        tags += [tag for d, tag in pieces if d == dim and tag not in tags]
-    return found
+    for tag, keys in sorted(keys_of.items()):
+        for key in keys:
+            found.setdefault(key, []).append(tag)
+    layers = {key: tags for key, tags in found.items() if key in regions}
+    named = {key: tags for key, tags in found.items() if key not in regions}
+    return layers, named
+
+
+def _cut(occ, entities: list[tuple[int, int]]) -> list[list[tuple[int, int]]]:
+    """``entities`` cut into one another (OCC's fragment): the pieces each became."""
+    if len(entities) > 1:
+        return occ.fragment(entities, [])[1]
+    return [list(entities)]
 
 
 def _loop(occ, points: np.ndarray, z: float = 0.0) -> int | None:
@@ -264,7 +330,9 @@ def _boundary(gmsh, tags: list[int], dim: int) -> list[int]:
 # -- sizes ----------------------------------------------------------------------------
 
 
-def _sizes(gmsh, entities: dict[str, list[int]], settings: ResolvedMesh, dim: int) -> None:
+def _sizes(
+    gmsh, entities: dict[str, list[int]], settings: ResolvedMesh, dim: int, size_points=()
+) -> None:
     """The size field: the smallest of each layer's size (inside it), and of each
     smaller size graded outward (see the module docstring)."""
     field_ = gmsh.model.mesh.field
@@ -335,6 +403,7 @@ def _sizes(gmsh, entities: dict[str, list[int]], settings: ResolvedMesh, dim: in
 
     for refinement in settings.refine:
         refinement.apply(Refinements)
+    parts += _automatic(gmsh, size_points, graded, sides_list, dim)
     smallest = field_.add("Min")
     field_.setNumbers(smallest, "FieldsList", parts)
     field_.setAsBackgroundMesh(smallest)
@@ -345,8 +414,73 @@ def _sizes(gmsh, entities: dict[str, list[int]], settings: ResolvedMesh, dim: in
         ("Mesh.MeshSizeMax", largest),
         ("Mesh.Algorithm", 6),  # Frontal-Delaunay: well-shaped triangles
         ("Mesh.Algorithm3D", 1),  # Delaunay
+        ("Mesh.OptimizeNetgen", 1),  # and then fewer slivers
     ):
         gmsh.option.setNumber(option, value)
+
+
+def _automatic(gmsh, size_points, graded, sides_list: str, dim: int) -> list[int]:
+    """The size fields of the automatic size map: for each bin of sizes, the
+    distance to its corners and to the edges between two of them (a narrow beam's
+    sides), graded away by the growth rate."""
+    if not size_points:
+        return []
+    field_ = gmsh.model.mesh.field
+    by_place = {(round(p.x, 4), round(p.y, 4)): p.size for p in size_points}
+    corner_size: dict[int, float] = {}
+    for _, tag in gmsh.model.getEntities(0):
+        x, y, _z = gmsh.model.getValue(0, tag, [])
+        size = by_place.get((round(x, 4), round(y, 4)))
+        if size is not None:
+            corner_size[tag] = size
+    if not corner_size:
+        return []
+    groups: list[tuple[float, list[int], list[int]]] = []  # size, corners, edges
+    for size, members in bins(size_points):
+        top = size * BIN_RATIO
+        corners = [t for t, s in corner_size.items() if size <= s <= top]
+        groups.append((size, corners, []))
+    for _, curve in gmsh.model.getEntities(1):
+        ends = gmsh.model.getBoundary([(1, curve)], oriented=False)
+        sizes = [corner_size.get(abs(t)) for d, t in ends if d == 0]
+        if len(sizes) == 2 and None not in sizes:
+            edge = max(sizes)  # finer along it only where both ends are
+            for size, _corners, edges in groups:
+                if size <= edge <= size * BIN_RATIO:
+                    edges.append(curve)
+                    break
+    made = []
+    for size, corners, edges in groups:
+        if not corners and not edges:
+            continue
+        distance = field_.add("Distance")
+        if corners:
+            field_.setNumbers(distance, "PointsList", corners)
+        if edges:
+            field_.setNumbers(distance, "CurvesList", edges)
+            longest = max(_extent(gmsh, 1, e) for e in edges)
+            field_.setNumber(
+                distance, "Sampling", min(max(int(longest / size) + 2, 20), MAX_SAMPLING)
+            )
+        made.append(graded(distance, size, 0.0))
+    return made
+
+
+def named_shapes(build) -> dict[str, Geometry]:
+    """The named shapes at the top of a component's shape tree and their geometry,
+    from its build (``Build.records()``): what :func:`generate` names parts after."""
+    try:
+        records = build.records()
+    except Exception:  # noqa: BLE001 - no records: no named parts
+        return {}
+    found: dict[str, Geometry] = {}
+    for path, record in records.items():
+        if len(path) != 1:
+            continue
+        name = record.points.name if record.points is not None else None
+        if name and not record.geometry.is_empty():
+            found[name] = record.geometry
+    return found
 
 
 def _extent(gmsh, dim: int, tag: int) -> float:
@@ -367,7 +501,7 @@ def _groups(gmsh, entities: dict[str, list[int]], dim: int) -> None:
 # -- reading the mesh back -----------------------------------------------------------
 
 
-def _read(gmsh, entities: dict[str, list[int]], dim: int) -> Mesh:
+def _read(gmsh, entities: dict[str, list[int]], parts: dict[str, list[int]], dim: int) -> Mesh:
     tags, coords, _ = gmsh.model.mesh.getNodes()
     index = {int(t): k for k, t in enumerate(tags)}
     nodes = np.asarray(coords, dtype=float).reshape(-1, 3)[:, :dim]
@@ -398,14 +532,16 @@ def _read(gmsh, entities: dict[str, list[int]], dim: int) -> Mesh:
         if len(all_tags)
         else np.zeros(0)
     )
-    regions = {
-        layer: np.unique(np.concatenate([by_entity.get(t, np.zeros(0, np.int64)) for t in found]))
-        for layer, found in entities.items()
-    }
+
+    def members(found: list[int]) -> np.ndarray:
+        return np.unique(np.concatenate([by_entity.get(t, np.zeros(0, np.int64)) for t in found]))
+
+    regions = {layer: members(found) for layer, found in entities.items()}
+    named = {name: members(found) for name, found in parts.items()}
     facets: list[np.ndarray] = []
     boundaries: dict[str, np.ndarray] = {}
     total = 0
-    for layer, found in entities.items():
+    for layer, found in {**entities, **parts}.items():
         sides = [connectivity(dim - 1, s, FACET[dim], dim)[0] for s in _boundary(gmsh, found, dim)]
         sides = [s for s in sides if len(s)]
         if sides:
@@ -420,6 +556,7 @@ def _read(gmsh, entities: dict[str, list[int]], dim: int) -> Mesh:
         facets=np.vstack(facets) if facets else np.zeros((0, dim), dtype=np.int64),
         boundaries=boundaries,
         quality=quality,
+        parts=named,
     )
 
 

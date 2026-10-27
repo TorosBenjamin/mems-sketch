@@ -19,6 +19,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QHBoxLayout,
@@ -63,17 +64,34 @@ class MeshPanel(_Panel):
         self.size = self._field(optional=True)
         self.size.returnPressed.connect(lambda: self._set("size", self.size, optional=True))
         self.growth = self._field()
+        self.growth.set_unit("")
         self.growth.returnPressed.connect(lambda: self._set("growth", self.growth))
+        self.automatic = QCheckBox("Finer in narrow parts, gaps and curves")
+        self.automatic.setToolTip(
+            "The automatic size map: about *Across* elements across each narrow beam "
+            "and small gap, and enough along each curve"
+        )
+        self.automatic.clicked.connect(lambda on: self._change_or_refresh(automatic=on))
+        self.across = self._field()
+        self.across.set_unit("")
+        self.across.set_help("Elements across the narrowest part of a beam or a gap")
+        self.across.returnPressed.connect(lambda: self._set("across", self.across))
         sizes = widgets.Card(
             "Sizes",
             help="*Size* is the largest element (µm); empty, it is a twentieth of the "
             "component's smaller side. Elements grow by at most *Growth* from one to "
             "the next, so sizes change gradually where a fine region meets a coarse "
-            "one. A layer's size applies on that layer.",
+            "one. A layer's size applies on that layer.\n\n"
+            "*Automatic* makes the mesh finer where the geometry needs it: *Across* "
+            "elements across each narrow beam and small gap (e.g. between comb "
+            "fingers), and enough along tight curves. *Show the size map* draws "
+            "where, before meshing.",
         )
         form = QFormLayout()
         form.addRow("Size", self.size)
         form.addRow("Growth", self.growth)
+        form.addRow("Automatic", self.automatic)
+        form.addRow("Across", self.across)
         sizes.body.addLayout(form)
         layer_box = QWidget()  # (a widget of its own: its rows come and go)
         self.layer_form = QFormLayout(layer_box)
@@ -107,6 +125,13 @@ class MeshPanel(_Panel):
         self.mesh_button.clicked.connect(lambda: self.preview())
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear_preview)
+        self.show_map = QCheckBox("Show the size map")
+        self.show_map.setToolTip(
+            "Where the automatic sizes make the mesh finer: a circle as wide as the "
+            "element there, finer ones darker"
+        )
+        self.show_map.toggled.connect(lambda _on: self.shown_changed.emit())
+        self._size_map: list | None = None
         self.export_button = QPushButton("Export…")
         self.export_button.clicked.connect(self.export_requested.emit)
         self.summary = QLabel()
@@ -131,6 +156,7 @@ class MeshPanel(_Panel):
         buttons.addStretch(1)
         buttons.addWidget(self.export_button)
         preview.body.addLayout(buttons)
+        preview.body.addWidget(self.show_map)
         preview.body.addWidget(self.summary)
 
         page = QWidget()
@@ -165,9 +191,14 @@ class MeshPanel(_Panel):
         self._editable = active is not None and active in self.document.project.components
         settings = self.settings()
         scope, names = self._scope()
-        for field in (self.size, self.growth):
+        for field in (self.size, self.growth, self.across):
             field.scope, field.parameters = scope, names
             field.setReadOnly(not self._editable)
+        self.automatic.setChecked(settings.automatic)
+        self.automatic.setEnabled(self._editable)
+        self.across.setText(_format(settings.across))
+        self.across.setEnabled(settings.automatic)
+        self._size_map = None  # made again when shown
         automatic = self._automatic()
         self.size.setText("" if settings.size is None else _format(settings.size))
         self.size.setPlaceholderText(f"{automatic:.3g}" if automatic else "")
@@ -388,7 +419,11 @@ class MeshPanel(_Panel):
             if self.dimensions.currentText() == "3D":
                 heights = meshing.stack_heights(self.document.project.process)
             self.mesh = meshing.generate(
-                build.geometry, self.settings(), build.variables(), heights=heights
+                build.geometry,
+                self.settings(),
+                build.variables(),
+                heights=heights,
+                shapes=meshing.named_shapes(build),
             )
         except Exception as exc:  # noqa: BLE001 - shown in the panel
             self.mesh = None
@@ -407,6 +442,30 @@ class MeshPanel(_Panel):
         self._preview_key = None
         self.summary.setText("")
         self.shown_changed.emit()
+
+    def size_map_marks(self) -> list[tuple[float, float, float]]:
+        """The automatic size map to draw: (x, y, size) at each corner that needs a
+        finer mesh, while *Show the size map* is on (and the map is)."""
+        settings = self.settings()
+        if not self.show_map.isChecked() or not settings.automatic:
+            return []
+        if self._size_map is None:
+            from mems_sketch.mesh_sizes import rings_of, size_map
+
+            try:
+                build = self.document.results.build()
+                geometry = build.geometry
+                resolved = settings.resolved(build.variables(), geometry.bbox())
+            except Exception:  # noqa: BLE001 - nothing to show until it builds
+                return []
+            largest = max([resolved.size, *resolved.layers.values()])
+            points = size_map(rings_of(geometry), resolved.across, largest)
+            self._size_map = [(p.x, p.y, p.size) for p in points]
+        return self._size_map
+
+    def _change_or_refresh(self, **fields) -> None:
+        if not self._change(**fields):
+            self.refresh()
 
     def preview_arrays(self):
         """The preview's nodes and triangles, or (None, None) (none, or a 3D mesh)."""

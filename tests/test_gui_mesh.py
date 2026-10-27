@@ -142,8 +142,24 @@ def test_a_3d_preview_is_counted_not_drawn(window):
     panel.dimensions.setCurrentText("3D")
     mesh = panel.preview()  # the example's process (mems.surface) places its layers
     assert mesh is not None and mesh.dim == 3
-    assert "tetrahedra" in panel.summary.text()
+    assert "prisms" in panel.summary.text()
     assert not window.canvas.mesh_shown()
+
+
+@needs_gmsh
+def test_the_element_order_and_prisms_through_are_set(window):
+    window.open_component("suspension")
+    panel = window.mesh
+    panel.refresh()
+    assert panel.order.currentIndex() == 1 and panel.through.value() == 2  # the defaults
+    panel.order.setCurrentIndex(0)
+    panel.order.activated.emit(0)
+    panel.through.setValue(0)
+    panel.through.editingFinished.emit()
+    mesh = window.document.project.components["suspension"].mesh
+    assert (mesh.order, mesh.through) == (1, 0)
+    window.document.undo()
+    assert window.document.project.components["suspension"].mesh.through == 2
 
 
 @needs_gmsh

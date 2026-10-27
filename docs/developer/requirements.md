@@ -110,7 +110,7 @@ but should not have to program. Scripting is there for those who want it.
 - **PRC-1** (Must, exists) The process has **constants** (`process.<name>` in
   every expression) and **layers**. Each layer has a GDS layer and datatype,
   and optionally a minimum width and minimum spacing.
-- **PRC-2** (Should, new; [#76](https://github.com/TorosBenjamin/mems-sketch/issues/76)) Each layer has a **position in the stack**: its
+- **PRC-2** (Should, exists; [#76](https://github.com/TorosBenjamin/mems-sketch/issues/76)) Each layer has a **position in the stack**: its
   bottom z and thickness, as values or expressions over process constants.
   It is used by 3D output ([MSH](#meshing), [VIEW](#3d-view)) and ignored by
   2D output.
@@ -580,7 +580,9 @@ Ansys) can mesh the STEP export themselves (OUT-6).
 
 - **MSH-1** (Must, exists; [#49](https://github.com/TorosBenjamin/mems-sketch/issues/49)) Export a **mesh** of a component for simulation:
   2D (the layers' faces) or 3D (the layers extruded through the stack, each
-  from its z by its thickness, as the process gives them).
+  from its z by its thickness, as the process gives them), in second-order
+  elements by default; in 3D, prisms through each layer's thickness or free
+  tetrahedra ([#346](https://github.com/TorosBenjamin/mems-sketch/issues/346)).
 - **MSH-2** (Must, changes; [#50](https://github.com/TorosBenjamin/mems-sketch/issues/50)) **Mesh settings are project data**, as expressions:
   a global size, sizes per layer, and refinement regions (areas, points,
   edges, distances from edges) drawn on the canvas. They are saved, diffed

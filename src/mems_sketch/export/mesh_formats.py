@@ -6,13 +6,14 @@
 - **Elmer**: a mesh folder (``mesh.header``, ``mesh.nodes``, ``mesh.elements``,
   ``mesh.boundary``, ``mesh.names``), what ``Mesh DB`` points ElmerSolver to.
 - **XDMF** ``.xdmf`` (FEniCS/dolfinx, scikit-fem via meshio, ParaView): the
-  triangles with a ``region`` number per triangle, the data inline.
+  elements with a ``region`` number per element, the data inline.
 
 Each exports the component's mesh as its mesh settings say (see
 :mod:`mems_sketch.meshing`), with layers as named regions and their outlines as
 named boundaries, and each named shape on each layer too (``mass.device``,
 ``mass.device_boundary``): in 2D (``dimensions=2D``, triangles) or 3D (``3D``, the
-layers extruded through the stack as the process places them, tetrahedra).
+layers extruded through the stack as the process places them, in prisms or
+tetrahedra), of the first or second order, as the mesh settings say (#346).
 Coordinates are in µm, or in metres with ``units=m``.
 """
 
@@ -28,7 +29,14 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.mesh_settings import MeshSettings
 from mems_sketch.core.project import Project
 from mems_sketch.export.base import ExportOption
-from mems_sketch.meshing import Mesh, generate, named_shapes, save_with_gmsh, stack_heights
+from mems_sketch.meshing import (
+    ELEMENT_TYPES,
+    Mesh,
+    generate,
+    named_shapes,
+    save_with_gmsh,
+    stack_heights,
+)
 
 UNITS = {"um": 1.0, "m": 1e-6}
 _OPTIONS = (
@@ -37,7 +45,8 @@ _OPTIONS = (
         "2D",
         "Dimensions",
         "2D: the layers' faces, in triangles. 3D: the layers extruded through the "
-        "stack (each layer's z and thickness in the process), in tetrahedra",
+        "stack (each layer's z and thickness in the process), in prisms through "
+        "each layer, or tetrahedra",
         choices=("2D", "3D"),
     ),
     ExportOption(
@@ -162,8 +171,12 @@ BUILTIN = (MshExporter, AbaqusExporter, NastranExporter, ElmerExporter, XdmfExpo
 
 # -- Elmer ----------------------------------------------------------------------------
 
-ELMER_ELEMENT = {2: 303, 3: 504}  # 3-node triangle, 4-node tetrahedron
-ELMER_FACET = {2: 202, 3: 303}  # their sides: 2-node line, 3-node triangle
+# Elmer's numbers for gmsh's element types, and the order Elmer wants their nodes
+# in (from ElmerGrid's own conversion, GmshToElmerIndx).
+ELMER = {1: 202, 8: 203, 2: 303, 9: 306, 3: 404, 16: 408, 4: 504, 11: 510, 6: 706, 18: 715}
+TET10_ORDER = (0, 1, 2, 3, 4, 5, 6, 7, 9, 8)
+PRISM15_ORDER = (0, 1, 2, 3, 4, 5, 6, 9, 7, 12, 14, 13, 8, 10, 11)
+ELMER_ORDER = {11: TET10_ORDER, 18: PRISM15_ORDER}
 
 
 def write_elmer(mesh: Mesh, folder: Path, scale: float = 1.0) -> Path:
@@ -179,30 +192,34 @@ def write_elmer(mesh: Mesh, folder: Path, scale: float = 1.0) -> Path:
     (folder / "mesh.nodes").write_text(
         "".join(f"{k + 1} -1 {x:.12g} {y:.12g} {z:.12g}\n" for k, (x, y, z) in enumerate(nodes))
     )
+    kind = mesh.kind.gmsh
+    elements = _ordered(mesh.elements, ELMER_ORDER.get(kind))
     (folder / "mesh.elements").write_text(
         "".join(
-            f"{k + 1} {body_of[k] + 1} {ELMER_ELEMENT[dim]} {_numbers(element)}\n"
-            for k, element in enumerate(mesh.elements)
+            f"{k + 1} {body_of[k] + 1} {ELMER[kind]} {_numbers(element)}\n"
+            for k, element in enumerate(elements)
         )
     )
-    owners = _facet_owners(mesh.elements)
+    owners = _facet_owners(mesh)
     lines = []
+    counts: dict[int, int] = {kind: len(mesh.elements)}
     names = sorted(mesh.boundaries)
     for number, name in enumerate(names, start=1):
         for index in mesh.boundaries[name]:
-            facet = mesh.facets[index]
-            parents = [*owners.get(tuple(sorted(int(n) for n in facet)), []), -1, -1][:2]
+            facet_kind = int(mesh.facet_types[index])
+            facet_type = ELEMENT_TYPES[facet_kind]
+            facet = mesh.facets[index, : facet_type.nodes]
+            corners = tuple(sorted(int(n) for n in facet[: facet_type.corners]))
+            parents = [*owners.get(corners, []), -1, -1][:2]
             left, right = (p + 1 if p >= 0 else 0 for p in parents)
-            lines.append(f"{number} {left} {right} {ELMER_FACET[dim]} {_numbers(facet)}")
+            lines.append(f"{number} {left} {right} {ELMER[facet_kind]} {_numbers(facet)}")
+            counts[facet_kind] = counts.get(facet_kind, 0) + 1
     (folder / "mesh.boundary").write_text(
         "".join(f"{k + 1} {line}\n" for k, line in enumerate(lines))
     )
-    types = [(ELMER_ELEMENT[dim], len(mesh.elements))]
-    if lines:
-        types.append((ELMER_FACET[dim], len(lines)))
     (folder / "mesh.header").write_text(
-        f"{len(nodes)} {len(mesh.elements)} {len(lines)}\n{len(types)}\n"
-        + "".join(f"{kind} {count}\n" for kind, count in types)
+        f"{len(nodes)} {len(mesh.elements)} {len(lines)}\n{len(counts)}\n"
+        + "".join(f"{ELMER[k]} {count}\n" for k, count in counts.items())
     )
     (folder / "mesh.names").write_text(
         "! ----- names for bodies -----\n"
@@ -211,6 +228,11 @@ def write_elmer(mesh: Mesh, folder: Path, scale: float = 1.0) -> Path:
         + "".join(f"$ {_elmer_name(n)} = {k}\n" for k, n in enumerate(names, start=1))
     )
     return folder
+
+
+def _ordered(rows: np.ndarray, order: tuple[int, ...] | None) -> np.ndarray:
+    """Each row's nodes in ``order`` (None: as they are)."""
+    return rows if order is None else rows[:, list(order)]
 
 
 def _elmer_name(name: str) -> str:
@@ -222,29 +244,41 @@ def _numbers(nodes) -> str:
     return " ".join(str(int(n) + 1) for n in nodes)
 
 
-def _facet_owners(elements: np.ndarray) -> dict[tuple[int, ...], list[int]]:
-    """The elements each side (sorted node indices) belongs to."""
+def _facet_owners(mesh: Mesh) -> dict[tuple[int, ...], list[int]]:
+    """The elements each side (its sorted corner nodes) belongs to."""
     owners: dict[tuple[int, ...], list[int]] = {}
-    for k, element in enumerate(elements.tolist()):
-        for left_out in range(len(element)):
-            side = tuple(sorted(n for i, n in enumerate(element) if i != left_out))
-            owners.setdefault(side, []).append(k)
+    for k, element in enumerate(mesh.corners.tolist()):
+        for side in mesh.kind.sides:
+            owners.setdefault(tuple(sorted(element[i] for i in side)), []).append(k)
     return owners
 
 
 # -- XDMF -----------------------------------------------------------------------------
 
 
+# XDMF's names for gmsh's element types, and the order of their nodes (as meshio
+# writes them: VTK's for the quadratic ones, gmsh's for the linear prism).
+XDMF = {
+    2: "Triangle",
+    9: "Triangle_6",
+    4: "Tetrahedron",
+    11: "Tetrahedron_10",
+    6: "Wedge",
+    18: "Wedge_15",
+}
+XDMF_ORDER = {11: TET10_ORDER, 18: PRISM15_ORDER}
+
+
 def write_xdmf(mesh: Mesh, path: Path, scale: float = 1.0) -> Path:
-    """``mesh`` as XDMF 3 with the data inline: a ``region`` number per triangle
+    """``mesh`` as XDMF 3 with the data inline: a ``region`` number per element
     (each its body, see :meth:`Mesh.bodies`), the names in an Information entry."""
     bodies, body_of = mesh.bodies()
     nodes = mesh.nodes * scale
     xy = "\n".join(" ".join(f"{v:.12g}" for v in node) for node in nodes)
-    cells = "\n".join(" ".join(str(int(n)) for n in element) for element in mesh.elements)
-    topology, geometry, corners = (
-        ("Triangle", "XY", 3) if mesh.dim == 2 else ("Tetrahedron", "XYZ", 4)
-    )
+    kind = mesh.kind
+    elements = _ordered(mesh.elements, XDMF_ORDER.get(kind.gmsh))
+    cells = "\n".join(" ".join(str(int(n)) for n in element) for element in elements)
+    topology, geometry, corners = XDMF[kind.gmsh], "XY" if mesh.dim == 2 else "XYZ", kind.nodes
     regions = " ".join(str(int(b) + 1) for b in body_of)
     names = "; ".join(f"{k}={name}" for k, name in enumerate(bodies, start=1))
     path = Path(path)

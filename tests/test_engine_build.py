@@ -87,6 +87,8 @@ _LATER_FIELDS = {
         "refine": [],
         "automatic": True,
         "across": 2.0,
+        "order": 2,  # #346
+        "through": 2,
     },
 }
 # What components were called when the recording was made: the built-ins and

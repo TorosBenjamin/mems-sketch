@@ -4,8 +4,8 @@ mems-sketch makes a mesh of a component for simulation, so a design goes
 straight into a free solver: **Elmer** (electrostatics, structures, modes),
 **CalculiX**, **FEniCS** or scikit-fem, or **gmsh** itself. Ansys Mechanical
 also reads the Abaqus and Nastran files. Meshes are **2D** (the layers' faces,
-in triangles) or **3D** (each layer extruded through the stack, in
-tetrahedra).
+in triangles) or **3D** (each layer extruded through the stack, in prisms or
+tetrahedra), with second-order elements by default.
 
 Meshing uses [gmsh](https://gmsh.info). It is installed with the app; with
 pip, it is an extra: `pip install "mems-sketch[mesh]"`. On Linux, gmsh also
@@ -33,15 +33,25 @@ is meshed:
   round a circle). Without it, a beam narrower than the size gets thin,
   distorted triangles. **Show the size map** draws where, before meshing: a
   circle as wide as the element at each corner that needs it, the finest
-  darkest. In 3D it also keeps each layer's elements near its thickness, so
-  thin layers get no flat tetrahedra.
+  darkest. With free tetrahedra in 3D (below) it also keeps each layer's
+  elements near its thickness, so thin layers get no flat tetrahedra.
 - **Size on** a layer sets a size for that layer, e.g. finer anchors.
 - **Refinements** make the mesh finer in places: around a point (within a
   radius), in a box, or along the edges of a layer (within a distance). Points
   and boxes are drawn dashed on the canvas while the window is open.
+- **Order** is **Second** by default: each element has a node at the middle of
+  each edge too (6-node triangles, 10-node tetrahedra, 15-node prisms). Keep
+  it: first-order elements are far too stiff in bending, so a spring's
+  stiffness or a resonator's frequency comes out tens of percent off unless
+  the mesh is extremely fine. **First** is there for quick looks and tools that
+  read nothing else.
+- **Through each layer** (3D) is how many prisms go through each layer's
+  thickness: 2 by default. **Free tetrahedra** (0) fills the layers with
+  tetrahedra instead.
 - **Mesh** makes the mesh and draws it over the layers, with the number of
-  triangles and the worst triangle's quality (1 is equilateral, near 0 a
-  sliver). It goes away when the design changes; press Mesh again.
+  elements and the worst element's quality (1 is a regular element, near 0 a
+  sliver; prisms in a thin film score lower for being flat, which is fine).
+  It goes away when the design changes; press Mesh again.
 - **Export…** saves it (see below).
 
 Every value is an expression like any other, over the component's parameters
@@ -57,6 +67,8 @@ mesh:
   size: plate / 20
   growth: 1.2
   across: 3            # automatic: three elements across narrow parts
+  order: 2             # second-order elements (the default); 1 for linear
+  through: 2           # 3D: prisms through each layer (the default); 0 for tetrahedra
   # automatic: false   # to turn the automatic size map off
   layers: {anchor: 2}
   refine:
@@ -83,9 +95,16 @@ out of 3D meshes. The bundled processes (mems.surface, mems.soi,
 mems.polysilicon) give theirs. Choose **3D** before *Mesh* in the Mesh window,
 or the *Dimensions* option when exporting. A 3D mesh is counted in the
 window, not drawn. Point and box refinements reach through the whole height.
-A fine 3D mesh of a whole device is large: the example resonator with the
-automatic map is about 530 000 tetrahedra and takes minutes; mesh a part of it,
-or raise *Size* or lower *Across*.
+
+By default each layer is the 2D mesh **extruded into prisms**, *Through each
+layer* of them through its thickness. Every layer uses the same heights (each
+layer's bottom and top, and the steps between), so layers that meet, one on
+another or side by side, share their nodes, and where two overlap in height a
+prism is in both. Prisms suit thin films: a film 2 µm thick and 100 µm wide
+needs tetrahedra about 2 µm across to keep them from being flat, but only a
+couple of prisms through it. The example resonator with the automatic map is
+about 124 000 prisms in half a minute; as free tetrahedra it is 538 000 and
+takes minutes.
 
 ## What the mesh is
 
@@ -101,7 +120,9 @@ or raise *Size* or lower *Across*.
   layers overlap, a triangle is in both; formats that allow one body per
   element (Elmer, XDMF) name it after the shapes it is in (`mass.device`), else
   its layers (`anchor+device`).
-- **Triangles** (gmsh's Frontal-Delaunay) or **tetrahedra** (Delaunay).
+- **Triangles** (gmsh's Frontal-Delaunay); in 3D **prisms** (those triangles
+  extruded) or **tetrahedra** (Delaunay). Second order by default: the extra
+  nodes are at the middle of each edge.
 
 ## Formats
 
@@ -114,11 +135,13 @@ line `mems-sketch-cli export PROJECT FILE`:
 | Abaqus / CalculiX | `.inp` | CalculiX, Abaqus, Ansys Mechanical |
 | Nastran | `.bdf` | Nastran and the tools that read it |
 | Elmer | `.elmer` | a mesh folder (`mesh.header`, `mesh.nodes`, …, `mesh.names`): point Elmer's `Mesh DB` at it |
-| XDMF | `.xdmf` | FEniCS/dolfinx, meshio, ParaView: a `region` number per triangle |
+| XDMF | `.xdmf` | FEniCS/dolfinx, meshio, ParaView: a `region` number per element |
 
 Options: **Dimensions** (`2D` or `3D`), **Units** (`um`, or `m` for SI
 solvers) and **Layers** (the layers to mesh, e.g. `device`; all of them when
-empty).
+empty). Every format writes second-order and prism elements: `C3D15` and
+`C3D10` in `.inp`, Elmer's 715 and 510, XDMF's `Wedge_15` and
+`Tetrahedron_10`.
 
 ```sh
 mems-sketch-cli export examples/resonator resonator.elmer --option units=m --option dimensions=3D

@@ -9,6 +9,8 @@ In a component's file::
       size: 20                    # the largest element (µm); left out: automatic
       growth: 1.2                 # how much an element may be larger than the next
       layers: {anchor: 5}         # a size per layer
+      automatic: true             # finer in narrow parts, gaps and curves (#73)
+      across: 2                   # elements across the narrowest part of a beam or gap
       refine:
         - {kind: point, x: 0, y: "plate / 2", size: 1, radius: 3}
         - {kind: box, x0: -10, y0: 0, x1: 10, y1: 40, size: 2}
@@ -20,6 +22,10 @@ In a component's file::
 
 Away from each of them the size grows by at most ``growth`` from one element to
 the next (MSH-7, #52), up to the size of the layer it is on, then ``size``.
+
+The **automatic size map** (``automatic``, on unless turned off) adds what the
+geometry needs: about ``across`` elements across each narrow beam and each
+small gap, and enough along tight curves (see :mod:`mems_sketch.mesh_sizes`).
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ from mems_sketch.core.expressions import evaluate
 Value = float | str
 REFINEMENT_KINDS = ("point", "box", "edges")
 DEFAULT_GROWTH = 1.2
+DEFAULT_ACROSS = 2.0  # elements across the narrowest part, for the automatic size map
 AUTOMATIC_DIVISIONS = 20  # automatic size: the component's smaller side over this
 
 
@@ -137,6 +144,10 @@ class MeshSettings(_Model):
     growth: Value = DEFAULT_GROWTH
     layers: dict[str, Value] = Field(default_factory=dict)
     refine: list[Refinement] = Field(default_factory=list)
+    # The automatic size map (#73): finer in narrow parts, small gaps and curves,
+    # with ``across`` elements across the narrowest part of a beam or a gap.
+    automatic: bool = True
+    across: Value = DEFAULT_ACROSS
 
     def resolved(
         self, variables: dict[str, float], bbox: tuple[float, float, float, float] | None
@@ -180,7 +191,8 @@ class MeshSettings(_Model):
                 return number(value, f"{what} {name}")
 
             refine.append(r.resolved(field))
-        return ResolvedMesh(size, growth, layers, refine)
+        across = positive(self.across, "elements across")
+        return ResolvedMesh(size, growth, layers, refine, self.automatic, across)
 
 
 class ResolvedRefinement:
@@ -241,6 +253,8 @@ class ResolvedMesh:
     growth: float
     layers: dict[str, float] = field(default_factory=dict)
     refine: list[ResolvedRefinement] = field(default_factory=list)
+    automatic: bool = False
+    across: float = 2.0
 
     def ramp(self, small: float, large: float) -> float:
         """How far the size takes to grow from ``small`` to ``large``, by at most the

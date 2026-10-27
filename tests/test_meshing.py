@@ -174,19 +174,20 @@ def test_every_format_is_written_with_the_named_regions(tmp_path, extension):
         assert len(files["mesh.nodes"].splitlines()) == nodes
         assert len(files["mesh.elements"].splitlines()) == elements
         assert len(files["mesh.boundary"].splitlines()) == boundary > 0
-        assert "$ anchor_and_device = 1" in files["mesh.names"]
+        assert "$ frame_device_and_pad_anchor = 2" in files["mesh.names"]  # the shapes
         assert "$ device_boundary" in files["mesh.names"]
         return
     text = path.read_text()
     if extension == ".msh":
         assert '"device"' in text and '"anchor_boundary"' in text
+        assert '"pad.anchor"' in text and '"frame.device_boundary"' in text  # the shapes
     elif extension == ".inp":
         assert "ELSET=device" in text and "type=CPS3" in text
     elif extension == ".bdf":
         assert "CTRIA3" in text
     else:
         grid = ET.fromstring(text).find("Domain/Grid")
-        assert "anchor+device" in grid.find("Information").get("Value")
+        assert "frame.device+pad.anchor" in grid.find("Information").get("Value")
         assert int(grid.find("Topology").get("NumberOfElements")) > 10
 
 
@@ -255,6 +256,7 @@ def test_3d_formats(tmp_path, extension):
     text = path.read_text()
     if extension == ".msh":
         assert '"device"' in text and '"anchor_boundary"' in text
+        assert '"pad.anchor"' in text and '"frame.device_boundary"' in text  # the shapes
     elif extension == ".inp":
         assert "type=C3D4" in text and "ELSET=device" in text
     else:
@@ -317,3 +319,90 @@ def test_layer_heights_round_trip_and_show_in_diffs(tmp_path):
     changed.layers["device"].thickness = 4.0
     texts = [c.text for c in diff_projects(loaded, changed)]
     assert any("thickness process.t → 4" in t for t in texts), texts
+
+
+# -- the automatic size map (#73) ------------------------------------------------------
+
+
+def test_the_size_map_follows_beams_gaps_and_curves():
+    import math
+
+    from mems_sketch.mesh_sizes import bins, size_map
+
+    beam = np.array([[0, 0], [100, 0], [100, 2], [0, 2]], float)
+    other = beam + [0, 5]  # 3 µm above it
+    circle = np.array(
+        [[10 * math.cos(t), 10 * math.sin(t)] for t in np.linspace(0, 2 * math.pi, 64, False)]
+    )
+    wide = np.array([[0, 0], [200, 0], [200, 200], [0, 200]], float)
+    assert {p.size for p in size_map({"d": [beam]}, 2, 20)} == {1.0}  # two across 2 µm
+    assert {p.size for p in size_map({"d": [beam]}, 4, 20)} == {0.5}
+    gap = size_map({"d": [beam + [0, 10], beam + [0, 10.5]]}, 2, 20)  # a 0.5 µm slit
+    assert min(p.size for p in gap) == pytest.approx(0.25)
+    assert {round(p.size, 2) for p in size_map({"d": [circle]}, 2, 20)} == {3.93}  # 2πr/16
+    assert size_map({"d": [wide]}, 2, 20) == []  # nothing narrower than the largest size
+    groups = bins(size_map({"d": [beam, other, circle + [50, 50]]}, 2, 20))
+    assert [round(size, 2) for size, _ in groups] == [1.0, 3.93]
+
+
+@needs_gmsh
+def test_the_automatic_map_meshes_a_narrow_beam_across():
+    geometry = Geometry()
+    geometry.add_rect("device", 0, 0, 200, 2)  # a 2 µm beam, 200 µm long
+    off = meshing.generate(geometry, MeshSettings(size=20, automatic=False))
+    on = meshing.generate(geometry, MeshSettings(size=20))
+    assert on.min_quality > 0.6 > off.min_quality  # no slivers
+    assert np.median(on.sizes()) == pytest.approx(1.0, rel=0.3)  # two across
+    assert on.size_points and not off.size_points
+    finer = meshing.generate(geometry, MeshSettings(size=20, across=4))
+    assert finer.element_count > on.element_count
+
+
+@needs_gmsh
+def test_in_3d_thin_layers_get_no_flat_elements():
+    mesh = meshing.generate(frame_and_pad(), MeshSettings(size=20), heights=STACK)
+    assert mesh.min_quality > 0.2
+    flat = meshing.generate(frame_and_pad(), MeshSettings(size=20, automatic=False), heights=STACK)
+    assert flat.min_quality < mesh.min_quality
+
+
+def test_automatic_settings_are_saved_and_checked(tmp_path):
+    settings = MeshSettings(automatic=False, across="fine * 2")
+    folder = save(chip(settings), tmp_path / "chip")
+    assert load(folder).components["top"].mesh == settings
+    assert MeshSettings(across="fine * 2").resolved({"fine": 2}, None).across == 4
+    with pytest.raises(ValueError, match="elements across must be more than 0"):
+        MeshSettings(across=0).resolved({}, None)
+
+
+# -- named shapes (#71) -----------------------------------------------------------------
+
+
+@needs_gmsh
+def test_named_shapes_are_parts_of_the_mesh():
+    from mems_sketch.engine import Engine
+
+    project = chip()
+    build = Engine().load(project).build("top")
+    shapes = meshing.named_shapes(build)
+    assert set(shapes) == {"frame", "pad"}
+    mesh = meshing.generate(build.geometry, MeshSettings(size=10), shapes=shapes)
+    assert set(mesh.parts) == {"frame.device", "pad.anchor"}
+    assert set(mesh.parts["pad.anchor"]) == set(mesh.regions["anchor"])
+    assert {"pad.anchor_boundary", "frame.device_boundary"} <= set(mesh.boundaries)
+    names, _ = mesh.bodies()
+    assert names == ["frame.device", "frame.device+pad.anchor"]  # shapes before layers
+
+
+@needs_gmsh
+def test_a_shape_splits_a_layer_along_its_outline():
+    geometry = Geometry()
+    geometry.add_rect("device", 0, 0, 100, 20)  # two shapes, merged on one layer
+    left, right = Geometry(), Geometry()
+    left.add_rect("device", 0, 0, 40, 20)
+    right.add_rect("device", 40, 0, 100, 20)
+    mesh = meshing.generate(geometry, MeshSettings(size=5), shapes={"left": left, "right": right})
+    area = mesh.measures()
+    assert area[mesh.parts["left.device"]].sum() == pytest.approx(40 * 20, rel=1e-6)
+    assert area[mesh.parts["right.device"]].sum() == pytest.approx(60 * 20, rel=1e-6)
+    assert not set(mesh.parts["left.device"]) & set(mesh.parts["right.device"])

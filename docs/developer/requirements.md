@@ -589,7 +589,7 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   Mesh window and shown on the canvas.
 - **MSH-3** (Should, new; [#70](https://github.com/TorosBenjamin/mems-sketch/issues/70)) The mesh is generated from the **exact geometry**,
   not the export grid, with its own merge tolerance (e.g. 10⁻⁶ µm).
-- **MSH-4** (Should, new; [#71](https://github.com/TorosBenjamin/mems-sketch/issues/71)) Mesh regions and boundaries are **named** after
+- **MSH-4** (Should, exists; [#71](https://github.com/TorosBenjamin/mems-sketch/issues/71)) Mesh regions and boundaries are **named** after
   layers and named shapes (physical groups), so a solver finds anchors and
   electrodes by name.
 - **MSH-5** (Must, exists; [#51](https://github.com/TorosBenjamin/mems-sketch/issues/51)) Mesh formats for **free solvers** first: Elmer
@@ -606,7 +606,7 @@ Ansys) can mesh the STEP export themselves (OUT-6).
   (a project setting, e.g. 1.2), never in one step. The mesh is conforming
   everywhere: neighbouring regions share their nodes. A sudden jump in size
   makes distorted elements and unreliable results along the seam.
-- **MSH-8** (Should, new; [#73](https://github.com/TorosBenjamin/mems-sketch/issues/73)) An **automatic size map** from the geometry:
+- **MSH-8** (Should, exists; [#73](https://github.com/TorosBenjamin/mems-sketch/issues/73)) An **automatic size map** from the geometry:
   smaller elements in narrow beams, small gaps (between comb fingers),
   tight curves and sharp corners. It is what gmsh's own sizing makes
   (curvature, distance between edges), shown on the canvas as a colour

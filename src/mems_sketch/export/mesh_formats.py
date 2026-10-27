@@ -10,7 +10,8 @@
 
 Each exports the component's mesh as its mesh settings say (see
 :mod:`mems_sketch.meshing`), with layers as named regions and their outlines as
-named boundaries: in 2D (``dimensions=2D``, triangles) or 3D (``3D``, the
+named boundaries, and each named shape on each layer too (``mass.device``,
+``mass.device_boundary``): in 2D (``dimensions=2D``, triangles) or 3D (``3D``, the
 layers extruded through the stack as the process places them, tetrahedra).
 Coordinates are in µm, or in metres with ``units=m``.
 """
@@ -27,7 +28,7 @@ from mems_sketch.core.component import Geometry
 from mems_sketch.core.mesh_settings import MeshSettings
 from mems_sketch.core.project import Project
 from mems_sketch.export.base import ExportOption
-from mems_sketch.meshing import Mesh, generate, save_with_gmsh, stack_heights
+from mems_sketch.meshing import Mesh, generate, named_shapes, save_with_gmsh, stack_heights
 
 UNITS = {"um": 1.0, "m": 1e-6}
 _OPTIONS = (
@@ -97,8 +98,15 @@ class _MeshExporter:
         scale = UNITS[units]
         heights = stack_heights(project.process) if dimensions == "3D" else None
         write = save_with_gmsh(Path(path), scale) if self.gmsh_writes else None
+        shapes = named_shapes(build) if build is not None else {}
         mesh = generate(
-            geometry, settings, variables, layer_list(layers), write=write, heights=heights
+            geometry,
+            settings,
+            variables,
+            layer_list(layers),
+            write=write,
+            heights=heights,
+            shapes=shapes,
         )
         if not self.gmsh_writes:
             self.write(mesh, Path(path), scale)
@@ -206,7 +214,7 @@ def write_elmer(mesh: Mesh, folder: Path, scale: float = 1.0) -> Path:
 
 
 def _elmer_name(name: str) -> str:
-    return name.replace("+", "_and_")
+    return name.replace("+", "_and_").replace(".", "_")
 
 
 def _numbers(nodes) -> str:
